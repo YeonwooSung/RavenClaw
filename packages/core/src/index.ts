@@ -34,27 +34,4 @@ export { readTool } from './tools/read'
 export { grepTool } from './tools/grep'
 export { globTool } from './tools/glob'
 export { partitionToolCalls } from './tools/partition'
-export {
-  compactThreshold,
-  defaultCompactPolicy,
-  hardLimit,
-  shouldAutocompact,
-} from './compact/policy'
-export {
-  applyRestoreCaps,
-  applyToolResultBudget,
-  microcompact,
-  runAutocompact,
-  truncateRestoredText,
-} from './compact/prune'
-export { compactSummary, mechanicalSummary, summarizeSpan } from './compact/summarize'
-export { editTool } from './tools/edit'
-export { writeTool } from './tools/write'
-export { bashTool, matchesDangerousPattern } from './tools/bash'
-export { createLocalTerminalBackend } from './tools/terminal-backend'
-export type {
-  TerminalBackend,
-  TerminalExecOpts,
-  TerminalExecResult,
-} from './tools/terminal-backend'
 

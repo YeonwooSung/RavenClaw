@@ -1,0 +1,501 @@
+import { Database } from 'bun:sqlite'
+import { PersistError } from '../types'
+import type {
+  Funding,
+  Message,
+  PermissionMode,
+  PermissionRule,
+  SessionListFilter,
+  SessionRecord,
+  SessionStore,
+  TokenUsage,
+} from '../types'
+import { repairRoleAlternation } from '../loop/repair'
+import { applyMigrations } from './schema'
+
+type SessionRow = {
+  id: string
+  created_at: number
+  updated_at: number
+  cwd: string
+  model: string
+  permission_mode: string
+  pre_plan_mode: string | null
+  compact_generation: number
+  usage_json: string
+  title: string | null
+  parent_session_id: string | null
+  funding: string
+}
+
+type MessageRow = {
+  id: string
+  session_id: string
+  created_at: number
+  role: string
+  blocks_json: string
+  tool_use_id: string | null
+  ok: number | null
+  persist_path: string | null
+  usage_json: string | null
+  active: number
+  generation: number
+}
+
+type RuleRow = {
+  id: string
+  session_id: string
+  tool: string
+  spec_json: string
+  behavior: string
+}
+
+function sqliteCode(error: unknown): string | undefined {
+  if (typeof error === 'object' && error !== null && 'code' in error) {
+    const code = (error as { code?: unknown }).code
+    if (typeof code === 'string') return code
+  }
+  return undefined
+}
+
+function sqliteErrno(error: unknown): number | undefined {
+  if (typeof error === 'object' && error !== null && 'errno' in error) {
+    const errno = (error as { errno?: unknown }).errno
+    if (typeof errno === 'number') return errno
+  }
+  return undefined
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
+function toPersistError(error: unknown): PersistError {
+  if (error instanceof PersistError) return error
+  const code = sqliteCode(error)
+  const errno = sqliteErrno(error)
+  const message = errorMessage(error)
+  if (code === 'SQLITE_BUSY' || code?.startsWith('SQLITE_BUSY') || errno === 5) {
+    return new PersistError('busy', message)
+  }
+  if (code === 'SQLITE_LOCKED' || code?.startsWith('SQLITE_LOCKED') || errno === 6) {
+    return new PersistError('locked', message)
+  }
+  if (
+    code === 'SQLITE_CORRUPT' ||
+    code === 'SQLITE_NOTADB' ||
+    errno === 11 ||
+    errno === 26
+  ) {
+    return new PersistError('corrupt', message)
+  }
+  if (code === 'SQLITE_READONLY' || code?.startsWith('SQLITE_READONLY') || errno === 8) {
+    return new PersistError('readonly', message)
+  }
+  return new PersistError('unknown', message)
+}
+
+function isUniqueConstraint(error: unknown): boolean {
+  const code = sqliteCode(error)
+  const errno = sqliteErrno(error)
+  return (
+    code === 'SQLITE_CONSTRAINT' ||
+    code === 'SQLITE_CONSTRAINT_PRIMARYKEY' ||
+    code === 'SQLITE_CONSTRAINT_UNIQUE' ||
+    errno === 19 ||
+    errno === 1555 ||
+    errno === 2067
+  )
+}
+
+function sessionFromRow(row: SessionRow): SessionRecord {
+  const session: SessionRecord = {
+    id: row.id,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    cwd: row.cwd,
+    model: row.model,
+    permissionMode: row.permission_mode as PermissionMode,
+    compactGeneration: row.compact_generation,
+    usage: JSON.parse(row.usage_json) as TokenUsage,
+    funding: row.funding as Funding,
+  }
+  if (row.pre_plan_mode != null) session.prePlanMode = row.pre_plan_mode as PermissionMode
+  if (row.title != null) session.title = row.title
+  if (row.parent_session_id != null) session.parentSessionId = row.parent_session_id
+  return session
+}
+
+function messageFromRow(row: MessageRow): Message {
+  const blocks = JSON.parse(row.blocks_json) as Message['blocks']
+  if (row.role === 'user') {
+    return {
+      id: row.id,
+      role: 'user',
+      blocks: blocks as Extract<Message, { role: 'user' }>['blocks'],
+      createdAt: row.created_at,
+    }
+  }
+  if (row.role === 'assistant') {
+    const message: Extract<Message, { role: 'assistant' }> = {
+      id: row.id,
+      role: 'assistant',
+      blocks: blocks as Extract<Message, { role: 'assistant' }>['blocks'],
+      createdAt: row.created_at,
+    }
+    if (row.usage_json != null) message.usage = JSON.parse(row.usage_json) as TokenUsage
+    return message
+  }
+  if (row.role === 'tool') {
+    const message: Extract<Message, { role: 'tool' }> = {
+      id: row.id,
+      role: 'tool',
+      toolUseId: row.tool_use_id ?? '',
+      ok: row.ok === 1,
+      blocks: blocks as Extract<Message, { role: 'tool' }>['blocks'],
+      createdAt: row.created_at,
+    }
+    if (row.persist_path != null) message.persistPath = row.persist_path
+    return message
+  }
+  throw new PersistError('corrupt', `unknown message role ${row.role}`)
+}
+
+function hasToolUse(message: Extract<Message, { role: 'assistant' }>): boolean {
+  return message.blocks.some((block) => block.type === 'tool_use')
+}
+
+function sessionBind(session: SessionRecord) {
+  return {
+    $id: session.id,
+    $created_at: session.createdAt,
+    $updated_at: session.updatedAt,
+    $cwd: session.cwd,
+    $model: session.model,
+    $permission_mode: session.permissionMode,
+    $pre_plan_mode: session.prePlanMode ?? null,
+    $compact_generation: session.compactGeneration,
+    $usage_json: JSON.stringify(session.usage),
+    $title: session.title ?? null,
+    $parent_session_id: session.parentSessionId ?? null,
+    $funding: session.funding,
+  }
+}
+
+function messageBind(sessionId: string, message: Message) {
+  return {
+    $id: message.id,
+    $session_id: sessionId,
+    $created_at: message.createdAt,
+    $role: message.role,
+    $blocks_json: JSON.stringify(message.blocks),
+    $tool_use_id: message.role === 'tool' ? message.toolUseId : null,
+    $ok: message.role === 'tool' ? (message.ok ? 1 : 0) : null,
+    $persist_path:
+      message.role === 'tool' && message.persistPath !== undefined
+        ? message.persistPath
+        : null,
+    $usage_json:
+      message.role === 'assistant' && message.usage !== undefined
+        ? JSON.stringify(message.usage)
+        : null,
+  }
+}
+
+// One live writer per session id. withWrite is a process-local mutex
+// (store-wide is ok). A second store instance on the same file may read.
+export function createSqliteStore(dbPath: string): SessionStore {
+  const db = new Database(dbPath, { create: true })
+  db.exec('PRAGMA journal_mode = WAL')
+  db.exec('PRAGMA busy_timeout = 5000')
+  db.exec('PRAGMA foreign_keys = ON')
+  applyMigrations(db)
+
+  const insertSession = db.query(
+    `INSERT INTO sessions (
+       id, created_at, updated_at, cwd, model, permission_mode, pre_plan_mode,
+       compact_generation, usage_json, title, parent_session_id, funding
+     ) VALUES (
+       $id, $created_at, $updated_at, $cwd, $model, $permission_mode, $pre_plan_mode,
+       $compact_generation, $usage_json, $title, $parent_session_id, $funding
+     )`,
+  )
+  const upsertSessionSql = db.query(
+    `INSERT INTO sessions (
+       id, created_at, updated_at, cwd, model, permission_mode, pre_plan_mode,
+       compact_generation, usage_json, title, parent_session_id, funding
+     ) VALUES (
+       $id, $created_at, $updated_at, $cwd, $model, $permission_mode, $pre_plan_mode,
+       $compact_generation, $usage_json, $title, $parent_session_id, $funding
+     )
+     ON CONFLICT(id) DO UPDATE SET
+       created_at = excluded.created_at,
+       updated_at = excluded.updated_at,
+       cwd = excluded.cwd,
+       model = excluded.model,
+       permission_mode = excluded.permission_mode,
+       pre_plan_mode = excluded.pre_plan_mode,
+       compact_generation = excluded.compact_generation,
+       usage_json = excluded.usage_json,
+       title = excluded.title,
+       parent_session_id = excluded.parent_session_id,
+       funding = excluded.funding`,
+  )
+  const selectSession = db.query(`SELECT * FROM sessions WHERE id = ?`)
+  const insertMessage = db.query(
+    `INSERT INTO messages (
+       id, session_id, created_at, role, blocks_json, tool_use_id, ok,
+       persist_path, usage_json, active, generation
+     ) VALUES (
+       $id, $session_id, $created_at, $role, $blocks_json, $tool_use_id, $ok,
+       $persist_path, $usage_json, 1, 0
+     )`,
+  )
+  const upsertTool = db.query(
+    `INSERT INTO messages (
+       id, session_id, created_at, role, blocks_json, tool_use_id, ok,
+       persist_path, usage_json, active, generation
+     ) VALUES (
+       $id, $session_id, $created_at, $role, $blocks_json, $tool_use_id, $ok,
+       $persist_path, $usage_json, 1, 0
+     )
+     ON CONFLICT(id) DO UPDATE SET
+       session_id = excluded.session_id,
+       created_at = excluded.created_at,
+       role = excluded.role,
+       blocks_json = excluded.blocks_json,
+       tool_use_id = excluded.tool_use_id,
+       ok = excluded.ok,
+       persist_path = excluded.persist_path,
+       usage_json = excluded.usage_json,
+       active = 1`,
+  )
+  const selectActiveMessages = db.query(
+    `SELECT * FROM messages WHERE session_id = ? AND active = 1 ORDER BY created_at`,
+  )
+  const inactivateMessage = db.query(`UPDATE messages SET active = 0 WHERE id = ?`)
+  const insertBoundary = db.query(
+    `INSERT INTO compact_boundaries (session_id, generation, created_at, summary)
+     VALUES (?, ?, ?, ?)`,
+  )
+  const bumpCompact = db.query(
+    `UPDATE sessions SET compact_generation = ?, updated_at = ? WHERE id = ?`,
+  )
+  const deleteRules = db.query(`DELETE FROM permission_rules WHERE session_id = ?`)
+  const insertRule = db.query(
+    `INSERT INTO permission_rules (id, session_id, tool, spec_json, behavior)
+     VALUES (?, ?, ?, ?, ?)`,
+  )
+  const selectRules = db.query(`SELECT * FROM permission_rules WHERE session_id = ?`)
+
+  let tail: Promise<void> = Promise.resolve()
+  let depth = 0
+
+  async function retryOnce<T>(fn: () => Promise<T>): Promise<T> {
+    try {
+      return await fn()
+    } catch (error) {
+      const mapped = toPersistError(error)
+      if (mapped.code === 'busy' || mapped.code === 'locked') {
+        try {
+          return await fn()
+        } catch (retryError) {
+          throw toPersistError(retryError)
+        }
+      }
+      throw mapped
+    }
+  }
+
+  async function withWrite<T>(fn: () => Promise<T>): Promise<T> {
+    if (depth > 0) return retryOnce(fn)
+    let release!: () => void
+    const prev = tail
+    tail = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await prev
+    depth += 1
+    try {
+      return await retryOnce(fn)
+    } finally {
+      depth -= 1
+      release()
+    }
+  }
+
+  function insertMessageRow(sessionId: string, message: Message): void {
+    try {
+      insertMessage.run(messageBind(sessionId, message))
+    } catch (error) {
+      if (isUniqueConstraint(error)) {
+        throw new PersistError('unknown', `duplicate message id ${message.id}`)
+      }
+      throw error
+    }
+  }
+
+  const persistToolsTx = db.transaction(
+    (sessionId: string, msgs: Array<Extract<Message, { role: 'tool' }>>) => {
+      for (const msg of msgs) {
+        upsertTool.run(messageBind(sessionId, msg))
+      }
+    },
+  )
+
+  const setRulesTx = db.transaction((sessionId: string, rules: PermissionRule[]) => {
+    deleteRules.run(sessionId)
+    for (const rule of rules) {
+      insertRule.run(
+        rule.id,
+        sessionId,
+        rule.tool,
+        JSON.stringify(rule.spec),
+        rule.behavior,
+      )
+    }
+  })
+
+  const recordCompactTx = db.transaction(
+    (sessionId: string, generation: number, summary: string, inactivatedIds: string[]) => {
+      for (const id of inactivatedIds) {
+        inactivateMessage.run(id)
+      }
+      insertBoundary.run(sessionId, generation, Date.now(), summary)
+      bumpCompact.run(generation, Date.now(), sessionId)
+    },
+  )
+
+  const store: SessionStore & { close(): void } = {
+    async createSession(session) {
+      await withWrite(async () => {
+        try {
+          insertSession.run(sessionBind(session))
+        } catch (error) {
+          if (isUniqueConstraint(error)) {
+            throw new PersistError('unknown', `session exists: ${session.id}`)
+          }
+          throw error
+        }
+      })
+    },
+
+    async upsertSession(session) {
+      await withWrite(async () => {
+        upsertSessionSql.run(sessionBind(session))
+      })
+    },
+
+    async listSessions(filter?: SessionListFilter) {
+      const where: string[] = []
+      const params: Array<string | number> = []
+      if (filter?.cwd !== undefined) {
+        where.push('cwd = ?')
+        params.push(filter.cwd)
+      }
+      if (filter && 'parentSessionId' in filter) {
+        if (filter.parentSessionId === null) {
+          where.push('parent_session_id IS NULL')
+        } else if (filter.parentSessionId !== undefined) {
+          where.push('parent_session_id = ?')
+          params.push(filter.parentSessionId)
+        }
+      }
+      let sql = 'SELECT * FROM sessions'
+      if (where.length > 0) sql += ` WHERE ${where.join(' AND ')}`
+      sql += ' ORDER BY updated_at DESC'
+      if (filter?.limit !== undefined) {
+        sql += ' LIMIT ?'
+        params.push(filter.limit)
+      }
+      const rows = db.query(sql).all(...params) as SessionRow[]
+      return rows.map(sessionFromRow)
+    },
+
+    async loadSession(sessionId) {
+      let session: SessionRecord
+      let active: Message[]
+      try {
+        const row = selectSession.get(sessionId) as SessionRow | null
+        if (!row) {
+          throw new PersistError('unknown', `session not found: ${sessionId}`)
+        }
+        session = sessionFromRow(row)
+        active = (selectActiveMessages.all(sessionId) as MessageRow[]).map(messageFromRow)
+      } catch (error) {
+        throw toPersistError(error)
+      }
+      const repaired = repairRoleAlternation(active)
+      const existingIds = new Set(active.map((msg) => msg.id))
+      const inserted = repaired.filter(
+        (msg): msg is Extract<Message, { role: 'tool' }> =>
+          msg.role === 'tool' && !existingIds.has(msg.id),
+      )
+      if (inserted.length > 0) {
+        await store.persistToolResults(sessionId, inserted)
+      }
+      return { session, messages: repaired }
+    },
+
+    async persistUser(sessionId, message) {
+      await withWrite(async () => {
+        insertMessageRow(sessionId, message)
+      })
+    },
+
+    async persistAssistant(sessionId, message) {
+      await withWrite(async () => {
+        if (hasToolUse(message)) {
+          throw new PersistError('unknown', 'persistAssistant cannot write tool_use')
+        }
+        insertMessageRow(sessionId, message)
+      })
+    },
+
+    async persistToolCalls(sessionId, message) {
+      await withWrite(async () => {
+        if (!hasToolUse(message)) {
+          throw new PersistError('unknown', 'persistToolCalls requires tool_use')
+        }
+        insertMessageRow(sessionId, message)
+      })
+    },
+
+    async persistToolResults(sessionId, msgs) {
+      await withWrite(async () => {
+        persistToolsTx(sessionId, msgs)
+      })
+    },
+
+    async setPermissionRules(sessionId, rules) {
+      await withWrite(async () => {
+        setRulesTx(sessionId, rules)
+      })
+    },
+
+    async listPermissionRules(sessionId) {
+      const rows = selectRules.all(sessionId) as RuleRow[]
+      return rows.map((row) => ({
+        id: row.id,
+        sessionId: row.session_id,
+        tool: row.tool,
+        spec: JSON.parse(row.spec_json) as unknown,
+        behavior: row.behavior as PermissionRule['behavior'],
+      }))
+    },
+
+    async recordCompact(sessionId, generation, summary, inactivatedIds) {
+      await withWrite(async () => {
+        recordCompactTx(sessionId, generation, summary, inactivatedIds)
+      })
+    },
+
+    withWrite,
+
+    close() {
+      db.close()
+    },
+  }
+
+  return store
+}
