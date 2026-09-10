@@ -1,0 +1,45 @@
+{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "ravenclaw",
+    },
+    "packages/ads": {
+      "name": "@ravenclaw/ads",
+      "version": "0.0.0",
+    },
+    "packages/cli": {
+      "name": "@ravenclaw/cli",
+      "version": "0.0.0",
+      "bin": {
+        "raven": "src/index.ts",
+      },
+      "dependencies": {
+        "@ravenclaw/ads": "workspace:*",
+        "@ravenclaw/core": "workspace:*",
+        "@ravenclaw/providers": "workspace:*",
+      },
+    },
+    "packages/core": {
+      "name": "@ravenclaw/core",
+      "version": "0.0.0",
+    },
+    "packages/providers": {
+      "name": "@ravenclaw/providers",
+      "version": "0.0.0",
+      "dependencies": {
+        "@ravenclaw/core": "workspace:*",
+      },
+    },
+  },
+  "packages": {
+    "@ravenclaw/ads": ["@ravenclaw/ads@workspace:packages/ads"],
+
+    "@ravenclaw/cli": ["@ravenclaw/cli@workspace:packages/cli"],
+
+    "@ravenclaw/core": ["@ravenclaw/core@workspace:packages/core"],
+
+    "@ravenclaw/providers": ["@ravenclaw/providers@workspace:packages/providers"],
+  }
+}

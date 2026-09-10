@@ -1,0 +1,9 @@
+{
+  "name": "ravenclaw",
+  "private": true,
+  "packageManager": "bun@1.x",
+  "workspaces": ["packages/*"],
+  "scripts": {
+    "test": "bun test"
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "name": "@ravenclaw/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "raven": "src/index.ts"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@ravenclaw/core": "workspace:*",
+    "@ravenclaw/providers": "workspace:*",
+    "@ravenclaw/ads": "workspace:*"
+  }
+}

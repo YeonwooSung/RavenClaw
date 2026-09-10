@@ -1,0 +1,304 @@
+export type ApiMode = 'openai_compat' | 'anthropic_messages'
+export type SystemTier = 'stable' | 'context' | 'volatile'
+
+export interface SystemPart {
+  tier: SystemTier
+  text: string
+  cacheBreakpoint?: boolean
+}
+
+export interface ModelProfile {
+  id: string
+  contextWindow: number
+  reserveOutputTokens: number // min(20_000, floor(0.10 * contextWindow))
+  inputUsdPerMTok: number
+  outputUsdPerMTok: number
+  cacheReadUsdPerMTok: number
+  cacheWriteUsdPerMTok: number
+  supportsThinking: boolean
+}
+
+export interface ProviderRequest {
+  model: string
+  system: SystemPart[]
+  messages: Message[]
+  tools: Array<{ name: string; description: string; inputSchema: unknown }>
+  maxTokens: number
+}
+
+export type ProviderChunk =
+  | { type: 'text_delta'; text: string }
+  | { type: 'thinking_delta'; text: string }
+  | { type: 'tool_call'; id: string; name: string; input: unknown }
+  | { type: 'usage'; usage: TokenUsage }
+  | { type: 'stop'; reason: string | null }
+
+export interface ProviderErrorLike {
+  retryable: boolean
+  status?: number
+  bytes?: number
+}
+
+export interface Provider {
+  readonly id: string
+  readonly apiMode: ApiMode
+  profile(model: string): ModelProfile
+  stream(req: ProviderRequest, signal: AbortSignal): AsyncIterable<ProviderChunk>
+}
+
+export type PermissionMode = 'default' | 'acceptEdits' | 'plan' | 'dontAsk'
+export type PermissionReason = 'rule' | 'mode' | 'safety' | 'user'
+export type PermissionScope = 'session' | 'project' | 'user'
+export type Funding = 'byok' | 'included'
+export type PersistErrorCode = 'busy' | 'locked' | 'corrupt' | 'readonly' | 'unknown'
+
+export interface TokenUsage {
+  input: number
+  output: number
+  cacheRead: number
+  cacheWrite: number
+}
+
+export type ContentBlock =
+  | { type: 'text'; text: string }
+  | { type: 'thinking'; text: string }
+  | { type: 'tool_use'; id: string; name: string; input: unknown }
+
+export type Message =
+  | {
+      id: string
+      role: 'user'
+      blocks: Array<{ type: 'text'; text: string }>
+      createdAt: number
+    }
+  | {
+      id: string
+      role: 'assistant'
+      blocks: ContentBlock[]
+      createdAt: number
+      usage?: TokenUsage
+    }
+  | {
+      id: string
+      role: 'tool'
+      toolUseId: string
+      ok: boolean
+      blocks: Array<{ type: 'text'; text: string }>
+      persistPath?: string
+      createdAt: number
+    }
+
+export interface Turn {
+  id: string
+  sessionId: string
+  messages: Message[]
+  round: number
+  maxRounds: number
+  graceUsed: boolean
+  abort: AbortController
+  permissionMode: PermissionMode
+  prePlanMode?: PermissionMode
+  usage: TokenUsage
+  compactGeneration: number
+  funding: Funding
+  cwd: string
+  model: string
+  readFiles: Set<string>
+}
+
+export interface Round {
+  index: number
+  startedAt: number
+  model: string
+  toolCalls: Array<{ id: string; name: string; input: unknown }>
+  toolResults: ToolResult[]
+  end?: RoundEnd
+}
+
+export type StreamEvent =
+  | { type: 'round_start'; round: number }
+  | { type: 'text_delta'; text: string }
+  | { type: 'thinking_delta'; text: string }
+  | { type: 'tool_call'; id: string; name: string; input: unknown }
+  | { type: 'tool_progress'; id: string; text: string }
+  | { type: 'tool_result'; id: string; result: ToolResult }
+  | { type: 'status'; message: string }
+  | { type: 'compact'; summary: string; generation: number }
+  | {
+      type: 'permission_ask'
+      id: string
+      tool: string
+      input: unknown
+      message: string
+      saveAs?: PermissionScope
+    }
+  | { type: 'error'; message: string; recoverable: boolean }
+  | { type: 'usage'; usage: TokenUsage }
+  | { type: 'round_end'; end: RoundEnd }
+
+export type RoundEnd =
+  | { reason: 'completed' }
+  | { reason: 'max_rounds'; round: number }
+  | { reason: 'aborted' }
+  | { reason: 'context_full' }
+  | { reason: 'model_error'; error: unknown }
+  | { reason: 'persist_failed'; error: unknown }
+  | { reason: 'results_persist_failed'; error: unknown }
+
+export interface Tool<I = unknown, O = unknown> {
+  name: string
+  description: string
+  inputSchema: unknown
+  isEnabled?(ctx: ToolContext): boolean
+  parse(input: unknown): { ok: true; value: I } | { ok: false; message: string }
+  isConcurrencySafe(input: I): boolean
+  isReadOnly(input: I): boolean
+  checkPermissions(input: I, ctx: ToolContext): Promise<PermissionDecision>
+  execute(input: I, ctx: ToolContext): Promise<O>
+  renderResult?(output: O): string
+  interruptBehavior?(): 'cancel' | 'block'
+}
+
+export interface ToolContext {
+  turn: Turn
+  signal: AbortSignal
+  onProgress: (text: string) => void
+}
+
+export interface ToolResult {
+  toolUseId: string
+  ok: boolean
+  content: string
+  persistPath?: string
+}
+
+export type PermissionDecision =
+  | { behavior: 'allow'; reason: PermissionReason }
+  | { behavior: 'deny'; reason: PermissionReason; message: string }
+  | { behavior: 'ask'; message: string; saveAs?: PermissionScope }
+
+export interface CompactPolicy {
+  enabled: boolean
+  autoCompactBuffer: number
+  blockingBufferWhenManual: number
+  protectLastMessages: number
+  keepRecentFiles: number
+  maxCharsPerRestoredFile: number
+  maxCharsRestoredFilesTotal: number
+  maxCharsPerRestoredSkill: number
+  maxCharsRestoredSkillsTotal: number
+  maxConsecutiveFailures: number
+  llmSummarize: boolean
+}
+
+export interface AgentDefinition {
+  id: string
+  displayName: string
+  model?: string
+  toolNames: string[]
+  spawnableAgents: string[]
+  systemPrompt?: string
+  inheritParentSystemPrompt?: boolean
+  includeMessageHistory: boolean
+  maxRounds: number
+  compactContext?: CompactPolicy
+  outputMode: 'last_message' | 'all_messages'
+}
+
+export interface SessionRecord {
+  id: string
+  createdAt: number
+  updatedAt: number
+  cwd: string
+  model: string
+  permissionMode: PermissionMode
+  prePlanMode?: PermissionMode
+  compactGeneration: number
+  usage: TokenUsage
+  title?: string
+  parentSessionId?: string
+  funding: Funding
+}
+
+export interface SessionListFilter {
+  cwd?: string
+  parentSessionId?: string | null
+  limit?: number
+}
+
+export interface PermissionRule {
+  id: string
+  sessionId: string
+  tool: string
+  spec: unknown
+  behavior: 'allow' | 'deny' | 'ask'
+}
+
+export class PersistError extends Error {
+  readonly code: PersistErrorCode
+  constructor(code: PersistErrorCode, message: string) {
+    super(message)
+    this.code = code
+    this.name = 'PersistError'
+  }
+}
+
+export interface SessionStore {
+  createSession(session: SessionRecord): Promise<void>
+  upsertSession(session: SessionRecord): Promise<void>
+  listSessions(filter?: SessionListFilter): Promise<SessionRecord[]>
+  loadSession(sessionId: string): Promise<{ session: SessionRecord; messages: Message[] }>
+  persistUser(sessionId: string, message: Extract<Message, { role: 'user' }>): Promise<void>
+  /**
+   * Text-only assistant completions (no tool_use). Do not call for a tool-use round.
+   */
+  persistAssistant(sessionId: string, message: Extract<Message, { role: 'assistant' }>): Promise<void>
+  /**
+   * Persist-before-execute; this IS the durable write of the assistant row with tool_use.
+   * Do not also call persistAssistant for the same row.
+   */
+  persistToolCalls(sessionId: string, message: Extract<Message, { role: 'assistant' }>): Promise<void>
+  persistToolResults(sessionId: string, messages: Array<Extract<Message, { role: 'tool' }>>): Promise<void>
+  setPermissionRules(sessionId: string, rules: PermissionRule[]): Promise<void>
+  listPermissionRules(sessionId: string): Promise<PermissionRule[]>
+  recordCompact(
+    sessionId: string,
+    generation: number,
+    summary: string,
+    inactivatedIds: string[],
+  ): Promise<void>
+  withWrite<T>(fn: () => Promise<T>): Promise<T>
+}
+
+export interface SessionEngineOptions {
+  session: SessionRecord
+  messages?: Message[]
+  provider: Provider
+  store: SessionStore
+  tools: Tool[]
+  compact: CompactPolicy
+  model: ModelProfile
+  maxRounds: number
+  askUser: (
+    e: Extract<StreamEvent, { type: 'permission_ask' }>,
+    signal: AbortSignal,
+  ) => Promise<'allow' | 'deny' | 'allow_always'>
+}
+
+export interface SessionEngine {
+  readonly session: SessionRecord
+  submitMessage(text: string): AsyncGenerator<StreamEvent, RoundEnd>
+  compactNow(): Promise<void>
+  setPermissionMode(mode: PermissionMode): Promise<void>
+  abort(): void
+}
+
+export interface QueryLoopOptions {
+  turn: Turn
+  tools: Tool[]
+  provider: Provider
+  store: SessionStore
+  compact: CompactPolicy
+  model: ModelProfile
+  askUser: SessionEngineOptions['askUser']
+}
