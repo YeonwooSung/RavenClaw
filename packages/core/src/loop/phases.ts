@@ -14,8 +14,10 @@ import { shouldAutocompact } from '../compact/policy'
 import { applyToolResultBudget, microcompact, runAutocompact } from '../compact/prune'
 import { compactSummary } from '../compact/summarize'
 import { decidePermission } from '../permissions/pipeline'
+import type { PermissionRuleSet } from '../permissions/types'
 import { commandOrPath, loadPermissionRules, persistAllowAlways } from '../permissions/rules'
 import { isAbortError, nextOrAbort } from './abort'
+import { partitionToolCalls } from '../tools/partition'
 import { estimateTokens, shouldEnterGrace, suffixGraceNotice } from './budget'
 import {
   denyText,
@@ -156,7 +158,6 @@ export async function* beginRound(state: LoopState): AsyncGenerator<StreamEvent,
 
   if (shouldEnterGrace(state.turn, state.lastHadToolUse)) {
     state.turn.graceUsed = true
-    suffixGraceNotice(state.turn.messages)
     resetPending(state)
     yield { type: 'round_start', round: state.turn.round }
     return { action: 'continue' }
@@ -269,7 +270,9 @@ export async function* maybeCompact(
 }
 
 export function assembleRequest(state: LoopState): ProviderRequest {
-  let messages = state.turn.messages
+  let messages = state.turn.graceUsed
+    ? suffixGraceNotice(state.turn.messages)
+    : state.turn.messages
   if (!state.model.supportsThinking) {
     messages = messages.map((msg) => {
       if (msg.role !== 'assistant') return msg
@@ -467,143 +470,48 @@ export async function* runToolRound(
 
   const results: Array<Extract<Message, { role: 'tool' }>> = []
   const calls = state.pendingToolCalls
-  let rules = await loadPermissionRules({
-    cwd: state.turn.cwd,
-    store: state.store,
-    sessionId: state.turn.sessionId,
-  })
+  const box: { rules: PermissionRuleSet } = {
+    rules: await loadPermissionRules({
+      cwd: state.turn.cwd,
+      store: state.store,
+      sessionId: state.turn.sessionId,
+    }),
+  }
   const serializedAsk = createAskSerializer()
+  const batches = partitionToolCalls(calls, state.tools)
+  let abortRest = false
 
-  for (let i = 0; i < calls.length; i++) {
-    const call = calls[i]
-    if (!call) continue
-    if (state.turn.abort.signal.aborted) {
-      results.push(...pairMissing(calls.slice(i).map((row) => row.id), 'aborted'))
+  for (const batch of batches) {
+    if (abortRest || state.turn.abort.signal.aborted) {
+      const leftover = calls.filter(
+        (call) => !results.some((row) => row.toolUseId === call.id),
+      )
+      if (leftover.length > 0) {
+        results.push(...pairMissing(leftover.map((row) => row.id), 'aborted'))
+      }
       break
     }
 
-    const tool = state.tools.find((entry) => entry.name === call.name)
-    if (!tool) {
-      results.push(makeToolMessage(call.id, false, unknownToolText(call.name)))
-      continue
+    const signal =
+      batch.length > 1
+        ? mergeAbortSignals(state.turn.abort.signal, BATCH_TIMEOUT_MS)
+        : state.turn.abort.signal
+    const settled = await Promise.all(
+      batch.map((call) => executeOneCall(state, call, box, serializedAsk, signal)),
+    )
+    for (const item of settled) {
+      results.push(...item.messages)
+      for (const event of item.events) yield event
+      if (item.abortRest) abortRest = true
     }
+  }
 
-    const parsed = tool.parse(call.input)
-    if (!parsed.ok) {
-      results.push(makeToolMessage(call.id, false, parseFailedText(parsed.message)))
-      continue
-    }
-
-    const progress: StreamEvent[] = []
-    const ctx: ToolContext = {
-      turn: state.turn,
-      signal: state.turn.abort.signal,
-      onProgress: (text) => {
-        progress.push({ type: 'tool_progress', id: call.id, text })
-      },
-    }
-
-    let allowed = false
-    try {
-      const decision = await decidePermission({
-        tool,
-        name: call.name,
-        input: parsed.value,
-        ctx,
-        mode: state.turn.permissionMode,
-        rules,
-      })
-      if (decision.behavior === 'deny') {
-        results.push(makeToolMessage(call.id, false, denyText(decision.message)))
-        continue
-      }
-      if (decision.behavior === 'ask') {
-        const event: Extract<StreamEvent, { type: 'permission_ask' }> = {
-          type: 'permission_ask',
-          id: call.id,
-          tool: call.name,
-          input: parsed.value,
-          message: decision.message,
-        }
-        if (decision.saveAs !== undefined) event.saveAs = decision.saveAs
-        yield event
-        try {
-          const answer = await serializedAsk(() =>
-            state.askUser(event, state.turn.abort.signal),
-          )
-          if (answer === 'deny') {
-            results.push(makeToolMessage(call.id, false, denyText(decision.message)))
-            continue
-          }
-          if (answer === 'allow_always') {
-            const scope = decision.saveAs ?? 'session'
-            await persistAllowAlways({
-              store: state.store,
-              sessionId: state.turn.sessionId,
-              cwd: state.turn.cwd,
-              scope,
-              tool: call.name,
-              spec: commandOrPath(parsed.value) ?? {},
-            })
-            rules = await loadPermissionRules({
-              cwd: state.turn.cwd,
-              store: state.store,
-              sessionId: state.turn.sessionId,
-            })
-          }
-          allowed = true
-        } catch {
-          results.push(...pairMissing([call.id], 'aborted'))
-          if (state.turn.abort.signal.aborted) {
-            results.push(
-              ...pairMissing(calls.slice(i + 1).map((row) => row.id), 'aborted'),
-            )
-            break
-          }
-          continue
-        }
-      } else {
-        allowed = true
-      }
-    } catch (error) {
-      if (isAbortError(error) || state.turn.abort.signal.aborted) {
-        results.push(...pairMissing(calls.slice(i).map((row) => row.id), 'aborted'))
-        break
-      }
-      results.push(makeToolMessage(call.id, false, executeFailedText(errorMessage(error))))
-      continue
-    }
-
-    if (!allowed) continue
-    if (state.turn.abort.signal.aborted) {
-      results.push(...pairMissing(calls.slice(i).map((row) => row.id), 'aborted'))
-      break
-    }
-
-    try {
-      const output = await tool.execute(parsed.value, ctx)
-      for (const event of progress) yield event
-      const content = formatOutput(tool, output)
-      results.push(makeToolMessage(call.id, true, content))
-      yield {
-        type: 'tool_result',
-        id: call.id,
-        result: { toolUseId: call.id, ok: true, content },
-      }
-    } catch (error) {
-      for (const event of progress) yield event
-      if (isAbortError(error) || state.turn.abort.signal.aborted) {
-        results.push(...pairMissing([call.id], 'aborted'))
-        results.push(...pairMissing(calls.slice(i + 1).map((row) => row.id), 'aborted'))
-        break
-      }
-      const content = executeFailedText(errorMessage(error))
-      results.push(makeToolMessage(call.id, false, content))
-      yield {
-        type: 'tool_result',
-        id: call.id,
-        result: { toolUseId: call.id, ok: false, content },
-      }
+  if (abortRest || state.turn.abort.signal.aborted) {
+    const leftover = calls.filter(
+      (call) => !results.some((row) => row.toolUseId === call.id),
+    )
+    if (leftover.length > 0) {
+      results.push(...pairMissing(leftover.map((row) => row.id), 'aborted'))
     }
   }
 
@@ -627,6 +535,185 @@ export async function* finalizeRound(
   const fail = await persistResultsWithRetry(state, state.toolResults)
   if (fail) return { action: 'return', end: fail }
   return { action: 'continue' }
+}
+
+const BATCH_TIMEOUT_MS = 300_000
+
+function mergeAbortSignals(parent: AbortSignal, timeoutMs: number): AbortSignal {
+  const extra = new AbortController()
+  const timer = setTimeout(() => extra.abort(), timeoutMs)
+  const onParent = () => extra.abort()
+  if (parent.aborted) extra.abort()
+  else parent.addEventListener('abort', onParent, { once: true })
+  extra.signal.addEventListener(
+    'abort',
+    () => {
+      clearTimeout(timer)
+      parent.removeEventListener('abort', onParent)
+    },
+    { once: true },
+  )
+  return extra.signal
+}
+
+type SerializedAsk = <T>(fn: () => Promise<T>) => Promise<T>
+
+async function executeOneCall(
+  state: LoopState,
+  call: { id: string; name: string; input: unknown },
+  box: { rules: PermissionRuleSet },
+  serializedAsk: SerializedAsk,
+  signal: AbortSignal,
+): Promise<{
+  messages: Array<Extract<Message, { role: 'tool' }>>
+  events: StreamEvent[]
+  abortRest: boolean
+}> {
+  const events: StreamEvent[] = []
+  if (signal.aborted) {
+    return { messages: pairMissing([call.id], 'aborted'), events, abortRest: true }
+  }
+
+  const tool = state.tools.find((entry) => entry.name === call.name)
+  if (!tool) {
+    return {
+      messages: [makeToolMessage(call.id, false, unknownToolText(call.name))],
+      events,
+      abortRest: false,
+    }
+  }
+
+  const parsed = tool.parse(call.input)
+  if (!parsed.ok) {
+    return {
+      messages: [makeToolMessage(call.id, false, parseFailedText(parsed.message))],
+      events,
+      abortRest: false,
+    }
+  }
+
+  const progress: StreamEvent[] = []
+  const ctx: ToolContext = {
+    turn: state.turn,
+    signal,
+    onProgress: (text) => {
+      progress.push({ type: 'tool_progress', id: call.id, text })
+    },
+  }
+
+  let allowed = false
+  try {
+    const decision = await decidePermission({
+      tool,
+      name: call.name,
+      input: parsed.value,
+      ctx,
+      mode: state.turn.permissionMode,
+      rules: box.rules,
+    })
+    if (decision.behavior === 'deny') {
+      return {
+        messages: [makeToolMessage(call.id, false, denyText(decision.message))],
+        events,
+        abortRest: false,
+      }
+    }
+    if (decision.behavior === 'ask') {
+      const event: Extract<StreamEvent, { type: 'permission_ask' }> = {
+        type: 'permission_ask',
+        id: call.id,
+        tool: call.name,
+        input: parsed.value,
+        message: decision.message,
+      }
+      if (decision.saveAs !== undefined) event.saveAs = decision.saveAs
+      events.push(event)
+      try {
+        const answer = await serializedAsk(() => state.askUser(event, signal))
+        if (answer === 'deny') {
+          return {
+            messages: [makeToolMessage(call.id, false, denyText(decision.message))],
+            events,
+            abortRest: false,
+          }
+        }
+        if (answer === 'allow_always') {
+          const scope = decision.saveAs ?? 'session'
+          await persistAllowAlways({
+            store: state.store,
+            sessionId: state.turn.sessionId,
+            cwd: state.turn.cwd,
+            scope,
+            tool: call.name,
+            spec: commandOrPath(parsed.value) ?? {},
+          })
+          box.rules = await loadPermissionRules({
+            cwd: state.turn.cwd,
+            store: state.store,
+            sessionId: state.turn.sessionId,
+          })
+        }
+        allowed = true
+      } catch {
+        return {
+          messages: pairMissing([call.id], 'aborted'),
+          events,
+          abortRest: signal.aborted,
+        }
+      }
+    } else {
+      allowed = true
+    }
+  } catch (error) {
+    if (isAbortError(error) || signal.aborted) {
+      return { messages: pairMissing([call.id], 'aborted'), events, abortRest: true }
+    }
+    return {
+      messages: [makeToolMessage(call.id, false, executeFailedText(errorMessage(error)))],
+      events,
+      abortRest: false,
+    }
+  }
+
+  if (!allowed || signal.aborted) {
+    return {
+      messages: pairMissing([call.id], 'aborted'),
+      events,
+      abortRest: signal.aborted,
+    }
+  }
+
+  try {
+    const output = await tool.execute(parsed.value, ctx)
+    events.push(...progress)
+    const content = formatOutput(tool, output)
+    events.push({
+      type: 'tool_result',
+      id: call.id,
+      result: { toolUseId: call.id, ok: true, content },
+    })
+    return {
+      messages: [makeToolMessage(call.id, true, content)],
+      events,
+      abortRest: false,
+    }
+  } catch (error) {
+    events.push(...progress)
+    if (isAbortError(error) || signal.aborted) {
+      return { messages: pairMissing([call.id], 'aborted'), events, abortRest: true }
+    }
+    const content = executeFailedText(errorMessage(error))
+    events.push({
+      type: 'tool_result',
+      id: call.id,
+      result: { toolUseId: call.id, ok: false, content },
+    })
+    return {
+      messages: [makeToolMessage(call.id, false, content)],
+      events,
+      abortRest: false,
+    }
+  }
 }
 
 function createAskSerializer(): <T>(fn: () => Promise<T>) => Promise<T> {

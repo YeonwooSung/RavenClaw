@@ -1,4 +1,5 @@
 import type { CompactPolicy, Message, ModelProfile, Turn } from '../types'
+import { injectMidTurn } from '../prompt/cache'
 
 export const GRACE_NOTICE =
   'This is the last round; answer the user now. Do not call tools.'
@@ -29,16 +30,6 @@ export function shouldEnterGrace(turn: Turn, lastHadToolUse: boolean): boolean {
   return lastHadToolUse && turn.round >= turn.maxRounds && !turn.graceUsed
 }
 
-export function suffixGraceNotice(messages: Message[]): void {
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const msg = messages[i]
-    if (!msg || msg.role !== 'tool') continue
-    const last = msg.blocks[msg.blocks.length - 1]
-    if (last && last.type === 'text') {
-      last.text = `${last.text}\n${GRACE_NOTICE}`
-    } else {
-      msg.blocks.push({ type: 'text', text: GRACE_NOTICE })
-    }
-    return
-  }
+export function suffixGraceNotice(messages: Message[]): Message[] {
+  return injectMidTurn(messages, `\n${GRACE_NOTICE}`)
 }

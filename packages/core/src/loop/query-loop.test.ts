@@ -15,6 +15,7 @@ import {
 } from '../types'
 import { createSessionEngine } from './session-engine'
 import { createMemoryStore } from '../session/memory-store'
+import { GRACE_NOTICE } from './budget'
 
 const INCOMPLETE_TEXT =
   'incomplete: the process ended before this tool result was saved. The tool was not re-run.'
@@ -583,6 +584,50 @@ describe('queryLoop via SessionEngine', () => {
     expect(provider.requests[1]?.tools.map((t) => t.name)).toEqual(['Echo'])
     expect(provider.requests[2]?.tools).toEqual([])
     expect(echo.executeCount).toBe(2)
+    const graceReq = provider.requests[2]
+    const graceToolText = graceReq?.messages
+      .filter((m): m is Extract<Message, { role: 'tool' }> => m.role === 'tool')
+      .at(-1)
+      ?.blocks.find((b) => b.type === 'text')
+    expect(graceToolText && graceToolText.type === 'text' ? graceToolText.text : '').toContain(
+      GRACE_NOTICE,
+    )
+    const loaded = await store.loadSession(session.id)
+    for (const msg of loaded.messages) {
+      if (msg.role !== 'tool') continue
+      for (const block of msg.blocks) {
+        if (block.type === 'text') expect(block.text).not.toContain(GRACE_NOTICE)
+      }
+    }
+  })
+
+  test('8b. two concurrency-safe tools in one round keep arrival order', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_parallel' })
+    await store.createSession(session)
+    const echo = createEcho()
+    const provider = createFakeProvider([
+      [
+        { type: 'tool_call', id: 'p1', name: 'Echo', input: { text: 'first' } },
+        { type: 'tool_call', id: 'p2', name: 'Echo', input: { text: 'second' } },
+        { type: 'stop', reason: 'tool_use' },
+      ],
+      textThenStop('done'),
+    ])
+    const engine = createSessionEngine(
+      engineOpts({ provider, store, session, tools: [echo] }),
+    )
+
+    const { result } = await collect(engine.submitMessage('both'))
+
+    expect(result).toEqual({ reason: 'completed' })
+    expect(echo.executeCount).toBe(2)
+    const loaded = await store.loadSession(session.id)
+    const toolRows = loaded.messages.filter(
+      (m): m is Extract<Message, { role: 'tool' }> => m.role === 'tool',
+    )
+    expect(toolRows.map((row) => row.toolUseId)).toEqual(['p1', 'p2'])
+    expect(toolRows.map((row) => row.blocks[0]?.text)).toEqual(['first', 'second'])
   })
 
   test('9. grace provider emitting tool_use pairs tools_omitted and does not execute', async () => {
