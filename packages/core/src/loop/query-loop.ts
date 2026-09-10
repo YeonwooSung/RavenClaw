@@ -24,6 +24,7 @@ export async function* queryLoop(
     streamAborted: false,
     assistantMessage: null,
     toolResults: [],
+    compactFailures: 0,
   }
 
   while (true) {
@@ -32,7 +33,7 @@ export async function* queryLoop(
 
     await prepareContext(state)
 
-    const compact = maybeCompact(state)
+    const compact = yield* maybeCompact(state)
     if (compact.action === 'return') return compact.end
 
     const req = assembleRequest(state)

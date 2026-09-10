@@ -10,8 +10,11 @@ import type {
   Tool,
   ToolContext,
 } from '../types'
+import { shouldAutocompact } from '../compact/policy'
+import { applyToolResultBudget, microcompact, runAutocompact } from '../compact/prune'
+import { compactSummary } from '../compact/summarize'
 import { isAbortError, nextOrAbort } from './abort'
-import { exceedsHardLimit, shouldEnterGrace, suffixGraceNotice } from './budget'
+import { estimateTokens, shouldEnterGrace, suffixGraceNotice } from './budget'
 import {
   denyText,
   executeFailedText,
@@ -20,7 +23,7 @@ import {
   parseFailedText,
   unknownToolText,
 } from './pairing'
-import { repairRoleAlternation } from './repair'
+import { repairRoleAlternation, selectProtectedTail } from './repair'
 
 export interface LoopState extends QueryLoopOptions {
   lastHadToolUse: boolean
@@ -31,6 +34,7 @@ export interface LoopState extends QueryLoopOptions {
   streamAborted: boolean
   assistantMessage: Extract<Message, { role: 'assistant' }> | null
   toolResults: Array<Extract<Message, { role: 'tool' }>>
+  compactFailures: number
 }
 
 export type PhaseResult =
@@ -180,14 +184,86 @@ export async function prepareContext(state: LoopState): Promise<PhaseResult> {
   return { action: 'continue' }
 }
 
-export function maybeCompact(state: LoopState): PhaseResult {
-  if (
-    !state.compact.enabled &&
-    exceedsHardLimit(state.turn.messages, state.model, state.compact)
-  ) {
+function lastAnchoredTokens(messages: Message[]): number | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]
+    if (msg?.role === 'assistant' && msg.usage) {
+      return msg.usage.input + msg.usage.output + msg.usage.cacheRead + msg.usage.cacheWrite
+    }
+  }
+  return undefined
+}
+
+function compactDecision(state: LoopState): 'skip' | 'compact' | 'context_full' {
+  const anchoredTokens = lastAnchoredTokens(state.turn.messages)
+  const opts: Parameters<typeof shouldAutocompact>[0] = {
+    enabled: state.compact.enabled,
+    estimatedTokens: estimateTokens(state.turn.messages),
+    model: state.model,
+    compact: state.compact,
+    consecutiveFailures: state.compactFailures,
+  }
+  if (anchoredTokens !== undefined) opts.anchoredTokens = anchoredTokens
+  return shouldAutocompact(opts)
+}
+
+export async function* maybeCompact(
+  state: LoopState,
+): AsyncGenerator<StreamEvent, PhaseResult> {
+  const decision = compactDecision(state)
+  if (!state.compact.enabled || state.compactFailures >= state.compact.maxConsecutiveFailures) {
+    if (decision === 'context_full') {
+      return { action: 'return', end: { reason: 'context_full' } }
+    }
+    return { action: 'continue' }
+  }
+
+  state.turn.messages = applyToolResultBudget(state.turn.messages)
+  state.turn.messages = microcompact(state.turn.messages, state.compact.protectLastMessages)
+
+  const afterCheap = compactDecision(state)
+  if (afterCheap === 'context_full') {
     return { action: 'return', end: { reason: 'context_full' } }
   }
-  return { action: 'continue' }
+  if (afterCheap !== 'compact') return { action: 'continue' }
+
+  const tail = selectProtectedTail(state.turn.messages, state.compact.protectLastMessages)
+  const cut = state.turn.messages.length - tail.length
+  if (cut <= 0) return { action: 'continue' }
+
+  const middle = state.turn.messages.slice(0, cut)
+  try {
+    const summary = await compactSummary(
+      middle,
+      state.compact,
+      state.provider,
+      state.model,
+      state.turn.abort.signal,
+    )
+    const result = await runAutocompact({
+      messages: state.turn.messages,
+      compact: state.compact,
+      model: state.model,
+      store: state.store,
+      sessionId: state.turn.sessionId,
+      generation: state.turn.compactGeneration,
+      summary,
+    })
+    state.turn.messages = result.messages
+    state.turn.compactGeneration = result.generation
+    state.compactFailures = 0
+    yield { type: 'compact', summary, generation: result.generation }
+    return { action: 'continue' }
+  } catch {
+    state.compactFailures += 1
+    if (
+      state.compactFailures >= state.compact.maxConsecutiveFailures &&
+      compactDecision(state) === 'context_full'
+    ) {
+      return { action: 'return', end: { reason: 'context_full' } }
+    }
+    return { action: 'continue' }
+  }
 }
 
 export function assembleRequest(state: LoopState): ProviderRequest {
