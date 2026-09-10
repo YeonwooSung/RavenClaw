@@ -65,4 +65,16 @@ export { safetyCheck } from './permissions/safety'
 export { createPlanModeTools } from './tools/plan-mode'
 export { discoverSkills, parseSkillFrontmatter, skillTool } from './tools/skill'
 export type { DiscoveredSkill, SkillInput } from './tools/skill'
+export { createAgentTool } from './tools/agent'
+export type { AgentInput } from './tools/agent'
+export { rootAgent } from './agent/root'
+export { generalAgent } from './agent/general'
+export {
+  boundChildResult,
+  childToolNames,
+  filterChildTools,
+  lastAssistantText,
+  resolveChildModel,
+  CHILD_RESULT_CHAR_BOUND,
+} from './agent/definition'
 
