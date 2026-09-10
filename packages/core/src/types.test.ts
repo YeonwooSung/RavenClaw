@@ -1,6 +1,10 @@
 import { describe, expect, test } from 'bun:test'
 import {
   PersistError,
+  defaultConfig,
+  getModelProfile,
+  ravenclawHome,
+  reserveOutputTokens,
   type Funding,
   type Message,
   type PermissionMode,
@@ -201,5 +205,14 @@ describe('port shapes', () => {
     expect(provider.apiMode).toBe('openai_compat')
     expect(options.session.funding).toBe('byok')
     expect(options.maxRounds).toBe(8)
+  })
+})
+
+describe('package root re-exports PR3 APIs', () => {
+  test('home, config, and ModelProfile are importable from @ravenclaw/core', () => {
+    expect(ravenclawHome().endsWith('.ravenclaw')).toBe(true)
+    expect(defaultConfig().ads.feedUrl).toBe('')
+    expect(reserveOutputTokens(200_000)).toBe(20_000)
+    expect(getModelProfile('missing').contextWindow).toBe(32_000)
   })
 })
