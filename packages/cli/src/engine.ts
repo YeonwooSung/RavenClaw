@@ -2,6 +2,7 @@ import { join } from 'node:path'
 import {
   bashTool,
   buildSystemParts,
+  createAgentTool,
   createPlanModeTools,
   createSessionEngine,
   createSqliteStore,
@@ -18,6 +19,7 @@ import {
   type CompactPolicy,
   type ConfigFlags,
   type Message,
+  type ModelProfile,
   type PermissionMode,
   type Provider,
   type ResolvedConfig,
@@ -25,6 +27,7 @@ import {
   type SessionEngineOptions,
   type SessionRecord,
   type SessionStore,
+  type SystemPart,
   type Tool,
 } from '@ravenclaw/core'
 import { createProvider } from '@ravenclaw/providers'
@@ -42,6 +45,29 @@ export function createRootTools(store: SessionStore): Tool[] {
     plan.enter,
     plan.exit,
   ]
+}
+
+export function createSessionTools(opts: {
+  store: SessionStore
+  provider: Provider
+  compact: CompactPolicy
+  model: ModelProfile
+  askUser: SessionEngineOptions['askUser']
+  childMaxRounds: number
+  system?: SystemPart[]
+}): Tool[] {
+  const base = createRootTools(opts.store)
+  const agentOpts: Parameters<typeof createAgentTool>[0] = {
+    store: opts.store,
+    provider: opts.provider,
+    tools: base,
+    compact: opts.compact,
+    model: opts.model,
+    askUser: opts.askUser,
+    childMaxRounds: opts.childMaxRounds,
+  }
+  if (opts.system !== undefined) agentOpts.system = opts.system
+  return [...base, createAgentTool(agentOpts)]
 }
 
 export function compactPolicyFromConfig(compact: {
@@ -117,19 +143,29 @@ export async function openEngine(opts: {
   })
   if (!opts.session) await opts.store.createSession(session)
 
+  const compact = compactPolicyFromConfig(opts.config.compact)
+  const system = buildSystemParts({
+    cwd: session.cwd,
+    permissionMode: session.permissionMode,
+  })
   const engineOpts: SessionEngineOptions = {
     session,
     provider: opts.provider,
     store: opts.store,
-    tools: createRootTools(opts.store),
-    compact: compactPolicyFromConfig(opts.config.compact),
+    tools: createSessionTools({
+      store: opts.store,
+      provider: opts.provider,
+      compact,
+      model: opts.config.profile,
+      askUser: opts.askUser,
+      childMaxRounds: opts.config.childMaxRounds,
+      system,
+    }),
+    compact,
     model: opts.config.profile,
     maxRounds: opts.config.maxRounds,
     askUser: opts.askUser,
-    system: buildSystemParts({
-      cwd: session.cwd,
-      permissionMode: session.permissionMode,
-    }),
+    system,
   }
   if (opts.messages) engineOpts.messages = opts.messages
   return createSessionEngine(engineOpts)

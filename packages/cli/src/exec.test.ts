@@ -12,7 +12,7 @@ import {
   type SystemPart,
 } from '@ravenclaw/core'
 import { runExec } from './exec'
-import { createRootTools } from './engine'
+import { createRootTools, createSessionTools } from './engine'
 
 function defaultModel(id = 'dummy'): ModelProfile {
   return {
@@ -77,6 +77,33 @@ describe('createRootTools', () => {
       'ExitPlanMode',
     ])
     expect(names).not.toContain('Agent')
+  })
+
+  test('createSessionTools appends Agent after the static root tools', () => {
+    const store = createMemoryStore()
+    const provider = createFakeProvider([])
+    const names = createSessionTools({
+      store,
+      provider,
+      compact: defaultCompactPolicy(),
+      model: defaultModel(),
+      childMaxRounds: 30,
+      async askUser() {
+        return 'deny'
+      },
+    }).map((tool) => tool.name)
+    expect(names).toEqual([
+      'Read',
+      'Grep',
+      'Glob',
+      'Edit',
+      'Write',
+      'Bash',
+      'Skill',
+      'EnterPlanMode',
+      'ExitPlanMode',
+      'Agent',
+    ])
   })
 })
 
