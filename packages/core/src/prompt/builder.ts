@@ -1,5 +1,6 @@
 import { execFileSync } from 'node:child_process'
 import type { PermissionMode, SystemPart } from '../types'
+import { discoverSkills } from '../tools/skill'
 import { loadProjectFiles } from './project-files'
 
 const SKILL_DESC_MAX = 60
@@ -65,7 +66,7 @@ function buildVolatilePrompt(input: PromptBuildInput): string {
     lines.push(`locale: ${input.locale}`)
   }
   lines.push('')
-  const skills = input.skills ?? []
+  const skills = input.skills !== undefined ? input.skills : discoverSkills(input.cwd)
   if (skills.length === 0) {
     lines.push('Skills: none')
   } else {

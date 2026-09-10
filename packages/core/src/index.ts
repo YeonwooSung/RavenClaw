@@ -63,4 +63,6 @@ export { cyclePermissionMode, isMutatingTool } from './permissions/modes'
 export { loadPermissionRules, persistAllowAlways } from './permissions/rules'
 export { safetyCheck } from './permissions/safety'
 export { createPlanModeTools } from './tools/plan-mode'
+export { discoverSkills, parseSkillFrontmatter, skillTool } from './tools/skill'
+export type { DiscoveredSkill, SkillInput } from './tools/skill'
 

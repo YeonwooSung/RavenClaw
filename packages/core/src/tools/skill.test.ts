@@ -1,0 +1,310 @@
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import type { ToolContext, Turn } from '../types'
+import {
+  discoverSkills,
+  parseSkillFrontmatter,
+  skillTool,
+} from './skill'
+
+const ENV_KEY = 'RAVENCLAW_HOME'
+
+let savedHome: string | undefined
+const tempDirs: string[] = []
+
+beforeEach(() => {
+  savedHome = process.env[ENV_KEY]
+  delete process.env[ENV_KEY]
+})
+
+afterEach(() => {
+  if (savedHome === undefined) delete process.env[ENV_KEY]
+  else process.env[ENV_KEY] = savedHome
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop()
+    if (dir) rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+function tempDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix))
+  tempDirs.push(dir)
+  return dir
+}
+
+function writeSkill(
+  root: string,
+  name: string,
+  markdown: string,
+  extra?: { files?: Record<string, string | Buffer> },
+): string {
+  const dir = join(root, name)
+  mkdirSync(dir, { recursive: true })
+  writeFileSync(join(dir, 'SKILL.md'), markdown)
+  if (extra?.files) {
+    for (const [rel, content] of Object.entries(extra.files)) {
+      const path = join(dir, rel)
+      mkdirSync(join(path, '..'), { recursive: true })
+      writeFileSync(path, content)
+    }
+  }
+  return dir
+}
+
+function makeTurn(cwd: string): Turn {
+  return {
+    id: 'turn_1',
+    sessionId: 'sess_1',
+    messages: [],
+    round: 1,
+    maxRounds: 80,
+    graceUsed: false,
+    abort: new AbortController(),
+    permissionMode: 'default',
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    compactGeneration: 0,
+    funding: 'byok',
+    cwd,
+    model: 'dummy',
+    readFiles: new Set(),
+  }
+}
+
+function makeCtx(cwd: string, signal?: AbortSignal): ToolContext {
+  const turn = makeTurn(cwd)
+  return {
+    turn,
+    signal: signal ?? turn.abort.signal,
+    onProgress() {},
+  }
+}
+
+describe('parseSkillFrontmatter', () => {
+  test('parses name, description, version, and allowed-tools and omits missing keys', () => {
+    const full = parseSkillFrontmatter(
+      [
+        '---',
+        'name: demo',
+        'description: A short demo skill',
+        'version: 1.2.0',
+        'allowed-tools: Read, Grep',
+        '---',
+        '',
+        'Body text',
+      ].join('\n'),
+    )
+    expect(full).toEqual({
+      name: 'demo',
+      description: 'A short demo skill',
+      version: '1.2.0',
+      allowedTools: ['Read', 'Grep'],
+    })
+
+    const empty = parseSkillFrontmatter('# just a body\n')
+    expect(empty).toEqual({})
+    expect('name' in empty).toBe(false)
+    expect('description' in empty).toBe(false)
+    expect('version' in empty).toBe(false)
+    expect('allowedTools' in empty).toBe(false)
+  })
+})
+
+describe('discoverSkills', () => {
+  test('finds user and project skills and lets the project override the same name', () => {
+    const home = tempDir('ravenclaw-skill-home-')
+    const cwd = tempDir('ravenclaw-skill-cwd-')
+    process.env[ENV_KEY] = home
+
+    writeSkill(
+      join(home, 'skills'),
+      'user-only',
+      ['---', 'name: user-only', 'description: From the user dir', '---', '', 'user body'].join(
+        '\n',
+      ),
+    )
+    writeSkill(
+      join(home, 'skills'),
+      'shared',
+      ['---', 'name: shared', 'description: User copy of shared', '---', '', 'user shared'].join(
+        '\n',
+      ),
+    )
+    writeSkill(
+      join(cwd, '.ravenclaw', 'skills'),
+      'project-only',
+      [
+        '---',
+        'name: project-only',
+        'description: From the project dir',
+        '---',
+        '',
+        'project body',
+      ].join('\n'),
+    )
+    const projectShared = writeSkill(
+      join(cwd, '.ravenclaw', 'skills'),
+      'shared',
+      [
+        '---',
+        'name: shared',
+        'description: Project copy of shared',
+        '---',
+        '',
+        'project shared',
+      ].join('\n'),
+    )
+
+    const found = discoverSkills(cwd, home)
+    const byName = new Map(found.map((skill) => [skill.name, skill]))
+
+    expect(byName.get('user-only')).toMatchObject({
+      name: 'user-only',
+      description: 'From the user dir',
+      dir: join(home, 'skills', 'user-only'),
+    })
+    expect(byName.get('project-only')).toMatchObject({
+      name: 'project-only',
+      description: 'From the project dir',
+      dir: join(cwd, '.ravenclaw', 'skills', 'project-only'),
+    })
+    expect(byName.get('shared')).toMatchObject({
+      name: 'shared',
+      description: 'Project copy of shared',
+      dir: projectShared,
+    })
+    expect(found).toHaveLength(3)
+  })
+})
+
+describe('Skill', () => {
+  test('is a concurrency-safe read-only tool that allows by mode', async () => {
+    expect(skillTool.name).toBe('Skill')
+    expect(skillTool.isConcurrencySafe({ name: 'demo' })).toBe(true)
+    expect(skillTool.isReadOnly({ name: 'demo' })).toBe(true)
+    const decision = await skillTool.checkPermissions({ name: 'demo' }, makeCtx('/tmp'))
+    expect(decision).toEqual({ behavior: 'allow', reason: 'mode' })
+  })
+
+  test('level 1 returns the body and prepends allowed-tools as documentation only', async () => {
+    const home = tempDir('ravenclaw-skill-home-')
+    const cwd = tempDir('ravenclaw-skill-cwd-')
+    process.env[ENV_KEY] = home
+    writeSkill(
+      join(cwd, '.ravenclaw', 'skills'),
+      'demo',
+      [
+        '---',
+        'name: demo',
+        'description: Demo skill',
+        'allowed-tools: Read, Grep',
+        '---',
+        '',
+        'Use this when reviewing code.',
+      ].join('\n'),
+    )
+
+    const out = await skillTool.execute({ name: 'demo' }, makeCtx(cwd))
+    expect(out.startsWith('This skill suggests: Read, Grep.')).toBe(true)
+    expect(out).toContain('Use this when reviewing code.')
+    expect(out).not.toMatch(/^---/m)
+
+    expect(skillTool).not.toHaveProperty('allowedTools')
+    expect(skillTool).not.toHaveProperty('restrictTools')
+    expect(skillTool).not.toHaveProperty('applyAllowedTools')
+    expect(skillTool).not.toHaveProperty('setTools')
+  })
+
+  test('level 1 caps the body at 20000 characters with a truncation note', async () => {
+    const home = tempDir('ravenclaw-skill-home-')
+    const cwd = tempDir('ravenclaw-skill-cwd-')
+    process.env[ENV_KEY] = home
+    const body = 'x'.repeat(25_000)
+    writeSkill(
+      join(cwd, '.ravenclaw', 'skills'),
+      'huge',
+      ['---', 'name: huge', 'description: Big body', '---', '', body].join('\n'),
+    )
+
+    const out = await skillTool.execute({ name: 'huge' }, makeCtx(cwd))
+    expect(out.length).toBeGreaterThan(20_000)
+    expect(out).toContain('x'.repeat(20_000))
+    expect(out).not.toContain('x'.repeat(20_001))
+    expect(out).toMatch(/truncat/i)
+    expect(out).toMatch(/20000/)
+  })
+
+  test('level 2 reads a reference file under the skill directory', async () => {
+    const home = tempDir('ravenclaw-skill-home-')
+    const cwd = tempDir('ravenclaw-skill-cwd-')
+    process.env[ENV_KEY] = home
+    writeSkill(
+      join(cwd, '.ravenclaw', 'skills'),
+      'demo',
+      ['---', 'name: demo', 'description: Demo skill', '---', '', 'index body'].join('\n'),
+      { files: { 'references/foo.md': '# Foo reference\nDetails here.\n' } },
+    )
+
+    const out = await skillTool.execute({ name: 'demo', path: 'references/foo.md' }, makeCtx(cwd))
+    expect(out).toContain('# Foo reference')
+    expect(out).toContain('Details here.')
+    expect(out).not.toContain('index body')
+  })
+
+  test('level 2 rejects ../escape and a symlink that leaves the skill dir', async () => {
+    const home = tempDir('ravenclaw-skill-home-')
+    const cwd = tempDir('ravenclaw-skill-cwd-')
+    process.env[ENV_KEY] = home
+    const secret = join(cwd, 'secret.txt')
+    writeFileSync(secret, 'SECRET_OUTSIDE_CONTENTS\n')
+    const skillDir = writeSkill(
+      join(cwd, '.ravenclaw', 'skills'),
+      'demo',
+      ['---', 'name: demo', 'description: Demo skill', '---', '', 'index body'].join('\n'),
+    )
+    symlinkSync(secret, join(skillDir, 'leak.md'))
+
+    const escaped = await skillTool.execute({ name: 'demo', path: '../escape' }, makeCtx(cwd))
+    expect(typeof escaped).toBe('string')
+    expect(escaped.toLowerCase()).toMatch(/escape|path/)
+    expect(escaped).not.toContain('SECRET_OUTSIDE_CONTENTS')
+
+    const linked = await skillTool.execute({ name: 'demo', path: 'leak.md' }, makeCtx(cwd))
+    expect(typeof linked).toBe('string')
+    expect(linked.toLowerCase()).toMatch(/escape|path/)
+    expect(linked).not.toContain('SECRET_OUTSIDE_CONTENTS')
+  })
+
+  test('level 2 returns a short error for a binary reference', async () => {
+    const home = tempDir('ravenclaw-skill-home-')
+    const cwd = tempDir('ravenclaw-skill-cwd-')
+    process.env[ENV_KEY] = home
+    writeSkill(
+      join(cwd, '.ravenclaw', 'skills'),
+      'demo',
+      ['---', 'name: demo', 'description: Demo skill', '---', '', 'index body'].join('\n'),
+      { files: { 'references/blob.bin': Buffer.from([0x00, 0x01, 0x02, 0xff]) } },
+    )
+
+    const out = await skillTool.execute(
+      { name: 'demo', path: 'references/blob.bin' },
+      makeCtx(cwd),
+    )
+    expect(typeof out).toBe('string')
+    expect(out.toLowerCase()).toContain('binary')
+    expect(out.length).toBeLessThan(200)
+    expect(out).not.toContain('index body')
+  })
+
+  test('unknown skill name returns an error string', async () => {
+    const home = tempDir('ravenclaw-skill-home-')
+    const cwd = tempDir('ravenclaw-skill-cwd-')
+    process.env[ENV_KEY] = home
+
+    const out = await skillTool.execute({ name: 'missing' }, makeCtx(cwd))
+    expect(typeof out).toBe('string')
+    expect(out.toLowerCase()).toContain('unknown')
+    expect(out).toContain('missing')
+  })
+})

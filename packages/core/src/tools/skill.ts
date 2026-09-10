@@ -1,0 +1,282 @@
+import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { join, sep } from 'node:path'
+import { ravenclawHome } from '../home'
+import type { Tool, ToolContext } from '../types'
+import { parseWithSchema } from './parse'
+
+export interface SkillInput {
+  name: string
+  path?: string
+}
+
+export interface DiscoveredSkill {
+  name: string
+  description: string
+  dir: string
+}
+
+const BINARY_SCAN = 8192
+const BODY_CAP = 20_000
+const TRUNCATION_NOTE = '\n... [truncated: output exceeds 20000 characters]'
+
+const inputSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['name'],
+  properties: {
+    name: { type: 'string', minLength: 1 },
+    path: { type: 'string', minLength: 1 },
+  },
+}
+
+export const skillTool: Tool<SkillInput, string> = {
+  name: 'Skill',
+  description:
+    'Load a named skill. Omit path to return the SKILL.md body. Pass path for a file under that skill directory (realpath-confined). Skills live in ~/.ravenclaw/skills and <project>/.ravenclaw/skills; a project skill overrides a user skill of the same name. Frontmatter allowed-tools is documentation only.',
+  inputSchema,
+  parse(input: unknown) {
+    return parseWithSchema<SkillInput>(inputSchema, input)
+  },
+  isConcurrencySafe() {
+    return true
+  },
+  isReadOnly() {
+    return true
+  },
+  async checkPermissions() {
+    return { behavior: 'allow', reason: 'mode' }
+  },
+  async execute(input: SkillInput, ctx: ToolContext) {
+    if (ctx.signal.aborted) throw abortError()
+    const found = discoverSkills(ctx.turn.cwd).find((skill) => skill.name === input.name)
+    if (!found) return `Skill failed: unknown skill: ${input.name}`
+    if (input.path !== undefined) return readSkillFile(found.dir, input.path)
+    return readSkillBody(found.dir)
+  },
+}
+
+export function discoverSkills(cwd: string, home?: string): DiscoveredSkill[] {
+  const userHome = home ?? ravenclawHome()
+  const byName = new Map<string, DiscoveredSkill>()
+  loadSkillRoot(join(userHome, 'skills'), byName)
+  loadSkillRoot(join(cwd, '.ravenclaw', 'skills'), byName)
+  return [...byName.values()].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+}
+
+export function parseSkillFrontmatter(markdown: string): {
+  name?: string
+  description?: string
+  version?: string
+  allowedTools?: string[]
+} {
+  const block = extractFrontmatter(markdown)
+  if (block === undefined) return {}
+  const fields = parseYamlish(block)
+  const out: {
+    name?: string
+    description?: string
+    version?: string
+    allowedTools?: string[]
+  } = {}
+  const name = asString(fields.name)
+  if (name !== undefined) out.name = name
+  const description = asString(fields.description)
+  if (description !== undefined) out.description = description
+  const version = asString(fields.version)
+  if (version !== undefined) out.version = version
+  const allowedTools = parseAllowedTools(fields['allowed-tools'])
+  if (allowedTools !== undefined) out.allowedTools = allowedTools
+  return out
+}
+
+function loadSkillRoot(root: string, into: Map<string, DiscoveredSkill>): void {
+  let entries
+  try {
+    entries = readdirSync(root, { withFileTypes: true })
+  } catch {
+    return
+  }
+  for (const ent of entries) {
+    if (ent.name === '.' || ent.name === '..') continue
+    const dir = join(root, ent.name)
+    const markdown = readUtf8File(join(dir, 'SKILL.md'))
+    if (markdown === undefined) continue
+    const fm = parseSkillFrontmatter(markdown)
+    const name = fm.name ?? ent.name
+    const description = fm.description ?? ''
+    into.set(name, { name, description, dir })
+  }
+}
+
+function readSkillBody(skillDir: string): string {
+  const loaded = confinedRead(skillDir, 'SKILL.md')
+  if (!loaded.ok) return loaded.message
+  const markdown = loaded.buf.toString('utf8')
+  const fm = parseSkillFrontmatter(markdown)
+  const body = extractBody(markdown)
+  const parts: string[] = []
+  if (fm.allowedTools !== undefined && fm.allowedTools.length > 0) {
+    parts.push(`This skill suggests: ${fm.allowedTools.join(', ')}.`)
+  }
+  if (body.length > 0) parts.push(body)
+  return capBody(parts.join('\n\n'))
+}
+
+function readSkillFile(skillDir: string, userPath: string): string {
+  const loaded = confinedRead(skillDir, userPath)
+  if (!loaded.ok) return loaded.message
+  return capBody(loaded.buf.toString('utf8'))
+}
+
+function confinedRead(
+  skillDir: string,
+  userPath: string,
+): { ok: true; buf: Buffer } | { ok: false; message: string } {
+  let root: string
+  let target: string
+  try {
+    root = realpathSync(skillDir)
+    target = realpathSync(join(skillDir, userPath))
+  } catch {
+    return { ok: false, message: 'Skill failed: path escape' }
+  }
+  const allow = target === root || target.startsWith(root + sep)
+  if (!allow) return { ok: false, message: 'Skill failed: path escape' }
+
+  let stat
+  try {
+    stat = statSync(target)
+  } catch {
+    return { ok: false, message: 'Skill failed: path escape' }
+  }
+  if (!stat.isFile()) return { ok: false, message: 'Skill failed: path escape' }
+
+  let buf: Buffer
+  try {
+    buf = readFileSync(target)
+  } catch {
+    return { ok: false, message: 'Skill failed: path escape' }
+  }
+  if (containsNul(buf.subarray(0, Math.min(buf.length, BINARY_SCAN)))) {
+    return { ok: false, message: 'Skill failed: binary file' }
+  }
+  return { ok: true, buf }
+}
+
+function extractFrontmatter(markdown: string): string | undefined {
+  if (!markdown.startsWith('---')) return undefined
+  const rest = markdown.slice(3)
+  if (!rest.startsWith('\n') && !rest.startsWith('\r\n')) return undefined
+  const afterOpen = rest.replace(/^\r?\n/, '')
+  const close = afterOpen.search(/\r?\n---(?:\r?\n|$)/)
+  if (close === -1) return undefined
+  return afterOpen.slice(0, close)
+}
+
+function extractBody(markdown: string): string {
+  const match = /^---\r?\n[\s\S]*?\r?\n---(?:\r?\n|$)/.exec(markdown)
+  if (!match) return markdown
+  return markdown.slice(match[0].length).replace(/^(?:\r?\n)+/, '')
+}
+
+function parseYamlish(block: string): Record<string, unknown> {
+  const result: Record<string, unknown> = {}
+  const lines = block.split(/\r?\n/)
+  let i = 0
+  while (i < lines.length) {
+    const line = lines[i] ?? ''
+    const trimmed = line.trim()
+    if (trimmed === '' || trimmed.startsWith('#')) {
+      i += 1
+      continue
+    }
+    const kv = /^([A-Za-z0-9_-]+)\s*:\s*(.*)$/.exec(line)
+    if (!kv) {
+      i += 1
+      continue
+    }
+    const key = kv[1] ?? ''
+    const raw = (kv[2] ?? '').trim()
+    if (raw === '') {
+      const items: string[] = []
+      i += 1
+      while (i < lines.length) {
+        const next = lines[i] ?? ''
+        const item = /^\s+-\s+(.*)$/.exec(next)
+        if (!item) break
+        items.push(unquote(item[1] ?? ''))
+        i += 1
+      }
+      result[key] = items
+      continue
+    }
+    result[key] = parseScalar(raw)
+    i += 1
+  }
+  return result
+}
+
+function parseScalar(raw: string): string | string[] {
+  if (raw.startsWith('[') && raw.endsWith(']')) {
+    return raw
+      .slice(1, -1)
+      .split(',')
+      .map((part) => unquote(part.trim()))
+      .filter((part) => part.length > 0)
+  }
+  return unquote(raw)
+}
+
+function parseAllowedTools(value: unknown): string[] | undefined {
+  if (value === undefined) return undefined
+  const parts = Array.isArray(value)
+    ? value.map((item) => String(item))
+    : typeof value === 'string'
+      ? value.split(/[\s,]+/)
+      : []
+  const tools = parts.map((part) => part.trim()).filter((part) => part.length > 0)
+  return tools.length > 0 ? tools : undefined
+}
+
+function asString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined
+  return value.length > 0 ? value : undefined
+}
+
+function unquote(value: string): string {
+  const t = value.trim()
+  if (t.length >= 2) {
+    const start = t[0]
+    const end = t[t.length - 1]
+    if ((start === '"' && end === '"') || (start === "'" && end === "'")) {
+      return t.slice(1, -1)
+    }
+  }
+  return t
+}
+
+function readUtf8File(path: string): string | undefined {
+  try {
+    const buf = readFileSync(path)
+    if (containsNul(buf.subarray(0, Math.min(buf.length, BINARY_SCAN)))) return undefined
+    return buf.toString('utf8')
+  } catch {
+    return undefined
+  }
+}
+
+function capBody(text: string): string {
+  if (text.length <= BODY_CAP) return text
+  return text.slice(0, BODY_CAP) + TRUNCATION_NOTE
+}
+
+function containsNul(buf: Uint8Array): boolean {
+  for (let i = 0; i < buf.length; i++) {
+    if (buf[i] === 0) return true
+  }
+  return false
+}
+
+function abortError(): Error {
+  return Object.assign(new Error('aborted'), { name: 'AbortError' })
+}

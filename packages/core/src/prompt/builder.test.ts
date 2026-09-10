@@ -1,7 +1,35 @@
-import { describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import type { PermissionMode } from '../types'
 import { hashSystemParts } from './cache'
 import { buildStablePrompt, buildSystemParts, type PromptBuildInput } from './builder'
+
+const ENV_KEY = 'RAVENCLAW_HOME'
+
+let savedHome: string | undefined
+const tempDirs: string[] = []
+
+beforeEach(() => {
+  savedHome = process.env[ENV_KEY]
+  delete process.env[ENV_KEY]
+})
+
+afterEach(() => {
+  if (savedHome === undefined) delete process.env[ENV_KEY]
+  else process.env[ENV_KEY] = savedHome
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop()
+    if (dir) rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+function tempDir(prefix: string): string {
+  const dir = mkdtempSync(join(tmpdir(), prefix))
+  tempDirs.push(dir)
+  return dir
+}
 
 const GIT = { branch: 'main', head: 'abc123def456', dirty: false } as const
 
@@ -65,6 +93,81 @@ describe('buildSystemParts', () => {
     const b = buildSystemParts(input({ skills: [] }))
     expect(a[2]?.text).toBe(b[2]?.text)
     expect(a[2]?.text).toMatch(/skills/i)
+  })
+
+  test('omitted skills discover name and clipped description from disk', () => {
+    const home = tempDir('ravenclaw-builder-home-')
+    const cwd = tempDir('ravenclaw-builder-cwd-')
+    process.env[ENV_KEY] = home
+    const long =
+      'abcdefghijklmnopqrstuvwxyz-0123456789-ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    expect(long.length).toBeGreaterThan(60)
+    mkdirSync(join(cwd, '.ravenclaw', 'skills', 'found-skill'), { recursive: true })
+    writeFileSync(
+      join(cwd, '.ravenclaw', 'skills', 'found-skill', 'SKILL.md'),
+      ['---', 'name: found-skill', `description: ${long}`, '---', '', 'body'].join('\n'),
+    )
+
+    const parts = buildSystemParts({
+      cwd,
+      permissionMode: 'default',
+      projectFilesText: 'project-instructions-body',
+      git: GIT,
+    })
+    const volatile = parts[2]?.text ?? ''
+    expect(volatile).toContain('found-skill')
+    expect(volatile).toContain(long.slice(0, 60))
+    expect(volatile).not.toContain(long.slice(0, 61))
+    expect(volatile).toMatch(/Skills:/)
+    expect(volatile).not.toContain('Skills: none')
+  })
+
+  test('explicit skills including empty skip filesystem discovery', () => {
+    const home = tempDir('ravenclaw-builder-home-')
+    const cwd = tempDir('ravenclaw-builder-cwd-')
+    process.env[ENV_KEY] = home
+    mkdirSync(join(cwd, '.ravenclaw', 'skills', 'disk-skill'), { recursive: true })
+    writeFileSync(
+      join(cwd, '.ravenclaw', 'skills', 'disk-skill', 'SKILL.md'),
+      ['---', 'name: disk-skill', 'description: should not appear', '---', '', 'body'].join(
+        '\n',
+      ),
+    )
+
+    const empty = buildSystemParts(
+      input({ cwd, projectFilesText: 'project-instructions-body', git: GIT, skills: [] }),
+    )
+    expect(empty[2]?.text).toContain('Skills: none')
+    expect(empty[2]?.text).not.toContain('disk-skill')
+
+    const explicit = buildSystemParts(
+      input({
+        cwd,
+        projectFilesText: 'project-instructions-body',
+        git: GIT,
+        skills: [{ name: 'passed-skill', description: 'from caller' }],
+      }),
+    )
+    expect(explicit[2]?.text).toContain('passed-skill')
+    expect(explicit[2]?.text).toContain('from caller')
+    expect(explicit[2]?.text).not.toContain('disk-skill')
+  })
+
+  test('omitted skills with no skill dirs stay Skills: none', () => {
+    const home = tempDir('ravenclaw-builder-home-')
+    const cwd = tempDir('ravenclaw-builder-cwd-')
+    process.env[ENV_KEY] = home
+    const base = {
+      cwd,
+      permissionMode: 'default' as const,
+      projectFilesText: 'project-instructions-body',
+      git: GIT,
+    }
+    const omitted = buildSystemParts(base)
+    const empty = buildSystemParts({ ...base, skills: [] })
+    expect(omitted[2]?.text).toContain('Skills: none')
+    expect(omitted[2]?.text).toBe(empty[2]?.text)
+    expect(hashSystemParts(omitted)).toBe(hashSystemParts(empty))
   })
 })
 
