@@ -5,6 +5,7 @@
   "workspaces": ["packages/*"],
   "scripts": {
     "test": "bun test",
-    "test:ci": "bun test"
+    "test:ci": "bun test",
+    "raven": "bun packages/cli/src/index.ts"
   }
 }
