@@ -12,6 +12,9 @@
   "dependencies": {
     "@ravenclaw/core": "workspace:*",
     "@ravenclaw/providers": "workspace:*",
-    "@ravenclaw/ads": "workspace:*"
+    "@ravenclaw/ads": "workspace:*",
+    "@types/react": "^18.3.18",
+    "ink": "^5.2.1",
+    "react": "^18.3.1"
   }
 }

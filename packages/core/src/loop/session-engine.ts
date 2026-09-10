@@ -1,6 +1,7 @@
 import type {
   Message,
   PermissionMode,
+  QueryLoopOptions,
   RoundEnd,
   SessionEngine,
   SessionEngineOptions,
@@ -57,7 +58,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       }
 
       try {
-        const end = yield* queryLoop({
+        const loopOpts: QueryLoopOptions = {
           turn,
           tools: opts.tools,
           provider: opts.provider,
@@ -65,7 +66,9 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
           compact: opts.compact,
           model: opts.model,
           askUser: opts.askUser,
-        })
+        }
+        if (opts.system !== undefined) loopOpts.system = opts.system
+        const end = yield* queryLoop(loopOpts)
         messages = turn.messages
         session.usage = turn.usage
         session.compactGeneration = turn.compactGeneration

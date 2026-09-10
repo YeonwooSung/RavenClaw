@@ -285,7 +285,7 @@ export function assembleRequest(state: LoopState): ProviderRequest {
       }))
   return {
     model: state.model.id,
-    system: [],
+    system: state.system ?? [],
     messages,
     tools,
     maxTokens: state.model.reserveOutputTokens,

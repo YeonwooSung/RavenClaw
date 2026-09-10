@@ -279,6 +279,7 @@ export interface SessionEngineOptions {
   compact: CompactPolicy
   model: ModelProfile
   maxRounds: number
+  system?: SystemPart[]
   askUser: (
     e: Extract<StreamEvent, { type: 'permission_ask' }>,
     signal: AbortSignal,
@@ -300,5 +301,6 @@ export interface QueryLoopOptions {
   store: SessionStore
   compact: CompactPolicy
   model: ModelProfile
+  system?: SystemPart[]
   askUser: SessionEngineOptions['askUser']
 }
