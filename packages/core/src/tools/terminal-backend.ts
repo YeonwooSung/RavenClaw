@@ -19,8 +19,37 @@ export interface TerminalBackend {
   exec(opts: TerminalExecOpts): Promise<TerminalExecResult>
 }
 
+export interface TerminalRunRequest {
+  command: string
+  args: string[]
+  cwd: string
+  env: NodeJS.ProcessEnv
+  timeoutMs: number
+  signal: AbortSignal
+  onOutput?: (text: string) => void
+}
+
+export type TerminalRunCommand = (
+  req: TerminalRunRequest,
+) => Promise<{ stdout: string; stderr: string; exitCode: number }>
+
+export interface DockerTerminalBackendOpts {
+  image: string
+  extraArgs?: string[]
+  runCommand?: TerminalRunCommand
+}
+
+export type TerminalBackendKind = 'local' | 'docker'
+
 const DEFAULT_TIMEOUT_MS = 120_000
 const KILL_GRACE_MS = 200
+const DOCKER_ENV_KEYS = ['PATH', 'HOME', 'TERM', 'LANG'] as const
+const DOCKER_ENV_FALLBACKS: Record<(typeof DOCKER_ENV_KEYS)[number], string> = {
+  PATH: '/usr/bin:/bin',
+  HOME: '/tmp',
+  TERM: 'xterm',
+  LANG: 'C.UTF-8',
+}
 
 export function createLocalTerminalBackend(): TerminalBackend {
   return {
@@ -30,14 +59,110 @@ export function createLocalTerminalBackend(): TerminalBackend {
   }
 }
 
+export function createDockerTerminalBackend(opts: DockerTerminalBackendOpts): TerminalBackend {
+  return {
+    exec(execOpts: TerminalExecOpts) {
+      return execDocker(execOpts, opts)
+    },
+  }
+}
+
+export function createTerminalBackend(
+  kind: TerminalBackendKind,
+  opts?: { image?: string; extraArgs?: string[] },
+): TerminalBackend {
+  if (kind === 'docker' && opts?.image) {
+    return createDockerTerminalBackend({ image: opts.image, extraArgs: opts.extraArgs })
+  }
+  return createLocalTerminalBackend()
+}
+
 function execLocal(opts: TerminalExecOpts): Promise<TerminalExecResult> {
   if (opts.signal.aborted) return Promise.reject(abortError())
 
   const timeoutMs = opts.timeoutMs > 0 ? opts.timeoutMs : DEFAULT_TIMEOUT_MS
-  const marker = `__RAVENCLAW_CWD_${crypto.randomUUID()}__`
-  // EXIT trap prints a unique marker + pwd so we can report the ending cwd after `cd`.
-  const script = `trap 'printf "%s\\n" "${marker}"; pwd' EXIT\n${opts.command}`
+  const marker = cwdMarker()
+  const script = wrapCwdMarkerScript(opts.command, marker)
 
+  return runSpawned(
+    {
+      command: 'bash',
+      args: ['-c', script],
+      cwd: opts.cwd,
+      env: process.env,
+      timeoutMs,
+      signal: opts.signal,
+      onOutput: opts.onOutput,
+    },
+    { spawnError: 'reject', marker, fallbackCwd: opts.cwd },
+  )
+}
+
+async function execDocker(
+  opts: TerminalExecOpts,
+  docker: DockerTerminalBackendOpts,
+): Promise<TerminalExecResult> {
+  if (opts.signal.aborted) return Promise.reject(abortError())
+
+  const timeoutMs = opts.timeoutMs > 0 ? opts.timeoutMs : DEFAULT_TIMEOUT_MS
+  const marker = cwdMarker()
+  const script = wrapCwdMarkerScript(opts.command, marker)
+  const extraArgs = docker.extraArgs ?? []
+  const req: TerminalRunRequest = {
+    command: 'docker',
+    args: [
+      'run',
+      '--rm',
+      '-i',
+      '-v',
+      `${opts.cwd}:${opts.cwd}`,
+      '-w',
+      opts.cwd,
+      ...extraArgs,
+      docker.image,
+      'bash',
+      '-c',
+      script,
+    ],
+    cwd: opts.cwd,
+    env: dockerAllowlistEnv(),
+    timeoutMs,
+    signal: opts.signal,
+    onOutput: opts.onOutput,
+  }
+
+  try {
+    if (docker.runCommand) {
+      const ran = await docker.runCommand(req)
+      if (opts.signal.aborted) return Promise.reject(abortError())
+      const parsed = splitCwdMarker(ran.stdout, marker, opts.cwd)
+      return {
+        stdout: parsed.stdout,
+        stderr: ran.stderr,
+        exitCode: ran.exitCode,
+        cwd: parsed.cwd,
+      }
+    }
+    return await runSpawned(req, { spawnError: 'result', marker, fallbackCwd: opts.cwd })
+  } catch (error) {
+    if (opts.signal.aborted || isAbortError(error)) return Promise.reject(abortError())
+    return {
+      stdout: '',
+      stderr: errorMessage(error),
+      exitCode: 1,
+      cwd: opts.cwd,
+    }
+  }
+}
+
+function runSpawned(
+  req: TerminalRunRequest,
+  opts: {
+    spawnError: 'reject' | 'result'
+    marker: string
+    fallbackCwd: string
+  },
+): Promise<TerminalExecResult> {
   return new Promise((resolvePromise, reject) => {
     let stdout = ''
     let stderr = ''
@@ -45,19 +170,19 @@ function execLocal(opts: TerminalExecOpts): Promise<TerminalExecResult> {
     let settled = false
     let killTimer: ReturnType<typeof setTimeout> | undefined
 
-    const child = spawn('bash', ['-c', script], {
-      cwd: opts.cwd,
-      env: process.env,
+    const child = spawn(req.command, req.args, {
+      cwd: req.cwd,
+      env: req.env,
       stdio: ['ignore', 'pipe', 'pipe'],
     })
 
     const timeoutTimer = setTimeout(() => {
       timedOut = true
       requestKill()
-    }, timeoutMs)
+    }, req.timeoutMs)
 
     const cleanup = () => {
-      opts.signal.removeEventListener('abort', onAbort)
+      req.signal.removeEventListener('abort', onAbort)
       clearTimeout(timeoutTimer)
       if (killTimer !== undefined) clearTimeout(killTimer)
     }
@@ -82,32 +207,47 @@ function execLocal(opts: TerminalExecOpts): Promise<TerminalExecResult> {
       requestKill()
     }
 
-    opts.signal.addEventListener('abort', onAbort)
+    req.signal.addEventListener('abort', onAbort)
 
     child.stdout?.on('data', (chunk: Buffer | string) => {
       const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8')
       stdout += text
-      opts.onOutput?.(text)
+      req.onOutput?.(text)
     })
     child.stderr?.on('data', (chunk: Buffer | string) => {
       const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8')
       stderr += text
-      opts.onOutput?.(text)
+      req.onOutput?.(text)
     })
 
     child.on('error', (error) => {
-      finish(() => reject(error))
+      finish(() => {
+        if (req.signal.aborted) {
+          reject(abortError())
+          return
+        }
+        if (opts.spawnError === 'result') {
+          resolvePromise({
+            stdout: '',
+            stderr: errorMessage(error),
+            exitCode: 127,
+            cwd: opts.fallbackCwd,
+          })
+          return
+        }
+        reject(error)
+      })
     })
 
     child.on('exit', (code, signal) => {
       finish(() => {
         child.stdout?.destroy()
         child.stderr?.destroy()
-        if (opts.signal.aborted) {
+        if (req.signal.aborted) {
           reject(abortError())
           return
         }
-        const parsed = splitCwdMarker(stdout, marker, opts.cwd)
+        const parsed = splitCwdMarker(stdout, opts.marker, opts.fallbackCwd)
         const exitCode = timedOut ? 124 : (code ?? (signal ? 128 : 1))
         resolvePromise({
           stdout: parsed.stdout,
@@ -118,6 +258,33 @@ function execLocal(opts: TerminalExecOpts): Promise<TerminalExecResult> {
       })
     })
   })
+}
+
+function cwdMarker(): string {
+  return `__RAVENCLAW_CWD_${crypto.randomUUID()}__`
+}
+
+function wrapCwdMarkerScript(command: string, marker: string): string {
+  // EXIT trap prints a unique marker + pwd so we can report the ending cwd after `cd`.
+  return `trap 'printf "%s\\n" "${marker}"; pwd' EXIT\n${command}`
+}
+
+function dockerAllowlistEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {}
+  for (const key of DOCKER_ENV_KEYS) {
+    const value = process.env[key]
+    env[key] = value && value !== '' ? value : DOCKER_ENV_FALLBACKS[key]
+  }
+  return env
+}
+
+function errorMessage(error: unknown): string {
+  if (error instanceof Error && error.message) return error.message
+  return String(error)
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError'
 }
 
 function splitCwdMarker(

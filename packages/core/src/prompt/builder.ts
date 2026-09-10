@@ -1,6 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import type { PermissionMode, SystemPart } from '../types'
 import { discoverSkills } from '../tools/skill'
+import { loadMemorySnapshot } from './memory'
 import { loadProjectFiles } from './project-files'
 
 const SKILL_DESC_MAX = 60
@@ -18,10 +19,11 @@ export interface PromptBuildInput {
 export function buildSystemParts(input: PromptBuildInput): SystemPart[] {
   const projectText =
     input.projectFilesText !== undefined ? input.projectFilesText : loadProjectFiles(input.cwd)
+  const memoryText = loadMemorySnapshot(input.cwd)
   const git = resolveGit(input)
   return [
     { tier: 'stable', text: buildStablePrompt(input.permissionMode), cacheBreakpoint: true },
-    { tier: 'context', text: buildContextPrompt(projectText, git), cacheBreakpoint: true },
+    { tier: 'context', text: buildContextPrompt(projectText, git, memoryText), cacheBreakpoint: true },
     { tier: 'volatile', text: buildVolatilePrompt(input) },
   ]
 }
@@ -45,10 +47,15 @@ export function buildStablePrompt(permissionMode: PermissionMode): string {
 function buildContextPrompt(
   projectText: string,
   git: { branch: string; head: string; dirty: boolean } | null,
+  memoryText: string,
 ): string {
   const lines = ['Project instructions:']
   if (projectText.length > 0) {
     lines.push(projectText)
+  }
+  if (memoryText.length > 0) {
+    if (lines.length > 1) lines.push('')
+    lines.push(memoryText)
   }
   if (git !== null) {
     if (lines.length > 1) lines.push('')

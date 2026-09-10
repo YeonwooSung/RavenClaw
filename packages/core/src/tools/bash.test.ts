@@ -3,7 +3,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ToolContext, Turn } from '../types'
-import { bashTool, matchesDangerousPattern } from './bash'
+import { bashTool, createBashTool, matchesDangerousPattern } from './bash'
+import type { TerminalBackend } from './terminal-backend'
 
 const HOME_ENV = 'RAVENCLAW_HOME'
 const tempDirs: string[] = []
@@ -129,5 +130,31 @@ describe('Bash', () => {
     expect(result.content.length).toBeLessThan(100_000)
     expect(result.content).toContain(persistPath)
     expect(result.content.length).toBeLessThan(readFileSync(persistPath, 'utf8').length)
+  })
+})
+
+describe('createBashTool', () => {
+  test('execute uses the provided backend', async () => {
+    const calls: Array<{ command: string; cwd: string }> = []
+    const fakeBackend: TerminalBackend = {
+      async exec(opts) {
+        calls.push({ command: opts.command, cwd: opts.cwd })
+        return { stdout: 'from-fake\n', stderr: '', exitCode: 0, cwd: opts.cwd }
+      },
+    }
+    const tool = createBashTool(fakeBackend)
+    const root = fixtureRoot()
+    const result = await tool.execute({ command: 'echo hi' }, makeCtx(root))
+    expect(calls).toEqual([{ command: 'echo hi', cwd: root }])
+    expect(result.exitCode).toBe(0)
+    expect(result.content).toContain('from-fake')
+    expect(result.content).toMatch(/exit[_ ]?code\s*=\s*0/i)
+  })
+
+  test('bashTool stays on the local backend', async () => {
+    const root = fixtureRoot()
+    const result = await bashTool.execute({ command: 'echo still-local' }, makeCtx(root))
+    expect(result.exitCode).toBe(0)
+    expect(result.content).toContain('still-local')
   })
 })

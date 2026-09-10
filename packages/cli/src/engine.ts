@@ -3,6 +3,8 @@ import {
   bashTool,
   buildSystemParts,
   createAgentTool,
+  createBashTool,
+  createTerminalBackend,
   createPlanModeTools,
   createSessionEngine,
   createSqliteStore,
@@ -32,7 +34,7 @@ import {
 } from '@ravenclaw/core'
 import { createProvider } from '@ravenclaw/providers'
 
-export function createRootTools(store: SessionStore): Tool[] {
+export function createRootTools(store: SessionStore, bash: Tool = bashTool): Tool[] {
   const plan = createPlanModeTools(store)
   return [
     readTool,
@@ -40,7 +42,7 @@ export function createRootTools(store: SessionStore): Tool[] {
     globTool,
     editTool,
     writeTool,
-    bashTool,
+    bash,
     skillTool,
     plan.enter,
     plan.exit,
@@ -55,8 +57,9 @@ export function createSessionTools(opts: {
   askUser: SessionEngineOptions['askUser']
   childMaxRounds: number
   system?: SystemPart[]
+  bash?: Tool
 }): Tool[] {
-  const base = createRootTools(opts.store)
+  const base = createRootTools(opts.store, opts.bash ?? bashTool)
   const agentOpts: Parameters<typeof createAgentTool>[0] = {
     store: opts.store,
     provider: opts.provider,
@@ -148,6 +151,12 @@ export async function openEngine(opts: {
     cwd: session.cwd,
     permissionMode: session.permissionMode,
   })
+  const terminal = opts.config.terminal
+  const bash = createBashTool(
+    createTerminalBackend(terminal?.backend ?? 'local', {
+      ...(terminal?.image !== undefined ? { image: terminal.image } : {}),
+    }),
+  )
   const engineOpts: SessionEngineOptions = {
     session,
     provider: opts.provider,
@@ -160,6 +169,7 @@ export async function openEngine(opts: {
       askUser: opts.askUser,
       childMaxRounds: opts.config.childMaxRounds,
       system,
+      bash,
     }),
     compact,
     model: opts.config.profile,

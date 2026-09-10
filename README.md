@@ -39,9 +39,14 @@ model: anthropic/claude-sonnet-4
 provider: anthropic          # anthropic | openai_compat
 permissionMode: default      # default | acceptEdits | plan | dontAsk
 maxRounds: 80
+terminal:
+  backend: local             # local | docker
+  image: bash:5              # required when backend is docker
 ads:
   feedUrl: ""                # empty ⇒ no ad network; house floor only if included
 ```
+
+Optional memory files (context snapshot, 8k/file, 16k total): `~/.ravenclaw/USER.md`, `~/.ravenclaw/MEMORY.md`, and the same names under the project root or `.ravenclaw/`.
 
 Resolution: `--provider` / `--model` flags beat `config.yaml`, which beats env for the *choice* of provider. Env still supplies the secret.
 

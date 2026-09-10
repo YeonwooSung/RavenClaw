@@ -12,6 +12,7 @@ import type {
 } from '../types'
 import { repairRoleAlternation } from '../loop/repair'
 import { applyMigrations } from './schema'
+import { indexMessageFts, unindexMessagesFts } from './search'
 
 type SessionRow = {
   id: string
@@ -333,6 +334,7 @@ export function createSqliteStore(dbPath: string): SessionStore {
       }
       throw error
     }
+    indexMessageFts(db, sessionId, message)
   }
 
   const persistToolsTx = db.transaction(
@@ -464,6 +466,9 @@ export function createSqliteStore(dbPath: string): SessionStore {
     async persistToolResults(sessionId, msgs) {
       await withWrite(async () => {
         persistToolsTx(sessionId, msgs)
+        for (const msg of msgs) {
+          indexMessageFts(db, sessionId, msg)
+        }
       })
     },
 
@@ -487,6 +492,7 @@ export function createSqliteStore(dbPath: string): SessionStore {
     async recordCompact(sessionId, generation, summary, inactivatedIds) {
       await withWrite(async () => {
         recordCompactTx(sessionId, generation, summary, inactivatedIds)
+        unindexMessagesFts(db, inactivatedIds)
       })
     },
 

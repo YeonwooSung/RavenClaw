@@ -56,6 +56,7 @@ describe('defaultConfig', () => {
     expect(cfg.childMaxRounds).toBe(30)
     expect(cfg.compact).toEqual({ enabled: true, llmSummarize: true })
     expect(cfg.ads.feedUrl).toBe('')
+    expect(cfg.terminal).toBeUndefined()
   })
 })
 
@@ -214,6 +215,24 @@ describe('loadConfig', () => {
     expect(cfg.ads.feedUrl).not.toContain('sk-from-dotenv')
     expect(cfg.model).not.toContain('sk-from-dotenv')
   })
+
+  test('yaml terminal.backend docker + image is preserved', () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test'
+    const home = tempHome()
+    writeFileSync(
+      join(home, 'config.yaml'),
+      [
+        'provider: anthropic',
+        'model: anthropic/claude-sonnet-4',
+        'terminal:',
+        '  backend: docker',
+        '  image: bash:5',
+        '',
+      ].join('\n'),
+    )
+    const cfg = loadConfig({ home })
+    expect(cfg.terminal).toEqual({ backend: 'docker', image: 'bash:5' })
+  })
 })
 
 describe('resolveProviderModel', () => {
@@ -241,6 +260,18 @@ describe('parseConfigYaml', () => {
     expect(parsed.ads?.feedUrl).toBe('')
     expect(parsed.compact?.enabled).toBe(true)
     expect(parsed.compact?.llmSummarize).toBe(false)
+  })
+
+  test('parses terminal.backend docker and terminal.image', () => {
+    const parsed = parseConfigYaml(
+      [
+        'terminal:',
+        '  backend: docker',
+        '  image: alpine:3.20',
+        '',
+      ].join('\n'),
+    )
+    expect(parsed.terminal).toEqual({ backend: 'docker', image: 'alpine:3.20' })
   })
 })
 

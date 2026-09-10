@@ -9,6 +9,8 @@ export {
 export { createMemoryStore } from './session/memory-store'
 export { createSqliteStore } from './session/sqlite-store'
 export { resumeSession } from './session/resume'
+export { rebuildMessagesFts, searchMessages } from './session/search'
+export type { MessageSearchHit } from './session/search'
 export { ensureHomeDir, ravenclawHome } from './home'
 export {
   defaultConfig,
@@ -56,8 +58,12 @@ export {
 export { compactSummary, mechanicalSummary, summarizeSpan } from './compact/summarize'
 export { editTool } from './tools/edit'
 export { writeTool } from './tools/write'
-export { bashTool, matchesDangerousPattern } from './tools/bash'
-export { createLocalTerminalBackend } from './tools/terminal-backend'
+export { bashTool, createBashTool, matchesDangerousPattern } from './tools/bash'
+export {
+  createDockerTerminalBackend,
+  createLocalTerminalBackend,
+  createTerminalBackend,
+} from './tools/terminal-backend'
 export type {
   TerminalBackend,
   TerminalExecOpts,
@@ -73,6 +79,7 @@ export { discoverSkills, parseSkillFrontmatter, skillTool } from './tools/skill'
 export type { DiscoveredSkill, SkillInput } from './tools/skill'
 export { buildSystemParts } from './prompt/builder'
 export type { PromptBuildInput } from './prompt/builder'
+export { loadMemorySnapshot } from './prompt/memory'
 export { createAgentTool } from './tools/agent'
 export type { AgentInput } from './tools/agent'
 export { rootAgent } from './agent/root'

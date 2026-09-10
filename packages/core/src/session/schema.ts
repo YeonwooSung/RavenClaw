@@ -7,7 +7,15 @@ export const INIT_SQL = readFileSync(
   'utf8',
 )
 
-const MIGRATIONS: Array<{ version: number; sql: string }> = [{ version: 1, sql: INIT_SQL }]
+export const FTS5_SQL = readFileSync(
+  join(import.meta.dir, '../migrations/002_fts5.sql'),
+  'utf8',
+)
+
+const MIGRATIONS: Array<{ version: number; sql: string }> = [
+  { version: 1, sql: INIT_SQL },
+  { version: 2, sql: FTS5_SQL },
+]
 
 function currentSchemaVersion(db: Database): number {
   const exists = db

@@ -169,6 +169,91 @@ describe('buildSystemParts', () => {
     expect(omitted[2]?.text).toBe(empty[2]?.text)
     expect(hashSystemParts(omitted)).toBe(hashSystemParts(empty))
   })
+
+  test('missing memory files leave the context hash unchanged', () => {
+    const home = tempDir('ravenclaw-builder-home-')
+    const cwd = tempDir('ravenclaw-builder-cwd-')
+    process.env[ENV_KEY] = home
+    const parts = buildSystemParts(
+      input({ cwd, projectFilesText: 'project-instructions-body', git: GIT }),
+    )
+    const context = parts[1]?.text ?? ''
+    expect(context).not.toContain('User memory:')
+    expect(context).not.toContain('Agent memory:')
+    expect(context).toBe(
+      [
+        'Project instructions:',
+        'project-instructions-body',
+        '',
+        'Git snapshot:',
+        'branch: main',
+        'HEAD: abc123def456',
+        'dirty: false',
+      ].join('\n'),
+    )
+    expect(hashSystemParts(parts)).toBe(
+      hashSystemParts(
+        buildSystemParts(input({ cwd, projectFilesText: 'project-instructions-body', git: GIT })),
+      ),
+    )
+  })
+
+  test('USER.md and MEMORY.md appear in the context tier after project instructions', () => {
+    const home = tempDir('ravenclaw-builder-home-')
+    const cwd = tempDir('ravenclaw-builder-cwd-')
+    process.env[ENV_KEY] = home
+    mkdirSync(join(cwd, '.ravenclaw'))
+    writeFileSync(join(home, 'USER.md'), 'HOME_USER')
+    writeFileSync(join(home, 'MEMORY.md'), 'HOME_AGENT')
+    writeFileSync(join(cwd, 'USER.md'), 'CWD_USER')
+    writeFileSync(join(cwd, 'MEMORY.md'), 'CWD_AGENT')
+    writeFileSync(join(cwd, '.ravenclaw', 'USER.md'), 'DOT_USER')
+    writeFileSync(join(cwd, '.ravenclaw', 'MEMORY.md'), 'DOT_AGENT')
+
+    const parts = buildSystemParts(
+      input({ cwd, projectFilesText: 'project-instructions-body', git: GIT }),
+    )
+    const context = parts[1]?.text ?? ''
+    expect(parts[1]?.tier).toBe('context')
+    expect(context).toContain('User memory:')
+    expect(context).toContain('Agent memory:')
+    expect(context).toContain('HOME_USER')
+    expect(context).toContain('CWD_USER')
+    expect(context).toContain('DOT_USER')
+    expect(context).toContain('HOME_AGENT')
+    expect(context).toContain('CWD_AGENT')
+    expect(context).toContain('DOT_AGENT')
+    expect(context.indexOf('Project instructions:')).toBeLessThan(context.indexOf('project-instructions-body'))
+    expect(context.indexOf('project-instructions-body')).toBeLessThan(context.indexOf('User memory:'))
+    expect(context.indexOf('User memory:')).toBeLessThan(context.indexOf('HOME_USER'))
+    expect(context.indexOf('HOME_USER')).toBeLessThan(context.indexOf('CWD_USER'))
+    expect(context.indexOf('CWD_USER')).toBeLessThan(context.indexOf('DOT_USER'))
+    expect(context.indexOf('DOT_USER')).toBeLessThan(context.indexOf('Agent memory:'))
+    expect(context.indexOf('Agent memory:')).toBeLessThan(context.indexOf('HOME_AGENT'))
+    expect(context.indexOf('HOME_AGENT')).toBeLessThan(context.indexOf('CWD_AGENT'))
+    expect(context.indexOf('CWD_AGENT')).toBeLessThan(context.indexOf('DOT_AGENT'))
+    expect(context.indexOf('DOT_AGENT')).toBeLessThan(context.indexOf('Git snapshot:'))
+    expect(context).not.toContain('Claude Code')
+    expect(context).not.toContain('Anthropic')
+    expect(context).not.toContain('Hermes')
+    expect(context).not.toContain('Freebuff')
+  })
+
+  test('builder loads user-global memory from RAVENCLAW_HOME', () => {
+    const home = tempDir('ravenclaw-builder-home-')
+    const cwd = tempDir('ravenclaw-builder-cwd-')
+    process.env[ENV_KEY] = home
+    writeFileSync(join(home, 'USER.md'), 'ENV_HOME_PREF')
+    writeFileSync(join(home, 'MEMORY.md'), 'ENV_HOME_LESSON')
+    const parts = buildSystemParts(
+      input({ cwd, projectFilesText: 'project-instructions-body', git: GIT }),
+    )
+    const context = parts[1]?.text ?? ''
+    expect(context).toContain('User memory:')
+    expect(context).toContain('ENV_HOME_PREF')
+    expect(context).toContain('Agent memory:')
+    expect(context).toContain('ENV_HOME_LESSON')
+  })
 })
 
 describe('buildStablePrompt', () => {

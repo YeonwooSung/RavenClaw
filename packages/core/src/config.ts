@@ -6,6 +6,13 @@ import type { ModelProfile, PermissionMode } from './types'
 
 export type ProviderKind = 'anthropic' | 'openai_compat'
 
+export type TerminalBackendKind = 'local' | 'docker'
+
+export interface TerminalConfig {
+  backend: TerminalBackendKind
+  image?: string
+}
+
 export interface RavenClawConfig {
   model: string
   provider: ProviderKind
@@ -16,6 +23,7 @@ export interface RavenClawConfig {
   ads: { feedUrl: string }
   contextWindow?: number
   prices?: Record<string, ModelPriceFields>
+  terminal?: TerminalConfig
 }
 
 export interface ModelPriceFields {
@@ -51,6 +59,7 @@ const PERMISSION_MODES = new Set<PermissionMode>([
   'plan',
   'dontAsk',
 ])
+const TERMINAL_BACKENDS = new Set<TerminalBackendKind>(['local', 'docker'])
 
 const ENV_KEYS = ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_BASE_URL'] as const
 
@@ -104,6 +113,17 @@ export function parseConfigYaml(text: string): Partial<RavenClawConfig> {
   if (adsRaw) {
     const feedUrl = adsRaw.feedUrl
     out.ads = { feedUrl: feedUrl === undefined || feedUrl === null ? '' : String(feedUrl) }
+  }
+
+  const terminalRaw = asMap(raw.terminal)
+  if (terminalRaw) {
+    const backend = asString(terminalRaw.backend)
+    if (backend !== undefined && isTerminalBackendKind(backend)) {
+      const terminal: TerminalConfig = { backend }
+      const image = asString(terminalRaw.image)
+      if (image !== undefined && image !== '') terminal.image = image
+      out.terminal = terminal
+    }
   }
 
   const contextWindow = asNumber(raw.contextWindow)
@@ -198,6 +218,7 @@ export function loadConfig(opts?: { home?: string; flags?: ConfigFlags }): Resol
   }
   if (parsed.contextWindow !== undefined) resolved.contextWindow = parsed.contextWindow
   if (parsed.prices !== undefined) resolved.prices = parsed.prices
+  if (parsed.terminal !== undefined) resolved.terminal = parsed.terminal
   return resolved
 }
 
@@ -260,6 +281,10 @@ function isProviderKind(value: string): value is ProviderKind {
 
 function isPermissionMode(value: string): value is PermissionMode {
   return PERMISSION_MODES.has(value as PermissionMode)
+}
+
+function isTerminalBackendKind(value: string): value is TerminalBackendKind {
+  return TERMINAL_BACKENDS.has(value as TerminalBackendKind)
 }
 
 function asString(value: unknown): string | undefined {

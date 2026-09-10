@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import type { Tool, ToolContext } from '../types'
 import { ravenclawHome } from '../home'
 import { parseWithSchema } from './parse'
-import { createLocalTerminalBackend } from './terminal-backend'
+import { createLocalTerminalBackend, type TerminalBackend } from './terminal-backend'
 
 export interface BashInput {
   command: string
@@ -40,59 +40,62 @@ export function matchesDangerousPattern(command: string): boolean {
   return false
 }
 
-export const bashTool: Tool<BashInput, BashResult> = {
-  name: 'Bash',
-  description:
-    'Run a command with bash -c in the turn cwd. Optional timeout is milliseconds (default 120000 = 120 seconds). Reports exit code and ending cwd (captured via an in-band marker after the command). Combined output over 100000 characters is written to $RAVENCLAW_HOME/tool-results and only a preview is returned. interruptBehavior is cancel.',
-  inputSchema,
-  parse(input: unknown) {
-    return parseWithSchema<BashInput>(inputSchema, input)
-  },
-  isConcurrencySafe() {
-    return false
-  },
-  isReadOnly() {
-    return false
-  },
-  interruptBehavior() {
-    return 'cancel'
-  },
-  async checkPermissions(input: BashInput) {
-    if (matchesDangerousPattern(input.command)) {
-      return { behavior: 'ask', message: 'Command matches a dangerous pattern' }
-    }
-    return { behavior: 'allow', reason: 'mode' }
-  },
-  async execute(input: BashInput, ctx: ToolContext) {
-    if (ctx.signal.aborted) throw abortError()
-    const timeoutMs = input.timeout ?? DEFAULT_TIMEOUT_MS
-    const backend = createLocalTerminalBackend()
-    const result = await backend.exec({
-      command: input.command,
-      cwd: ctx.turn.cwd,
-      timeoutMs,
-      signal: ctx.signal,
-      onOutput: (text) => {
-        ctx.onProgress(text)
-      },
-    })
+export function createBashTool(backend: TerminalBackend): Tool<BashInput, BashResult> {
+  return {
+    name: 'Bash',
+    description:
+      'Run a command with bash -c in the turn cwd. Optional timeout is milliseconds (default 120000 = 120 seconds). Reports exit code and ending cwd (captured via an in-band marker after the command). Combined output over 100000 characters is written to $RAVENCLAW_HOME/tool-results and only a preview is returned. interruptBehavior is cancel.',
+    inputSchema,
+    parse(input: unknown) {
+      return parseWithSchema<BashInput>(inputSchema, input)
+    },
+    isConcurrencySafe() {
+      return false
+    },
+    isReadOnly() {
+      return false
+    },
+    interruptBehavior() {
+      return 'cancel'
+    },
+    async checkPermissions(input: BashInput) {
+      if (matchesDangerousPattern(input.command)) {
+        return { behavior: 'ask', message: 'Command matches a dangerous pattern' }
+      }
+      return { behavior: 'allow', reason: 'mode' }
+    },
+    async execute(input: BashInput, ctx: ToolContext) {
+      if (ctx.signal.aborted) throw abortError()
+      const timeoutMs = input.timeout ?? DEFAULT_TIMEOUT_MS
+      const result = await backend.exec({
+        command: input.command,
+        cwd: ctx.turn.cwd,
+        timeoutMs,
+        signal: ctx.signal,
+        onOutput: (text) => {
+          ctx.onProgress(text)
+        },
+      })
 
-    const timedOut = result.exitCode === 124
-    const body = formatBody(result.stdout, result.stderr, result.exitCode, result.cwd, timedOut)
-    const persisted = persistIfLarge(body, result.exitCode, result.cwd)
-    const out: BashResult = {
-      content: persisted.content,
-      exitCode: result.exitCode,
-    }
-    if (persisted.persistPath !== undefined) {
-      out.persistPath = persisted.persistPath
-    }
-    return out
-  },
-  renderResult(output: BashResult) {
-    return output.content
-  },
+      const timedOut = result.exitCode === 124
+      const body = formatBody(result.stdout, result.stderr, result.exitCode, result.cwd, timedOut)
+      const persisted = persistIfLarge(body, result.exitCode, result.cwd)
+      const out: BashResult = {
+        content: persisted.content,
+        exitCode: result.exitCode,
+      }
+      if (persisted.persistPath !== undefined) {
+        out.persistPath = persisted.persistPath
+      }
+      return out
+    },
+    renderResult(output: BashResult) {
+      return output.content
+    },
+  }
 }
+
+export const bashTool: Tool<BashInput, BashResult> = createBashTool(createLocalTerminalBackend())
 
 function formatBody(
   stdout: string,

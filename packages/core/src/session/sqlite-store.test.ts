@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PersistError, type Message, type SessionRecord, type SessionStore } from '../types'
 import { INCOMPLETE_TEXT } from '../loop/pairing'
+import { searchMessages } from './search'
 import { createSqliteStore } from './sqlite-store'
 
 type ClosableStore = SessionStore & { close(): void }
@@ -55,7 +56,7 @@ function session(over: Partial<SessionRecord> = {}): SessionRecord {
 }
 
 describe('createSqliteStore', () => {
-  test('fresh install uses WAL and schema_version 1', () => {
+  test('fresh install uses WAL and schema_version 2', () => {
     const path = tempDbPath()
     openStore(path)
     const db = new Database(path, { readonly: true })
@@ -65,7 +66,12 @@ describe('createSqliteStore', () => {
       const version = db
         .query("SELECT value FROM meta WHERE key = 'schema_version'")
         .get() as { value: string }
-      expect(version.value).toBe('1')
+      expect(version.value).toBe('2')
+      expect(
+        db
+          .query("SELECT 1 AS ok FROM sqlite_master WHERE name = 'messages_fts'")
+          .get(),
+      ).toBeTruthy()
     } finally {
       db.close()
     }
@@ -254,6 +260,109 @@ describe('createSqliteStore', () => {
     const again = await store.loadSession('s1')
     const tools = again.messages.filter((m) => m.role === 'tool')
     expect(tools).toHaveLength(1)
+  })
+
+  test('persist indexes FTS and compact hides inactive rows', async () => {
+    const path = tempDbPath()
+    const store = openStore(path)
+    await store.createSession(session())
+    await store.persistUser('s1', {
+      id: 'u1',
+      role: 'user',
+      blocks: [{ type: 'text', text: 'findmeplease oldunique' }],
+      createdAt: 1,
+    })
+    await store.persistAssistant('s1', {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'thinking', text: 'pondering quietly' }],
+      createdAt: 2,
+    })
+    await store.persistToolCalls('s1', {
+      id: 'a2',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'c1', name: 'Read', input: { path: 'secretfile' } }],
+      createdAt: 3,
+    })
+    await store.persistToolResults('s1', [
+      {
+        id: 't1',
+        role: 'tool',
+        toolUseId: 'c1',
+        ok: true,
+        blocks: [{ type: 'text', text: 'filecontents' }],
+        createdAt: 4,
+      },
+    ])
+
+    const db = new Database(path)
+    try {
+      expect(searchMessages(db, 'findmeplease').map((h) => h.messageId)).toEqual(['u1'])
+      expect(searchMessages(db, 'pondering').map((h) => h.messageId)).toEqual(['a1'])
+      expect(searchMessages(db, 'secretfile').map((h) => h.messageId)).toEqual(['a2'])
+      expect(searchMessages(db, 'filecontents').map((h) => h.messageId)).toEqual(['t1'])
+    } finally {
+      db.close()
+    }
+
+    await store.recordCompact('s1', 1, 'sum', ['u1'])
+    const after = new Database(path)
+    try {
+      expect(searchMessages(after, 'oldunique')).toEqual([])
+      expect(searchMessages(after, 'pondering').map((h) => h.messageId)).toEqual(['a1'])
+    } finally {
+      after.close()
+    }
+  })
+
+  test('broken FTS does not throw from persist or compact', async () => {
+    const path = tempDbPath()
+    const store = openStore(path)
+    await store.createSession(session())
+    const db = new Database(path)
+    db.exec('DROP TABLE messages_fts')
+    db.close()
+
+    await expect(
+      store.persistUser('s1', {
+        id: 'u1',
+        role: 'user',
+        blocks: [{ type: 'text', text: 'hi' }],
+        createdAt: 1,
+      }),
+    ).resolves.toBeUndefined()
+    await expect(
+      store.persistAssistant('s1', {
+        id: 'a1',
+        role: 'assistant',
+        blocks: [{ type: 'text', text: 'ok' }],
+        createdAt: 2,
+      }),
+    ).resolves.toBeUndefined()
+    await expect(
+      store.persistToolCalls('s1', {
+        id: 'a2',
+        role: 'assistant',
+        blocks: [{ type: 'tool_use', id: 'c1', name: 'Echo', input: {} }],
+        createdAt: 3,
+      }),
+    ).resolves.toBeUndefined()
+    await expect(
+      store.persistToolResults('s1', [
+        {
+          id: 't1',
+          role: 'tool',
+          toolUseId: 'c1',
+          ok: true,
+          blocks: [{ type: 'text', text: 'done' }],
+          createdAt: 4,
+        },
+      ]),
+    ).resolves.toBeUndefined()
+    await expect(store.recordCompact('s1', 1, 'sum', ['u1'])).resolves.toBeUndefined()
+
+    const loaded = await store.loadSession('s1')
+    expect(loaded.messages.map((m) => m.id).sort()).toEqual(['a1', 'a2', 't1'])
   })
 
   test('second store instance on the same file may read', async () => {
