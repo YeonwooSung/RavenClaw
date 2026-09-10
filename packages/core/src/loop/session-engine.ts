@@ -82,7 +82,18 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
     async compactNow() {},
 
     async setPermissionMode(mode: PermissionMode) {
+      const current = liveTurn?.permissionMode ?? session.permissionMode
+      if (mode === 'plan') {
+        if (current !== 'plan') {
+          session.prePlanMode = current
+          if (liveTurn) liveTurn.prePlanMode = current
+        }
+      } else if (current === 'plan') {
+        if (session.prePlanMode !== undefined) delete session.prePlanMode
+        if (liveTurn && liveTurn.prePlanMode !== undefined) delete liveTurn.prePlanMode
+      }
       session.permissionMode = mode
+      if (liveTurn) liveTurn.permissionMode = mode
       session.updatedAt = Date.now()
       await opts.store.upsertSession(session)
     },

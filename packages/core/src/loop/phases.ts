@@ -13,6 +13,8 @@ import type {
 import { shouldAutocompact } from '../compact/policy'
 import { applyToolResultBudget, microcompact, runAutocompact } from '../compact/prune'
 import { compactSummary } from '../compact/summarize'
+import { decidePermission } from '../permissions/pipeline'
+import { commandOrPath, loadPermissionRules, persistAllowAlways } from '../permissions/rules'
 import { isAbortError, nextOrAbort } from './abort'
 import { estimateTokens, shouldEnterGrace, suffixGraceNotice } from './budget'
 import {
@@ -465,6 +467,12 @@ export async function* runToolRound(
 
   const results: Array<Extract<Message, { role: 'tool' }>> = []
   const calls = state.pendingToolCalls
+  let rules = await loadPermissionRules({
+    cwd: state.turn.cwd,
+    store: state.store,
+    sessionId: state.turn.sessionId,
+  })
+  const serializedAsk = createAskSerializer()
 
   for (let i = 0; i < calls.length; i++) {
     const call = calls[i]
@@ -497,7 +505,14 @@ export async function* runToolRound(
 
     let allowed = false
     try {
-      const decision = await tool.checkPermissions(parsed.value, ctx)
+      const decision = await decidePermission({
+        tool,
+        name: call.name,
+        input: parsed.value,
+        ctx,
+        mode: state.turn.permissionMode,
+        rules,
+      })
       if (decision.behavior === 'deny') {
         results.push(makeToolMessage(call.id, false, denyText(decision.message)))
         continue
@@ -513,10 +528,28 @@ export async function* runToolRound(
         if (decision.saveAs !== undefined) event.saveAs = decision.saveAs
         yield event
         try {
-          const answer = await state.askUser(event, state.turn.abort.signal)
+          const answer = await serializedAsk(() =>
+            state.askUser(event, state.turn.abort.signal),
+          )
           if (answer === 'deny') {
             results.push(makeToolMessage(call.id, false, denyText(decision.message)))
             continue
+          }
+          if (answer === 'allow_always') {
+            const scope = decision.saveAs ?? 'session'
+            await persistAllowAlways({
+              store: state.store,
+              sessionId: state.turn.sessionId,
+              cwd: state.turn.cwd,
+              scope,
+              tool: call.name,
+              spec: commandOrPath(parsed.value) ?? {},
+            })
+            rules = await loadPermissionRules({
+              cwd: state.turn.cwd,
+              store: state.store,
+              sessionId: state.turn.sessionId,
+            })
           }
           allowed = true
         } catch {
@@ -594,4 +627,21 @@ export async function* finalizeRound(
   const fail = await persistResultsWithRetry(state, state.toolResults)
   if (fail) return { action: 'return', end: fail }
   return { action: 'continue' }
+}
+
+function createAskSerializer(): <T>(fn: () => Promise<T>) => Promise<T> {
+  let tail = Promise.resolve()
+  return async <T>(fn: () => Promise<T>): Promise<T> => {
+    const prev = tail
+    let release!: () => void
+    tail = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await prev
+    try {
+      return await fn()
+    } finally {
+      release()
+    }
+  }
 }
