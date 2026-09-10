@@ -1,0 +1,68 @@
+import { useEffect, useRef, useState } from 'react'
+import { Box, Text, useInput, useStdout } from 'ink'
+import {
+  createRotationState,
+  fetchAds,
+  layoutDock,
+  markActivity,
+  recordImpression,
+  shouldRotate,
+  type AdCreative,
+} from '@ravenclaw/ads'
+
+const DEFAULT_COMPOSER_ROWS = 3
+const ROTATE_TICK_MS = 1_000
+
+export function AdDock(props: {
+  enabled: boolean
+  feedUrl: string
+  sessionId: string
+  composerReservedRows?: number
+}) {
+  const { stdout } = useStdout()
+  const width = stdout?.columns || 80
+  const termHeight = stdout?.rows || 24
+  const reserved = props.composerReservedRows ?? DEFAULT_COMPOSER_ROWS
+  const rotation = useRef(createRotationState())
+  const [creative, setCreative] = useState<AdCreative | undefined>(undefined)
+
+  useEffect(() => {
+    let cancelled = false
+    const load = async () => {
+      const req: Parameters<typeof fetchAds>[0] = {
+        enabled: props.enabled,
+        feedUrl: props.feedUrl,
+        sessionId: props.sessionId,
+        hasPaidCapacityPlan: false,
+      }
+      const placement = await fetchAds(req)
+      if (cancelled) return
+      setCreative(placement.creative)
+      recordImpression(rotation.current, placement.creative.id, Date.now())
+    }
+    void load()
+    const timer = setInterval(() => {
+      if (shouldRotate(rotation.current, Date.now())) void load()
+    }, ROTATE_TICK_MS)
+    return () => {
+      cancelled = true
+      clearInterval(timer)
+    }
+  }, [props.enabled, props.feedUrl, props.sessionId])
+
+  useInput(() => {
+    markActivity(rotation.current, Date.now())
+  })
+
+  if (!creative) return null
+  const dock = layoutDock(width, termHeight, creative, reserved)
+  if (!dock.opened) return null
+
+  return (
+    <Box flexDirection="column">
+      {dock.lines.map((line, index) => (
+        <Text key={index}>{line}</Text>
+      ))}
+    </Box>
+  )
+}

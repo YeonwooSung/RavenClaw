@@ -8,6 +8,7 @@ import {
   type StreamEvent,
   type TokenUsage,
 } from '@ravenclaw/core'
+import { AdDock } from './ad-dock'
 import { LEARN_PROMPT, handleSlashCommand } from './commands'
 import { formatCostNotice } from './cost-format'
 import { Composer } from './composer'
@@ -288,7 +289,7 @@ export function App(props: AppProps) {
       <Transcript rows={rows} />
       {picker ? <ResumePicker sessions={picker} index={pickerIndex} /> : null}
       {ask ? <PermissionDialog event={ask} /> : null}
-      {runtimeRef.current.engine.session.funding === 'included' ? (
+      {funding === 'included' ? (
         <AdDock
           enabled
           feedUrl={runtimeRef.current.config.ads.feedUrl}
