@@ -4,6 +4,7 @@
   "packageManager": "bun@1.x",
   "workspaces": ["packages/*"],
   "scripts": {
-    "test": "bun test"
+    "test": "bun test",
+    "test:ci": "bun test"
   }
 }
