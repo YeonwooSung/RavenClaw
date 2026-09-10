@@ -475,6 +475,40 @@ describe('queryLoop via SessionEngine', () => {
     expect(provider.streamCount).toBe(1)
   })
 
+  test('6b. persistToolResults fail then incomplete retry succeeds: still no next assemble', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_persist_results_retry_ok' })
+    await store.createSession(session)
+    let resultCalls = 0
+    const inner = store.persistToolResults.bind(store)
+    store.persistToolResults = async (sessionId, messages) => {
+      resultCalls += 1
+      if (resultCalls === 1) throw new PersistError('locked', 'locked')
+      return inner(sessionId, messages)
+    }
+    const echo = createEcho()
+    const provider = createFakeProvider([
+      toolThenStop('call_z', 'Echo', { text: 'once' }),
+      textThenStop('should not run'),
+    ])
+    const engine = createSessionEngine(
+      engineOpts({ provider, store, session, tools: [echo] }),
+    )
+
+    const { result } = await collect(engine.submitMessage('call'))
+
+    expect(echo.executeCount).toBe(1)
+    expect(resultCalls).toBe(2)
+    expect(result.reason).toBe('results_persist_failed')
+    expect(provider.streamCount).toBe(1)
+    const loaded = await store.loadSession(session.id)
+    const toolRow = loaded.messages.find((msg) => msg.role === 'tool')
+    expect(toolRow?.ok).toBe(false)
+    expect(toolRow && toolRow.role === 'tool' ? toolRow.blocks[0]?.text : '').toBe(
+      INCOMPLETE_TEXT,
+    )
+  })
+
   test('7. resume of unpaired tool_use inserts incomplete and never executes', async () => {
     const store = createMemoryStore()
     const session = makeSession({ id: 'sess_resume' })

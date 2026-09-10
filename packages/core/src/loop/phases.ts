@@ -126,24 +126,24 @@ export async function persistResultsWithRetry(
   try {
     await state.store.persistToolResults(state.turn.sessionId, results)
     return undefined
-  } catch {
+  } catch (first) {
     const incomplete = pairMissing(
       results.map((row) => row.toolUseId),
       'incomplete',
     )
     try {
       await state.store.persistToolResults(state.turn.sessionId, incomplete)
-      for (const row of incomplete) {
-        const idx = state.turn.messages.findIndex(
-          (msg) => msg.role === 'tool' && msg.toolUseId === row.toolUseId,
-        )
-        if (idx >= 0) state.turn.messages[idx] = row
-      }
-      state.toolResults = incomplete
-      return undefined
     } catch (second) {
       return { reason: 'results_persist_failed', error: second }
     }
+    for (const row of incomplete) {
+      const idx = state.turn.messages.findIndex(
+        (msg) => msg.role === 'tool' && msg.toolUseId === row.toolUseId,
+      )
+      if (idx >= 0) state.turn.messages[idx] = row
+    }
+    state.toolResults = incomplete
+    return { reason: 'results_persist_failed', error: first }
   }
 }
 
