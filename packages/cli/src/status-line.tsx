@@ -1,5 +1,6 @@
 import { Text } from 'ink'
-import type { TokenUsage } from '@ravenclaw/core'
+import { formatCostLine } from '@ravenclaw/core'
+import type { Funding, ModelProfile, TokenUsage } from '@ravenclaw/core'
 
 export function formatCount(n: number): string {
   if (n < 1000) return String(Math.round(n))
@@ -23,16 +24,39 @@ export function formatStatusLine(opts: {
   mode: string
   usage: TokenUsage
   sessionId: string
+  usd?: string
+  funding?: Funding
+  profile?: ModelProfile
 }): string {
   const cache = opts.usage.cacheRead + opts.usage.cacheWrite
-  return [
+  const parts = [
     shortModelName(opts.model),
     opts.mode,
     `${formatCount(opts.usage.input)}↑`,
     `${formatCount(opts.usage.output)}↓`,
     `${formatCount(cache)}c`,
-    `sess ${shortSessionId(opts.sessionId)}`,
-  ].join('  ')
+  ]
+  const usd = resolveUsd(opts)
+  if (usd !== undefined) parts.push(usd)
+  parts.push(`sess ${shortSessionId(opts.sessionId)}`)
+  return parts.join('  ')
+}
+
+function resolveUsd(opts: {
+  usage: TokenUsage
+  usd?: string
+  funding?: Funding
+  profile?: ModelProfile
+}): string | undefined {
+  if (opts.usd !== undefined) return opts.usd
+  if (opts.profile !== undefined && opts.funding !== undefined) {
+    return formatCostLine({
+      usage: opts.usage,
+      profile: opts.profile,
+      funding: opts.funding,
+    })
+  }
+  return undefined
 }
 
 export function StatusLine(props: {
@@ -40,6 +64,9 @@ export function StatusLine(props: {
   mode: string
   usage: TokenUsage
   sessionId: string
+  usd?: string
+  funding?: Funding
+  profile?: ModelProfile
 }) {
   return <Text dimColor>{formatStatusLine(props)}</Text>
 }

@@ -1,3 +1,5 @@
+import { runAutocompact } from '../compact/prune'
+import { mechanicalSummary } from '../compact/summarize'
 import type {
   Message,
   PermissionMode,
@@ -10,6 +12,16 @@ import type {
 } from '../types'
 import { abortTurn } from './abort'
 import { queryLoop } from './query-loop'
+import { selectProtectedTail } from './repair'
+
+const TITLE_MAX = 50
+
+function titleFromUserText(text: string): string | undefined {
+  const first = text.split(/\r?\n/, 1)[0] ?? ''
+  const line = first.replace(/\s+/g, ' ').trim()
+  if (line === '') return undefined
+  return line.length <= TITLE_MAX ? line : line.slice(0, TITLE_MAX)
+}
 
 export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
   const session = { ...opts.session }
@@ -57,6 +69,15 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         throw error
       }
 
+      if (session.title === undefined || session.title === '') {
+        const title = titleFromUserText(text)
+        if (title !== undefined) {
+          session.title = title
+          session.updatedAt = Date.now()
+          await opts.store.upsertSession(session)
+        }
+      }
+
       try {
         const loopOpts: QueryLoopOptions = {
           turn,
@@ -82,7 +103,30 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       }
     },
 
-    async compactNow() {},
+    async compactNow() {
+      const source = liveTurn?.messages ?? messages
+      const tail = selectProtectedTail(source, opts.compact.protectLastMessages)
+      const cut = source.length - tail.length
+      if (cut <= 0) return
+
+      const result = await runAutocompact({
+        messages: source,
+        compact: opts.compact,
+        model: opts.model,
+        store: opts.store,
+        sessionId: session.id,
+        generation: liveTurn?.compactGeneration ?? session.compactGeneration,
+        summary: mechanicalSummary(source.slice(0, cut)),
+      })
+      messages = result.messages
+      if (liveTurn) {
+        liveTurn.messages = result.messages
+        liveTurn.compactGeneration = result.generation
+      }
+      session.compactGeneration = result.generation
+      session.updatedAt = Date.now()
+      await opts.store.upsertSession(session)
+    },
 
     async setPermissionMode(mode: PermissionMode) {
       const current = liveTurn?.permissionMode ?? session.permissionMode

@@ -2,12 +2,14 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Box, Text, useApp, useInput } from 'ink'
 import {
   cyclePermissionMode,
+  type Funding,
   type PermissionMode,
   type SessionRecord,
   type StreamEvent,
   type TokenUsage,
 } from '@ravenclaw/core'
 import { LEARN_PROMPT, handleSlashCommand } from './commands'
+import { formatCostNotice } from './cost-format'
 import { Composer } from './composer'
 import {
   parsePermissionMode,
@@ -48,6 +50,7 @@ export function App(props: AppProps) {
   const [usage, setUsage] = useState<TokenUsage>(props.runtime.engine.session.usage)
   const [sessionId, setSessionId] = useState(props.runtime.engine.session.id)
   const [model, setModel] = useState(props.runtime.engine.session.model)
+  const [funding, setFunding] = useState<Funding>(props.runtime.engine.session.funding)
   const [ask, setAsk] = useState<PermissionAsk | undefined>(undefined)
   const [picker, setPicker] = useState<SessionRecord[] | undefined>(undefined)
   const [pickerIndex, setPickerIndex] = useState(0)
@@ -58,6 +61,7 @@ export function App(props: AppProps) {
     setUsage(session.usage)
     setSessionId(session.id)
     setModel(session.model)
+    setFunding(session.funding)
   }, [])
 
   useEffect(() => {
@@ -167,7 +171,13 @@ export function App(props: AppProps) {
           })
           return
         case 'cost':
-          setNotice('Cost tracking is not enabled yet. Token counts are on the status line.')
+          setNotice(
+            formatCostNotice({
+              usage: runtimeRef.current.engine.session.usage,
+              profile: runtimeRef.current.config.profile,
+              funding: runtimeRef.current.engine.session.funding,
+            }),
+          )
           return
         case 'learn':
           void runTurn(LEARN_PROMPT)
@@ -278,8 +288,26 @@ export function App(props: AppProps) {
       <Transcript rows={rows} />
       {picker ? <ResumePicker sessions={picker} index={pickerIndex} /> : null}
       {ask ? <PermissionDialog event={ask} /> : null}
+      {runtimeRef.current.engine.session.funding === 'included' ? (
+        <AdDock
+          enabled
+          feedUrl={runtimeRef.current.config.ads.feedUrl}
+          sessionId={sessionId}
+        />
+      ) : null}
       <Composer value={draft} busy={busy} {...(notice !== undefined ? { notice } : {})} />
-      <StatusLine model={model} mode={mode} usage={usage} sessionId={sessionId} />
+      <StatusLine
+        model={model}
+        mode={mode}
+        usage={usage}
+        sessionId={sessionId}
+        funding={funding}
+        usd={formatCostNotice({
+          usage,
+          profile: runtimeRef.current.config.profile,
+          funding,
+        })}
+      />
     </Box>
   )
 }

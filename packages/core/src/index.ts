@@ -27,6 +27,12 @@ export {
   getModelProfile,
   reserveOutputTokens,
 } from './cost/models'
+export {
+  CostTracker,
+  estimateUsd,
+  formatCostLine,
+  formatUsd,
+} from './cost/tracker'
 export { createToolRegistry } from './tools/registry'
 export type { ToolRegistry } from './tools/registry'
 export { parseWithSchema } from './tools/parse'
