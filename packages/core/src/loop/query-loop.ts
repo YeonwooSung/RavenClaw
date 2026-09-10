@@ -1,0 +1,51 @@
+import type { QueryLoopOptions, RoundEnd, StreamEvent } from '../types'
+import {
+  assembleRequest,
+  beginRound,
+  finalizeRound,
+  maybeCompact,
+  normalizeResponse,
+  prepareContext,
+  runToolRound,
+  streamModel,
+  type LoopState,
+} from './phases'
+
+export async function* queryLoop(
+  opts: QueryLoopOptions,
+): AsyncGenerator<StreamEvent, RoundEnd> {
+  const state: LoopState = {
+    ...opts,
+    lastHadToolUse: false,
+    pendingText: '',
+    pendingThinking: '',
+    pendingToolCalls: [],
+    pendingUsage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    streamAborted: false,
+    assistantMessage: null,
+    toolResults: [],
+  }
+
+  while (true) {
+    const begin = yield* beginRound(state)
+    if (begin.action === 'return') return begin.end
+
+    await prepareContext(state)
+
+    const compact = maybeCompact(state)
+    if (compact.action === 'return') return compact.end
+
+    const req = assembleRequest(state)
+    const streamed = yield* streamModel(state, req)
+    if (streamed.action === 'return') return streamed.end
+
+    const norm = yield* normalizeResponse(state)
+    if (norm.action === 'return') return norm.end
+
+    const tools = yield* runToolRound(state)
+    if (tools.action === 'return') return tools.end
+
+    const fin = yield* finalizeRound(state)
+    if (fin.action === 'return') return fin.end
+  }
+}
