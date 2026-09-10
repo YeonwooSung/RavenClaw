@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createMemoryStore } from '../session/memory-store'
@@ -57,7 +57,7 @@ function makeCtx(turn: Turn): ToolContext {
 }
 
 describe('createPlanModeTools', () => {
-  test('EnterPlanMode uses empty object schema, allows, upserts plan, and writes no plan file', async () => {
+  test('EnterPlanMode uses empty object schema, allows, upserts plan, and writes plan.md once', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-plan-'))
     tempDirs.push(cwd)
     const store = createMemoryStore()
@@ -85,7 +85,27 @@ describe('createPlanModeTools', () => {
     expect(loaded.session.permissionMode).toBe('plan')
     expect(loaded.session.prePlanMode).toBe('acceptEdits')
     expect(existsSync(join(cwd, 'plan.md'))).toBe(false)
-    expect(readdirSync(cwd)).toEqual([])
+    const planPath = join(cwd, '.ravenclaw', 'plan.md')
+    expect(existsSync(planPath)).toBe(true)
+    expect(readFileSync(planPath, 'utf8')).toBe('# Plan\n')
+  })
+
+  test('EnterPlanMode does not clobber an existing plan.md on a second enter', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-plan-'))
+    tempDirs.push(cwd)
+    const store = createMemoryStore()
+    const session = makeSession({ cwd, permissionMode: 'default' })
+    await store.createSession(session)
+    const { enter } = createPlanModeTools(store)
+    const turn = makeTurn(session)
+    const ctx = makeCtx(turn)
+    const planPath = join(cwd, '.ravenclaw', 'plan.md')
+
+    await enter.execute({}, ctx)
+    expect(readFileSync(planPath, 'utf8')).toBe('# Plan\n')
+    writeFileSync(planPath, '# Custom plan\nDo not clobber\n')
+    await enter.execute({}, ctx)
+    expect(readFileSync(planPath, 'utf8')).toBe('# Custom plan\nDo not clobber\n')
   })
 
   test('EnterPlanMode does not overwrite prePlanMode when already in plan', async () => {
@@ -99,6 +119,23 @@ describe('createPlanModeTools', () => {
     expect(turn.prePlanMode).toBe('default')
     const loaded = await store.loadSession(session.id)
     expect(loaded.session.prePlanMode).toBe('default')
+  })
+
+  test('ExitPlanMode does not delete the on-disk plan file', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-plan-'))
+    tempDirs.push(cwd)
+    const store = createMemoryStore()
+    const session = makeSession({ cwd, permissionMode: 'default' })
+    await store.createSession(session)
+    const { enter, exit } = createPlanModeTools(store)
+    const turn = makeTurn(session)
+    const ctx = makeCtx(turn)
+    await enter.execute({}, ctx)
+    const planPath = join(cwd, '.ravenclaw', 'plan.md')
+    expect(existsSync(planPath)).toBe(true)
+    await exit.execute({}, ctx)
+    expect(existsSync(planPath)).toBe(true)
+    expect(readFileSync(planPath, 'utf8')).toBe('# Plan\n')
   })
 
   test('ExitPlanMode restores prePlanMode, upserts, and is allow in dontAsk', async () => {

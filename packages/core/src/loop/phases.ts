@@ -18,6 +18,7 @@ import type { PermissionRuleSet } from '../permissions/types'
 import { commandOrPath, loadPermissionRules, persistAllowAlways } from '../permissions/rules'
 import { isAbortError, nextOrAbort } from './abort'
 import { partitionToolCalls } from '../tools/partition'
+import { filterToolsForTurn } from '../tools/skill'
 import { estimateTokens, shouldEnterGrace, suffixGraceNotice } from './budget'
 import {
   denyText,
@@ -281,7 +282,7 @@ export function assembleRequest(state: LoopState): ProviderRequest {
   }
   const tools = state.turn.graceUsed
     ? []
-    : state.tools.map((tool) => ({
+    : filterToolsForTurn(state.tools, state.turn).map((tool) => ({
         name: tool.name,
         description: tool.description,
         inputSchema: tool.inputSchema,

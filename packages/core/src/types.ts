@@ -47,7 +47,7 @@ export interface Provider {
 }
 
 export type PermissionMode = 'default' | 'acceptEdits' | 'plan' | 'dontAsk'
-export type PermissionReason = 'rule' | 'mode' | 'safety' | 'user'
+export type PermissionReason = 'rule' | 'mode' | 'safety' | 'user' | 'hook'
 export type PermissionScope = 'session' | 'project' | 'user'
 export type Funding = 'byok' | 'included'
 export type PersistErrorCode = 'busy' | 'locked' | 'corrupt' | 'readonly' | 'unknown'
@@ -104,6 +104,7 @@ export interface Turn {
   cwd: string
   model: string
   readFiles: Set<string>
+  skillAllowedTools?: string[]
 }
 
 export interface Round {

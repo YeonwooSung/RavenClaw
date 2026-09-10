@@ -274,6 +274,10 @@ describe('createAgentTool', () => {
 
     const withModel = tool.parse({ prompt: 'x', model: 'other' })
     expect(withModel.ok).toBe(false)
+
+    const withSubagent = tool.parse({ prompt: 'x', subagent: 'file-finder' })
+    expect(withSubagent.ok).toBe(true)
+    if (withSubagent.ok) expect(withSubagent.value.subagent).toBe('file-finder')
   })
 
   test('child history starts empty; parent messages are not in the child request', async () => {
@@ -615,6 +619,103 @@ describe('createAgentTool', () => {
     const child = (await store.listSessions({ parentSessionId: session.id }))[0]
     expect(child?.permissionMode).toBe('plan')
     expect(child?.prePlanMode).toBe('acceptEdits')
+  })
+
+  test('file-finder child tools are Read, Grep, Glob only', async () => {
+    const provider = createFakeProvider([textThenStop('found')])
+    const store = createMemoryStore()
+    const session = makeSession()
+    await store.createSession(session)
+    const { tool } = createTestAgent({ store, provider })
+    await tool.execute(
+      { prompt: 'find ts files', subagent: 'file-finder' },
+      makeCtx(makeTurn(session)),
+    )
+
+    const names = provider.requests[0]?.tools.map((entry) => entry.name) ?? []
+    expect(names).toEqual(['Read', 'Grep', 'Glob'])
+    expect(names).not.toContain('Agent')
+    expect(names).not.toContain('EnterPlanMode')
+    expect(names).not.toContain('ExitPlanMode')
+    expect(names).not.toContain('Bash')
+    expect(names).not.toContain('Edit')
+  })
+
+  test('command-runner child tools are Read and Bash only', async () => {
+    const provider = createFakeProvider([textThenStop('ran')])
+    const store = createMemoryStore()
+    const session = makeSession()
+    await store.createSession(session)
+    const { tool } = createTestAgent({ store, provider })
+    await tool.execute(
+      { prompt: 'run tests', subagent: 'command-runner' },
+      makeCtx(makeTurn(session)),
+    )
+
+    const names = provider.requests[0]?.tools.map((entry) => entry.name) ?? []
+    expect(names).toEqual(['Read', 'Bash'])
+    expect(names).not.toContain('Agent')
+    expect(names).not.toContain('EnterPlanMode')
+    expect(names).not.toContain('ExitPlanMode')
+    expect(names).not.toContain('Grep')
+    expect(names).not.toContain('Edit')
+  })
+
+  test('explicit general subagent matches the default tool list', async () => {
+    const provider = createFakeProvider([textThenStop('ok')])
+    const store = createMemoryStore()
+    const session = makeSession()
+    await store.createSession(session)
+    const { tool } = createTestAgent({ store, provider })
+    await tool.execute(
+      { prompt: 'list tools', subagent: 'general' },
+      makeCtx(makeTurn(session)),
+    )
+
+    const names = provider.requests[0]?.tools.map((entry) => entry.name) ?? []
+    expect(names).toEqual(['Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash', 'Skill'])
+  })
+
+  test('unknown subagent returns an error and does not spawn', async () => {
+    const store = createMemoryStore()
+    const session = makeSession()
+    await store.createSession(session)
+    const provider = createFakeProvider([textThenStop('should not run')])
+    const { tool } = createTestAgent({ store, provider })
+    const result = await tool.execute(
+      { prompt: 'find files', subagent: 'nope' },
+      makeCtx(makeTurn(session)),
+    )
+
+    expect(result).toMatch(/unknown subagent/i)
+    expect(provider.streamCount).toBe(0)
+    const children = await store.listSessions({ parentSessionId: session.id })
+    expect(children).toHaveLength(0)
+  })
+
+  test('included funding pins specialist child.model to parent.model', async () => {
+    const provider = createFakeProvider([textThenStop('included')])
+    const store = createMemoryStore()
+    const session = makeSession({
+      id: 'sess_specialist_included',
+      model: 'parent-model',
+      funding: 'included',
+    })
+    await store.createSession(session)
+    const { tool } = createTestAgent({
+      store,
+      provider,
+      model: defaultModel('parent-model'),
+    })
+    await tool.execute(
+      { prompt: 'find', subagent: 'file-finder' },
+      makeCtx(makeTurn(session, { model: 'parent-model', funding: 'included' })),
+    )
+
+    expect(provider.requests[0]?.model).toBe('parent-model')
+    const child = (await store.listSessions({ parentSessionId: session.id }))[0]
+    expect(child?.model).toBe('parent-model')
+    expect(child?.funding).toBe('included')
   })
 
   test('persistUser failure on child does not call provider.stream', async () => {

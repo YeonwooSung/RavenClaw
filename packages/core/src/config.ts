@@ -13,6 +13,10 @@ export interface TerminalConfig {
   image?: string
 }
 
+export interface IncludedConfig {
+  gatewayUrl: string
+}
+
 export interface RavenClawConfig {
   model: string
   provider: ProviderKind
@@ -21,6 +25,7 @@ export interface RavenClawConfig {
   childMaxRounds: number
   compact: { enabled: boolean; llmSummarize: boolean }
   ads: { feedUrl: string }
+  included?: IncludedConfig
   contextWindow?: number
   prices?: Record<string, ModelPriceFields>
   terminal?: TerminalConfig
@@ -72,6 +77,7 @@ export function defaultConfig(): RavenClawConfig {
     childMaxRounds: 30,
     compact: { enabled: true, llmSummarize: true },
     ads: { feedUrl: '' },
+    included: { gatewayUrl: '' },
   }
 }
 
@@ -113,6 +119,14 @@ export function parseConfigYaml(text: string): Partial<RavenClawConfig> {
   if (adsRaw) {
     const feedUrl = adsRaw.feedUrl
     out.ads = { feedUrl: feedUrl === undefined || feedUrl === null ? '' : String(feedUrl) }
+  }
+
+  const includedRaw = asMap(raw.included)
+  if (includedRaw) {
+    const gatewayUrl = includedRaw.gatewayUrl
+    out.included = {
+      gatewayUrl: gatewayUrl === undefined || gatewayUrl === null ? '' : String(gatewayUrl),
+    }
   }
 
   const terminalRaw = asMap(raw.terminal)
@@ -212,6 +226,7 @@ export function loadConfig(opts?: { home?: string; flags?: ConfigFlags }): Resol
       llmSummarize: parsed.compact?.llmSummarize ?? base.compact.llmSummarize,
     },
     ads: { feedUrl: parsed.ads?.feedUrl ?? base.ads.feedUrl },
+    included: { gatewayUrl: parsed.included?.gatewayUrl ?? base.included?.gatewayUrl ?? '' },
     home,
     env,
     profile: getModelProfile(model, profileOverrides(model, parsed)),

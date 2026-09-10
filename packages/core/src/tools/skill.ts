@@ -1,7 +1,7 @@
 import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { join, sep } from 'node:path'
 import { ravenclawHome } from '../home'
-import type { Tool, ToolContext } from '../types'
+import type { Tool, ToolContext, Turn } from '../types'
 import { parseWithSchema } from './parse'
 
 export interface SkillInput {
@@ -32,7 +32,7 @@ const inputSchema = {
 export const skillTool: Tool<SkillInput, string> = {
   name: 'Skill',
   description:
-    'Load a named skill. Omit path to return the SKILL.md body. Pass path for a file under that skill directory (realpath-confined). Skills live in ~/.ravenclaw/skills and <project>/.ravenclaw/skills; a project skill overrides a user skill of the same name. Frontmatter allowed-tools is documentation only.',
+    'Load a named skill. Omit path to return the SKILL.md body. Pass path for a file under that skill directory (realpath-confined). Skills live in ~/.ravenclaw/skills and <project>/.ravenclaw/skills; a project skill overrides a user skill of the same name. Frontmatter allowed-tools sets a turn-scoped allow list.',
   inputSchema,
   parse(input: unknown) {
     return parseWithSchema<SkillInput>(inputSchema, input)
@@ -50,9 +50,18 @@ export const skillTool: Tool<SkillInput, string> = {
     if (ctx.signal.aborted) throw abortError()
     const found = discoverSkills(ctx.turn.cwd).find((skill) => skill.name === input.name)
     if (!found) return `Skill failed: unknown skill: ${input.name}`
+    applySkillAllowedTools(found.dir, ctx.turn)
     if (input.path !== undefined) return readSkillFile(found.dir, input.path)
     return readSkillBody(found.dir)
   },
+}
+
+const TURN_ALWAYS_TOOLS = new Set(['Skill', 'EnterPlanMode', 'ExitPlanMode', 'Agent'])
+
+export function filterToolsForTurn(tools: Tool[], turn: Turn): Tool[] {
+  if (turn.skillAllowedTools === undefined) return tools
+  const allow = new Set(turn.skillAllowedTools)
+  return tools.filter((tool) => allow.has(tool.name) || TURN_ALWAYS_TOOLS.has(tool.name))
 }
 
 export function discoverSkills(cwd: string, home?: string): DiscoveredSkill[] {
@@ -87,6 +96,13 @@ export function parseSkillFrontmatter(markdown: string): {
   const allowedTools = parseAllowedTools(fields['allowed-tools'])
   if (allowedTools !== undefined) out.allowedTools = allowedTools
   return out
+}
+
+function applySkillAllowedTools(skillDir: string, turn: Turn): void {
+  const markdown = readUtf8File(join(skillDir, 'SKILL.md'))
+  if (markdown === undefined) return
+  const allowed = parseSkillFrontmatter(markdown).allowedTools
+  if (allowed !== undefined) turn.skillAllowedTools = allowed
 }
 
 function loadSkillRoot(root: string, into: Map<string, DiscoveredSkill>): void {

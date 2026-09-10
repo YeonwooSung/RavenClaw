@@ -1,3 +1,5 @@
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type {
   PermissionMode,
   SessionRecord,
@@ -14,7 +16,7 @@ export function createPlanModeTools(store: SessionStore): { enter: Tool; exit: T
   const enter: Tool<EmptyInput, string> = {
     name: 'EnterPlanMode',
     description:
-      'Switch this session into plan mode. Mutating tools are denied until ExitPlanMode. Input is an empty object. Writes no plan file.',
+      'Switch this session into plan mode. Mutating tools are denied until ExitPlanMode. Input is an empty object. Writes .ravenclaw/plan.md if missing.',
     inputSchema: EMPTY_SCHEMA,
     parse: parseEmpty,
     isConcurrencySafe() {
@@ -31,6 +33,7 @@ export function createPlanModeTools(store: SessionStore): { enter: Tool; exit: T
     },
     async execute(_input, ctx) {
       await applyMode(store, ctx, 'plan')
+      maybeWritePlanStub(ctx.turn.cwd)
       return 'mode=plan'
     },
   }
@@ -61,6 +64,19 @@ export function createPlanModeTools(store: SessionStore): { enter: Tool; exit: T
   }
 
   return { enter, exit }
+}
+
+function maybeWritePlanStub(cwd: string): void {
+  try {
+    if (!existsSync(cwd)) return
+    const dir = join(cwd, '.ravenclaw')
+    const path = join(dir, 'plan.md')
+    if (existsSync(path)) return
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(path, '# Plan\n', { flag: 'wx' })
+  } catch {
+    // best-effort seam; the mode switch still succeeds
+  }
 }
 
 function parseEmpty(

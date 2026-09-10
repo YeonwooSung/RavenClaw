@@ -15,7 +15,7 @@ export const rootAgent: AgentDefinition = {
     'EnterPlanMode',
     'ExitPlanMode',
   ],
-  spawnableAgents: ['general'],
+  spawnableAgents: ['general', 'file-finder', 'command-runner'],
   inheritParentSystemPrompt: false,
   includeMessageHistory: false,
   maxRounds: 80,

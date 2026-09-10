@@ -1,0 +1,12 @@
+{
+  "name": "@ravenclaw/tui-opentui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@ravenclaw/core": "workspace:*"
+  }
+}

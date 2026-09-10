@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import type { AgentDefinition, Tool } from '../types'
 import { childToolNames, filterChildTools, resolveChildModel } from './definition'
+import { commandRunnerAgent } from './command-runner'
+import { fileFinderAgent } from './file-finder'
 import { generalAgent } from './general'
 import { rootAgent } from './root'
 
@@ -43,7 +45,7 @@ describe('rootAgent', () => {
       'EnterPlanMode',
       'ExitPlanMode',
     ])
-    expect(rootAgent.spawnableAgents).toEqual(['general'])
+    expect(rootAgent.spawnableAgents).toEqual(['general', 'file-finder', 'command-runner'])
     expect(rootAgent.inheritParentSystemPrompt).toBe(false)
     expect(rootAgent.includeMessageHistory).toBe(false)
     expect(rootAgent.maxRounds).toBe(80)
@@ -71,6 +73,34 @@ describe('generalAgent', () => {
     expect(generalAgent.maxRounds).toBe(30)
     expect(generalAgent.outputMode).toBe('last_message')
     expect(generalAgent.model).toBeUndefined()
+  })
+})
+
+describe('fileFinderAgent', () => {
+  test('shape: Read/Grep/Glob only, maxRounds 20', () => {
+    expect(fileFinderAgent.id).toBe('file-finder')
+    expect(fileFinderAgent.displayName).toBe('File Finder')
+    expect(fileFinderAgent.toolNames).toEqual(['Read', 'Grep', 'Glob'])
+    expect(fileFinderAgent.spawnableAgents).toEqual([])
+    expect(fileFinderAgent.inheritParentSystemPrompt).toBe(true)
+    expect(fileFinderAgent.includeMessageHistory).toBe(false)
+    expect(fileFinderAgent.maxRounds).toBe(20)
+    expect(fileFinderAgent.outputMode).toBe('last_message')
+    expect(fileFinderAgent.model).toBeUndefined()
+  })
+})
+
+describe('commandRunnerAgent', () => {
+  test('shape: Read/Bash only, maxRounds 20', () => {
+    expect(commandRunnerAgent.id).toBe('command-runner')
+    expect(commandRunnerAgent.displayName).toBe('Command Runner')
+    expect(commandRunnerAgent.toolNames).toEqual(['Read', 'Bash'])
+    expect(commandRunnerAgent.spawnableAgents).toEqual([])
+    expect(commandRunnerAgent.inheritParentSystemPrompt).toBe(true)
+    expect(commandRunnerAgent.includeMessageHistory).toBe(false)
+    expect(commandRunnerAgent.maxRounds).toBe(20)
+    expect(commandRunnerAgent.outputMode).toBe('last_message')
+    expect(commandRunnerAgent.model).toBeUndefined()
   })
 })
 
@@ -125,6 +155,30 @@ describe('child tools', () => {
     expect(filterChildTools(pool, generalAgent).map((tool) => tool.name)).toEqual([
       'Read',
       'Edit',
+    ])
+  })
+
+  test('filterChildTools for specialists keeps only their allow-list', () => {
+    const pool = [
+      stubTool('Read'),
+      stubTool('Grep'),
+      stubTool('Glob'),
+      stubTool('Edit'),
+      stubTool('Write'),
+      stubTool('Bash'),
+      stubTool('Skill'),
+      stubTool('Agent'),
+      stubTool('EnterPlanMode'),
+      stubTool('ExitPlanMode'),
+    ]
+    expect(filterChildTools(pool, fileFinderAgent).map((tool) => tool.name)).toEqual([
+      'Read',
+      'Grep',
+      'Glob',
+    ])
+    expect(filterChildTools(pool, commandRunnerAgent).map((tool) => tool.name)).toEqual([
+      'Read',
+      'Bash',
     ])
   })
 })

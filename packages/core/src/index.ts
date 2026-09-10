@@ -75,8 +75,21 @@ export { cyclePermissionMode, isMutatingTool } from './permissions/modes'
 export { loadPermissionRules, persistAllowAlways } from './permissions/rules'
 export { safetyCheck } from './permissions/safety'
 export { createPlanModeTools } from './tools/plan-mode'
-export { discoverSkills, parseSkillFrontmatter, skillTool } from './tools/skill'
+export {
+  discoverSkills,
+  filterToolsForTurn,
+  parseSkillFrontmatter,
+  skillTool,
+} from './tools/skill'
 export type { DiscoveredSkill, SkillInput } from './tools/skill'
+export { createMcpToolBridge, createStdioMcpTransport } from './mcp/client'
+export { mergeToolPool, wrapMcpTools } from './mcp/tools'
+export { getAgentDefinition, agentCatalog } from './agent/catalog'
+export { fileFinderAgent } from './agent/file-finder'
+export { commandRunnerAgent } from './agent/command-runner'
+export { runPermissionHooks } from './permissions/hooks'
+export type { PermissionHook } from './permissions/hooks'
+export { forkMemoryReview } from './review/fork'
 export { buildSystemParts } from './prompt/builder'
 export type { PromptBuildInput } from './prompt/builder'
 export { loadMemorySnapshot } from './prompt/memory'

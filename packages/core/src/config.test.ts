@@ -56,6 +56,7 @@ describe('defaultConfig', () => {
     expect(cfg.childMaxRounds).toBe(30)
     expect(cfg.compact).toEqual({ enabled: true, llmSummarize: true })
     expect(cfg.ads.feedUrl).toBe('')
+    expect(cfg.included).toEqual({ gatewayUrl: '' })
     expect(cfg.terminal).toBeUndefined()
   })
 })
@@ -71,7 +72,43 @@ describe('loadConfig', () => {
     expect(cfg.childMaxRounds).toBe(30)
     expect(cfg.permissionMode).toBe('default')
     expect(cfg.ads.feedUrl).toBe('')
+    expect(cfg.included).toEqual({ gatewayUrl: '' })
     expect(cfg.home).toBe(home)
+  })
+
+  test('empty or absent included.gatewayUrl stays BYOK and does not change inference', () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test'
+    const emptyHome = tempHome()
+    writeFileSync(
+      join(emptyHome, 'config.yaml'),
+      [
+        'provider: anthropic',
+        'model: anthropic/claude-sonnet-4',
+        'included:',
+        '  gatewayUrl: ""',
+        '',
+      ].join('\n'),
+    )
+    const empty = loadConfig({ home: emptyHome })
+    expect(empty.provider).toBe('anthropic')
+    expect(empty.included).toEqual({ gatewayUrl: '' })
+
+    const urlHome = tempHome()
+    writeFileSync(
+      join(urlHome, 'config.yaml'),
+      [
+        'included:',
+        '  gatewayUrl: https://gw.example.com/v1',
+        '',
+      ].join('\n'),
+    )
+    const withUrl = loadConfig({ home: urlHome })
+    expect(withUrl.provider).toBe('anthropic')
+    expect(withUrl.included).toEqual({ gatewayUrl: 'https://gw.example.com/v1' })
+    expect(withUrl.env.ANTHROPIC_API_KEY).toBe('sk-ant-test')
+
+    delete process.env.ANTHROPIC_API_KEY
+    expect(() => loadConfig({ home: tempHome() })).toThrow(/config\.yaml|API key/i)
   })
 
   test('empty ads.feedUrl stays empty from defaults and from yaml', () => {
@@ -260,6 +297,15 @@ describe('parseConfigYaml', () => {
     expect(parsed.ads?.feedUrl).toBe('')
     expect(parsed.compact?.enabled).toBe(true)
     expect(parsed.compact?.llmSummarize).toBe(false)
+  })
+
+  test('parses included.gatewayUrl including quoted empty', () => {
+    const empty = parseConfigYaml(['included:', '  gatewayUrl: ""', ''].join('\n'))
+    expect(empty.included).toEqual({ gatewayUrl: '' })
+    const set = parseConfigYaml(
+      ['included:', '  gatewayUrl: https://gw.example.com/v1', ''].join('\n'),
+    )
+    expect(set.included).toEqual({ gatewayUrl: 'https://gw.example.com/v1' })
   })
 
   test('parses terminal.backend docker and terminal.image', () => {

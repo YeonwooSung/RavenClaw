@@ -77,10 +77,12 @@ In the TUI: `/resume`, `/compact`, `/cost`, `/learn`, `/quit`. Shift+Tab cycles 
 
 ## Packages
 
-- `@ravenclaw/core` — query loop, tools, permissions, sessions, Provider port
-- `@ravenclaw/providers` — OpenAI-compatible Chat Completions and Anthropic Messages adapters
-- `@ravenclaw/ads` — first-party ad layout and house-ad floor (included-model sessions only; never on BYOK)
-- `@ravenclaw/cli` — `raven` Ink TUI
+- `@ravenclaw/core` — query loop, tools, permissions, sessions, Provider port, MCP merge, specialists
+- `@ravenclaw/providers` — OpenAI-compatible, Anthropic, optional included-model gateway
+- `@ravenclaw/ads` — first-party ad layout, house floor, entitlement probe (included sessions only)
+- `@ravenclaw/cli` — `raven` Ink TUI (default)
+- `@ravenclaw/tui-opentui` — StreamEvent view-swap seam
+- `@ravenclaw/acp` — Agent Client Protocol JSON-RPC adapter
 
 ## Docs
 

@@ -1,4 +1,5 @@
 import type { PermissionDecision, PermissionRule } from '../types'
+import { runPermissionHooks } from './hooks'
 import { isInTreePath, isMutatingTool } from './modes'
 import { ruleMatches } from './rules'
 import { safetyCheck } from './safety'
@@ -20,6 +21,13 @@ export async function decidePermission(opts: DecidePermissionOpts): Promise<Perm
   const safety = safetyCheck(opts.name, opts.input, opts.ctx.turn.cwd)
   if (safety) return safety
 
+  let leftover: PermissionDecision = checked
+  if (opts.hooks) {
+    const hooked = await runPermissionHooks(opts.hooks, { name: opts.name, input: opts.input })
+    if (hooked?.behavior === 'deny') return hooked
+    if (hooked?.behavior === 'allow' && leftover.behavior === 'ask') leftover = hooked
+  }
+
   if (
     opts.mode === 'plan' &&
     opts.name !== 'ExitPlanMode' &&
@@ -32,7 +40,6 @@ export async function decidePermission(opts: DecidePermissionOpts): Promise<Perm
     }
   }
 
-  let leftover: PermissionDecision = checked
   if (leftover.behavior === 'ask') {
     const allow = firstMatch(opts.rules, 'allow', opts.name, opts.input)
     if (allow) leftover = { behavior: 'allow', reason: 'rule' }

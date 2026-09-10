@@ -1,4 +1,5 @@
 import type { PermissionRule, Tool, ToolContext, PermissionMode } from '../types'
+import type { PermissionHook } from './hooks'
 
 export interface PermissionRuleSet {
   session: PermissionRule[]
@@ -13,4 +14,5 @@ export interface DecidePermissionOpts {
   ctx: ToolContext
   mode: PermissionMode
   rules: PermissionRuleSet
+  hooks?: PermissionHook[]
 }

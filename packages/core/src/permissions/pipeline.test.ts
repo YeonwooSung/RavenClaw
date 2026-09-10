@@ -10,6 +10,7 @@ import type {
   ToolContext,
   Turn,
 } from '../types'
+import type { PermissionHook } from './hooks'
 import { decidePermission } from './pipeline'
 
 function makeTurn(over: Partial<Turn> = {}): Turn {
@@ -86,6 +87,7 @@ async function decide(opts: {
   mode?: PermissionMode
   cwd?: string
   rules?: typeof emptyRules
+  hooks?: PermissionHook[]
 }): Promise<PermissionDecision> {
   const tool = opts.tool ?? mockTool({ name: opts.name })
   const name = opts.name ?? tool.name
@@ -99,6 +101,7 @@ async function decide(opts: {
     }),
     mode: opts.mode ?? 'default',
     rules: opts.rules ?? emptyRules,
+    ...(opts.hooks !== undefined ? { hooks: opts.hooks } : {}),
   })
 }
 
@@ -314,5 +317,118 @@ describe('decidePermission', () => {
       mode: 'default',
     })
     expect(decision).toEqual({ behavior: 'ask', message: 'run this?' })
+  })
+
+  test('hook deny wins after safety with reason hook', async () => {
+    const tool = mockTool({
+      name: 'Bash',
+      readOnly: false,
+      check: { behavior: 'allow', reason: 'mode' },
+    })
+    const decision = await decide({
+      tool,
+      name: 'Bash',
+      input: { command: 'ls' },
+      hooks: [() => ({ behavior: 'deny', reason: 'user', message: 'hook says no' })],
+    })
+    expect(decision).toEqual({ behavior: 'deny', reason: 'hook', message: 'hook says no' })
+  })
+
+  test('hook allow promotes leftover ask', async () => {
+    const tool = mockTool({
+      name: 'Bash',
+      readOnly: false,
+      check: { behavior: 'ask', message: 'run this?' },
+    })
+    const decision = await decide({
+      tool,
+      name: 'Bash',
+      input: { command: 'echo hi' },
+      hooks: [() => ({ behavior: 'allow', reason: 'user' })],
+    })
+    expect(decision).toEqual({ behavior: 'allow', reason: 'hook' })
+  })
+
+  test('omitted hooks leave leftover ask unchanged', async () => {
+    const tool = mockTool({
+      name: 'Bash',
+      readOnly: false,
+      check: { behavior: 'ask', message: 'run this?' },
+    })
+    const decision = await decide({
+      tool,
+      name: 'Bash',
+      input: { command: 'echo hi' },
+    })
+    expect(decision).toEqual({ behavior: 'ask', message: 'run this?' })
+  })
+
+  test('hooks cannot promote a prior rule, tool, or safety deny', async () => {
+    const allowHook: PermissionHook = () => ({ behavior: 'allow', reason: 'mode' })
+    const write = mockTool({
+      name: 'Write',
+      readOnly: false,
+      check: { behavior: 'allow', reason: 'mode' },
+    })
+    const ruleDeny = await decide({
+      tool: write,
+      name: 'Write',
+      input: { path: 'a.txt', content: 'x' },
+      rules: {
+        session: [rule({ tool: 'Write', behavior: 'deny' })],
+        user: [],
+        project: [],
+      },
+      hooks: [allowHook],
+    })
+    expect(ruleDeny).toEqual({ behavior: 'deny', reason: 'rule', message: 'denied by session rule' })
+
+    const toolDeny = await decide({
+      tool: mockTool({
+        name: 'Edit',
+        readOnly: false,
+        check: { behavior: 'deny', reason: 'safety', message: 'path escape' },
+      }),
+      name: 'Edit',
+      input: { path: '../secret.txt', old_string: 'a', new_string: 'b' },
+      hooks: [allowHook],
+    })
+    expect(toolDeny).toEqual({ behavior: 'deny', reason: 'safety', message: 'path escape' })
+
+    const safetyDeny = await decide({
+      tool: write,
+      name: 'Write',
+      input: { path: '.git/config', content: 'x' },
+      mode: 'acceptEdits',
+      hooks: [allowHook],
+    })
+    expect(safetyDeny.behavior).toBe('deny')
+    if (safetyDeny.behavior === 'deny') expect(safetyDeny.reason).toBe('safety')
+  })
+
+  test('hook deny wins before plan; hook allow cannot skip plan deny', async () => {
+    const edit = mockTool({
+      name: 'Edit',
+      readOnly: false,
+      check: { behavior: 'allow', reason: 'mode' },
+    })
+    const hookDeny = await decide({
+      tool: edit,
+      name: 'Edit',
+      input: { path: 'a.txt', old_string: 'a', new_string: 'b' },
+      mode: 'plan',
+      hooks: [() => ({ behavior: 'deny', reason: 'user', message: 'hook first' })],
+    })
+    expect(hookDeny).toEqual({ behavior: 'deny', reason: 'hook', message: 'hook first' })
+
+    const hookAllow = await decide({
+      tool: edit,
+      name: 'Edit',
+      input: { path: 'a.txt', old_string: 'a', new_string: 'b' },
+      mode: 'plan',
+      hooks: [() => ({ behavior: 'allow', reason: 'user' })],
+    })
+    expect(hookAllow.behavior).toBe('deny')
+    if (hookAllow.behavior === 'deny') expect(hookAllow.reason).toBe('mode')
   })
 })

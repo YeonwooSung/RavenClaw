@@ -2,9 +2,10 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { ToolContext, Turn } from '../types'
+import type { Tool, ToolContext, Turn } from '../types'
 import {
   discoverSkills,
+  filterToolsForTurn,
   parseSkillFrontmatter,
   skillTool,
 } from './skill'
@@ -187,7 +188,7 @@ describe('Skill', () => {
     expect(decision).toEqual({ behavior: 'allow', reason: 'mode' })
   })
 
-  test('level 1 returns the body and prepends allowed-tools as documentation only', async () => {
+  test('level 1 returns the body and sets a turn-scoped allowed-tools list', async () => {
     const home = tempDir('ravenclaw-skill-home-')
     const cwd = tempDir('ravenclaw-skill-cwd-')
     process.env[ENV_KEY] = home
@@ -205,10 +206,12 @@ describe('Skill', () => {
       ].join('\n'),
     )
 
-    const out = await skillTool.execute({ name: 'demo' }, makeCtx(cwd))
+    const ctx = makeCtx(cwd)
+    const out = await skillTool.execute({ name: 'demo' }, ctx)
     expect(out.startsWith('This skill suggests: Read, Grep.')).toBe(true)
     expect(out).toContain('Use this when reviewing code.')
     expect(out).not.toMatch(/^---/m)
+    expect(ctx.turn.skillAllowedTools).toEqual(['Read', 'Grep'])
 
     expect(skillTool).not.toHaveProperty('allowedTools')
     expect(skillTool).not.toHaveProperty('restrictTools')
@@ -297,6 +300,20 @@ describe('Skill', () => {
     expect(out).not.toContain('index body')
   })
 
+  test('level 1 without allowed-tools leaves the turn pool unset', async () => {
+    const home = tempDir('ravenclaw-skill-home-')
+    const cwd = tempDir('ravenclaw-skill-cwd-')
+    process.env[ENV_KEY] = home
+    writeSkill(
+      join(cwd, '.ravenclaw', 'skills'),
+      'plain',
+      ['---', 'name: plain', 'description: No tools', '---', '', 'plain body'].join('\n'),
+    )
+    const ctx = makeCtx(cwd)
+    await skillTool.execute({ name: 'plain' }, ctx)
+    expect(ctx.turn.skillAllowedTools).toBeUndefined()
+  })
+
   test('unknown skill name returns an error string', async () => {
     const home = tempDir('ravenclaw-skill-home-')
     const cwd = tempDir('ravenclaw-skill-cwd-')
@@ -306,5 +323,68 @@ describe('Skill', () => {
     expect(typeof out).toBe('string')
     expect(out.toLowerCase()).toContain('unknown')
     expect(out).toContain('missing')
+  })
+})
+
+function namedTool(name: string): Tool {
+  return {
+    name,
+    description: name,
+    inputSchema: {},
+    parse(input: unknown) {
+      return { ok: true as const, value: input }
+    },
+    isConcurrencySafe() {
+      return true
+    },
+    isReadOnly() {
+      return true
+    },
+    async checkPermissions() {
+      return { behavior: 'allow', reason: 'mode' }
+    },
+    async execute() {
+      return name
+    },
+  }
+}
+
+describe('filterToolsForTurn', () => {
+  const pool = [
+    namedTool('Read'),
+    namedTool('Grep'),
+    namedTool('Edit'),
+    namedTool('Write'),
+    namedTool('Bash'),
+    namedTool('Skill'),
+    namedTool('Agent'),
+    namedTool('EnterPlanMode'),
+    namedTool('ExitPlanMode'),
+  ]
+
+  test('returns the same tools when the turn has no skill allow list', () => {
+    const turn = makeTurn('/tmp')
+    expect(filterToolsForTurn(pool, turn)).toBe(pool)
+  })
+
+  test('keeps listed builtins plus Skill, plan tools, and Agent', () => {
+    const turn = makeTurn('/tmp')
+    turn.skillAllowedTools = ['Read', 'Grep']
+    expect(filterToolsForTurn(pool, turn).map((tool) => tool.name)).toEqual([
+      'Read',
+      'Grep',
+      'Skill',
+      'Agent',
+      'EnterPlanMode',
+      'ExitPlanMode',
+    ])
+  })
+
+  test('does not mutate the input tool array', () => {
+    const turn = makeTurn('/tmp')
+    turn.skillAllowedTools = ['Read']
+    const before = pool.map((tool) => tool.name)
+    filterToolsForTurn(pool, turn)
+    expect(pool.map((tool) => tool.name)).toEqual(before)
   })
 })

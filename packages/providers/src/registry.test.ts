@@ -45,4 +45,31 @@ describe('createProvider', () => {
     expect(ant.id).toBe('anthropic')
     expect(ant.apiMode).toBe('anthropic_messages')
   })
+
+  test('included requires a gateway URL and returns included-gateway', () => {
+    const viaBase = createProvider({
+      provider: 'included',
+      apiKey: 'k',
+      baseUrl: 'https://gw.example.com/v1',
+    })
+    expect(viaBase.id).toBe('included-gateway')
+    expect(viaBase.apiMode).toBe('openai_compat')
+
+    const viaGateway = createProvider({
+      provider: 'included',
+      apiKey: 'k',
+      gatewayUrl: 'https://gw.example.com/v1',
+    })
+    expect(viaGateway.id).toBe('included-gateway')
+    expect(viaGateway.apiMode).toBe('openai_compat')
+  })
+
+  test('included without baseUrl or gatewayUrl throws a setup error', () => {
+    expect(() => createProvider({ provider: 'included', apiKey: 'k' })).toThrow(
+      /included\.gatewayUrl|baseUrl|BYOK/i,
+    )
+    expect(() =>
+      createProvider({ provider: 'included', apiKey: 'k', baseUrl: '', gatewayUrl: '' }),
+    ).toThrow(/included\.gatewayUrl|baseUrl|BYOK/i)
+  })
 })

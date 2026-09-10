@@ -26,3 +26,5 @@ export {
 } from './rotation'
 export type { ClickKind, RotationState } from './rotation'
 export { sanitizeAdText, sanitizeAdUrl } from './sanitize'
+export { probeEntitlement } from './entitlement'
+export type { Entitlement } from './entitlement'

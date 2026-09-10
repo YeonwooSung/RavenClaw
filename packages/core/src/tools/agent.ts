@@ -1,7 +1,7 @@
 import { queryLoop } from '../loop/query-loop'
 import { ABORTED_TEXT, INCOMPLETE_TEXT } from '../loop/pairing'
 import { isAbortError } from '../loop/abort'
-import { generalAgent } from '../agent/general'
+import { getAgentDefinition } from '../agent/catalog'
 import {
   boundChildResult,
   filterChildTools,
@@ -31,6 +31,7 @@ export interface AgentInput {
   prompt: string
   context?: string
   description?: string
+  subagent?: string
 }
 
 const inputSchema = {
@@ -41,6 +42,7 @@ const inputSchema = {
     prompt: { type: 'string', minLength: 1 },
     context: { type: 'string' },
     description: { type: 'string' },
+    subagent: { type: 'string', minLength: 1 },
   },
 }
 
@@ -54,13 +56,10 @@ export function createAgentTool(opts: {
   childMaxRounds?: number
   system?: SystemPart[]
 }): Tool<AgentInput, string> {
-  const childTools = filterChildTools(opts.tools, generalAgent)
-  const maxRounds = opts.childMaxRounds ?? generalAgent.maxRounds
-
   return {
     name: 'Agent',
     description:
-      'Run a nested general agent on an isolated sub-task. Child history and readFiles start empty. Returns the child\'s last assistant text (capped at 32000 characters).',
+      'Run a nested agent on an isolated sub-task. Optional subagent selects a catalog definition (default general). Child history and readFiles start empty. Returns the child\'s last assistant text (capped at 32000 characters).',
     inputSchema,
     parse(input: unknown) {
       return parseWithSchema<AgentInput>(inputSchema, input)
@@ -80,8 +79,13 @@ export function createAgentTool(opts: {
     async execute(input: AgentInput, ctx: ToolContext) {
       if (ctx.signal.aborted) return ABORTED_TEXT
 
+      const definition = getAgentDefinition(input.subagent ?? 'general')
+      if (!definition) return `Unknown subagent: ${input.subagent}`
+
+      const childTools = filterChildTools(opts.tools, definition)
+      const maxRounds = opts.childMaxRounds ?? definition.maxRounds
       const now = Date.now()
-      const childModel = resolveChildModel(ctx.turn, generalAgent)
+      const childModel = resolveChildModel(ctx.turn, definition)
       const childSession = buildChildSession(ctx.turn, childModel, now, input.description)
       const userMessage = buildChildUserMessage(input, now)
 
@@ -102,7 +106,7 @@ export function createAgentTool(opts: {
           model: opts.model,
           askUser: opts.askUser,
         }
-        if (generalAgent.inheritParentSystemPrompt && opts.system !== undefined) {
+        if (definition.inheritParentSystemPrompt && opts.system !== undefined) {
           loopOpts.system = opts.system
         }
         const end = await drainLoop(queryLoop(loopOpts))
