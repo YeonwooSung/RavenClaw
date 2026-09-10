@@ -1,0 +1,96 @@
+import { readFileSync, statSync } from 'node:fs'
+import { resolve } from 'node:path'
+import type { Tool, ToolContext } from '../types'
+import { parseWithSchema } from './parse'
+
+export interface ReadInput {
+  path: string
+  offset?: number
+  limit?: number
+}
+
+const BINARY_SCAN = 8192
+const READ_CHAR_CAP = 100_000
+const TRUNCATION_NOTE = '\n... [truncated: output exceeds 100000 characters]'
+
+const inputSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['path'],
+  properties: {
+    path: { type: 'string', minLength: 1 },
+    offset: { type: 'integer', minimum: 1 },
+    limit: { type: 'integer', minimum: 0 },
+  },
+}
+
+export const readTool: Tool<ReadInput, string> = {
+  name: 'Read',
+  description:
+    'Read a utf-8 text file. path is resolved relative to the turn cwd. offset is a 1-based line number; limit is the maximum number of lines to return. Binary files (NUL in the first 8 KiB) are rejected. Output is capped around 100000 characters. Exempt from disk persist.',
+  inputSchema,
+  parse(input: unknown) {
+    return parseWithSchema<ReadInput>(inputSchema, input)
+  },
+  isConcurrencySafe() {
+    return true
+  },
+  isReadOnly() {
+    return true
+  },
+  interruptBehavior() {
+    return 'block'
+  },
+  async checkPermissions() {
+    return { behavior: 'allow', reason: 'mode' }
+  },
+  async execute(input: ReadInput, ctx: ToolContext) {
+    if (ctx.signal.aborted) throw abortError()
+    const resolved = resolve(ctx.turn.cwd, input.path)
+
+    let stat
+    try {
+      stat = statSync(resolved)
+    } catch {
+      return `Read failed: file not found: ${input.path}`
+    }
+    if (stat.isDirectory()) {
+      return `Read failed: path is a directory: ${input.path}`
+    }
+
+    let buf: Buffer
+    try {
+      buf = readFileSync(resolved)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return `Read failed: ${message}`
+    }
+
+    if (containsNul(buf.subarray(0, Math.min(buf.length, BINARY_SCAN)))) {
+      return 'Read failed: binary file (NUL in first 8 KiB)'
+    }
+
+    const lines = buf.toString('utf8').split(/\r?\n/)
+    const start = Math.max(0, (input.offset ?? 1) - 1)
+    const sliced =
+      input.limit === undefined ? lines.slice(start) : lines.slice(start, start + input.limit)
+    let text = sliced.join('\n')
+    if (text.length > READ_CHAR_CAP) {
+      text = text.slice(0, READ_CHAR_CAP) + TRUNCATION_NOTE
+    }
+
+    ctx.turn.readFiles.add(resolved)
+    return text
+  },
+}
+
+function containsNul(buf: Uint8Array): boolean {
+  for (let i = 0; i < buf.length; i++) {
+    if (buf[i] === 0) return true
+  }
+  return false
+}
+
+function abortError(): Error {
+  return Object.assign(new Error('aborted'), { name: 'AbortError' })
+}
