@@ -1,0 +1,469 @@
+import { existsSync, readFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { getModelProfile } from './cost/models'
+import { ravenclawHome } from './home'
+import type { ModelProfile, PermissionMode } from './types'
+
+export type ProviderKind = 'anthropic' | 'openai_compat'
+
+export interface RavenClawConfig {
+  model: string
+  provider: ProviderKind
+  permissionMode: PermissionMode
+  maxRounds: number
+  childMaxRounds: number
+  compact: { enabled: boolean; llmSummarize: boolean }
+  ads: { feedUrl: string }
+  contextWindow?: number
+  prices?: Record<string, ModelPriceFields>
+}
+
+export interface ModelPriceFields {
+  input?: number
+  output?: number
+  cacheRead?: number
+  cacheWrite?: number
+}
+
+export interface ConfigFlags {
+  provider?: ProviderKind
+  model?: string
+  permissionMode?: PermissionMode
+  dontAsk?: boolean
+}
+
+export interface ResolvedEnv {
+  OPENAI_API_KEY?: string
+  ANTHROPIC_API_KEY?: string
+  OPENAI_BASE_URL?: string
+}
+
+export interface ResolvedConfig extends RavenClawConfig {
+  home: string
+  env: ResolvedEnv
+  profile: ModelProfile
+}
+
+const PROVIDERS = new Set<ProviderKind>(['anthropic', 'openai_compat'])
+const PERMISSION_MODES = new Set<PermissionMode>([
+  'default',
+  'acceptEdits',
+  'plan',
+  'dontAsk',
+])
+
+const ENV_KEYS = ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_BASE_URL'] as const
+
+export function defaultConfig(): RavenClawConfig {
+  return {
+    model: 'anthropic/claude-sonnet-4',
+    provider: 'anthropic',
+    permissionMode: 'default',
+    maxRounds: 80,
+    childMaxRounds: 30,
+    compact: { enabled: true, llmSummarize: true },
+    ads: { feedUrl: '' },
+  }
+}
+
+export function parseConfigYaml(text: string): Partial<RavenClawConfig> {
+  const raw = parseYamlMap(text)
+  const out: Partial<RavenClawConfig> = {}
+
+  const model = asString(raw.model)
+  if (model !== undefined) out.model = model
+
+  const provider = asString(raw.provider)
+  if (provider !== undefined && isProviderKind(provider)) out.provider = provider
+
+  const permissionMode = asString(raw.permissionMode)
+  if (permissionMode !== undefined && isPermissionMode(permissionMode)) {
+    out.permissionMode = permissionMode
+  }
+
+  const maxRounds = asNumber(raw.maxRounds)
+  if (maxRounds !== undefined) out.maxRounds = maxRounds
+
+  const childMaxRounds = asNumber(raw.childMaxRounds)
+  if (childMaxRounds !== undefined) out.childMaxRounds = childMaxRounds
+
+  const compactRaw = asMap(raw.compact)
+  if (compactRaw) {
+    const compact: { enabled: boolean; llmSummarize: boolean } = {
+      enabled: defaultConfig().compact.enabled,
+      llmSummarize: defaultConfig().compact.llmSummarize,
+    }
+    const enabled = asBoolean(compactRaw.enabled)
+    if (enabled !== undefined) compact.enabled = enabled
+    const llmSummarize = asBoolean(compactRaw.llmSummarize)
+    if (llmSummarize !== undefined) compact.llmSummarize = llmSummarize
+    out.compact = compact
+  }
+
+  const adsRaw = asMap(raw.ads)
+  if (adsRaw) {
+    const feedUrl = adsRaw.feedUrl
+    out.ads = { feedUrl: feedUrl === undefined || feedUrl === null ? '' : String(feedUrl) }
+  }
+
+  const contextWindow = asNumber(raw.contextWindow)
+  if (contextWindow !== undefined) out.contextWindow = contextWindow
+
+  const pricesRaw = asMap(raw.prices)
+  if (pricesRaw) {
+    const prices: Record<string, ModelPriceFields> = {}
+    for (const [id, value] of Object.entries(pricesRaw)) {
+      const fields = asMap(value)
+      if (!fields) continue
+      const entry: ModelPriceFields = {}
+      const input = asNumber(fields.input)
+      if (input !== undefined) entry.input = input
+      const output = asNumber(fields.output)
+      if (output !== undefined) entry.output = output
+      const cacheRead = asNumber(fields.cacheRead)
+      if (cacheRead !== undefined) entry.cacheRead = cacheRead
+      const cacheWrite = asNumber(fields.cacheWrite)
+      if (cacheWrite !== undefined) entry.cacheWrite = cacheWrite
+      prices[id] = entry
+    }
+    out.prices = prices
+  }
+
+  return out
+}
+
+export function loadDotEnv(text: string): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const rawLine of text.split(/\r?\n/)) {
+    const line = rawLine.trim()
+    if (line === '' || line.startsWith('#')) continue
+    const trimmed = line.startsWith('export ') ? line.slice(7).trim() : line
+    const eq = trimmed.indexOf('=')
+    if (eq <= 0) continue
+    const key = trimmed.slice(0, eq).trim()
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue
+    out[key] = stripWrappingQuotes(trimmed.slice(eq + 1).trim())
+  }
+  return out
+}
+
+export function resolveProviderModel(opts: {
+  flags?: ConfigFlags
+  config: Partial<Pick<RavenClawConfig, 'provider' | 'model'>>
+  env: ResolvedEnv
+}): { provider: ProviderKind; model: string } {
+  const provider =
+    opts.flags?.provider ?? opts.config.provider ?? inferProviderFromEnv(opts.env)
+  if (provider === undefined) {
+    throw new Error(
+      'No provider configured. Set provider in config.yaml or export ANTHROPIC_API_KEY / OPENAI_API_KEY (or OPENAI_BASE_URL).',
+    )
+  }
+  const model = opts.flags?.model ?? opts.config.model ?? defaultConfig().model
+  return { provider, model }
+}
+
+export function loadConfig(opts?: { home?: string; flags?: ConfigFlags }): ResolvedConfig {
+  const home = opts?.home ?? ravenclawHome()
+  const flags = opts?.flags
+  const yamlText = readIfExists(join(home, 'config.yaml'))
+  const parsed = yamlText === undefined ? {} : parseConfigYaml(yamlText)
+  const fileEnv = loadDotEnv(readIfExists(join(home, '.env')) ?? '')
+  const env = resolveEnv(fileEnv)
+  const { provider, model } = resolveProviderModel({
+    flags,
+    config: pickedProviderModel(parsed),
+    env,
+  })
+
+  const base = defaultConfig()
+  const permissionMode = flags?.dontAsk
+    ? 'dontAsk'
+    : (flags?.permissionMode ?? parsed.permissionMode ?? base.permissionMode)
+
+  const resolved: ResolvedConfig = {
+    model,
+    provider,
+    permissionMode,
+    maxRounds: parsed.maxRounds ?? base.maxRounds,
+    childMaxRounds: parsed.childMaxRounds ?? base.childMaxRounds,
+    compact: {
+      enabled: parsed.compact?.enabled ?? base.compact.enabled,
+      llmSummarize: parsed.compact?.llmSummarize ?? base.compact.llmSummarize,
+    },
+    ads: { feedUrl: parsed.ads?.feedUrl ?? base.ads.feedUrl },
+    home,
+    env,
+    profile: getModelProfile(model, profileOverrides(model, parsed)),
+  }
+  if (parsed.contextWindow !== undefined) resolved.contextWindow = parsed.contextWindow
+  if (parsed.prices !== undefined) resolved.prices = parsed.prices
+  return resolved
+}
+
+function pickedProviderModel(
+  parsed: Partial<RavenClawConfig>,
+): Partial<Pick<RavenClawConfig, 'provider' | 'model'>> {
+  const out: Partial<Pick<RavenClawConfig, 'provider' | 'model'>> = {}
+  if (parsed.provider !== undefined) out.provider = parsed.provider
+  if (parsed.model !== undefined) out.model = parsed.model
+  return out
+}
+
+function profileOverrides(
+  model: string,
+  parsed: Partial<RavenClawConfig>,
+): { contextWindow?: number; prices?: ModelPriceFields } | undefined {
+  const out: { contextWindow?: number; prices?: ModelPriceFields } = {}
+  if (parsed.contextWindow !== undefined) out.contextWindow = parsed.contextWindow
+  const prices = parsed.prices?.[model]
+  if (prices !== undefined) out.prices = prices
+  if (out.contextWindow === undefined && out.prices === undefined) return undefined
+  return out
+}
+
+function resolveEnv(fileEnv: Record<string, string>): ResolvedEnv {
+  const env: ResolvedEnv = {}
+  for (const key of ENV_KEYS) {
+    const value = firstNonEmpty(process.env[key], fileEnv[key])
+    if (value !== undefined) env[key] = value
+  }
+  return env
+}
+
+function inferProviderFromEnv(env: ResolvedEnv): ProviderKind | undefined {
+  if (firstNonEmpty(env.ANTHROPIC_API_KEY) !== undefined) return 'anthropic'
+  if (
+    firstNonEmpty(env.OPENAI_API_KEY) !== undefined ||
+    firstNonEmpty(env.OPENAI_BASE_URL) !== undefined
+  ) {
+    return 'openai_compat'
+  }
+  return undefined
+}
+
+function firstNonEmpty(...values: Array<string | undefined>): string | undefined {
+  for (const value of values) {
+    if (value !== undefined && value !== '') return value
+  }
+  return undefined
+}
+
+function readIfExists(path: string): string | undefined {
+  if (!existsSync(path)) return undefined
+  return readFileSync(path, 'utf8')
+}
+
+function isProviderKind(value: string): value is ProviderKind {
+  return PROVIDERS.has(value as ProviderKind)
+}
+
+function isPermissionMode(value: string): value is PermissionMode {
+  return PERMISSION_MODES.has(value as PermissionMode)
+}
+
+function asString(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined
+}
+
+function asNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+function asBoolean(value: unknown): boolean | undefined {
+  return typeof value === 'boolean' ? value : undefined
+}
+
+function asMap(value: unknown): Record<string, unknown> | undefined {
+  if (value === null || typeof value !== 'object' || Array.isArray(value)) return undefined
+  return value as Record<string, unknown>
+}
+
+function stripWrappingQuotes(value: string): string {
+  if (value.length >= 2) {
+    const start = value[0]
+    const end = value[value.length - 1]
+    if ((start === '"' && end === '"') || (start === "'" && end === "'")) {
+      return value.slice(1, -1)
+    }
+  }
+  return value
+}
+
+type YamlValue = string | number | boolean | null | YamlValue[] | { [key: string]: YamlValue }
+
+function parseYamlMap(text: string): Record<string, YamlValue> {
+  const lines = text.split(/\r?\n/)
+  const { value } = parseYamlBlock(lines, 0, 0)
+  return value
+}
+
+function parseYamlBlock(
+  lines: string[],
+  start: number,
+  minIndent: number,
+): { value: Record<string, YamlValue>; next: number } {
+  const out: Record<string, YamlValue> = {}
+  let i = start
+  while (i < lines.length) {
+    const raw = lines[i] ?? ''
+    if (isBlankOrComment(raw)) {
+      i++
+      continue
+    }
+    const indent = leadingSpaces(raw)
+    if (indent < minIndent) break
+    const parsed = parseKeyedLine(raw.slice(indent))
+    if (!parsed) {
+      i++
+      continue
+    }
+    i++
+    if (parsed.value === undefined) {
+      const next = nextMeaningful(lines, i)
+      const nextIndent = next === undefined ? -1 : leadingSpaces(lines[next] ?? '')
+      if (next !== undefined && nextIndent > indent) {
+        const nested = parseYamlBlock(lines, i, nextIndent)
+        out[parsed.key] = nested.value
+        i = nested.next
+      } else {
+        out[parsed.key] = null
+      }
+    } else {
+      out[parsed.key] = parsed.value
+    }
+  }
+  return { value: out, next: i }
+}
+
+function parseKeyedLine(content: string): { key: string; value: YamlValue | undefined } | undefined {
+  const trimmed = stripYamlComment(content).trim()
+  if (trimmed === '') return undefined
+  const keyMatch = trimmed.match(/^(?:"([^"]*)"|'([^']*)'|([^:#{}[\],]+?))\s*:(\s+.*)?$/)
+  if (!keyMatch) return undefined
+  const key = keyMatch[1] ?? keyMatch[2] ?? (keyMatch[3] ?? '').trim()
+  if (key === '') return undefined
+  const rest = (keyMatch[4] ?? '').trim()
+  if (rest === '') return { key, value: undefined }
+  return { key, value: parseYamlScalar(rest) }
+}
+
+function parseYamlScalar(raw: string): YamlValue {
+  const text = stripYamlComment(raw).trim()
+  if (text === '' || text === '~' || text === 'null' || text === 'Null' || text === 'NULL') {
+    return null
+  }
+  if (text === 'true' || text === 'True' || text === 'TRUE') return true
+  if (text === 'false' || text === 'False' || text === 'FALSE') return false
+  if (text.startsWith('{') && text.endsWith('}')) {
+    return parseInlineMap(text)
+  }
+  if (
+    (text.startsWith('"') && text.endsWith('"') && text.length >= 2) ||
+    (text.startsWith("'") && text.endsWith("'") && text.length >= 2)
+  ) {
+    return text.slice(1, -1)
+  }
+  if (/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(text)) {
+    return Number(text)
+  }
+  return text
+}
+
+function parseInlineMap(text: string): Record<string, YamlValue> {
+  const inner = text.slice(1, -1).trim()
+  if (inner === '') return {}
+  const out: Record<string, YamlValue> = {}
+  let i = 0
+  while (i < inner.length) {
+    while (i < inner.length && (inner[i] === ' ' || inner[i] === ',')) i++
+    if (i >= inner.length) break
+    const keyPart = readInlineKey(inner, i)
+    i = keyPart.next
+    while (i < inner.length && inner[i] === ' ') i++
+    if (inner[i] !== ':') break
+    i++
+    while (i < inner.length && inner[i] === ' ') i++
+    const valuePart = readInlineValue(inner, i)
+    out[keyPart.key] = valuePart.value
+    i = valuePart.next
+  }
+  return out
+}
+
+function readInlineKey(text: string, start: number): { key: string; next: number } {
+  if (text[start] === '"' || text[start] === "'") {
+    const quote = text[start]
+    let i = start + 1
+    while (i < text.length && text[i] !== quote) i++
+    return { key: text.slice(start + 1, i), next: i < text.length ? i + 1 : i }
+  }
+  let i = start
+  while (i < text.length && text[i] !== ':' && text[i] !== ',') i++
+  return { key: text.slice(start, i).trim(), next: i }
+}
+
+function readInlineValue(
+  text: string,
+  start: number,
+): { value: YamlValue; next: number } {
+  if (text[start] === '{') {
+    let depth = 0
+    let i = start
+    while (i < text.length) {
+      if (text[i] === '{') depth++
+      else if (text[i] === '}') {
+        depth--
+        if (depth === 0) {
+          return { value: parseInlineMap(text.slice(start, i + 1)), next: i + 1 }
+        }
+      }
+      i++
+    }
+    return { value: parseInlineMap(text.slice(start)), next: text.length }
+  }
+  if (text[start] === '"' || text[start] === "'") {
+    const quote = text[start]
+    let i = start + 1
+    while (i < text.length && text[i] !== quote) i++
+    const end = i < text.length ? i + 1 : i
+    return { value: parseYamlScalar(text.slice(start, end)), next: end }
+  }
+  let i = start
+  while (i < text.length && text[i] !== ',') i++
+  return { value: parseYamlScalar(text.slice(start, i)), next: i }
+}
+
+function stripYamlComment(text: string): string {
+  let inSingle = false
+  let inDouble = false
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i]
+    if (ch === "'" && !inDouble) inSingle = !inSingle
+    else if (ch === '"' && !inSingle) inDouble = !inDouble
+    else if (ch === '#' && !inSingle && !inDouble) {
+      if (i === 0 || text[i - 1] === ' ' || text[i - 1] === '\t') {
+        return text.slice(0, i)
+      }
+    }
+  }
+  return text
+}
+
+function isBlankOrComment(line: string): boolean {
+  const trimmed = line.trim()
+  return trimmed === '' || trimmed.startsWith('#')
+}
+
+function leadingSpaces(line: string): number {
+  let i = 0
+  while (i < line.length && line[i] === ' ') i++
+  return i
+}
+
+function nextMeaningful(lines: string[], start: number): number | undefined {
+  for (let i = start; i < lines.length; i++) {
+    if (!isBlankOrComment(lines[i] ?? '')) return i
+  }
+  return undefined
+}
