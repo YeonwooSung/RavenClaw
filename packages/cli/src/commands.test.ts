@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { LEARN_PROMPT, handleSlashCommand } from './commands'
+import { LEARN_PROMPT, SLASH_HELP, handleSlashCommand } from './commands'
 
 describe('handleSlashCommand', () => {
   test('plain text is a prompt', () => {
@@ -27,12 +27,21 @@ describe('handleSlashCommand', () => {
     ['/search --all bar', { type: 'command', name: 'search', arg: '--all bar' }],
     ['/quit', { type: 'command', name: 'quit' }],
     ['/learn', { type: 'command', name: 'learn' }],
+    ['/help', { type: 'command', name: 'help' }],
+    ['/?', { type: 'command', name: '?' }],
   ] as const)('%s', (line, expected) => {
     expect(handleSlashCommand(line)).toEqual(expected)
   })
 
   test('unknown slash stays a command so the app can reject it', () => {
     expect(handleSlashCommand('/nope')).toEqual({ type: 'command', name: 'nope' })
+  })
+
+  test('SLASH_HELP lists the in-session commands', () => {
+    expect(SLASH_HELP).toContain('/resume')
+    expect(SLASH_HELP).toContain('/search')
+    expect(SLASH_HELP).toContain('/help')
+    expect(SLASH_HELP).toContain('/quit')
   })
 
   test('learn prompt asks to write a skill, and is not a tool name', () => {

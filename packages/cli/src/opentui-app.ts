@@ -5,7 +5,7 @@ import {
   permissionPromptLines,
 } from '@ravenclaw/tui-opentui'
 import type { StreamEvent } from '@ravenclaw/core'
-import { LEARN_PROMPT, handleSlashCommand } from './commands'
+import { LEARN_PROMPT, SLASH_HELP, handleSlashCommand } from './commands'
 import { formatCostNotice } from './cost-format'
 import { searchNotice } from './search'
 import { parsePermissionMode, resumeRuntime, type CliRuntime } from './engine'
@@ -83,6 +83,10 @@ export async function runOpenTuiApp(
       }
 
       switch (parsed.name) {
+        case 'help':
+        case '?':
+          write(`${SLASH_HELP}\n`)
+          continue
         case 'quit':
           return 0
         case 'cancel':

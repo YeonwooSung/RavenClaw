@@ -226,6 +226,22 @@ describe('runOpenTuiApp', () => {
     expect(written.join('')).toContain('session not found: missing')
     expect(written.join('')).not.toContain('resumed ')
   })
+
+  test('/help lists slash commands', async () => {
+    const written: string[] = []
+    const code = await runOpenTuiApp(
+      fakeRuntime(fakeEngine(makeSession(), emptyTurn), { store: fakeStore() }),
+      {
+        input: asyncLines('/help', '/quit'),
+        write: (chunk) => {
+          written.push(chunk)
+        },
+      },
+    )
+    expect(code).toBe(0)
+    expect(written.join('')).toContain('/resume')
+    expect(written.join('')).toContain('/quit')
+  })
 })
 
 async function* emptyTurn(): AsyncGenerator<StreamEvent, RoundEnd> {

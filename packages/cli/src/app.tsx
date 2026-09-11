@@ -9,7 +9,7 @@ import {
   type TokenUsage,
 } from '@ravenclaw/core'
 import { AdDock } from './ad-dock'
-import { LEARN_PROMPT, handleSlashCommand } from './commands'
+import { LEARN_PROMPT, SLASH_HELP, handleSlashCommand } from './commands'
 import { formatCostNotice } from './cost-format'
 import { searchNotice } from './search'
 import { Composer } from './composer'
@@ -164,6 +164,10 @@ export function App(props: AppProps) {
         return
       }
       switch (parsed.name) {
+        case 'help':
+        case '?':
+          setNotice(SLASH_HELP)
+          return
         case 'quit':
           exit()
           return
