@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.1.31 — 2026-09-11
+
+Skill allow-lists jail execute, worktree children keep parent project policy, and included resume no longer burns the daily cap.
+
+### Fixed
+- Skill `allowed-tools` now jails execute and `Agent` children (hidden names do not run)
+- `isolation: worktree` loads project permissions and skills from the parent cwd
+- OpenAI-compat defers tool-result images until after a contiguous tool run
+- Responses maps tool-result images as a follow-up `input_image` user item
+- `included.gatewayUrl` with or without `/v1` probes `…/v1/entitlement` and chats `…/v1/chat/completions`
+- `raven resume` does not create an orphan session or increment the included daily cap
+- Local included-cap reserve is atomic (mkdir lock)
+
+### Try it
+
+```bash
+git clone --branch v0.1.31 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+bun test
+bun run raven --version
+```
+
 ## 0.1.30 — 2026-09-11
 
 Catalog coerce keeps the gateway entitlement model, and worktree children resume from the parent cwd.
