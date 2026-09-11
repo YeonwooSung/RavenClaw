@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.29 — 2026-09-11
 
 The leftover v1.x seams: optional included gateway, embeddable SDK, plan.md, skill tool pools, worktrees, images, Responses, local plugins.
 
@@ -14,6 +14,15 @@ The leftover v1.x seams: optional included gateway, embeddable SDK, plan.md, ski
 - `createProvider({ provider: 'openai_responses' })` for the OpenAI Responses API
 - Local plugins from `~/.ravenclaw/plugins/<name>/plugin.json` (user-installed only; leftover ask, so `dontAsk` denies)
 - OpenAI-compat keeps tool-result images off `role: tool` (follow-up user part instead)
+
+### Try it
+
+```bash
+git clone --branch v0.1.29 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+bun test
+bun run raven --version
+```
 
 ## 0.1.28 — 2026-09-11
 
