@@ -4,7 +4,13 @@ import {
   createOpenTuiView,
   permissionPromptLines,
 } from '@ravenclaw/tui-opentui'
-import { buildSystemParts, type StreamEvent } from '@ravenclaw/core'
+import {
+  buildSystemParts,
+  formatTasksNotice,
+  formatUndoNotice,
+  parseTasksArg,
+  type StreamEvent,
+} from '@ravenclaw/core'
 import {
   LEARN_PROMPT,
   RELOAD_NOTICE,
@@ -183,9 +189,21 @@ export async function runOpenTuiApp(
           )
           write(`${RELOAD_NOTICE}\n`)
           continue
-        case 'tasks':
-          write(`${TASKS_NOTICE}\n`)
+        case 'tasks': {
+          const parsedTasks = parseTasksArg(parsed.arg)
+          if (parsedTasks.action === 'kill') {
+            const stopped = current.engine.tasks.kill(parsedTasks.id)
+            write(`${stopped ? `stopped ${stopped.id}` : `unknown task ${parsedTasks.id}`}\n`)
+            continue
+          }
+          const listed = current.engine.tasks.list()
+          write(`${listed.length === 0 ? TASKS_NOTICE : formatTasksNotice(listed)}\n`)
           continue
+        }
+        case 'undo': {
+          write(`${formatUndoNotice(current.engine.fileHistory.undo())}\n`)
+          continue
+        }
         case 'permissions': {
           let sessionRuleCount = 0
           try {

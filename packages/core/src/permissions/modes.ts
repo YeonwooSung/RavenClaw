@@ -16,9 +16,12 @@ const READ_ONLY_NAMES = new Set([
   'Fetch',
   'EnterPlanMode',
   'ExitPlanMode',
+  'TaskOutput',
+  'ListMcpResources',
+  'ReadMcpResource',
 ])
 
-const MUTATING_NAMES = new Set(['Edit', 'Write', 'Bash', 'Agent', 'TodoWrite'])
+const MUTATING_NAMES = new Set(['Edit', 'Write', 'Bash', 'Agent', 'TodoWrite', 'TaskStop'])
 
 export function cyclePermissionMode(mode: PermissionMode): PermissionMode {
   if (mode === 'dontAsk') return 'dontAsk'

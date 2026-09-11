@@ -203,6 +203,7 @@ export async function prepareContext(state: LoopState): Promise<PhaseResult> {
   if (inserted.length > 0) {
     await state.store.persistToolResults(state.turn.sessionId, inserted)
   }
+  await injectSteering(state)
   return { action: 'continue' }
 }
 
@@ -621,7 +622,38 @@ export async function* finalizeRound(
 ): AsyncGenerator<StreamEvent, PhaseResult> {
   const fail = await persistResultsWithRetry(state, state.toolResults)
   if (fail) return { action: 'return', end: fail }
+  const steered = await injectSteering(state)
+  for (const text of steered) {
+    yield { type: 'status', message: `steered: ${steerPreview(text)}` }
+  }
   return { action: 'continue' }
+}
+
+async function injectSteering(state: LoopState): Promise<string[]> {
+  const texts = state.drainSteering?.() ?? []
+  if (texts.length === 0) return []
+  const injected: string[] = []
+  for (const text of texts) {
+    const userMsg: Extract<Message, { role: 'user' }> = {
+      id: crypto.randomUUID(),
+      role: 'user',
+      blocks: [{ type: 'text', text }],
+      createdAt: Date.now(),
+    }
+    try {
+      await state.store.persistUser(state.turn.sessionId, userMsg)
+    } catch {
+      continue
+    }
+    state.turn.messages.push(userMsg)
+    injected.push(text)
+  }
+  return injected
+}
+
+function steerPreview(text: string): string {
+  const line = text.replace(/\s+/g, ' ').trim()
+  return line.length <= 80 ? line : `${line.slice(0, 77)}...`
 }
 
 const BATCH_TIMEOUT_MS = 300_000
@@ -687,6 +719,8 @@ async function executeOneCall(
       progress.push({ type: 'tool_progress', id: call.id, text })
     },
   }
+  if (state.tasks) ctx.tasks = state.tasks
+  if (state.fileHistory) ctx.fileHistory = state.fileHistory
 
   let allowed = false
   try {

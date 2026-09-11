@@ -10,10 +10,14 @@ export function loadMcpServers(home?: string): McpServerConfig[] {
 }
 
 export function formatMcpServerLine(server: McpServerConfig): string {
+  if (server.url) {
+    const kind = server.type ?? 'http'
+    return `${server.name}  ${kind}  ${server.url}`
+  }
   const args = server.args !== undefined && server.args.length > 0 ? ` ${server.args.join(' ')}` : ''
   const envKeys = server.env !== undefined ? Object.keys(server.env) : []
   const env = envKeys.length > 0 ? `  env: ${envKeys.join(',')}` : ''
-  return `${server.name}  ${server.command}${args}${env}`
+  return `${server.name}  ${server.command ?? ''}${args}${env}`
 }
 
 export function formatMcpList(servers: McpServerConfig[]): string {

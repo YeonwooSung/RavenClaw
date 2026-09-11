@@ -21,7 +21,8 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
   { name: 'clear', aliases: ['new'], usage: '/clear', summary: 'start a new session (alias /new)' },
   { name: 'model', usage: '/model [id]', summary: "show or set this session's model" },
   { name: 'permissions', usage: '/permissions', summary: 'list extra permission rule files' },
-  { name: 'tasks', usage: '/tasks', summary: 'list background tasks' },
+  { name: 'tasks', usage: '/tasks [kill <id>]', summary: 'list or stop background tasks' },
+  { name: 'undo', usage: '/undo', summary: 'restore files from the last edit checkpoint' },
   { name: 'reload', usage: '/reload', summary: 'reload skills on the next turn' },
   { name: 'mcp', usage: '/mcp', summary: 'show configured MCP servers' },
   { name: 'skills', usage: '/skills', summary: 'list discovered skills' },
@@ -48,6 +49,7 @@ export const LEARN_PROMPT =
   'Write a new skill that captures the reusable procedure we just figured out. Create a SKILL.md with a name, a short description, and a step-by-step body under this project\'s .ravenclaw/skills directory or the user skills directory. Do not add a new built-in tool — just write the skill files.'
 
 export const TASKS_NOTICE = 'no background tasks'
+export const UNDO_NOTHING_NOTICE = 'nothing to undo'
 export const RELOAD_NOTICE = 'skills reloaded'
 export const NO_EXTRA_RULES_NOTICE = 'no extra rules'
 

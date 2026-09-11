@@ -49,6 +49,7 @@ export const writeTool: Tool<WriteInput, string> = {
 
     try {
       mkdirSync(dirname(resolved), { recursive: true })
+      ctx.fileHistory?.snapshot(resolved)
       writeFileSync(resolved, input.content, 'utf8')
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)

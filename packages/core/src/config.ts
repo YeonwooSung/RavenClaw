@@ -20,11 +20,16 @@ export interface IncludedConfig {
   defaultModel?: string
 }
 
+export type McpTransportKind = 'stdio' | 'http' | 'sse'
+
 export interface McpServerConfig {
   name: string
-  command: string
+  type?: McpTransportKind
+  command?: string
   args?: string[]
   env?: Record<string, string>
+  url?: string
+  headers?: Record<string, string>
 }
 
 export interface McpConfig {
@@ -413,27 +418,54 @@ function parseMcpConfig(raw: Record<string, unknown>): McpConfig {
     for (const item of raw.servers) {
       const rec = asMap(item)
       if (!rec) continue
-      const name = asString(rec.name)
-      const command = asString(rec.command)
-      if (name === undefined || name === '' || command === undefined || command === '') continue
-      const server: McpServerConfig = { name, command }
-      const args = asStringList(rec.args)
-      if (args !== undefined) server.args = args
-      const envRaw = asMap(rec.env)
-      if (envRaw) {
-        const env: Record<string, string> = {}
-        for (const [key, value] of Object.entries(envRaw)) {
-          const text = asString(value)
-          if (text !== undefined) env[key] = text
-          else if (typeof value === 'number' && Number.isFinite(value)) env[key] = String(value)
-          else if (typeof value === 'boolean') env[key] = value ? 'true' : 'false'
-        }
-        server.env = env
-      }
-      servers.push(server)
+      const parsed = parseMcpServer(rec)
+      if (parsed) servers.push(parsed)
     }
   }
   return { servers }
+}
+
+function parseMcpServer(rec: Record<string, unknown>): McpServerConfig | undefined {
+  const name = asString(rec.name)
+  if (name === undefined || name === '') return undefined
+  const typeRaw = asString(rec.type)
+  const type: McpTransportKind | undefined =
+    typeRaw === 'http' || typeRaw === 'sse' || typeRaw === 'stdio' ? typeRaw : undefined
+  const command = asString(rec.command)
+  const url = asString(rec.url)
+  const kind = type ?? (url ? 'http' : 'stdio')
+  if (kind === 'stdio') {
+    if (command === undefined || command === '') return undefined
+  } else if (url === undefined || url === '') {
+    return undefined
+  }
+  const server: McpServerConfig = { name }
+  if (kind !== 'stdio') server.type = kind
+  if (command !== undefined && command !== '') server.command = command
+  if (url !== undefined && url !== '') server.url = url
+  const args = asStringList(rec.args)
+  if (args !== undefined) server.args = args
+  const envRaw = asMap(rec.env)
+  if (envRaw) {
+    const env: Record<string, string> = {}
+    for (const [key, value] of Object.entries(envRaw)) {
+      const text = asString(value)
+      if (text !== undefined) env[key] = text
+      else if (typeof value === 'number' && Number.isFinite(value)) env[key] = String(value)
+      else if (typeof value === 'boolean') env[key] = value ? 'true' : 'false'
+    }
+    server.env = env
+  }
+  const headersRaw = asMap(rec.headers)
+  if (headersRaw) {
+    const headers: Record<string, string> = {}
+    for (const [key, value] of Object.entries(headersRaw)) {
+      const text = asString(value)
+      if (text !== undefined) headers[key] = text
+    }
+    if (Object.keys(headers).length > 0) server.headers = headers
+  }
+  return server
 }
 
 function stripWrappingQuotes(value: string): string {

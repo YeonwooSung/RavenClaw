@@ -157,6 +157,8 @@ export function createAgentTool(opts: {
         const system = childSystemParts(definition, opts.system)
         if (system !== undefined) loopOpts.system = system
         if (opts.hooks !== undefined) loopOpts.hooks = opts.hooks
+        if (ctx.tasks) loopOpts.tasks = ctx.tasks
+        if (ctx.fileHistory) loopOpts.fileHistory = ctx.fileHistory
         const end = await drainLoop(queryLoop(loopOpts))
         await persistChildSession(opts.store, childSession, childTurn)
         return childResult(end, childTurn.messages, ctx.signal)

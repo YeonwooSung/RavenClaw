@@ -121,6 +121,34 @@ describe('Bash', () => {
     if (danger.behavior === 'deny') expect(danger.reason).toBe('mode')
   })
 
+  test('run_in_background registers a task and TaskOutput can read it', async () => {
+    const root = fixtureRoot()
+    const home = fixtureRoot()
+    savedHome = process.env[HOME_ENV]
+    process.env[HOME_ENV] = home
+    const { createTaskRegistry } = await import('../tasks/registry')
+    const { taskOutputTool } = await import('./task')
+    const tasks = createTaskRegistry()
+    const ctx = makeCtx(root)
+    ctx.tasks = tasks
+    const result = await bashTool.execute(
+      { command: 'echo bg-hi', run_in_background: true },
+      ctx,
+    )
+    expect(result.exitCode).toBe(0)
+    expect(result.content).toContain('started background task')
+    const match = /started background task (b_[a-f0-9]+)/.exec(result.content)
+    expect(match?.[1]).toBeTruthy()
+    const id = match![1]!
+    const deadline = Date.now() + 3000
+    let output = ''
+    while (Date.now() < deadline) {
+      output = await taskOutputTool.execute({ task_id: id, block: true, timeout: 200 }, ctx)
+      if (output.includes('bg-hi') || output.includes('completed')) break
+    }
+    expect(output).toContain('bg-hi')
+  })
+
   test('echo hi appears in content with exit code and ending cwd', async () => {
     const root = fixtureRoot()
     const result = await bashTool.execute({ command: 'echo hi' }, makeCtx(root))

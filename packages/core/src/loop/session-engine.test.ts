@@ -240,3 +240,100 @@ describe('compactNow', () => {
     expect(recorded).toContain('old question')
   })
 })
+
+describe('steering and image submit', () => {
+  test('enqueueSteer injects a user row after a tool round', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_steer' })
+    await store.createSession(sess)
+    const engine = createSessionEngine({
+      session: sess,
+      provider: createFakeProvider([
+        [
+          { type: 'tool_call', id: 'c1', name: 'Ping', input: {} },
+          { type: 'stop', reason: 'tool' },
+        ],
+        [
+          { type: 'text_delta', text: 'done' },
+          { type: 'stop', reason: 'end' },
+        ],
+      ]),
+      store,
+      tools: [
+        {
+          name: 'Ping',
+          description: 'ping',
+          inputSchema: { type: 'object' },
+          parse() {
+            return { ok: true as const, value: {} }
+          },
+          isConcurrencySafe() {
+            return true
+          },
+          isReadOnly() {
+            return true
+          },
+          async checkPermissions() {
+            return { behavior: 'allow' as const, reason: 'mode' as const }
+          },
+          async execute() {
+            engine.enqueueSteer('keep going')
+            return 'pong'
+          },
+        },
+      ],
+      compact: defaultCompact({ enabled: false }),
+      model: defaultModel(),
+      maxRounds: 8,
+      async askUser() {
+        return 'deny'
+      },
+    })
+
+    const gen = engine.submitMessage('hi')
+    while (!(await gen.next()).done) {
+      // drain
+    }
+    const loaded = await store.loadSession(sess.id)
+    const users = loaded.messages.filter((msg) => msg.role === 'user')
+    expect(users.map((msg) => msg.blocks[0] && 'text' in msg.blocks[0] ? msg.blocks[0].text : '')).toEqual([
+      'hi',
+      'keep going',
+    ])
+    expect(engine.drainSteering()).toEqual([])
+  })
+
+  test('submitMessage accepts image blocks', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_img' })
+    await store.createSession(sess)
+    const engine = createSessionEngine({
+      session: sess,
+      provider: createFakeProvider([[{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: 'end' }]]),
+      store,
+      tools: [],
+      compact: defaultCompact({ enabled: false }),
+      model: defaultModel(),
+      maxRounds: 4,
+      async askUser() {
+        return 'deny'
+      },
+    })
+    const gen = engine.submitMessage({
+      text: 'see this',
+      images: [{ mediaType: 'image/png', data: 'abc' }],
+    })
+    while (!(await gen.next()).done) {
+      // drain
+    }
+    const loaded = await store.loadSession(sess.id)
+    const first = loaded.messages[0]
+    expect(first?.role).toBe('user')
+    if (first?.role === 'user') {
+      expect(first.blocks).toEqual([
+        { type: 'text', text: 'see this' },
+        { type: 'image', mediaType: 'image/png', data: 'abc' },
+      ])
+    }
+  })
+})

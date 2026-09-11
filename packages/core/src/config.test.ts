@@ -488,6 +488,36 @@ describe('parseConfigYaml', () => {
     expect(parsed.mcp).toBeUndefined()
   })
 
+  test('parses mcp http/sse servers by url', () => {
+    const parsed = parseConfigYaml(
+      [
+        'mcp:',
+        '  servers:',
+        '    - name: remote',
+        '      type: http',
+        '      url: https://example.com/mcp',
+        '      headers: { Authorization: "Bearer tok" }',
+        '    - name: events',
+        '      type: sse',
+        '      url: https://example.com/sse',
+        '',
+      ].join('\n'),
+    )
+    expect(parsed.mcp?.servers).toEqual([
+      {
+        name: 'remote',
+        type: 'http',
+        url: 'https://example.com/mcp',
+        headers: { Authorization: 'Bearer tok' },
+      },
+      {
+        name: 'events',
+        type: 'sse',
+        url: 'https://example.com/sse',
+      },
+    ])
+  })
+
   test('skips mcp servers that lack name or command', () => {
     const parsed = parseConfigYaml(
       [

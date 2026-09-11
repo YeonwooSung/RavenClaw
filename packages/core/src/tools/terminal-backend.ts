@@ -15,8 +15,14 @@ export interface TerminalExecResult {
   cwd: string
 }
 
+export interface TerminalJob {
+  kill(): void
+  wait(): Promise<TerminalExecResult>
+}
+
 export interface TerminalBackend {
   exec(opts: TerminalExecOpts): Promise<TerminalExecResult>
+  start?(opts: TerminalExecOpts): TerminalJob
 }
 
 export interface TerminalRunRequest {
@@ -55,6 +61,9 @@ export function createLocalTerminalBackend(): TerminalBackend {
   return {
     exec(opts: TerminalExecOpts) {
       return execLocal(opts)
+    },
+    start(opts: TerminalExecOpts) {
+      return startLocal(opts)
     },
   }
 }
@@ -96,6 +105,33 @@ function execLocal(opts: TerminalExecOpts): Promise<TerminalExecResult> {
     },
     { spawnError: 'reject', marker, fallbackCwd: opts.cwd },
   )
+}
+
+function startLocal(opts: TerminalExecOpts): TerminalJob {
+  const marker = cwdMarker()
+  const script = wrapCwdMarkerScript(opts.command, marker)
+  const timeoutMs = opts.timeoutMs > 0 ? opts.timeoutMs : 0
+  const controller = new AbortController()
+  const wait = runSpawned(
+    {
+      command: 'bash',
+      args: ['-c', script],
+      cwd: opts.cwd,
+      env: process.env,
+      timeoutMs,
+      signal: controller.signal,
+      onOutput: opts.onOutput,
+    },
+    { spawnError: 'result', marker, fallbackCwd: opts.cwd },
+  )
+  return {
+    kill() {
+      controller.abort()
+    },
+    wait() {
+      return wait
+    },
+  }
 }
 
 async function execDocker(
@@ -176,14 +212,17 @@ function runSpawned(
       stdio: ['ignore', 'pipe', 'pipe'],
     })
 
-    const timeoutTimer = setTimeout(() => {
-      timedOut = true
-      requestKill()
-    }, req.timeoutMs)
+    const timeoutTimer =
+      req.timeoutMs > 0
+        ? setTimeout(() => {
+            timedOut = true
+            requestKill()
+          }, req.timeoutMs)
+        : undefined
 
     const cleanup = () => {
       req.signal.removeEventListener('abort', onAbort)
-      clearTimeout(timeoutTimer)
+      if (timeoutTimer !== undefined) clearTimeout(timeoutTimer)
       if (killTimer !== undefined) clearTimeout(killTimer)
     }
 

@@ -167,10 +167,24 @@ export interface Tool<I = unknown, O = unknown> {
   interruptBehavior?(): 'cancel' | 'block'
 }
 
+export interface UserImage {
+  mediaType: string
+  data: string
+}
+
+export type UserSubmitInput =
+  | string
+  | {
+      text?: string
+      images?: UserImage[]
+    }
+
 export interface ToolContext {
   turn: Turn
   signal: AbortSignal
   onProgress: (text: string) => void
+  tasks?: import('./tasks/registry').TaskRegistry
+  fileHistory?: import('./session/file-history').FileHistory
 }
 
 export interface ToolResult {
@@ -298,7 +312,11 @@ export interface SessionEngineOptions {
 
 export interface SessionEngine {
   readonly session: SessionRecord
-  submitMessage(text: string): AsyncGenerator<StreamEvent, RoundEnd>
+  readonly tasks: import('./tasks/registry').TaskRegistry
+  readonly fileHistory: import('./session/file-history').FileHistory
+  submitMessage(input: UserSubmitInput): AsyncGenerator<StreamEvent, RoundEnd>
+  enqueueSteer(text: string): void
+  drainSteering(): string[]
   compactNow(): Promise<void>
   setPermissionMode(mode: PermissionMode): Promise<void>
   reloadSystem(system: SystemPart[]): void
@@ -315,4 +333,7 @@ export interface QueryLoopOptions {
   system?: SystemPart[]
   hooks?: SessionEngineOptions['hooks']
   askUser: SessionEngineOptions['askUser']
+  tasks?: import('./tasks/registry').TaskRegistry
+  fileHistory?: import('./session/file-history').FileHistory
+  drainSteering?: () => string[]
 }

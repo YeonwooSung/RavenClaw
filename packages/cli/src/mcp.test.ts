@@ -179,7 +179,12 @@ describe('loadConfiguredMcpTools', () => {
       { spawn: () => child },
     )
 
-    expect(loaded.tools.map((tool) => tool.name)).toEqual(['Read', 'mcp_ping'])
+    expect(loaded.tools.map((tool) => tool.name)).toEqual([
+      'Read',
+      'mcp_ping',
+      'ListMcpResources',
+      'ReadMcpResource',
+    ])
 
     const builtins = createRootTools(createMemoryStore())
     const pool = mergeToolPool(builtins, loaded.tools)
@@ -224,7 +229,11 @@ describe('loadConfiguredMcpTools', () => {
         return child
       },
     })
-    expect(loaded.tools.map((tool) => tool.name)).toEqual(['mcp_ping'])
+    expect(loaded.tools.map((tool) => tool.name)).toEqual([
+      'mcp_ping',
+      'ListMcpResources',
+      'ReadMcpResource',
+    ])
     await loaded.close()
   })
 

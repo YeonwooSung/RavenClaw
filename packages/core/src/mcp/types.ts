@@ -2,6 +2,7 @@ import { readPackageVersion } from '../package-version'
 
 export interface McpTransport {
   request(method: string, params?: unknown): Promise<unknown>
+  notify?(method: string, params?: unknown): Promise<void>
   close(): Promise<void>
 }
 
@@ -11,9 +12,26 @@ export interface McpToolDescriptor {
   inputSchema: unknown
 }
 
+export interface McpResource {
+  uri: string
+  name?: string
+  mimeType?: string
+  description?: string
+  server?: string
+}
+
+export interface McpResourceContents {
+  uri: string
+  mimeType?: string
+  text?: string
+  blob?: string
+}
+
 export interface McpToolBridge {
   listTools(): Promise<McpToolDescriptor[]>
   callTool(name: string, input: unknown): Promise<unknown>
+  listResources(): Promise<McpResource[]>
+  readResource(uri: string): Promise<McpResourceContents>
   close(): Promise<void>
 }
 

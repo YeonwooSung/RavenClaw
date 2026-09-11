@@ -1,5 +1,7 @@
 import { runAutocompact } from '../compact/prune'
 import { mechanicalSummary } from '../compact/summarize'
+import { createFileHistory } from '../session/file-history'
+import { createTaskRegistry } from '../tasks/registry'
 import type {
   Message,
   PermissionMode,
@@ -10,6 +12,8 @@ import type {
   StreamEvent,
   SystemPart,
   Turn,
+  UserOrToolBlock,
+  UserSubmitInput,
 } from '../types'
 import { abortTurn } from './abort'
 import { queryLoop } from './query-loop'
@@ -29,20 +33,40 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
   let messages: Message[] = opts.messages ? [...opts.messages] : []
   let liveTurn: Turn | null = null
   let system = opts.system
+  const tasks = createTaskRegistry()
+  const fileHistory = createFileHistory(session.id)
+  const steering: string[] = []
 
   return {
     get session() {
       return session
     },
+    get tasks() {
+      return tasks
+    },
+    get fileHistory() {
+      return fileHistory
+    },
 
-    async *submitMessage(text: string): AsyncGenerator<StreamEvent, RoundEnd> {
+    enqueueSteer(text: string) {
+      const trimmed = text.trim()
+      if (trimmed !== '') steering.push(trimmed)
+    },
+
+    drainSteering() {
+      return steering.splice(0)
+    },
+
+    async *submitMessage(input: UserSubmitInput): AsyncGenerator<StreamEvent, RoundEnd> {
+      const { text, blocks } = userSubmitToBlocks(input)
       const userMsg: Extract<Message, { role: 'user' }> = {
         id: crypto.randomUUID(),
         role: 'user',
-        blocks: [{ type: 'text', text }],
+        blocks,
         createdAt: Date.now(),
       }
       messages = [...messages, userMsg]
+      fileHistory.beginTurn()
 
       const turn: Turn = {
         id: crypto.randomUUID(),
@@ -68,6 +92,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       } catch (error) {
         messages = messages.slice(0, -1)
         liveTurn = null
+        fileHistory.endTurn()
         throw error
       }
 
@@ -92,6 +117,9 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         }
         if (system !== undefined) loopOpts.system = system
         if (opts.hooks !== undefined) loopOpts.hooks = opts.hooks
+        loopOpts.tasks = tasks
+        loopOpts.fileHistory = fileHistory
+        loopOpts.drainSteering = () => steering.splice(0)
         const end = yield* queryLoop(loopOpts)
         messages = turn.messages
         session.usage = turn.usage
@@ -102,6 +130,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         await opts.store.upsertSession(session)
         return end
       } finally {
+        fileHistory.endTurn()
         liveTurn = null
       }
     },
@@ -162,4 +191,19 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       if (liveTurn) abortTurn(liveTurn.abort)
     },
   }
+}
+
+function userSubmitToBlocks(input: UserSubmitInput): { text: string; blocks: UserOrToolBlock[] } {
+  if (typeof input === 'string') {
+    return { text: input, blocks: [{ type: 'text', text: input }] }
+  }
+  const text = input.text ?? ''
+  const blocks: UserOrToolBlock[] = []
+  if (text !== '') blocks.push({ type: 'text', text })
+  for (const image of input.images ?? []) {
+    if (image.data.length === 0) continue
+    blocks.push({ type: 'image', mediaType: image.mediaType, data: image.data })
+  }
+  if (blocks.length === 0) blocks.push({ type: 'text', text: '' })
+  return { text, blocks }
 }

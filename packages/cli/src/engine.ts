@@ -24,6 +24,8 @@ import {
   readTool,
   resumeSession,
   skillTool,
+  taskOutputTool,
+  taskStopTool,
   todoWriteTool,
   writeTool,
   type CompactPolicy,
@@ -163,6 +165,8 @@ export function createRootTools(store: SessionStore, bash: Tool = bashTool): Too
     skillTool,
     fetchTool,
     todoWriteTool,
+    taskOutputTool,
+    taskStopTool,
     plan.enter,
     plan.exit,
   ]

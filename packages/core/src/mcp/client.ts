@@ -22,6 +22,11 @@ export function createMcpToolBridge(transport: McpTransport): McpToolBridge {
         version: MCP_CLIENT_INFO.version,
       },
     })
+    try {
+      await transport.notify?.('notifications/initialized', {})
+    } catch {
+      // optional
+    }
     initialized = true
   }
 
@@ -45,6 +50,19 @@ export function createMcpToolBridge(transport: McpTransport): McpToolBridge {
         name,
         arguments: input ?? {},
       })
+    },
+    async listResources() {
+      await ensureReady()
+      try {
+        const raw = await transport.request('resources/list', {})
+        return parseListResourcesResult(raw)
+      } catch {
+        return []
+      }
+    },
+    async readResource(uri) {
+      await ensureReady()
+      return parseReadResourceResult(await transport.request('resources/read', { uri }), uri)
     },
     async close() {
       if (closed) return
@@ -177,6 +195,39 @@ function parseListToolsResult(raw: unknown): { tools: McpToolDescriptor[]; nextC
     return { tools, nextCursor: rec.nextCursor }
   }
   return { tools }
+}
+
+function parseListResourcesResult(raw: unknown): import('./types').McpResource[] {
+  if (!raw || typeof raw !== 'object' || !('resources' in raw) || !Array.isArray((raw as { resources: unknown }).resources)) {
+    return []
+  }
+  const out: import('./types').McpResource[] = []
+  for (const item of (raw as { resources: unknown[] }).resources) {
+    if (!item || typeof item !== 'object') continue
+    const rec = item as { uri?: unknown; name?: unknown; mimeType?: unknown; description?: unknown }
+    if (typeof rec.uri !== 'string' || rec.uri.length === 0) continue
+    const row: import('./types').McpResource = { uri: rec.uri }
+    if (typeof rec.name === 'string') row.name = rec.name
+    if (typeof rec.mimeType === 'string') row.mimeType = rec.mimeType
+    if (typeof rec.description === 'string') row.description = rec.description
+    out.push(row)
+  }
+  return out
+}
+
+function parseReadResourceResult(raw: unknown, uri: string): import('./types').McpResourceContents {
+  if (!raw || typeof raw !== 'object') return { uri }
+  const rec = raw as { contents?: unknown }
+  const first = Array.isArray(rec.contents) ? rec.contents[0] : raw
+  if (!first || typeof first !== 'object') return { uri }
+  const item = first as { uri?: unknown; mimeType?: unknown; text?: unknown; blob?: unknown }
+  const out: import('./types').McpResourceContents = {
+    uri: typeof item.uri === 'string' && item.uri.length > 0 ? item.uri : uri,
+  }
+  if (typeof item.mimeType === 'string') out.mimeType = item.mimeType
+  if (typeof item.text === 'string') out.text = item.text
+  if (typeof item.blob === 'string') out.blob = item.blob
+  return out
 }
 
 function normalizeToolDescriptor(item: unknown): McpToolDescriptor | undefined {

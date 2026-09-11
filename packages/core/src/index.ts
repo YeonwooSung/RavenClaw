@@ -71,6 +71,11 @@ export { compactSummary, mechanicalSummary, summarizeSpan } from './compact/summ
 export { editTool } from './tools/edit'
 export { writeTool } from './tools/write'
 export { bashTool, createBashTool, matchesDangerousPattern } from './tools/bash'
+export { taskOutputTool, taskStopTool } from './tools/task'
+export { createTaskRegistry, formatTasksNotice, parseTasksArg } from './tasks/registry'
+export type { TaskRegistry, TaskSnapshot } from './tasks/registry'
+export { createFileHistory, formatUndoNotice } from './session/file-history'
+export type { FileHistory, UndoResult } from './session/file-history'
 export {
   createDockerTerminalBackend,
   createLocalTerminalBackend,
@@ -96,7 +101,10 @@ export {
 } from './tools/skill'
 export type { DiscoveredSkill, SkillInput } from './tools/skill'
 export { createMcpToolBridge, createStdioMcpTransport } from './mcp/client'
+export { createHttpMcpTransport } from './mcp/http'
+export { createMcpResourceTools } from './mcp/resources'
 export { loadMcpTools, mergeToolPool, wrapMcpTools } from './mcp/tools'
+export type { McpResource, McpToolBridge, McpToolDescriptor, McpTransport } from './mcp/types'
 export { getAgentDefinition, agentCatalog } from './agent/catalog'
 export { loadDiskAgents } from './agent/load'
 export { fileFinderAgent } from './agent/file-finder'

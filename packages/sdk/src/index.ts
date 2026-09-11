@@ -21,6 +21,8 @@ import {
   ravenclawHome,
   readTool,
   skillTool,
+  taskOutputTool,
+  taskStopTool,
   todoWriteTool,
   VLLM_DEFAULT_BASE_URL,
   writeTool,
@@ -94,6 +96,8 @@ export function createRootTools(store: SessionStore, bash: Tool = bashTool): Too
     skillTool,
     fetchTool,
     todoWriteTool,
+    taskOutputTool,
+    taskStopTool,
     plan.enter,
     plan.exit,
   ]

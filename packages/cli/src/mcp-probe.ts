@@ -10,7 +10,9 @@ export async function formatMcpToolsReport(
   for (const server of servers) {
     const loaded = await load([server])
     try {
-      const names = loaded.tools.map((tool) => tool.name)
+      const names = loaded.tools
+        .map((tool) => tool.name)
+        .filter((name) => name !== 'ListMcpResources' && name !== 'ReadMcpResource')
       lines.push(
         names.length === 0
           ? `${server.name}  (no tools or failed)`

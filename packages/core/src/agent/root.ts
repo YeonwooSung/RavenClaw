@@ -13,6 +13,8 @@ export const rootAgent: AgentDefinition = {
     'Skill',
     'Fetch',
     'TodoWrite',
+    'TaskOutput',
+    'TaskStop',
     'Agent',
     'EnterPlanMode',
     'ExitPlanMode',

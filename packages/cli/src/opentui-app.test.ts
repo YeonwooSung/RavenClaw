@@ -1,13 +1,15 @@
 import { describe, expect, test } from 'bun:test'
-import type {
-  Message,
-  PermissionRule,
-  RoundEnd,
-  SessionEngine,
-  SessionListFilter,
-  SessionRecord,
-  SessionStore,
-  StreamEvent,
+import {
+  createFileHistory,
+  createTaskRegistry,
+  type Message,
+  type PermissionRule,
+  type RoundEnd,
+  type SessionEngine,
+  type SessionListFilter,
+  type SessionRecord,
+  type SessionStore,
+  type StreamEvent,
 } from '@ravenclaw/core'
 import { createAskBridge, type AskBridge, type CliRuntime } from './engine'
 import { runOpenTuiApp } from './opentui-app'
@@ -106,6 +108,12 @@ function fakeEngine(
   return {
     get session() {
       return session
+    },
+    tasks: createTaskRegistry(),
+    fileHistory: createFileHistory(session.id),
+    enqueueSteer() {},
+    drainSteering() {
+      return []
     },
     submitMessage: submit,
     async compactNow() {},

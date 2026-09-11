@@ -71,6 +71,7 @@ export const editTool: Tool<EditInput, string> = {
     }
 
     try {
+      ctx.fileHistory?.snapshot(resolved)
       writeFileSync(resolved, text.replace(input.old_string, input.new_string), 'utf8')
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)

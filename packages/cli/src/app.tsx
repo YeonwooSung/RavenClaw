@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Box, Text, useApp, useInput } from 'ink'
 import {
   cyclePermissionMode,
+  formatTasksNotice,
+  formatUndoNotice,
+  parseTasksArg,
   type Funding,
   type PermissionMode,
   type SessionRecord,
@@ -25,6 +28,7 @@ import { formatCostNotice } from './cost-format'
 import { formatMcpList } from './mcp-list'
 import { runSessionReview } from './review'
 import { searchNotice } from './search'
+import { collectUserImages, readClipboardImage } from './image-paste'
 import { formatSkillsList } from './skills-list'
 import { Composer } from './composer'
 import { applySessionTitle } from './resume'
@@ -118,7 +122,9 @@ export function App(props: AppProps) {
   const runTurn = useCallback(
     async (text: string) => {
       if (busyRef.current) {
-        queueRef.current.push(text)
+        runtimeRef.current.engine.enqueueSteer(text)
+        setNotice('steered (next round)')
+        setRows((prev) => [...prev, { kind: 'status', message: `steered: ${text}` }])
         return
       }
       busyRef.current = true
@@ -126,7 +132,12 @@ export function App(props: AppProps) {
       setNotice(undefined)
       setRows((prev) => [...prev, { kind: 'user', text }])
       try {
-        const gen = runtimeRef.current.engine.submitMessage(text)
+        const payload = collectUserImages(
+          text,
+          runtimeRef.current.cwd,
+          readClipboardImage,
+        )
+        const gen = runtimeRef.current.engine.submitMessage(payload)
         while (true) {
           const next = await gen.next()
           if (next.done) break
@@ -148,8 +159,12 @@ export function App(props: AppProps) {
         syncSession()
         busyRef.current = false
         setBusy(false)
-        const queued = queueRef.current.shift()
-        if (queued !== undefined) void runTurn(queued)
+        const leftover = runtimeRef.current.engine.drainSteering()
+        if (leftover.length > 0) void runTurn(leftover.join('\n'))
+        else {
+          const queued = queueRef.current.shift()
+          if (queued !== undefined) void runTurn(queued)
+        }
       }
     },
     [syncSession],
@@ -175,7 +190,11 @@ export function App(props: AppProps) {
     (line: string) => {
       const parsed = handleSlashCommand(line)
       if (parsed.type === 'prompt') {
-        if (parsed.text === '') return
+        if (parsed.text === '') {
+          if (!readClipboardImage()) return
+          void runTurn('')
+          return
+        }
         void runTurn(parsed.text)
         return
       }
@@ -236,9 +255,21 @@ export function App(props: AppProps) {
           setNotice(RELOAD_NOTICE)
           return
         }
-        case 'tasks':
-          setNotice(TASKS_NOTICE)
+        case 'tasks': {
+          const parsedTasks = parseTasksArg(parsed.arg)
+          if (parsedTasks.action === 'kill') {
+            const stopped = runtimeRef.current.engine.tasks.kill(parsedTasks.id)
+            setNotice(stopped ? `stopped ${stopped.id}` : `unknown task ${parsedTasks.id}`)
+            return
+          }
+          const listed = runtimeRef.current.engine.tasks.list()
+          setNotice(listed.length === 0 ? TASKS_NOTICE : formatTasksNotice(listed))
           return
+        }
+        case 'undo': {
+          setNotice(formatUndoNotice(runtimeRef.current.engine.fileHistory.undo()))
+          return
+        }
         case 'permissions':
           void runtimeRef.current.store
             .listPermissionRules(runtimeRef.current.engine.session.id)

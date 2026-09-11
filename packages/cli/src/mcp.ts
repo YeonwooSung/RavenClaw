@@ -1,9 +1,12 @@
 import { spawn } from 'node:child_process'
 import {
+  createHttpMcpTransport,
+  createMcpResourceTools,
   createMcpToolBridge,
   createStdioMcpTransport,
   loadMcpTools,
   type McpServerConfig,
+  type McpToolBridge,
   type Tool,
 } from '@ravenclaw/core'
 
@@ -30,12 +33,14 @@ export type McpSpawnFn = (
 export interface LoadedMcpTools {
   tools: Tool[]
   close: () => Promise<void>
+  bridge?: McpToolBridge
 }
 
 export function spawnMcpServer(
   server: Pick<McpServerConfig, 'command' | 'args' | 'env'>,
   spawnFn: McpSpawnFn = spawn as unknown as McpSpawnFn,
 ): McpChild {
+  if (!server.command) throw new Error('mcp stdio missing command')
   return spawnFn(server.command, server.args ?? [], {
     stdio: ['pipe', 'pipe', 'ignore'],
     env: { ...process.env, ...server.env },
@@ -50,14 +55,19 @@ export async function loadConfiguredMcpTools(
   const tools: Tool[] = []
   const closers: Array<() => Promise<void>> = []
 
+  const hosts: Array<{ name: string; bridge: McpToolBridge }> = []
   for (const server of servers) {
     try {
       const loaded = await loadOneMcpServer(server, spawnFn)
       tools.push(...loaded.tools)
       closers.push(loaded.close)
+      if (loaded.bridge) hosts.push({ name: server.name, bridge: loaded.bridge })
     } catch {
       // fail-open: skip this server
     }
+  }
+  if (hosts.length > 0) {
+    tools.push(...createMcpResourceTools(hosts))
   }
 
   return {
@@ -75,6 +85,40 @@ export async function loadConfiguredMcpTools(
 }
 
 async function loadOneMcpServer(
+  server: McpServerConfig,
+  spawnFn: McpSpawnFn,
+): Promise<LoadedMcpTools> {
+  if (server.type === 'http' || server.type === 'sse' || (server.url && !server.command)) {
+    return loadHttpMcpServer(server)
+  }
+  return loadStdioMcpServer(server, spawnFn)
+}
+
+async function loadHttpMcpServer(server: McpServerConfig): Promise<LoadedMcpTools> {
+  if (!server.url) throw new Error('mcp http missing url')
+  const transport = createHttpMcpTransport({
+    url: server.url,
+    ...(server.headers !== undefined ? { headers: server.headers } : {}),
+    ...(server.type === 'sse' ? { mode: 'sse' as const } : { mode: 'http' as const }),
+  })
+  const bridge = createMcpToolBridge(transport)
+  const close = async () => {
+    try {
+      await bridge.close()
+    } catch {
+      // fail-open
+    }
+  }
+  try {
+    const tools = await loadMcpTools(bridge)
+    return { tools, close, bridge }
+  } catch (error) {
+    await close()
+    throw error
+  }
+}
+
+async function loadStdioMcpServer(
   server: McpServerConfig,
   spawnFn: McpSpawnFn,
 ): Promise<LoadedMcpTools> {
@@ -108,7 +152,7 @@ async function loadOneMcpServer(
 
   try {
     const tools = await raceChildFailure(child, loadMcpTools(bridge))
-    return { tools, close }
+    return { tools, close, bridge }
   } catch (error) {
     await close()
     throw error

@@ -50,6 +50,8 @@ describe('handleSlashCommand', () => {
     ['/model anthropic/claude-sonnet-4', { type: 'command', name: 'model', arg: 'anthropic/claude-sonnet-4' }],
     ['/permissions', { type: 'command', name: 'permissions' }],
     ['/tasks', { type: 'command', name: 'tasks' }],
+    ['/tasks kill b_abc', { type: 'command', name: 'tasks', arg: 'kill b_abc' }],
+    ['/undo', { type: 'command', name: 'undo' }],
     ['/reload', { type: 'command', name: 'reload' }],
     ['/mcp', { type: 'command', name: 'mcp' }],
     ['/skills', { type: 'command', name: 'skills' }],
@@ -82,6 +84,7 @@ describe('handleSlashCommand', () => {
     expect(SLASH_HELP).toContain('/model')
     expect(SLASH_HELP).toContain('/permissions')
     expect(SLASH_HELP).toContain('/tasks')
+    expect(SLASH_HELP).toContain('/undo')
     expect(SLASH_HELP).toContain('/reload')
     expect(SLASH_HELP).toContain('/mcp')
     expect(SLASH_HELP).toContain('/skills')
@@ -105,6 +108,7 @@ describe('handleSlashCommand', () => {
       'model',
       'permissions',
       'tasks',
+      'undo',
       'reload',
       'mcp',
       'skills',

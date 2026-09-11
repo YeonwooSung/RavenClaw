@@ -51,6 +51,8 @@ describe('rootAgent', () => {
       'Skill',
       'Fetch',
       'TodoWrite',
+      'TaskOutput',
+      'TaskStop',
       'Agent',
       'EnterPlanMode',
       'ExitPlanMode',
@@ -163,6 +165,8 @@ describe('child tools', () => {
       'Skill',
       'Fetch',
       'TodoWrite',
+      'TaskOutput',
+      'TaskStop',
     ])
     expect(childToolNames(generalAgent)).toEqual(generalAgent.toolNames)
   })
