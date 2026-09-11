@@ -10,6 +10,7 @@ Usage:
   raven acp [options]
   raven setup
   raven smoke
+  raven sessions
   raven --help
   raven --version
 
@@ -19,6 +20,7 @@ Commands:
   acp           Agent Client Protocol on stdin/stdout; forces --dont-ask
   setup         Write ~/.ravenclaw/.env (provider + API key)
   smoke         One live turn (requires a key); expects the model to say pong
+  sessions      List recent sessions for this directory (no API key)
 
 Options:
   --provider <anthropic|openai_compat>

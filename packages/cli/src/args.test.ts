@@ -80,6 +80,10 @@ describe('parseArgv', () => {
     expect(parseArgv(['setup'])).toEqual({ cmd: 'setup', flags: {} })
   })
 
+  test('sessions lists without forcing dontAsk', () => {
+    expect(parseArgv(['sessions'])).toEqual({ cmd: 'sessions', flags: {} })
+  })
+
   test('smoke selects smoke and forces dontAsk', () => {
     expect(parseArgv(['smoke'])).toEqual({ cmd: 'smoke', flags: { dontAsk: true } })
   })

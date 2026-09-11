@@ -10,6 +10,7 @@ import { bootCli } from './engine'
 import { runExec } from './exec'
 import { SETUP_HINT, providerConfigured, runFirstRun } from './first-run'
 import { readSecretLine } from './secret-input'
+import { formatResumeSessionLine, listCliSessions } from './resume'
 import { runOpenTuiApp } from './opentui-app'
 import { SMOKE_PROMPT, evaluateSmoke } from './smoke'
 
@@ -36,6 +37,16 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   }
   if (parsed.cmd === 'version') {
     process.stdout.write(`${formatVersion()}\n`)
+    return 0
+  }
+
+  if (parsed.cmd === 'sessions') {
+    const rows = await listCliSessions()
+    if (rows.length === 0) {
+      process.stdout.write('no sessions\n')
+      return 0
+    }
+    for (const row of rows) process.stdout.write(`${formatResumeSessionLine(row)}\n`)
     return 0
   }
 
