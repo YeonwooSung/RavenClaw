@@ -4,11 +4,13 @@ import { parseArgv } from './args'
 import { App } from './app'
 import { bootCli } from './engine'
 import { runExec } from './exec'
+import { runOpenTuiApp } from './opentui-app'
 
 export { parseArgv } from './args'
 export { handleSlashCommand, LEARN_PROMPT } from './commands'
 export { formatStatusLine } from './status-line'
 export { runExec } from './exec'
+export { runOpenTuiApp } from './opentui-app'
 
 export async function main(argv = process.argv.slice(2)): Promise<number> {
   let parsed
@@ -41,6 +43,9 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
 
   try {
     const runtime = await bootCli({ flags: parsed.flags })
+    if (parsed.cmd === 'interactive' && parsed.tui === 'opentui') {
+      return await runOpenTuiApp(runtime)
+    }
     const instance = render(createElement(App, { runtime }))
     await instance.waitUntilExit()
     return 0

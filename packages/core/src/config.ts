@@ -17,6 +17,17 @@ export interface IncludedConfig {
   gatewayUrl: string
 }
 
+export interface McpServerConfig {
+  name: string
+  command: string
+  args?: string[]
+  env?: Record<string, string>
+}
+
+export interface McpConfig {
+  servers: McpServerConfig[]
+}
+
 export interface RavenClawConfig {
   model: string
   provider: ProviderKind
@@ -29,6 +40,7 @@ export interface RavenClawConfig {
   contextWindow?: number
   prices?: Record<string, ModelPriceFields>
   terminal?: TerminalConfig
+  mcp: McpConfig
 }
 
 export interface ModelPriceFields {
@@ -78,6 +90,7 @@ export function defaultConfig(): RavenClawConfig {
     compact: { enabled: true, llmSummarize: true },
     ads: { feedUrl: '' },
     included: { gatewayUrl: '' },
+    mcp: { servers: [] },
   }
 }
 
@@ -139,6 +152,9 @@ export function parseConfigYaml(text: string): Partial<RavenClawConfig> {
       out.terminal = terminal
     }
   }
+
+  const mcpRaw = asMap(raw.mcp)
+  if (mcpRaw) out.mcp = parseMcpConfig(mcpRaw)
 
   const contextWindow = asNumber(raw.contextWindow)
   if (contextWindow !== undefined) out.contextWindow = contextWindow
@@ -227,6 +243,7 @@ export function loadConfig(opts?: { home?: string; flags?: ConfigFlags }): Resol
     },
     ads: { feedUrl: parsed.ads?.feedUrl ?? base.ads.feedUrl },
     included: { gatewayUrl: parsed.included?.gatewayUrl ?? base.included?.gatewayUrl ?? '' },
+    mcp: { servers: parsed.mcp?.servers ?? base.mcp.servers },
     home,
     env,
     profile: getModelProfile(model, profileOverrides(model, parsed)),
@@ -319,6 +336,45 @@ function asMap(value: unknown): Record<string, unknown> | undefined {
   return value as Record<string, unknown>
 }
 
+function asStringList(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const out: string[] = []
+  for (const item of value) {
+    if (typeof item === 'string') out.push(item)
+    else if (typeof item === 'number' && Number.isFinite(item)) out.push(String(item))
+  }
+  return out
+}
+
+function parseMcpConfig(raw: Record<string, unknown>): McpConfig {
+  const servers: McpServerConfig[] = []
+  if (Array.isArray(raw.servers)) {
+    for (const item of raw.servers) {
+      const rec = asMap(item)
+      if (!rec) continue
+      const name = asString(rec.name)
+      const command = asString(rec.command)
+      if (name === undefined || name === '' || command === undefined || command === '') continue
+      const server: McpServerConfig = { name, command }
+      const args = asStringList(rec.args)
+      if (args !== undefined) server.args = args
+      const envRaw = asMap(rec.env)
+      if (envRaw) {
+        const env: Record<string, string> = {}
+        for (const [key, value] of Object.entries(envRaw)) {
+          const text = asString(value)
+          if (text !== undefined) env[key] = text
+          else if (typeof value === 'number' && Number.isFinite(value)) env[key] = String(value)
+          else if (typeof value === 'boolean') env[key] = value ? 'true' : 'false'
+        }
+        server.env = env
+      }
+      servers.push(server)
+    }
+  }
+  return { servers }
+}
+
 function stripWrappingQuotes(value: string): string {
   if (value.length >= 2) {
     const start = value[0]
@@ -363,7 +419,7 @@ function parseYamlBlock(
       const next = nextMeaningful(lines, i)
       const nextIndent = next === undefined ? -1 : leadingSpaces(lines[next] ?? '')
       if (next !== undefined && nextIndent > indent) {
-        const nested = parseYamlBlock(lines, i, nextIndent)
+        const nested = parseYamlNested(lines, i, nextIndent)
         out[parsed.key] = nested.value
         i = nested.next
       } else {
@@ -388,6 +444,86 @@ function parseKeyedLine(content: string): { key: string; value: YamlValue | unde
   return { key, value: parseYamlScalar(rest) }
 }
 
+function parseYamlNested(
+  lines: string[],
+  start: number,
+  minIndent: number,
+): { value: YamlValue; next: number } {
+  const next = nextMeaningful(lines, start)
+  if (next === undefined) return { value: null, next: start }
+  const indent = leadingSpaces(lines[next] ?? '')
+  if (indent < minIndent) return { value: null, next: start }
+  const content = (lines[next] ?? '').slice(indent)
+  if (isYamlListItem(content)) return parseYamlList(lines, start, indent)
+  return parseYamlBlock(lines, start, indent)
+}
+
+function parseYamlList(
+  lines: string[],
+  start: number,
+  minIndent: number,
+): { value: YamlValue[]; next: number } {
+  const out: YamlValue[] = []
+  let i = start
+  while (i < lines.length) {
+    const raw = lines[i] ?? ''
+    if (isBlankOrComment(raw)) {
+      i++
+      continue
+    }
+    const indent = leadingSpaces(raw)
+    if (indent < minIndent) break
+    if (indent > minIndent) {
+      i++
+      continue
+    }
+    const content = raw.slice(indent)
+    if (!isYamlListItem(content)) break
+    const rest = content.replace(/^-/, '').trim()
+    i++
+    if (rest === '') {
+      const next = nextMeaningful(lines, i)
+      const nextIndent = next === undefined ? -1 : leadingSpaces(lines[next] ?? '')
+      if (next !== undefined && nextIndent > indent) {
+        const nested = parseYamlNested(lines, i, nextIndent)
+        out.push(nested.value)
+        i = nested.next
+      } else {
+        out.push(null)
+      }
+      continue
+    }
+    const keyed = parseKeyedLine(rest)
+    if (keyed) {
+      const item: Record<string, YamlValue> = {}
+      if (keyed.value === undefined) {
+        const next = nextMeaningful(lines, i)
+        const nextIndent = next === undefined ? -1 : leadingSpaces(lines[next] ?? '')
+        if (next !== undefined && nextIndent > indent) {
+          const nested = parseYamlNested(lines, i, nextIndent)
+          item[keyed.key] = nested.value
+          i = nested.next
+        } else {
+          item[keyed.key] = null
+        }
+      } else {
+        item[keyed.key] = keyed.value
+      }
+      const siblings = parseYamlBlock(lines, i, indent + 1)
+      Object.assign(item, siblings.value)
+      i = siblings.next
+      out.push(item)
+    } else {
+      out.push(parseYamlScalar(rest))
+    }
+  }
+  return { value: out, next: i }
+}
+
+function isYamlListItem(content: string): boolean {
+  return content === '-' || content.startsWith('- ')
+}
+
 function parseYamlScalar(raw: string): YamlValue {
   const text = stripYamlComment(raw).trim()
   if (text === '' || text === '~' || text === 'null' || text === 'Null' || text === 'NULL') {
@@ -397,6 +533,9 @@ function parseYamlScalar(raw: string): YamlValue {
   if (text === 'false' || text === 'False' || text === 'FALSE') return false
   if (text.startsWith('{') && text.endsWith('}')) {
     return parseInlineMap(text)
+  }
+  if (text.startsWith('[') && text.endsWith(']')) {
+    return parseInlineList(text)
   }
   if (
     (text.startsWith('"') && text.endsWith('"') && text.length >= 2) ||
@@ -408,6 +547,21 @@ function parseYamlScalar(raw: string): YamlValue {
     return Number(text)
   }
   return text
+}
+
+function parseInlineList(text: string): YamlValue[] {
+  const inner = text.slice(1, -1).trim()
+  if (inner === '') return []
+  const out: YamlValue[] = []
+  let i = 0
+  while (i < inner.length) {
+    while (i < inner.length && (inner[i] === ' ' || inner[i] === ',')) i++
+    if (i >= inner.length) break
+    const valuePart = readInlineValue(inner, i)
+    out.push(valuePart.value)
+    i = valuePart.next
+  }
+  return out
 }
 
 function parseInlineMap(text: string): Record<string, YamlValue> {
@@ -461,6 +615,21 @@ function readInlineValue(
       i++
     }
     return { value: parseInlineMap(text.slice(start)), next: text.length }
+  }
+  if (text[start] === '[') {
+    let depth = 0
+    let i = start
+    while (i < text.length) {
+      if (text[i] === '[') depth++
+      else if (text[i] === ']') {
+        depth--
+        if (depth === 0) {
+          return { value: parseInlineList(text.slice(start, i + 1)), next: i + 1 }
+        }
+      }
+      i++
+    }
+    return { value: parseInlineList(text.slice(start)), next: text.length }
   }
   if (text[start] === '"' || text[start] === "'") {
     const quote = text[start]

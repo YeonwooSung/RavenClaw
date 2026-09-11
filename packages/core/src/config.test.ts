@@ -58,6 +58,7 @@ describe('defaultConfig', () => {
     expect(cfg.ads.feedUrl).toBe('')
     expect(cfg.included).toEqual({ gatewayUrl: '' })
     expect(cfg.terminal).toBeUndefined()
+    expect(cfg.mcp).toEqual({ servers: [] })
   })
 })
 
@@ -73,6 +74,7 @@ describe('loadConfig', () => {
     expect(cfg.permissionMode).toBe('default')
     expect(cfg.ads.feedUrl).toBe('')
     expect(cfg.included).toEqual({ gatewayUrl: '' })
+    expect(cfg.mcp).toEqual({ servers: [] })
     expect(cfg.home).toBe(home)
   })
 
@@ -270,6 +272,33 @@ describe('loadConfig', () => {
     const cfg = loadConfig({ home })
     expect(cfg.terminal).toEqual({ backend: 'docker', image: 'bash:5' })
   })
+
+  test('yaml mcp.servers flows into resolved config', () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test'
+    const home = tempHome()
+    writeFileSync(
+      join(home, 'config.yaml'),
+      [
+        'provider: anthropic',
+        'mcp:',
+        '  servers:',
+        '    - name: filesystem',
+        '      command: npx',
+        '      args: ["-y", "@modelcontextprotocol/server-filesystem", "."]',
+        '      env: { FOO: "bar" }',
+        '',
+      ].join('\n'),
+    )
+    const cfg = loadConfig({ home })
+    expect(cfg.mcp.servers).toEqual([
+      {
+        name: 'filesystem',
+        command: 'npx',
+        args: ['-y', '@modelcontextprotocol/server-filesystem', '.'],
+        env: { FOO: 'bar' },
+      },
+    ])
+  })
 })
 
 describe('resolveProviderModel', () => {
@@ -318,6 +347,57 @@ describe('parseConfigYaml', () => {
       ].join('\n'),
     )
     expect(parsed.terminal).toEqual({ backend: 'docker', image: 'alpine:3.20' })
+  })
+
+  test('parses mcp.servers with name, command, optional args and env', () => {
+    const parsed = parseConfigYaml(
+      [
+        'mcp:',
+        '  servers:',
+        '    - name: filesystem',
+        '      command: npx',
+        '      args: ["-y", "@modelcontextprotocol/server-filesystem", "."]',
+        '      env: { FOO: "bar" }',
+        '    - name: git',
+        '      command: uvx',
+        '      args:',
+        '        - mcp-server-git',
+        '',
+      ].join('\n'),
+    )
+    expect(parsed.mcp?.servers).toEqual([
+      {
+        name: 'filesystem',
+        command: 'npx',
+        args: ['-y', '@modelcontextprotocol/server-filesystem', '.'],
+        env: { FOO: 'bar' },
+      },
+      {
+        name: 'git',
+        command: 'uvx',
+        args: ['mcp-server-git'],
+      },
+    ])
+  })
+
+  test('absent mcp key is left unset so loadConfig defaults to no servers', () => {
+    const parsed = parseConfigYaml('model: anthropic/claude-sonnet-4\n')
+    expect(parsed.mcp).toBeUndefined()
+  })
+
+  test('skips mcp servers that lack name or command', () => {
+    const parsed = parseConfigYaml(
+      [
+        'mcp:',
+        '  servers:',
+        '    - name: only-name',
+        '    - command: only-command',
+        '    - name: ok',
+        '      command: npx',
+        '',
+      ].join('\n'),
+    )
+    expect(parsed.mcp?.servers).toEqual([{ name: 'ok', command: 'npx' }])
   })
 })
 

@@ -1,2 +1,2 @@
 export type { TuiView } from './render'
-export { createOpenTuiView } from './render'
+export { composerLine, createOpenTuiView, permissionPromptLines } from './render'

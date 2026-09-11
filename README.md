@@ -44,7 +44,14 @@ terminal:
   image: bash:5              # required when backend is docker
 ads:
   feedUrl: ""                # empty ⇒ no ad network; house floor only if included
+mcp:
+  servers:
+    - name: filesystem
+      command: npx
+      args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
 ```
+
+A server that fails to spawn or list tools is skipped; RavenClaw still boots. Built-in tool names win if an MCP tool collides.
 
 Optional memory files (context snapshot, 8k/file, 16k total): `~/.ravenclaw/USER.md`, `~/.ravenclaw/MEMORY.md`, and the same names under the project root or `.ravenclaw/`.
 
@@ -56,6 +63,7 @@ Interactive TUI:
 
 ```bash
 bun run raven
+bun run raven --tui opentui
 ```
 
 Headless (forces `dontAsk`):
@@ -65,7 +73,7 @@ bun run raven exec "list the TypeScript files in this repo"
 bun run raven exec --json "summarize README.md"
 ```
 
-Useful flags: `--dont-ask`, `--provider anthropic`, `--model anthropic/claude-sonnet-4`.
+Useful flags: `--dont-ask`, `--provider anthropic`, `--model anthropic/claude-sonnet-4`, `--tui ink|opentui`.
 
 This process is the same OS user as you. There is no network sandbox. Writes under `~/.ssh/id_*` and `$RAVENCLAW_HOME/state.db` are hard-denied; `.env` writes ask first.
 

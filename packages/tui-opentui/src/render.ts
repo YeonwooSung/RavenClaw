@@ -4,6 +4,7 @@ export interface TuiView {
   apply(event: StreamEvent): void
   lines(): string[]
   reset(): void
+  append(text: string): void
 }
 
 type Row =
@@ -24,7 +25,20 @@ export function createOpenTuiView(): TuiView {
     reset() {
       rows = []
     },
+    append(text) {
+      rows = label(rows, text)
+    },
   }
+}
+
+export function composerLine(draft = '', busy = false): string {
+  return `${busy ? '… ' : '> '}${draft}`
+}
+
+export function permissionPromptLines(
+  event: Extract<StreamEvent, { type: 'permission_ask' }>,
+): string[] {
+  return [`Allow ${event.tool}?`, event.message, 'y allow   n deny   a always']
 }
 
 function applyEvent(rows: Row[], event: StreamEvent): Row[] {

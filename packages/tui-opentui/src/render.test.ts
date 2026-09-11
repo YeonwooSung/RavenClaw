@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { StreamEvent } from '@ravenclaw/core'
-import { createOpenTuiView } from './render'
+import { composerLine, createOpenTuiView, permissionPromptLines } from './render'
 
 function walk(dir: string): string[] {
   const out: string[] = []
@@ -164,6 +164,30 @@ describe('createOpenTuiView', () => {
     const first = view.lines()
     first.push('mutated')
     expect(view.lines()).toEqual(['Hello'])
+  })
+
+  test('append adds a labeled line without breaking the current assistant row', () => {
+    const view = createOpenTuiView()
+    view.append('you  hi')
+    view.apply({ type: 'text_delta', text: 'Hello' })
+    expect(view.lines()).toEqual(['you  hi', 'Hello'])
+  })
+})
+
+describe('composer and permission helpers', () => {
+  test('composerLine shows a prompt or busy marker', () => {
+    expect(composerLine()).toBe('> ')
+    expect(composerLine('draft')).toBe('> draft')
+    expect(composerLine('', true)).toBe('… ')
+    expect(
+      permissionPromptLines({
+        type: 'permission_ask',
+        id: 'p1',
+        tool: 'Bash',
+        input: { command: 'ls' },
+        message: 'run ls in /tmp',
+      }),
+    ).toEqual(['Allow Bash?', 'run ls in /tmp', 'y allow   n deny   a always'])
   })
 })
 

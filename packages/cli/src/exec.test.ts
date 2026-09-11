@@ -1,18 +1,22 @@
 import { describe, expect, test } from 'bun:test'
 import {
   createMemoryStore,
+  createMcpToolBridge,
   createSessionEngine,
   defaultCompactPolicy,
+  defaultConfig,
+  loadMcpTools,
   type ModelProfile,
   type Provider,
   type ProviderChunk,
   type ProviderRequest,
+  type ResolvedConfig,
   type SessionRecord,
   type StreamEvent,
   type SystemPart,
 } from '@ravenclaw/core'
 import { runExec } from './exec'
-import { createRootTools, createSessionTools } from './engine'
+import { createRootTools, createSessionTools, openEngine } from './engine'
 
 function defaultModel(id = 'dummy'): ModelProfile {
   return {
@@ -104,6 +108,44 @@ describe('createRootTools', () => {
       'ExitPlanMode',
       'Agent',
     ])
+  })
+
+  test('createSessionTools merges MCP tools after builtins and drops colliding Read', async () => {
+    const mcpTools = await loadMcpTools(
+      createMcpToolBridge({
+        async request(method) {
+          if (method === 'initialize') {
+            return { protocolVersion: '2025-03-26', capabilities: {}, serverInfo: { name: 't' } }
+          }
+          if (method === 'tools/list') {
+            return {
+              tools: [
+                { name: 'Read', description: 'collide', inputSchema: { type: 'object' } },
+                { name: 'mcp_ping', description: 'ping', inputSchema: { type: 'object' } },
+              ],
+            }
+          }
+          throw new Error(method)
+        },
+        async close() {},
+      }),
+    )
+    const store = createMemoryStore()
+    const names = createSessionTools({
+      store,
+      provider: createFakeProvider([]),
+      compact: defaultCompactPolicy(),
+      model: defaultModel(),
+      childMaxRounds: 30,
+      mcpTools,
+      async askUser() {
+        return 'deny'
+      },
+    }).map((tool) => tool.name)
+    expect(names.filter((name) => name === 'Read')).toHaveLength(1)
+    expect(names).toContain('Agent')
+    expect(names.at(-1)).toBe('mcp_ping')
+    expect(names.indexOf('mcp_ping')).toBeGreaterThan(names.indexOf('Agent'))
   })
 })
 
@@ -221,5 +263,36 @@ describe('runExec', () => {
 
     await runExec({ prompt: 'hi', engine, write: () => {} })
     expect(provider.requests[0]?.system).toEqual(system)
+  })
+})
+
+function testResolvedConfig(): ResolvedConfig {
+  return {
+    ...defaultConfig(),
+    home: '/tmp',
+    env: { ANTHROPIC_API_KEY: 'sk-test' },
+    profile: defaultModel('anthropic/claude-sonnet-4'),
+  }
+}
+
+describe('openEngine', () => {
+  test('does not spawn when mcp.servers is empty', async () => {
+    let spawned = 0
+    const store = createMemoryStore()
+    const { engine } = await openEngine({
+      provider: createFakeProvider([]),
+      store,
+      config: testResolvedConfig(),
+      cwd: '/tmp',
+      async askUser() {
+        return 'deny'
+      },
+      spawnMcp() {
+        spawned += 1
+        throw new Error('should not spawn')
+      },
+    })
+    expect(spawned).toBe(0)
+    expect(engine.session.cwd).toBe('/tmp')
   })
 })

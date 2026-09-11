@@ -20,6 +20,8 @@ export {
 } from './config'
 export type {
   ConfigFlags,
+  McpConfig,
+  McpServerConfig,
   ProviderKind,
   RavenClawConfig,
   ResolvedConfig,
@@ -83,7 +85,7 @@ export {
 } from './tools/skill'
 export type { DiscoveredSkill, SkillInput } from './tools/skill'
 export { createMcpToolBridge, createStdioMcpTransport } from './mcp/client'
-export { mergeToolPool, wrapMcpTools } from './mcp/tools'
+export { loadMcpTools, mergeToolPool, wrapMcpTools } from './mcp/tools'
 export { getAgentDefinition, agentCatalog } from './agent/catalog'
 export { fileFinderAgent } from './agent/file-finder'
 export { commandRunnerAgent } from './agent/command-runner'

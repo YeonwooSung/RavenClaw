@@ -14,6 +14,7 @@ import {
   globTool,
   grepTool,
   loadConfig,
+  mergeToolPool,
   readTool,
   resumeSession,
   skillTool,
@@ -33,6 +34,7 @@ import {
   type Tool,
 } from '@ravenclaw/core'
 import { createProvider } from '@ravenclaw/providers'
+import { loadConfiguredMcpTools, type McpSpawnFn } from './mcp'
 
 export function createRootTools(store: SessionStore, bash: Tool = bashTool): Tool[] {
   const plan = createPlanModeTools(store)
@@ -58,19 +60,24 @@ export function createSessionTools(opts: {
   childMaxRounds: number
   system?: SystemPart[]
   bash?: Tool
+  mcpTools?: Tool[]
 }): Tool[] {
   const base = createRootTools(opts.store, opts.bash ?? bashTool)
+  const mcpTools = opts.mcpTools ?? []
+  const childPool = mcpTools.length > 0 ? mergeToolPool(base, mcpTools) : base
   const agentOpts: Parameters<typeof createAgentTool>[0] = {
     store: opts.store,
     provider: opts.provider,
-    tools: base,
+    tools: childPool,
     compact: opts.compact,
     model: opts.model,
     askUser: opts.askUser,
     childMaxRounds: opts.childMaxRounds,
   }
   if (opts.system !== undefined) agentOpts.system = opts.system
-  return [...base, createAgentTool(agentOpts)]
+  const agent = createAgentTool(agentOpts)
+  if (mcpTools.length === 0) return [...base, agent]
+  return mergeToolPool([...base, agent], mcpTools)
 }
 
 export function compactPolicyFromConfig(compact: {
@@ -128,6 +135,7 @@ export interface CliRuntime {
   config: ResolvedConfig
   cwd: string
   ask: AskBridge
+  mcpCloser?: () => Promise<void>
 }
 
 export async function openEngine(opts: {
@@ -138,7 +146,8 @@ export async function openEngine(opts: {
   askUser: SessionEngineOptions['askUser']
   session?: SessionRecord
   messages?: Message[]
-}): Promise<SessionEngine> {
+  spawnMcp?: McpSpawnFn
+}): Promise<{ engine: SessionEngine; mcpCloser?: () => Promise<void> }> {
   const session = opts.session ?? newSessionRecord({
     cwd: opts.cwd,
     model: opts.config.model,
@@ -157,6 +166,16 @@ export async function openEngine(opts: {
       ...(terminal?.image !== undefined ? { image: terminal.image } : {}),
     }),
   )
+  const servers = opts.config.mcp?.servers ?? []
+  let mcpTools: Tool[] = []
+  let mcpCloser: (() => Promise<void>) | undefined
+  if (servers.length > 0) {
+    const loaded = await loadConfiguredMcpTools(servers, {
+      ...(opts.spawnMcp ? { spawn: opts.spawnMcp } : {}),
+    })
+    mcpTools = loaded.tools
+    mcpCloser = loaded.close
+  }
   const engineOpts: SessionEngineOptions = {
     session,
     provider: opts.provider,
@@ -170,6 +189,7 @@ export async function openEngine(opts: {
       childMaxRounds: opts.config.childMaxRounds,
       system,
       bash,
+      mcpTools,
     }),
     compact,
     model: opts.config.profile,
@@ -178,7 +198,7 @@ export async function openEngine(opts: {
     system,
   }
   if (opts.messages) engineOpts.messages = opts.messages
-  return createSessionEngine(engineOpts)
+  return { engine: createSessionEngine(engineOpts), mcpCloser }
 }
 
 export function providerFromConfig(config: ResolvedConfig): Provider {
@@ -215,14 +235,14 @@ export async function bootCli(opts: {
   const provider = providerFromConfig(config)
   const cwd = opts.cwd ?? process.cwd()
   const ask = opts.ask ?? createAskBridge()
-  const engine = await openEngine({
+  const { engine, mcpCloser } = await openEngine({
     provider,
     store,
     config,
     cwd,
     askUser: ask.ask,
   })
-  return { engine, store, provider, config, cwd, ask }
+  return { engine, store, provider, config, cwd, ask, mcpCloser }
 }
 
 export async function resumeRuntime(
@@ -230,7 +250,8 @@ export async function resumeRuntime(
   sessionId: string,
 ): Promise<CliRuntime> {
   const loaded = await resumeSession(runtime.store, sessionId)
-  const engine = await openEngine({
+  await runtime.mcpCloser?.()
+  const { engine, mcpCloser } = await openEngine({
     provider: runtime.provider,
     store: runtime.store,
     config: runtime.config,
@@ -239,7 +260,7 @@ export async function resumeRuntime(
     session: loaded.session,
     messages: loaded.messages,
   })
-  return { ...runtime, engine, cwd: loaded.session.cwd }
+  return { ...runtime, engine, cwd: loaded.session.cwd, mcpCloser }
 }
 
 export const PERMISSION_MODES = [

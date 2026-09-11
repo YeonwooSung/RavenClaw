@@ -2,16 +2,20 @@ import type { ConfigFlags, ProviderKind } from '@ravenclaw/core'
 
 const PROVIDERS = new Set<ProviderKind>(['anthropic', 'openai_compat'])
 
+export type TuiKind = 'ink' | 'opentui'
+
 export interface ParsedArgv {
   cmd: 'interactive' | 'exec'
   prompt?: string
   json?: boolean
   flags: ConfigFlags
+  tui?: TuiKind
 }
 
 export function parseArgv(argv: string[]): ParsedArgv {
   let cmd: ParsedArgv['cmd'] = 'interactive'
   let json = false
+  let tui: TuiKind | undefined
   const flags: ConfigFlags = {}
   const positional: string[] = []
 
@@ -30,7 +34,20 @@ export function parseArgv(argv: string[]): ParsedArgv {
 
     const eq = splitEq(arg)
     if (eq) {
+      if (eq.key === 'tui') {
+        tui = parseTui(eq.value)
+        continue
+      }
       applyFlag(flags, eq.key, eq.value)
+      continue
+    }
+    if (arg === '--tui') {
+      const value = argv[i + 1]
+      if (value === undefined || value.startsWith('-')) {
+        throw new Error('--tui requires a value')
+      }
+      tui = parseTui(value)
+      i++
       continue
     }
     if (arg === '--provider' || arg === '--model') {
@@ -56,8 +73,14 @@ export function parseArgv(argv: string[]): ParsedArgv {
 
   const out: ParsedArgv = { cmd, flags }
   if (json) out.json = true
+  if (tui !== undefined) out.tui = tui
   if (positional.length > 0) out.prompt = positional.join(' ')
   return out
+}
+
+function parseTui(value: string): TuiKind {
+  if (value === 'ink' || value === 'opentui') return value
+  throw new Error(`unknown tui: ${value} (expected ink or opentui)`)
 }
 
 function splitEq(arg: string): { key: string; value: string } | undefined {

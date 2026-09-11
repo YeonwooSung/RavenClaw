@@ -65,4 +65,42 @@ describe('parseArgv', () => {
   test('rejects an unknown provider', () => {
     expect(() => parseArgv(['--provider', 'mystery'])).toThrow(/provider/)
   })
+
+  test('--tui opentui is recorded on ParsedArgv, not flags', () => {
+    expect(parseArgv(['--tui', 'opentui'])).toEqual({
+      cmd: 'interactive',
+      flags: {},
+      tui: 'opentui',
+    })
+  })
+
+  test('--tui=opentui and --tui ink are accepted', () => {
+    expect(parseArgv(['--tui=opentui'])).toEqual({
+      cmd: 'interactive',
+      flags: {},
+      tui: 'opentui',
+    })
+    expect(parseArgv(['--tui', 'ink'])).toEqual({
+      cmd: 'interactive',
+      flags: {},
+      tui: 'ink',
+    })
+    expect(parseArgv(['--tui=ink', '--model', 'claude'])).toEqual({
+      cmd: 'interactive',
+      flags: { model: 'claude' },
+      tui: 'ink',
+    })
+  })
+
+  test('omitting --tui leaves tui unset so the default Ink path is used', () => {
+    const parsed = parseArgv([])
+    expect(parsed).toEqual({ cmd: 'interactive', flags: {} })
+    expect(parsed.tui).toBeUndefined()
+  })
+
+  test('rejects an unknown or missing --tui value', () => {
+    expect(() => parseArgv(['--tui', 'mystery'])).toThrow(/tui/)
+    expect(() => parseArgv(['--tui'])).toThrow(/tui/)
+    expect(() => parseArgv(['--tui='])).toThrow(/tui/)
+  })
 })
