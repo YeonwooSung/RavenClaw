@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.1 — 2026-09-11
+
+CLI usability patch on top of 0.1.0. Same agent loop; easier to start without reading the README.
+
+### Added
+- `raven --help` / `--version` (`-h`, `-V`) without booting a session or needing a key
+- `raven setup` and first-run prompt write `~/.ravenclaw/.env` (mode 0600)
+- `/help` and `/?` inside Ink and OpenTUI list slash commands
+
+### Try it
+
+```bash
+git clone --branch v0.1.1 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+bun run raven --help
+bun run raven setup
+bun run raven
+```
+
 ## 0.1.0 — 2026-09-11
 
 First public release. RavenClaw is a local coding agent: it reads and edits a workspace, runs a shell, and resumes after a crash. Bring your own API key. There is no RavenClaw backend.

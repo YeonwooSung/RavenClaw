@@ -27,4 +27,4 @@ export interface McpStdioStreams {
 }
 
 export const MCP_PROTOCOL_VERSION = '2025-03-26'
-export const MCP_CLIENT_INFO = { name: 'ravenclaw', version: '0.1.0' } as const
+export const MCP_CLIENT_INFO = { name: 'ravenclaw', version: '0.1.1' } as const
