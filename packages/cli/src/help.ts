@@ -18,6 +18,7 @@ Usage:
   raven export <id>
   raven title <id> <name>
   raven doctor
+  raven config
   raven --help
   raven --version
 
@@ -35,6 +36,7 @@ Commands:
   export <id>   Print a session as Markdown (full tool bodies; no API key)
   title <id>    Set a session title (no API key)
   doctor        Check home, .env, config.yaml, and Bun (no secrets printed)
+  config        Print resolved settings with secrets redacted
 
 Options:
   --provider <anthropic|openai_compat>

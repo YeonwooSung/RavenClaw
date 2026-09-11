@@ -20,6 +20,7 @@ import {
   titleCliSession,
 } from './resume'
 import { runOpenTuiApp } from './opentui-app'
+import { formatPublicConfig } from './config-print'
 import { doctorFailed, formatDoctorReport, runDoctor } from './doctor'
 import { searchCliSessions } from './search'
 import { SMOKE_PROMPT, evaluateSmoke } from './smoke'
@@ -110,6 +111,11 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
       return 1
     }
+  }
+
+  if (parsed.cmd === 'config') {
+    process.stdout.write(`${formatPublicConfig({ flags: parsed.flags })}\n`)
+    return 0
   }
 
   if (parsed.cmd === 'doctor') {

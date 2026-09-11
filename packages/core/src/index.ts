@@ -16,6 +16,7 @@ export { ensureHomeDir, ravenclawHome } from './home'
 export {
   defaultConfig,
   loadConfig,
+  loadDotEnv,
   parseConfigYaml,
   resolveProviderModel,
 } from './config'
