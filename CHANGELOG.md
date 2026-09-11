@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.13 — 2026-09-11
+
+Export a session as Markdown, and list times in ISO-8601.
+
+### Added
+- `raven export <id>` prints a Markdown transcript with full tool bodies
+- Session lists (`sessions`, `show`, `/resume`) use ISO-8601 instead of unix milliseconds
+
+### Try it
+
+```bash
+git clone --branch v0.1.13 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+bun run raven export <id> > session.md
+```
+
 ## 0.1.12 — 2026-09-11
 
 Search saved sessions from the shell.
