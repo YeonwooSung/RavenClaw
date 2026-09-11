@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.23 — 2026-09-11
+
+List configured MCP servers without spawning them.
+
+### Added
+- `raven mcp` / `raven mcp list` prints name, command, args
+- Env is shown as key names only, never values
+- Empty config prints `no mcp servers`
+
+### Try it
+
+```bash
+git clone --branch v0.1.23 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+bun run raven mcp
+```
+
 ## 0.1.22 — 2026-09-11
 
 CI smokes no-key CLI commands.
