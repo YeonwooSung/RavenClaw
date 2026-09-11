@@ -4,7 +4,7 @@ import {
   createOpenTuiView,
   permissionPromptLines,
 } from '@ravenclaw/tui-opentui'
-import type { StreamEvent } from '@ravenclaw/core'
+import { buildSystemParts, type StreamEvent } from '@ravenclaw/core'
 import {
   LEARN_PROMPT,
   RELOAD_NOTICE,
@@ -175,6 +175,12 @@ export async function runOpenTuiApp(
           continue
         }
         case 'reload':
+          current.engine.reloadSystem(
+            buildSystemParts({
+              cwd: current.cwd,
+              permissionMode: current.engine.session.permissionMode,
+            }),
+          )
           write(`${RELOAD_NOTICE}\n`)
           continue
         case 'tasks':

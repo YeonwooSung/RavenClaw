@@ -27,7 +27,7 @@ describe('houseAds', () => {
 
   test('local floor body includes the included-privacy sentence', () => {
     const creative = houseAds({ hasPaidCapacityPlan: true })
-    expect(creative.body).toContain('never sent to the ad feed')
+    expect(creative.body).toContain(INCLUDED_PRIVACY)
     expect(creative.body).toContain(INCLUDED_PRIVACY)
   })
 })

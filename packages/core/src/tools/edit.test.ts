@@ -100,7 +100,7 @@ describe('Edit', () => {
     }
   })
 
-  test('dontAsk denies leftover ask', async () => {
+  test('dontAsk allows in-tree leftover Edit', async () => {
     const decision = await decidePermission({
       name: 'Edit',
       input: { path: 'a.txt', old_string: 'a', new_string: 'b' },
@@ -109,8 +109,7 @@ describe('Edit', () => {
       mode: 'dontAsk',
       rules: emptyRules,
     })
-    expect(decision.behavior).toBe('deny')
-    if (decision.behavior === 'deny') expect(decision.reason).toBe('mode')
+    expect(decision.behavior).toBe('allow')
   })
 
   test('fails without a prior Read and does not write', async () => {

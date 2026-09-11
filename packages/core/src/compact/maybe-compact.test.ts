@@ -138,6 +138,7 @@ async function makeState(over: {
     assistantMessage: null,
     toolResults: [],
     compactFailures: over.compactFailures ?? 0,
+    overflowCompacted: false,
   }
   return state
 }

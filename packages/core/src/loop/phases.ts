@@ -40,6 +40,7 @@ export interface LoopState extends QueryLoopOptions {
   assistantMessage: Extract<Message, { role: 'assistant' }> | null
   toolResults: Array<Extract<Message, { role: 'tool' }>>
   compactFailures: number
+  overflowCompacted: boolean
 }
 
 export type PhaseResult =
@@ -269,11 +270,12 @@ export async function* maybeCompact(
       sessionId: state.turn.sessionId,
       generation: state.turn.compactGeneration,
       summary,
-      cwd: state.turn.cwd,
+      cwd: state.turn.projectCwd ?? state.turn.cwd,
     })
     state.turn.messages = result.messages
     state.turn.compactGeneration = result.generation
     state.compactFailures = 0
+    state.overflowCompacted = true
     yield { type: 'compact', summary, generation: result.generation }
     return { action: 'continue' }
   } catch {
@@ -391,8 +393,8 @@ export async function* streamModel(
         return { action: 'continue' }
       }
       if (isContextOverflow(error)) {
-        if (compactRetried) {
-          return { action: 'return', end: { reason: 'model_error', error } }
+        if (compactRetried || state.overflowCompacted) {
+          return { action: 'return', end: { reason: 'context_full' } }
         }
         compactRetried = true
         const recovered = yield* reactiveCompact(state)
@@ -447,10 +449,11 @@ async function* reactiveCompact(
       sessionId: state.turn.sessionId,
       generation: state.turn.compactGeneration,
       summary,
-      cwd: state.turn.cwd,
+      cwd: state.turn.projectCwd ?? state.turn.cwd,
     })
     state.turn.messages = result.messages
     state.turn.compactGeneration = result.generation
+    state.overflowCompacted = true
     yield { type: 'compact', summary, generation: result.generation }
     return { ok: true, aborted: false }
   } catch (error) {

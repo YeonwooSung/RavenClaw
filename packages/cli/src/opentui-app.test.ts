@@ -110,6 +110,7 @@ function fakeEngine(
     submitMessage: submit,
     async compactNow() {},
     async setPermissionMode() {},
+    reloadSystem() {},
     abort() {},
   }
 }
@@ -371,7 +372,7 @@ describe('runOpenTuiApp', () => {
     })
     expect(code).toBe(0)
     const out = written.join('')
-    expect(out).toContain('skills reload on next turn')
+    expect(out).toContain('skills reloaded')
     expect(out).toContain('no background tasks')
     expect(out).toContain('no extra rules')
     expect(out).toContain('compact 2  messages 2')

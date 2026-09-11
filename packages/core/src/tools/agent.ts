@@ -2,7 +2,10 @@ import { queryLoop } from '../loop/query-loop'
 import { ABORTED_TEXT, INCOMPLETE_TEXT } from '../loop/pairing'
 import { isAbortError } from '../loop/abort'
 import { getAgentDefinition } from '../agent/catalog'
+import { loadDiskAgents } from '../agent/load'
 import { rootAgent } from '../agent/root'
+import { decidePermission } from '../permissions/pipeline'
+import { loadPermissionRules } from '../permissions/rules'
 import {
   addTokenUsage,
   boundChildResult,
@@ -91,7 +94,12 @@ export function createAgentTool(opts: {
     async execute(input: AgentInput, ctx: ToolContext) {
       if (ctx.signal.aborted) return ABORTED_TEXT
 
-      if (input.subagent !== undefined && !rootAgent.spawnableAgents.includes(input.subagent)) {
+      const projectCwd = ctx.turn.projectCwd ?? ctx.turn.cwd
+      const spawnable = new Set([
+        ...rootAgent.spawnableAgents,
+        ...loadDiskAgents(projectCwd).map((agent) => agent.id),
+      ])
+      if (input.subagent !== undefined && !spawnable.has(input.subagent)) {
         return `Subagent '${input.subagent}' is not spawnable`
       }
 
@@ -123,12 +131,19 @@ export function createAgentTool(opts: {
       const childTools = filterToolsForTurn(filterChildTools(opts.tools, definition), childTurn)
 
       try {
-        const oneShot = await maybeRunCommandRunner(input, definition, childTools, childTurn, ctx)
-        if (oneShot?.done) return oneShot.text
-        if (oneShot && !oneShot.done) appendCommandOutput(userMessage, oneShot.text)
-
         await opts.store.createSession(childSession)
         await opts.store.persistUser(childSession.id, userMessage)
+
+        const oneShot = await maybeRunCommandRunner(
+          input,
+          definition,
+          childTools,
+          childTurn,
+          ctx,
+          opts,
+        )
+        if (oneShot?.done) return oneShot.text
+        if (oneShot && !oneShot.done) appendCommandOutput(userMessage, oneShot.text)
 
         const loopOpts: QueryLoopOptions = {
           turn: childTurn,
@@ -294,6 +309,7 @@ async function maybeRunCommandRunner(
   childTools: Tool[],
   childTurn: Turn,
   ctx: ToolContext,
+  opts: { store: SessionStore; hooks?: PermissionHook[] },
 ): Promise<{ done: true; text: string } | { done: false; text: string } | undefined> {
   if (definition.id !== 'command-runner') return undefined
   const command = resolveCommand(input)
@@ -303,6 +319,25 @@ async function maybeRunCommandRunner(
 
   const parsed = bash.parse({ command })
   const value = commandInput(parsed, command)
+  const rules = await loadPermissionRules({
+    cwd: childTurn.projectCwd ?? childTurn.cwd,
+    store: opts.store,
+    sessionId: childTurn.sessionId,
+  })
+  const decision = await decidePermission({
+    tool: bash,
+    name: 'Bash',
+    input: value,
+    ctx: { turn: childTurn, signal: ctx.signal, onProgress: ctx.onProgress },
+    mode: childTurn.permissionMode,
+    rules,
+    ...(opts.hooks !== undefined ? { hooks: opts.hooks } : {}),
+  })
+  if (decision.behavior === 'deny') {
+    return { done: true, text: decision.message }
+  }
+  if (decision.behavior === 'ask') return undefined
+
   const output = await bash.execute(value, {
     turn: childTurn,
     signal: childTurn.abort.signal,

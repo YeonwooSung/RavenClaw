@@ -1,10 +1,11 @@
+import { INCLUDED_PRIVACY } from '@ravenclaw/ads'
 import { readPackageVersion } from '@ravenclaw/core'
 
 export const CLI_VERSION = readPackageVersion(import.meta.url)
 
 export const HELP_TEXT = `RavenClaw ${CLI_VERSION} — local coding agent (BYOK)
 
-Included sessions may choose first-party ads. Repository contents are never sent to the ad feed. BYOK sessions never contact the feed.
+${INCLUDED_PRIVACY}
 
 Usage:
   raven [options]

@@ -48,7 +48,7 @@ export const LEARN_PROMPT =
   'Write a new skill that captures the reusable procedure we just figured out. Create a SKILL.md with a name, a short description, and a step-by-step body under this project\'s .ravenclaw/skills directory or the user skills directory. Do not add a new built-in tool — just write the skill files.'
 
 export const TASKS_NOTICE = 'no background tasks'
-export const RELOAD_NOTICE = 'skills reload on next turn'
+export const RELOAD_NOTICE = 'skills reloaded'
 export const NO_EXTRA_RULES_NOTICE = 'no extra rules'
 
 export type SlashResult =

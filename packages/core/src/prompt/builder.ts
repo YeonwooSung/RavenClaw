@@ -35,10 +35,10 @@ export function buildStablePrompt(permissionMode: PermissionMode): string {
     'Use tools to inspect and change the workspace instead of guessing. Read a file before editing it. Treat tool results as the source of truth.',
     '',
     'Permission modes control when RavenClaw asks before a tool runs:',
-    '- default: ask before workspace changes and before commands that are not clearly read-only.',
+    '- default: ask before workspace changes and before commands that are not clearly read-only (ls/echo/pwd and git status/log/diff may proceed).',
     '- acceptEdits: in-workspace file edits may proceed without asking; other leftover asks still prompt.',
     '- plan: mutating tools are denied. Write a plan in text until plan mode ends.',
-    '- dontAsk: leftover asks become denials. For unattended runs.',
+    '- dontAsk: leftover asks become denials except in-workspace Edit/Write and read-only tools. For unattended runs.',
     '',
     `Current permission mode: ${permissionMode}`,
   ].join('\n')

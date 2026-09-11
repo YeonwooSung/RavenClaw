@@ -53,6 +53,10 @@ export async function decidePermission(opts: DecidePermissionOpts): Promise<Perm
     return { behavior: 'allow', reason: 'mode' }
   }
   if (opts.mode === 'dontAsk' && opts.name !== 'ExitPlanMode') {
+    if (opts.tool.isReadOnly()) return { behavior: 'allow', reason: 'mode' }
+    if (isAcceptEditsPromote(opts.name, opts.input, opts.ctx.turn.cwd)) {
+      return { behavior: 'allow', reason: 'mode' }
+    }
     return { behavior: 'deny', reason: 'mode', message: leftover.message }
   }
   return leftover

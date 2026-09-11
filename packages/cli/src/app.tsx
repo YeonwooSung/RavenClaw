@@ -7,6 +7,7 @@ import {
   type SessionRecord,
   type StreamEvent,
   type TokenUsage,
+  buildSystemParts,
 } from '@ravenclaw/core'
 import { AdDock } from './ad-dock'
 import {
@@ -225,9 +226,16 @@ export function App(props: AppProps) {
           })
           return
         }
-        case 'reload':
+        case 'reload': {
+          runtimeRef.current.engine.reloadSystem(
+            buildSystemParts({
+              cwd: runtimeRef.current.cwd,
+              permissionMode: runtimeRef.current.engine.session.permissionMode,
+            }),
+          )
           setNotice(RELOAD_NOTICE)
           return
+        }
         case 'tasks':
           setNotice(TASKS_NOTICE)
           return

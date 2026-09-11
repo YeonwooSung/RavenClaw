@@ -301,6 +301,7 @@ export interface SessionEngine {
   submitMessage(text: string): AsyncGenerator<StreamEvent, RoundEnd>
   compactNow(): Promise<void>
   setPermissionMode(mode: PermissionMode): Promise<void>
+  reloadSystem(system: SystemPart[]): void
   abort(): void
 }
 

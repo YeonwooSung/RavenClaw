@@ -30,6 +30,14 @@ const inputSchema = {
   },
 }
 
+export function isReadOnlyBashCommand(command: string): boolean {
+  const trimmed = command.trim()
+  if (trimmed === '' || /[|&><;`$]/.test(trimmed)) return false
+  if (/\bgit\s+(push|commit|reset|rebase|clean|add)\b/.test(trimmed)) return false
+  return /^(ls|echo|pwd|true|false|date|whoami|uname|cat|head|tail|wc|which|type)\b/.test(trimmed)
+    || /^git\s+(status|log|diff|show|rev-parse|branch)\b/.test(trimmed)
+}
+
 export function matchesDangerousPattern(command: string): boolean {
   if (/\brm\s+-[a-zA-Z]*r[a-zA-Z]*f[a-zA-Z]*\s+\/(?:\s|$)/.test(command)) return true
   if (/\brm\s+-[a-zA-Z]*f[a-zA-Z]*r[a-zA-Z]*\s+\/(?:\s|$)/.test(command)) return true
@@ -61,6 +69,9 @@ export function createBashTool(backend: TerminalBackend): Tool<BashInput, BashRe
     async checkPermissions(input: BashInput) {
       if (matchesDangerousPattern(input.command)) {
         return { behavior: 'ask', message: 'Command matches a dangerous pattern', saveAs: 'session' }
+      }
+      if (isReadOnlyBashCommand(input.command)) {
+        return { behavior: 'allow', reason: 'mode' }
       }
       return { behavior: 'ask', message: 'Run this command?', saveAs: 'session' }
     },

@@ -364,6 +364,13 @@ describe('included gateway access', () => {
       surface: 'headless',
     })
     expect(noPlacement.admitted).toBe(true)
+
+    const resume = await resolveIncludedAccess(cfg, {
+      probe: async () => admitted({ placementRequired: true }),
+      surface: 'headless',
+      consumeCap: false,
+    })
+    expect(resume.admitted).toBe(true)
   })
 
   test('admitted included works without a BYOK key', async () => {

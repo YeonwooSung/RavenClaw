@@ -924,7 +924,7 @@ describe('queryLoop via SessionEngine', () => {
     expect(toolMsg?.persistPath).toBe('/tmp/dump.txt')
   })
 
-  test('413 compact-retries once then completes; second overflow is model_error', async () => {
+  test('413 compact-retries once then completes; second overflow is context_full', async () => {
     const store = createMemoryStore()
     const session = makeSession({ id: 'sess_overflow_once' })
     await store.createSession(session)
@@ -1011,7 +1011,7 @@ describe('queryLoop via SessionEngine', () => {
       compact: { ...defaultCompact(), protectLastMessages: 2 },
     })
     const second = await collect(engine2.submitMessage('go again'))
-    expect(second.result.reason).toBe('model_error')
+    expect(second.result.reason).toBe('context_full')
     expect(twice.streamCount).toBe(2)
   })
 

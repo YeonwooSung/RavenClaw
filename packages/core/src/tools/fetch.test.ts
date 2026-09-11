@@ -61,6 +61,8 @@ describe('Fetch', () => {
     expect(isBlockedFetchUrl('https://172.16.0.4/x')).toBeDefined()
     expect(isBlockedFetchUrl('https://169.254.1.1/x')).toBeDefined()
     expect(isBlockedFetchUrl('https://[::1]/x')).toBeDefined()
+    expect(isBlockedFetchUrl('https://[::ffff:127.0.0.1]/x')).toBeDefined()
+    expect(isBlockedFetchUrl('https://[::ffff:7f00:1]/x')).toBeDefined()
     expect(isBlockedFetchUrl('https://example.com')).toBeUndefined()
   })
 

@@ -9,12 +9,12 @@ const HOOK_TIMEOUT_MS = 5_000
 export function loadFileHooks(cwd: string, home = ravenclawHome()): PermissionHook[] {
   const hooks: PermissionHook[] = []
   for (const path of [join(home, 'hooks.json'), join(cwd, '.ravenclaw', 'hooks.json')]) {
-    hooks.push(...hooksFromFile(path))
+    hooks.push(...hooksFromFile(path, cwd))
   }
   return hooks
 }
 
-function hooksFromFile(path: string): PermissionHook[] {
+function hooksFromFile(path: string, cwd: string): PermissionHook[] {
   let raw: string
   try {
     raw = readFileSync(path, 'utf8')
@@ -27,7 +27,7 @@ function hooksFromFile(path: string): PermissionHook[] {
   } catch {
     return []
   }
-  return extractCommands(parsed).map(commandHook)
+  return extractCommands(parsed).map((command) => commandHook(command, cwd))
 }
 
 function extractCommands(parsed: unknown): string[] {
@@ -43,7 +43,7 @@ function extractCommands(parsed: unknown): string[] {
   return out
 }
 
-function commandHook(command: string): PermissionHook {
+function commandHook(command: string, cwd: string): PermissionHook {
   return (info) => {
     let result: ReturnType<typeof spawnSync>
     try {
@@ -52,6 +52,7 @@ function commandHook(command: string): PermissionHook {
         encoding: 'utf8',
         timeout: HOOK_TIMEOUT_MS,
         shell: true,
+        cwd,
       })
     } catch {
       return undefined

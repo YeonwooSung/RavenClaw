@@ -140,7 +140,7 @@ describe('slash status helpers', () => {
 
   test('tasks and reload notices are one-liners', () => {
     expect(TASKS_NOTICE).toBe('no background tasks')
-    expect(RELOAD_NOTICE).toBe('skills reload on next turn')
+    expect(RELOAD_NOTICE).toBe('skills reloaded')
   })
 
   test('permissions notice lists existing rule files or no extra rules', () => {

@@ -84,7 +84,7 @@ describe('Write', () => {
     }
   })
 
-  test('dontAsk denies leftover ask', async () => {
+  test('dontAsk allows in-tree leftover Write', async () => {
     const decision = await decidePermission({
       name: 'Write',
       input: { path: 'a.txt', content: 'x' },
@@ -93,8 +93,7 @@ describe('Write', () => {
       mode: 'dontAsk',
       rules: emptyRules,
     })
-    expect(decision.behavior).toBe('deny')
-    if (decision.behavior === 'deny') expect(decision.reason).toBe('mode')
+    expect(decision.behavior).toBe('allow')
   })
 
   test('creates a new file including parent directories', async () => {

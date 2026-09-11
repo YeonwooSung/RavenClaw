@@ -94,7 +94,14 @@ export async function resolveIncludedAccess(
   // hasPaidCapacityPlan raises caps; it does not silence ads.
   if (!entitlement.admitted) return { admitted: false }
   const surface = opts?.surface ?? 'interactive'
-  if (entitlement.placementRequired === true && surface === 'headless') return { admitted: false }
+  // New sessions only. Resume/load must keep an already-stamped included session.
+  if (
+    opts?.consumeCap !== false &&
+    entitlement.placementRequired === true &&
+    surface === 'headless'
+  ) {
+    return { admitted: false }
+  }
   if (includedCapacityExhausted(config, entitlement, opts?.consumeCap)) return { admitted: false }
   const meteredByGateway =
     typeof entitlement.remainingSessions === 'number' && Number.isFinite(entitlement.remainingSessions)

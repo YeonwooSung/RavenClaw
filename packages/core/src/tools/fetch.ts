@@ -1,3 +1,4 @@
+import { lookup } from 'node:dns/promises'
 import type { Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
 
@@ -81,6 +82,7 @@ async function fetchValidated(url: string, signal: AbortSignal): Promise<Respons
   for (let hop = 0; hop < 5; hop++) {
     const blocked = isBlockedFetchUrl(current)
     if (blocked !== undefined) return undefined
+    if (await hostResolvesPrivate(new URL(current).hostname)) return undefined
     const response = await fetch(current, {
       method: 'GET',
       redirect: 'manual',
@@ -98,14 +100,36 @@ async function fetchValidated(url: string, signal: AbortSignal): Promise<Respons
   return undefined
 }
 
+async function hostResolvesPrivate(hostname: string): Promise<boolean> {
+  if (isBlockedHost(hostname)) return true
+  try {
+    const rows = await lookup(hostname, { all: true })
+    return rows.some((row) => isBlockedHost(row.address))
+  } catch {
+    return false
+  }
+}
+
 function isBlockedHost(host: string): boolean {
   const h = stripBrackets(host).toLowerCase()
   if (h === 'localhost' || h.endsWith('.localhost') || h === '0.0.0.0') return true
   if (h === '::' || h === '::1' || h === '0:0:0:0:0:0:0:1' || h === '0:0:0:0:0:0:0:0') return true
   if (h.startsWith('fe80:')) return true
   if (isUniqueLocalIPv6(h)) return true
-  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(h)
-  const ipv4 = parseIPv4(mapped?.[1] ?? h)
+  const mappedV4 = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/i.exec(h)
+  if (mappedV4?.[1] !== undefined) {
+    const ipv4 = parseIPv4(mappedV4[1])
+    return ipv4 !== undefined && isPrivateOrLinkLocalIPv4(ipv4)
+  }
+  const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i.exec(h)
+  if (mappedHex?.[1] !== undefined && mappedHex[2] !== undefined) {
+    const hi = Number.parseInt(mappedHex[1], 16)
+    const lo = Number.parseInt(mappedHex[2], 16)
+    if (Number.isInteger(hi) && Number.isInteger(lo)) {
+      return isPrivateOrLinkLocalIPv4([(hi >> 8) & 0xff, hi & 0xff, (lo >> 8) & 0xff, lo & 0xff])
+    }
+  }
+  const ipv4 = parseIPv4(h)
   if (ipv4 !== undefined) return isPrivateOrLinkLocalIPv4(ipv4)
   return false
 }

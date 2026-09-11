@@ -8,6 +8,7 @@ import type {
   SessionEngine,
   SessionEngineOptions,
   StreamEvent,
+  SystemPart,
   Turn,
 } from '../types'
 import { abortTurn } from './abort'
@@ -27,6 +28,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
   const session = { ...opts.session }
   let messages: Message[] = opts.messages ? [...opts.messages] : []
   let liveTurn: Turn | null = null
+  let system = opts.system
 
   return {
     get session() {
@@ -88,7 +90,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
           model: opts.model,
           askUser: opts.askUser,
         }
-        if (opts.system !== undefined) loopOpts.system = opts.system
+        if (system !== undefined) loopOpts.system = system
         if (opts.hooks !== undefined) loopOpts.hooks = opts.hooks
         const end = yield* queryLoop(loopOpts)
         messages = turn.messages
@@ -117,7 +119,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         store: opts.store,
         sessionId: session.id,
         generation: liveTurn?.compactGeneration ?? session.compactGeneration,
-        cwd: liveTurn?.cwd ?? session.cwd,
+        cwd: liveTurn?.projectCwd ?? liveTurn?.cwd ?? session.cwd,
         ...(opts.compact.llmSummarize
           ? {
               provider: opts.provider,
@@ -133,6 +135,10 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       session.compactGeneration = result.generation
       session.updatedAt = Date.now()
       await opts.store.upsertSession(session)
+    },
+
+    reloadSystem(next: SystemPart[]) {
+      system = next
     },
 
     async setPermissionMode(mode: PermissionMode) {

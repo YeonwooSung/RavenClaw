@@ -974,6 +974,27 @@ describe('createAgentTool', () => {
     expect(names).not.toContain('ExitPlanMode')
   })
 
+  test('disk agent ids are spawnable', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-agent-disk-'))
+    tempDirs.push(cwd)
+    mkdirSync(join(cwd, '.ravenclaw', 'agents'), { recursive: true })
+    writeFileSync(
+      join(cwd, '.ravenclaw', 'agents', 'reviewer.md'),
+      '---\nname: reviewer\nallowed-tools: Read\n---\nReview only.\n',
+    )
+    const store = createMemoryStore()
+    const session = makeSession({ cwd })
+    await store.createSession(session)
+    const provider = createFakeProvider([textThenStop('reviewed')])
+    const { tool } = createTestAgent({ store, provider })
+    const result = await tool.execute(
+      { prompt: 'review', subagent: 'reviewer' },
+      makeCtx(makeTurn(session, { cwd })),
+    )
+    expect(result).toBe('reviewed')
+    expect(provider.streamCount).toBe(1)
+  })
+
   test('subagent not in root spawnableAgents returns an error and does not spawn', async () => {
     const store = createMemoryStore()
     const session = makeSession()
@@ -1088,7 +1109,7 @@ describe('createAgentTool', () => {
     expect(bashCalls).toBe(1)
     expect(provider.streamCount).toBe(0)
     const children = await store.listSessions({ parentSessionId: session.id })
-    expect(children).toHaveLength(0)
+    expect(children).toHaveLength(1)
   })
 
   test('command-runner long bash output runs one helper round', async () => {

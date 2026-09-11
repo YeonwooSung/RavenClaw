@@ -92,11 +92,8 @@ export function AdDock(props: {
     }
   }, [props.enabled, props.feedUrl, props.sessionId, props.hasPaidCapacityPlan])
 
-  useInput((_input, key) => {
+  useInput(() => {
     markActivity(rotation.current, Date.now())
-    if (key.return && creativeRef.current) {
-      openCreativeUrl(creativeRef.current.url)
-    }
   })
 
   if (!creative) return null
