@@ -138,7 +138,7 @@ import { createRavenSession } from '@ravenclaw/sdk'
 const session = await createRavenSession({ cwd: process.cwd(), store: 'memory', provider })
 ```
 
-Local plugins are `~/.ravenclaw/plugins/<name>/plugin.json` (or `.ravenclaw/plugins` in the repo). Skill `allowed-tools` shrinks the live pool for the rest of the turn. `Agent` can take `isolation: "worktree"`. Plan mode may write only `.ravenclaw/plan.md`.
+Local plugins are `~/.ravenclaw/plugins/<name>/plugin.json` (user-installed only; they ask before running). Skill `allowed-tools` shrinks the live pool for the rest of the turn. `Agent` can take `isolation: "worktree"`. Plan mode may write only `.ravenclaw/plan.md`.
 
 This process is the same OS user as you. There is no network sandbox. Writes under `~/.ssh/id_*` and `$RAVENCLAW_HOME/state.db` are hard-denied; `.env` writes ask first.
 

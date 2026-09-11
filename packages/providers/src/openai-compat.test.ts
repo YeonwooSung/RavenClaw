@@ -186,7 +186,7 @@ describe('OpenAICompatProvider', () => {
     ])
   })
 
-  test('maps image blocks on user and tool messages to image_url data URLs', async () => {
+  test('maps user images to image_url and keeps tool results as text', async () => {
     const body = await fixture('openai-text-only.sse')
     const { calls } = mockFetch(() => sseResponse(body))
     const provider = new OpenAICompatProvider({ apiKey: 'sk-test' })
@@ -232,6 +232,10 @@ describe('OpenAICompatProvider', () => {
     expect(payload.messages[2]).toEqual({
       role: 'tool',
       tool_call_id: 'call_1',
+      content: '[image image/png]',
+    })
+    expect(payload.messages[3]).toEqual({
+      role: 'user',
       content: [
         { type: 'text', text: '[image image/png]' },
         { type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } },

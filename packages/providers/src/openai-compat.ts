@@ -220,8 +220,11 @@ function buildOpenAIMessages(
       out.push({
         role: 'tool',
         tool_call_id: msg.toolUseId,
-        content: mapOpenAIMultimodal(msg.blocks),
+        content: joinText(msg.blocks, false),
       })
+      if (msg.blocks.some(isImageBlock)) {
+        out.push({ role: 'user', content: mapOpenAIMultimodal(msg.blocks) })
+      }
       continue
     }
     const toolCalls = msg.blocks

@@ -12,7 +12,8 @@ The leftover v1.x seams: optional included gateway, embeddable SDK, plan.md, ski
 - `Agent` `isolation: worktree` (git worktree, removed after the child)
 - Image tool results (`Read` of small png/jpeg/gif/webp) mapped on OpenAI and Anthropic
 - `createProvider({ provider: 'openai_responses' })` for the OpenAI Responses API
-- Local plugins from `~/.ravenclaw/plugins/<name>/plugin.json` (project overrides user)
+- Local plugins from `~/.ravenclaw/plugins/<name>/plugin.json` (user-installed only; leftover ask, so `dontAsk` denies)
+- OpenAI-compat keeps tool-result images off `role: tool` (follow-up user part instead)
 
 ## 0.1.28 — 2026-09-11
 

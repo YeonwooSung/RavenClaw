@@ -23,11 +23,17 @@ const KILL_GRACE_MS = 200
 
 const toolInputSchema = { type: 'object' }
 
-export function loadLocalPlugins(cwd: string, home?: string): Tool[] {
+export function loadLocalPlugins(
+  cwd: string,
+  home?: string,
+  opts?: { project?: boolean },
+): Tool[] {
   const userHome = home ?? ravenclawHome()
   const byName = new Map<string, { dir: string; manifest: PluginManifest }>()
   loadPluginRoot(join(userHome, 'plugins'), byName)
-  loadPluginRoot(join(cwd, '.ravenclaw', 'plugins'), byName)
+  if (opts?.project === true) {
+    loadPluginRoot(join(cwd, '.ravenclaw', 'plugins'), byName)
+  }
 
   const tools: Tool[] = []
   for (const loaded of byName.values()) {
@@ -130,7 +136,7 @@ function createPluginTool(pluginDir: string, spec: PluginToolSpec): Tool {
       return 'cancel'
     },
     async checkPermissions() {
-      return { behavior: 'allow', reason: 'mode' }
+      return { behavior: 'ask', reason: 'user' }
     },
     async execute(input: unknown, ctx: ToolContext) {
       if (ctx.signal.aborted) throw abortError()
@@ -158,6 +164,17 @@ function createPluginTool(pluginDir: string, spec: PluginToolSpec): Tool {
   }
 }
 
+const SPAWN_ENV_KEYS = ['PATH', 'HOME', 'LANG', 'LC_ALL', 'TMPDIR', 'TEMP', 'TMP'] as const
+
+function pluginSpawnEnv(): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {}
+  for (const key of SPAWN_ENV_KEYS) {
+    const value = process.env[key]
+    if (value !== undefined) env[key] = value
+  }
+  return env
+}
+
 function resolveCommand(command: string, pluginDir: string): string {
   if (command.includes('/') || command.includes('\\')) return resolve(pluginDir, command)
   return command
@@ -179,6 +196,7 @@ function runPluginCommand(opts: {
 
     const child = spawn(opts.command, opts.args, {
       cwd: opts.cwd,
+      env: pluginSpawnEnv(),
       stdio: ['pipe', 'pipe', 'pipe'],
     })
 
