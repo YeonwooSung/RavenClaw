@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.18 — 2026-09-11
+
+Shell completion for the CLI.
+
+### Added
+- `raven completions bash` and `raven completions zsh` print a script to stdout
+- Completes commands, `--provider`, and `--tui`
+- Unknown shell exits 2 with usage
+
+### Try it
+
+```bash
+git clone --branch v0.1.18 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+eval "$(bun run raven completions bash)"
+# or
+eval "$(bun run raven completions zsh)"
+```
+
 ## 0.1.17 — 2026-09-11
 
 Scaffold project instructions.
