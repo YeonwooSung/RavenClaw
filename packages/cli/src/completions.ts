@@ -16,6 +16,7 @@ export const COMPLETION_COMMANDS = [
   'completions',
   'mcp',
   'skills',
+  'cron',
   'help',
   'version',
 ] as const

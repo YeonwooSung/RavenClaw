@@ -19,9 +19,20 @@ const READ_ONLY_NAMES = new Set([
   'TaskOutput',
   'ListMcpResources',
   'ReadMcpResource',
+  'CronList',
 ])
 
-const MUTATING_NAMES = new Set(['Edit', 'Write', 'Bash', 'Agent', 'TodoWrite', 'TaskStop'])
+const MUTATING_NAMES = new Set([
+  'Edit',
+  'Write',
+  'Bash',
+  'Agent',
+  'TodoWrite',
+  'TaskStop',
+  'CronCreate',
+  'CronDelete',
+  'CronSetEnabled',
+])
 
 export function cyclePermissionMode(mode: PermissionMode): PermissionMode {
   if (mode === 'dontAsk') return 'dontAsk'

@@ -56,7 +56,7 @@ bun test packages/cli/src/doctor.test.ts
 3. Update `HELP_TEXT` and `COMPLETION_COMMANDS`.
 4. Add parse + behavior tests.
 
-Commands that must not require a key: `help`, `version`, `sessions`, `show`, `rm`, `search`, `export`, `title`, `doctor`, `config`, `init`, `completions`, `mcp`, `skills`.
+Commands that must not require a key: `help`, `version`, `sessions`, `show`, `rm`, `search`, `export`, `title`, `doctor`, `config`, `init`, `completions`, `mcp`, `skills`, `cron` (list/add/rm/on/off; `tick`/`watch` need a key if a job fires).
 
 ## Releases
 

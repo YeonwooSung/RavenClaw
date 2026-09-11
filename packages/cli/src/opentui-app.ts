@@ -26,6 +26,7 @@ import { formatCostNotice } from './cost-format'
 import { formatMcpList } from './mcp-list'
 import { runSessionReview } from './review'
 import { searchNotice } from './search'
+import { applyCronMutate } from './cron-cmd'
 import { formatSkillsList } from './skills-list'
 import { openNewSession, parsePermissionMode, resumeRuntime, type CliRuntime } from './engine'
 import { loadIncludedDockLines } from './included-ads'
@@ -236,6 +237,9 @@ export async function runOpenTuiApp(
             cwd: current.cwd,
             ...(current.config.home !== undefined ? { home: current.config.home } : {}),
           })}\n`)
+          continue
+        case 'cron':
+          write(`${applyCronMutate(parsed.arg, current.cwd, current.config.home).text}\n`)
           continue
         case 'config':
           write(

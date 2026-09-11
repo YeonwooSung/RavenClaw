@@ -26,6 +26,7 @@ Usage:
   raven completions bash|zsh
   raven mcp [list|tools]
   raven skills [new|rm <name>] [--project]
+  raven cron [list|add|rm|on|off|tick|watch]
   raven --help
   raven --version
 
@@ -48,6 +49,7 @@ Commands:
   completions   Print bash or zsh completion script to stdout
   mcp           List configured MCP servers (list) or spawn and list tool names (tools)
   skills        List skills; new writes SKILL.md, rm deletes it (--project = cwd)
+  cron          List/add/remove local jobs; tick/watch fire due ones
 
 Options:
   --provider <anthropic|openai_compat|ollama|vllm>

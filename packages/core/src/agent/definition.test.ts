@@ -53,6 +53,10 @@ describe('rootAgent', () => {
       'TodoWrite',
       'TaskOutput',
       'TaskStop',
+      'CronCreate',
+      'CronList',
+      'CronDelete',
+      'CronSetEnabled',
       'Agent',
       'EnterPlanMode',
       'ExitPlanMode',
@@ -167,6 +171,10 @@ describe('child tools', () => {
       'TodoWrite',
       'TaskOutput',
       'TaskStop',
+      'CronCreate',
+      'CronList',
+      'CronDelete',
+      'CronSetEnabled',
     ])
     expect(childToolNames(generalAgent)).toEqual(generalAgent.toolNames)
   })

@@ -113,6 +113,16 @@ describe('parseArgv', () => {
     expect(parseArgv(['mcp', 'tools'])).toEqual({ cmd: 'mcp', prompt: 'tools', flags: {} })
   })
 
+  test('cron lists and adds without forcing dontAsk', () => {
+    expect(parseArgv(['cron'])).toEqual({ cmd: 'cron', flags: {} })
+    expect(parseArgv(['cron', 'list'])).toEqual({ cmd: 'cron', prompt: 'list', flags: {} })
+    expect(parseArgv(['cron', 'add', 'every', '30m', 'lint'])).toEqual({
+      cmd: 'cron',
+      prompt: 'add every 30m lint',
+      flags: {},
+    })
+  })
+
   test('completions takes bash or zsh as the prompt', () => {
     expect(parseArgv(['completions', 'zsh'])).toEqual({
       cmd: 'completions',

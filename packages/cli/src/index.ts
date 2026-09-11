@@ -6,7 +6,7 @@ import { parseArgv } from './args'
 import { HELP_TEXT, formatVersion } from './help'
 import { runAcpStdio } from './acp-stdio'
 import { App } from './app'
-import { bootCli, openNewSession, resumeRuntime } from './engine'
+import { bootCli, openEngine, openNewSession, resumeRuntime } from './engine'
 import { runExec } from './exec'
 import { SETUP_HINT, providerConfigured, runFirstRun } from './first-run'
 import { readSecretLine } from './secret-input'
@@ -30,6 +30,7 @@ import { initProject } from './init'
 import { doctorFailed, formatDoctorReport, probeLocalLlm, runDoctor } from './doctor'
 import { searchCliSessions } from './search'
 import { SMOKE_PROMPT, evaluateSmoke } from './smoke'
+import { handleCronCli, runCronTick } from './cron-cmd'
 
 export { parseArgv } from './args'
 export { CLI_VERSION, HELP_TEXT, formatVersion } from './help'
@@ -153,6 +154,15 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     return 0
   }
 
+  if (parsed.cmd === 'cron') {
+    const verb = (parsed.prompt ?? 'list').trim().split(/\s+/)[0]?.toLowerCase()
+    if (verb !== 'tick' && verb !== 'watch') {
+      const result = handleCronCli(parsed.prompt, process.cwd())
+      process.stdout.write(result.text + (result.text.endsWith('\n') ? '' : '\n'))
+      return result.code
+    }
+  }
+
   if (parsed.cmd === 'mcp') {
     const sub = (parsed.prompt ?? 'list').trim().toLowerCase()
     if (sub === 'tools' || sub === 'probe') {
@@ -232,7 +242,12 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     return (await promptFirstRun(home)) ? 0 : 1
   }
 
-  if (parsed.cmd === 'acp' || parsed.cmd === 'exec' || parsed.cmd === 'smoke') {
+  if (
+    parsed.cmd === 'acp' ||
+    parsed.cmd === 'exec' ||
+    parsed.cmd === 'smoke' ||
+    parsed.cmd === 'cron'
+  ) {
     const home = await ensureHomeDir()
     if (!providerConfigured(home, parsed.flags)) {
       process.stderr.write(`${SETUP_HINT}\n`)
@@ -273,6 +288,48 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
           }
         },
       })
+      return 0
+    } catch (error) {
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
+      return 1
+    }
+  }
+
+  if (parsed.cmd === 'cron') {
+    try {
+      const runtime = await bootCli({
+        flags: parsed.flags,
+        createSession: false,
+        surface: 'headless',
+      })
+      const tickOnce = async () => {
+        const text = await runCronTick({
+          run: async (job) => {
+            const { engine, mcpCloser } = await openEngine({
+              provider: runtime.provider,
+              store: runtime.store,
+              config: { ...runtime.config, permissionMode: 'dontAsk' },
+              cwd: job.cwd,
+              askUser: runtime.ask.ask,
+            })
+            try {
+              await runExec({ prompt: job.prompt, engine })
+              return { ok: true, sessionId: engine.session.id }
+            } finally {
+              await mcpCloser?.()
+            }
+          },
+        })
+        process.stdout.write(text + (text.endsWith('\n') ? '' : '\n'))
+      }
+      const verb = (parsed.prompt ?? '').trim().split(/\s+/)[0]?.toLowerCase()
+      if (verb === 'watch') {
+        for (;;) {
+          await tickOnce()
+          await new Promise((resolve) => setTimeout(resolve, 15_000))
+        }
+      }
+      await tickOnce()
       return 0
     } catch (error) {
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)

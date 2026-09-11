@@ -24,6 +24,8 @@ import {
   readTool,
   resumeSession,
   skillTool,
+  createCronTools,
+  createJsonCronStore,
   taskOutputTool,
   taskStopTool,
   todoWriteTool,
@@ -153,6 +155,11 @@ function includedSessionCap(
   return perDay
 }
 
+function cronToolList(): Tool[] {
+  const cron = createCronTools(createJsonCronStore())
+  return [cron.create, cron.list, cron.remove, cron.setEnabled]
+}
+
 export function createRootTools(store: SessionStore, bash: Tool = bashTool): Tool[] {
   const plan = createPlanModeTools(store)
   return [
@@ -167,6 +174,7 @@ export function createRootTools(store: SessionStore, bash: Tool = bashTool): Too
     todoWriteTool,
     taskOutputTool,
     taskStopTool,
+    ...cronToolList(),
     plan.enter,
     plan.exit,
   ]

@@ -26,6 +26,7 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
   { name: 'reload', usage: '/reload', summary: 'reload skills on the next turn' },
   { name: 'mcp', usage: '/mcp', summary: 'show configured MCP servers' },
   { name: 'skills', usage: '/skills', summary: 'list discovered skills' },
+  { name: 'cron', usage: '/cron [add|rm|on|off]', summary: 'list or edit local scheduled jobs' },
   { name: 'config', usage: '/config', summary: 'show resolved config' },
   { name: 'context', usage: '/context', summary: 'show compact generation and message count' },
   { name: 'help', aliases: ['?'], usage: '/help', summary: 'this list' },

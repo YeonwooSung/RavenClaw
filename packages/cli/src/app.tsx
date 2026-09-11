@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Box, Text, useApp, useInput } from 'ink'
 import {
+  createJsonCronStore,
   cyclePermissionMode,
+  fireDueJobs,
   formatTasksNotice,
   formatUndoNotice,
   parseTasksArg,
@@ -32,7 +34,10 @@ import { collectUserImages, readClipboardImage } from './image-paste'
 import { formatSkillsList } from './skills-list'
 import { Composer } from './composer'
 import { applySessionTitle } from './resume'
+import { applyCronMutate } from './cron-cmd'
+import { runExec } from './exec'
 import {
+  openEngine,
   openNewSession,
   parsePermissionMode,
   resumeRuntime,
@@ -322,6 +327,15 @@ export function App(props: AppProps) {
             }),
           )
           return
+        case 'cron':
+          setNotice(
+            applyCronMutate(
+              parsed.arg,
+              runtimeRef.current.cwd,
+              runtimeRef.current.config.home,
+            ).text,
+          )
+          return
         case 'config':
           setNotice(
             runtimeRef.current.config.home !== undefined
@@ -401,6 +415,50 @@ export function App(props: AppProps) {
     },
     [applyResume, exit, runTurn],
   )
+
+  useEffect(() => {
+    let cancelled = false
+    let inflight = false
+    const id = setInterval(() => {
+      if (inflight) return
+      inflight = true
+      void (async () => {
+        try {
+          const home = runtimeRef.current.config.home
+          const fired = await fireDueJobs({
+            store: createJsonCronStore(home !== undefined ? { home } : undefined),
+            run: async (job) => {
+              const { engine, mcpCloser } = await openEngine({
+                provider: runtimeRef.current.provider,
+                store: runtimeRef.current.store,
+                config: { ...runtimeRef.current.config, permissionMode: 'dontAsk' },
+                cwd: job.cwd,
+                askUser: runtimeRef.current.ask.ask,
+              })
+              try {
+                await runExec({ prompt: job.prompt, engine, write: () => {} })
+                return { ok: true, sessionId: engine.session.id }
+              } finally {
+                await mcpCloser?.()
+              }
+            },
+          })
+          if (!cancelled && fired.length > 0) {
+            const last = fired[fired.length - 1]
+            if (last) setNotice(`cron ${last.job.id} ${last.status}`)
+          }
+        } catch {
+          // ticker must not take down the live session
+        } finally {
+          inflight = false
+        }
+      })()
+    }, 15_000)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [])
 
   useInput((input, key) => {
     if (key.ctrl && input === 'c') {

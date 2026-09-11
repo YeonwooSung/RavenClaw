@@ -55,6 +55,8 @@ describe('handleSlashCommand', () => {
     ['/reload', { type: 'command', name: 'reload' }],
     ['/mcp', { type: 'command', name: 'mcp' }],
     ['/skills', { type: 'command', name: 'skills' }],
+    ['/cron', { type: 'command', name: 'cron' }],
+    ['/cron add every 30m lint', { type: 'command', name: 'cron', arg: 'add every 30m lint' }],
     ['/config', { type: 'command', name: 'config' }],
     ['/context', { type: 'command', name: 'context' }],
   ] as const)('%s', (line, expected) => {
@@ -88,6 +90,7 @@ describe('handleSlashCommand', () => {
     expect(SLASH_HELP).toContain('/reload')
     expect(SLASH_HELP).toContain('/mcp')
     expect(SLASH_HELP).toContain('/skills')
+    expect(SLASH_HELP).toContain('/cron')
     expect(SLASH_HELP).toContain('/config')
     expect(SLASH_HELP).toContain('/context')
   })
@@ -112,6 +115,7 @@ describe('handleSlashCommand', () => {
       'reload',
       'mcp',
       'skills',
+      'cron',
       'config',
       'context',
       'help',
