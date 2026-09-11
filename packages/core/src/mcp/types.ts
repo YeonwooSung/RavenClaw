@@ -1,3 +1,5 @@
+import { readPackageVersion } from '../package-version'
+
 export interface McpTransport {
   request(method: string, params?: unknown): Promise<unknown>
   close(): Promise<void>
@@ -27,4 +29,8 @@ export interface McpStdioStreams {
 }
 
 export const MCP_PROTOCOL_VERSION = '2025-03-26'
-export const MCP_CLIENT_INFO = { name: 'ravenclaw', version: '0.1.5' } as const
+
+export const MCP_CLIENT_INFO = {
+  name: 'ravenclaw',
+  version: readPackageVersion(import.meta.url),
+} as const

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { ACP_METHODS, JSON_RPC_METHOD_NOT_FOUND, PROTOCOL_VERSION, type JsonRpcNotification } from './protocol'
+import { ACP_METHODS, AGENT_INFO, JSON_RPC_METHOD_NOT_FOUND, PROTOCOL_VERSION, type JsonRpcNotification } from './protocol'
 import { createAcpServer, type AcpEngine } from './server'
 
 function resultOf(response: { result?: unknown; error?: unknown }): Record<string, unknown> {
@@ -42,7 +42,7 @@ describe('createAcpServer', () => {
     expect(result.agentInfo).toEqual({
       name: 'ravenclaw',
       title: 'RavenClaw',
-      version: '0.1.5',
+      version: AGENT_INFO.version,
     })
     expect(result.agentCapabilities).toEqual({
       loadSession: false,

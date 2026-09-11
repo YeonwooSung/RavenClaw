@@ -1,4 +1,5 @@
 export * from './types'
+export { readPackageVersion } from './package-version'
 export { createSessionEngine } from './loop/session-engine'
 export { queryLoop } from './loop/query-loop'
 export {

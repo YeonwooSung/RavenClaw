@@ -1,4 +1,6 @@
-export const CLI_VERSION = '0.1.5'
+import { readPackageVersion } from '@ravenclaw/core'
+
+export const CLI_VERSION = readPackageVersion(import.meta.url)
 
 export const HELP_TEXT = `RavenClaw ${CLI_VERSION} — local coding agent (BYOK)
 

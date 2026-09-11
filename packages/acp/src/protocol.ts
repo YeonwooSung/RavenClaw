@@ -1,4 +1,4 @@
-import type { RoundEnd, StreamEvent, ToolResult } from '@ravenclaw/core'
+import { readPackageVersion, type RoundEnd, type StreamEvent, type ToolResult } from '@ravenclaw/core'
 
 export const PROTOCOL_VERSION = 1
 
@@ -20,7 +20,7 @@ export const JSON_RPC_INTERNAL_ERROR = -32603
 export const AGENT_INFO = {
   name: 'ravenclaw',
   title: 'RavenClaw',
-  version: '0.1.5',
+  version: readPackageVersion(import.meta.url),
 } as const
 
 export type JsonRpcId = string | number
