@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.24 — 2026-09-11
+
+Probe MCP servers and list their tools.
+
+### Added
+- `raven mcp tools` (alias `probe`) spawns each configured server, prints tool names, then closes
+- Fail-open: a server that cannot start is `(no tools or failed)`
+- Empty config still prints `no mcp servers`
+
+### Try it
+
+```bash
+git clone --branch v0.1.24 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+bun run raven mcp tools
+```
+
 ## 0.1.23 — 2026-09-11
 
 List configured MCP servers without spawning them.
