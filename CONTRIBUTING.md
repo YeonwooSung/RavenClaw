@@ -46,6 +46,7 @@ bun test packages/cli/src/doctor.test.ts
 - Pairing invariant tests in `packages/core/src/loop/` must stay green.
 - Ads isolation test must stay green: `@ravenclaw/ads` has no core/ink/react import.
 - Env-gated live provider tests skip unless `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` is set.
+- CI also runs no-key CLI commands (`--help`, `sessions`, `config`, `init`, `completions`). `raven smoke` is not run in CI.
 
 ## Adding a CLI command
 

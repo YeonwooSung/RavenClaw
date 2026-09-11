@@ -14,3 +14,14 @@ jobs:
           bun-version: 1.x
       - run: bun install
       - run: bun test
+      - name: No-key CLI
+        run: |
+          bun packages/cli/src/index.ts --version
+          bun packages/cli/src/index.ts --help
+          bun packages/cli/src/index.ts completions bash
+          bun packages/cli/src/index.ts sessions
+          bun packages/cli/src/index.ts config
+          tmp=$(mktemp -d)
+          (cd "$tmp" && bun "$GITHUB_WORKSPACE/packages/cli/src/index.ts" init)
+          test -f "$tmp/AGENTS.md"
+          bun packages/cli/src/index.ts doctor || true
