@@ -1,0 +1,37 @@
+name: Bug
+description: Something does not work as documented
+title: '[bug] '
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please run `bun test` and `bun run raven doctor` first.
+        Do not paste API keys.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Output of `bun run raven --version`
+      placeholder: raven 0.1.19
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Repro
+      description: Commands or a minimal snippet. Redact secrets.
+    validations:
+      required: true
+  - type: textarea
+    id: doctor
+    attributes:
+      label: raven doctor
+      description: Paste `bun run raven doctor` (it does not print key values).
