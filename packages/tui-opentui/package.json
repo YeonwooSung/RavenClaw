@@ -1,6 +1,6 @@
 {
   "name": "@ravenclaw/tui-opentui",
-  "version": "0.1.31",
+  "version": "0.1.32",
   "private": true,
   "type": "module",
   "exports": {

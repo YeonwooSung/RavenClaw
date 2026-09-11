@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.1.32 — 2026-09-11
+
+ACP and resume keep included funding paired with the right provider, and paid-plan ads stop selling the cap.
+
+### Fixed
+- `raven acp` boots without an orphan session; `session/new` uses that store id; `session/load` resumes
+- Resume picks the provider from `session.funding` (`remainingSessions: 0` does not block an included load)
+- Gateway `remainingSessions` no longer inflates the local daily ledger
+- `tryRecordIncludedSession` denies the slot when the ledger write fails
+- Explicit `--provider` stays BYOK even if the included probe admits
+- Paid-plan house ads drop the cap upsell (`hasPaidCapacityPlan`)
+- OpenTUI mounts the included ad dock
+
+### Try it
+
+```bash
+git clone --branch v0.1.32 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+bun test
+bun run raven --version
+```
+
 ## 0.1.31 — 2026-09-11
 
 Skill allow-lists jail execute, worktree children keep parent project policy, and included resume no longer burns the daily cap.
