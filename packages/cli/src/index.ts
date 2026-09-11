@@ -24,7 +24,7 @@ import { formatPublicConfig } from './config-print'
 import { completionsScript } from './completions'
 import { formatMcpList, loadMcpServers } from './mcp-list'
 import { formatMcpToolsReport } from './mcp-probe'
-import { createSkill } from './skill-new'
+import { createSkill, deleteSkill } from './skill-new'
 import { formatSkillsList } from './skills-list'
 import { initProject } from './init'
 import { doctorFailed, formatDoctorReport, runDoctor } from './doctor'
@@ -133,8 +133,20 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       process.stdout.write(created.created ? `wrote ${created.path}\n` : `exists ${created.path}\n`)
       return 0
     }
+    if (parts[0] === 'rm') {
+      const deleted = deleteSkill({
+        name: parts.slice(1).join(' '),
+        project: parsed.project === true,
+      })
+      if ('error' in deleted) {
+        process.stderr.write(`${deleted.error}\n`)
+        return deleted.error.startsWith('usage:') ? 2 : 1
+      }
+      process.stdout.write(`deleted ${deleted.path}\n`)
+      return 0
+    }
     if (parts.length > 0) {
-      process.stderr.write('usage: raven skills [new <name>] [--project]\n')
+      process.stderr.write('usage: raven skills [new|rm <name>] [--project]\n')
       return 2
     }
     process.stdout.write(`${formatSkillsList()}\n`)

@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createSkill, parseSkillName, skillStarter } from './skill-new'
+import { createSkill, deleteSkill, parseSkillName, skillStarter } from './skill-new'
 
 describe('parseSkillName', () => {
   test('accepts lowercase names and rejects paths', () => {
@@ -37,5 +37,37 @@ describe('createSkill', () => {
     if ('error' in result) throw new Error(result.error)
     expect(result.created).toBe(true)
     expect(result.path).toBe(join(cwd, '.ravenclaw', 'skills', 'local', 'SKILL.md'))
+  })
+})
+
+describe('deleteSkill', () => {
+  test('removes a user skill directory', () => {
+    const home = join(tmpdir(), `raven-skill-rm-${Date.now()}`)
+    mkdirSync(home, { recursive: true })
+    const created = createSkill({ name: 'gone', home, cwd: home })
+    if ('error' in created) throw new Error(created.error)
+    const deleted = deleteSkill({ name: 'gone', home, cwd: home })
+    expect(deleted).toEqual({ path: created.path })
+    expect(existsSync(join(home, 'skills', 'gone'))).toBe(false)
+    expect(deleteSkill({ name: 'gone', home, cwd: home })).toEqual({
+      error: 'skill not found: gone',
+    })
+  })
+
+  test('does not delete a project skill unless --project', () => {
+    const root = join(tmpdir(), `raven-skill-rm-proj-${Date.now()}`)
+    const cwd = join(root, 'proj')
+    const home = join(root, 'home')
+    mkdirSync(cwd, { recursive: true })
+    const created = createSkill({ name: 'keep', cwd, home, project: true })
+    if ('error' in created) throw new Error(created.error)
+    expect(deleteSkill({ name: 'keep', cwd, home })).toEqual({
+      error: 'skill not found: keep',
+    })
+    expect(existsSync(created.path)).toBe(true)
+    expect(deleteSkill({ name: 'keep', cwd, home, project: true })).toEqual({
+      path: created.path,
+    })
+    expect(existsSync(created.path)).toBe(false)
   })
 })

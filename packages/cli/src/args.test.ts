@@ -100,6 +100,11 @@ describe('parseArgv', () => {
       project: true,
       flags: {},
     })
+    expect(parseArgv(['skills', 'rm', 'demo'])).toEqual({
+      cmd: 'skills',
+      prompt: 'rm demo',
+      flags: {},
+    })
   })
 
   test('mcp lists configured servers', () => {

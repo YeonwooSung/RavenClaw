@@ -22,7 +22,7 @@ Usage:
   raven init
   raven completions bash|zsh
   raven mcp [list|tools]
-  raven skills [new <name>] [--project]
+  raven skills [new|rm <name>] [--project]
   raven --help
   raven --version
 
@@ -44,7 +44,7 @@ Commands:
   init          Write AGENTS.md in this directory if missing
   completions   Print bash or zsh completion script to stdout
   mcp           List configured MCP servers (list) or spawn and list tool names (tools)
-  skills        List skills; skills new <name> writes a SKILL.md (--project = cwd)
+  skills        List skills; new writes SKILL.md, rm deletes it (--project = cwd)
 
 Options:
   --provider <anthropic|openai_compat>
