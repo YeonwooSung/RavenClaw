@@ -27,6 +27,7 @@ describe('handleSlashCommand', () => {
     ['/search --all bar', { type: 'command', name: 'search', arg: '--all bar' }],
     ['/quit', { type: 'command', name: 'quit' }],
     ['/learn', { type: 'command', name: 'learn' }],
+    ['/review', { type: 'command', name: 'review' }],
     ['/help', { type: 'command', name: 'help' }],
     ['/?', { type: 'command', name: '?' }],
   ] as const)('%s', (line, expected) => {
@@ -41,6 +42,7 @@ describe('handleSlashCommand', () => {
     expect(SLASH_HELP).toContain('/resume')
     expect(SLASH_HELP).toContain('/search')
     expect(SLASH_HELP).toContain('/help')
+    expect(SLASH_HELP).toContain('/review')
     expect(SLASH_HELP).toContain('/quit')
   })
 

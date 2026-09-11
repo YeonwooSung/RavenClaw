@@ -4,9 +4,13 @@ export const SLASH_HELP = `/resume [id]   list or restore a session
 /search <q>    search this session (or /search --all q)
 /mode <mode>   default | acceptEdits | plan | dontAsk
 /learn         write a skill from this session
+/review        append a read-only review to .ravenclaw/MEMORY.md
 /cancel        abort the current turn (OpenTUI)
 /help          this list
 /quit          exit`
+
+export const REVIEW_PROMPT =
+  'Summarize durable lessons from this session as short bullets. No tools. No secrets.'
 
 export const LEARN_PROMPT =
   'Write a new skill that captures the reusable procedure we just figured out. Create a SKILL.md with a name, a short description, and a step-by-step body under this project\'s .ravenclaw/skills directory or the user skills directory. Do not add a new built-in tool — just write the skill files.'

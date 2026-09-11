@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createMemoryStore } from '../session/memory-store'
@@ -11,7 +11,7 @@ import type {
   ProviderRequest,
   SessionRecord,
 } from '../types'
-import { forkMemoryReview } from './fork'
+import { applyReviewToMemory, forkMemoryReview } from './fork'
 
 const tempDirs: string[] = []
 
@@ -87,7 +87,7 @@ function createFakeProvider(scripts: ProviderChunk[][]): Provider & {
 }
 
 describe('forkMemoryReview', () => {
-  test('returns provider text and never writes MEMORY.md', async () => {
+  test('returns provider text and writes .ravenclaw/MEMORY.md', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-review-'))
     tempDirs.push(cwd)
     const provider = createFakeProvider([
@@ -109,9 +109,13 @@ describe('forkMemoryReview', () => {
       text: 'review this session',
     })
 
-    expect(result).toEqual({ ok: true, text: 'lesson: use bun test' })
+    expect(result.ok).toBe(true)
+    expect(result.text).toBe('lesson: use bun test')
+    expect(result.path).toBe(join(cwd, '.ravenclaw', 'MEMORY.md'))
     expect(existsSync(join(cwd, 'MEMORY.md'))).toBe(false)
-    expect(existsSync(join(cwd, '.ravenclaw', 'MEMORY.md'))).toBe(false)
+    expect(readFileSync(join(cwd, '.ravenclaw', 'MEMORY.md'), 'utf8')).toContain(
+      'lesson: use bun test',
+    )
     const names = provider.requests[0]?.tools.map((tool) => tool.name) ?? []
     expect(names).not.toContain('Edit')
     expect(names).not.toContain('Write')
@@ -147,9 +151,13 @@ describe('forkMemoryReview', () => {
       compact: defaultCompact(),
       text: 'try to mutate',
     })
-    expect(result).toEqual({ ok: true, text: 'read-only review' })
+    expect(result.ok).toBe(true)
+    expect(result.text).toBe('read-only review')
     expect(executed).toBe(1)
     expect(existsSync(join(cwd, 'MEMORY.md'))).toBe(false)
+    expect(readFileSync(join(cwd, '.ravenclaw', 'MEMORY.md'), 'utf8')).toContain(
+      'read-only review',
+    )
     expect(provider.requests[0]?.tools).toEqual([])
   })
 
@@ -174,5 +182,20 @@ describe('forkMemoryReview', () => {
     })
     expect(result.ok).toBe(false)
     expect(result.text).toContain('provider down')
+    expect(result.path).toBeUndefined()
+  })
+
+  test('applyReviewToMemory appends a dated section and skips empty text', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-review-'))
+    tempDirs.push(cwd)
+    mkdirSync(join(cwd, '.ravenclaw'), { recursive: true })
+    writeFileSync(join(cwd, '.ravenclaw', 'MEMORY.md'), '# Memory\n\nkeep me\n')
+    expect(applyReviewToMemory(cwd, '   ').wrote).toBe(false)
+    const applied = applyReviewToMemory(cwd, 'new lesson')
+    expect(applied.wrote).toBe(true)
+    const body = readFileSync(applied.path, 'utf8')
+    expect(body).toContain('keep me')
+    expect(body).toContain('new lesson')
+    expect(body).toContain('review')
   })
 })

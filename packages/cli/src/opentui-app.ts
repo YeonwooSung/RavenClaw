@@ -5,8 +5,9 @@ import {
   permissionPromptLines,
 } from '@ravenclaw/tui-opentui'
 import type { StreamEvent } from '@ravenclaw/core'
-import { LEARN_PROMPT, SLASH_HELP, handleSlashCommand } from './commands'
+import { LEARN_PROMPT, REVIEW_PROMPT, SLASH_HELP, handleSlashCommand } from './commands'
 import { formatCostNotice } from './cost-format'
+import { runSessionReview } from './review'
 import { searchNotice } from './search'
 import { parsePermissionMode, resumeRuntime, type CliRuntime } from './engine'
 import { formatResumeSessionLine } from './resume'
@@ -95,6 +96,9 @@ export async function runOpenTuiApp(
           continue
         case 'learn':
           await runTurn(LEARN_PROMPT)
+          continue
+        case 'review':
+          write(`${await runSessionReview(current, parsed.arg ?? REVIEW_PROMPT)}\n`)
           continue
         case 'compact':
           await current.engine.compactNow()

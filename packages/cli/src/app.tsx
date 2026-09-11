@@ -9,8 +9,9 @@ import {
   type TokenUsage,
 } from '@ravenclaw/core'
 import { AdDock } from './ad-dock'
-import { LEARN_PROMPT, SLASH_HELP, handleSlashCommand } from './commands'
+import { LEARN_PROMPT, REVIEW_PROMPT, SLASH_HELP, handleSlashCommand } from './commands'
 import { formatCostNotice } from './cost-format'
+import { runSessionReview } from './review'
 import { searchNotice } from './search'
 import { Composer } from './composer'
 import {
@@ -196,6 +197,14 @@ export function App(props: AppProps) {
           return
         case 'learn':
           void runTurn(LEARN_PROMPT)
+          return
+        case 'review':
+          void runSessionReview(
+            runtimeRef.current,
+            parsed.arg ?? REVIEW_PROMPT,
+          ).then((notice) => {
+            setNotice(notice)
+          })
           return
         case 'mode': {
           if (parsed.arg === undefined) {

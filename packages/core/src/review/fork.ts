@@ -1,3 +1,6 @@
+import { mkdirSync, existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { MEMORY_FILE_CHAR_CAP } from '../prompt/memory'
 import type {
   CompactPolicy,
   ModelProfile,
@@ -6,6 +9,8 @@ import type {
   SessionRecord,
   SessionStore,
 } from '../types'
+
+export const MEMORY_REVIEW_REL = join('.ravenclaw', 'MEMORY.md')
 
 const MUTATING_TOOLS = new Set(['Edit', 'Write', 'Bash'])
 
@@ -20,14 +25,14 @@ export interface ForkMemoryReviewOpts {
 
 export async function forkMemoryReview(
   opts: ForkMemoryReviewOpts,
-): Promise<{ ok: boolean; text: string }> {
+): Promise<{ ok: boolean; text: string; path?: string }> {
   try {
     const req: ProviderRequest = {
       model: opts.model.id,
       system: [
         {
           tier: 'stable',
-          text: 'Read-only memory review. You cannot call Edit, Write, or Bash.',
+          text: 'Read-only memory review. You cannot call Edit, Write, or Bash. Reply with durable bullets only.',
         },
       ],
       messages: [
@@ -47,11 +52,41 @@ export async function forkMemoryReview(
       if (chunk.type === 'text_delta') text += chunk.text
       if (chunk.type === 'tool_call' && MUTATING_TOOLS.has(chunk.name)) continue
     }
-    return { ok: true, text }
+    const applied = applyReviewToMemory(opts.session.cwd, text)
+    const out: { ok: boolean; text: string; path?: string } = { ok: true, text }
+    if (applied.wrote) out.path = applied.path
+    return out
   } catch (error) {
     return {
       ok: false,
       text: error instanceof Error ? error.message : 'review failed',
     }
   }
+}
+
+export function applyReviewToMemory(
+  cwd: string,
+  text: string,
+): { path: string; wrote: boolean } {
+  const path = join(cwd, MEMORY_REVIEW_REL)
+  const trimmed = text.trim()
+  if (trimmed === '') return { path, wrote: false }
+
+  const body =
+    trimmed.length > MEMORY_FILE_CHAR_CAP
+      ? `${trimmed.slice(0, MEMORY_FILE_CHAR_CAP)}\n... [truncated]`
+      : trimmed
+  const day = new Date().toISOString().slice(0, 10)
+  const section = `## ${day} review\n${body}\n`
+
+  mkdirSync(join(cwd, '.ravenclaw'), { recursive: true })
+  const existing = existsSync(path) ? readFileSync(path, 'utf8') : '# Memory\n'
+  const prefix = existing.endsWith('\n') ? existing : `${existing}\n`
+  let next = `${prefix}\n${section}`
+  if (next.length > MEMORY_FILE_CHAR_CAP) {
+    next = next.slice(next.length - MEMORY_FILE_CHAR_CAP)
+    if (!next.startsWith('#')) next = `# Memory\n${next}`
+  }
+  writeFileSync(path, next.endsWith('\n') ? next : `${next}\n`)
+  return { path, wrote: true }
 }
