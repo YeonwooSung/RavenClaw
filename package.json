@@ -1,8 +1,11 @@
 {
   "name": "ravenclaw",
+  "version": "0.1.0",
   "private": true,
   "packageManager": "bun@1.x",
-  "workspaces": ["packages/*"],
+  "workspaces": [
+    "packages/*"
+  ],
   "scripts": {
     "test": "bun test",
     "test:ci": "bun test",

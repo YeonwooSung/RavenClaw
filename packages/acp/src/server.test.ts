@@ -42,7 +42,7 @@ describe('createAcpServer', () => {
     expect(result.agentInfo).toEqual({
       name: 'ravenclaw',
       title: 'RavenClaw',
-      version: '0.0.0',
+      version: '0.1.0',
     })
     expect(result.agentCapabilities).toEqual({
       loadSession: false,
