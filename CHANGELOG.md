@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.6 — 2026-09-11
+
+CLI, MCP, and ACP versions come from each package.json.
+
+### Changed
+- `readPackageVersion(import.meta.url)` walks up to the nearest `package.json`
+- `raven --version`, MCP `clientInfo`, and ACP `agentInfo` no longer hardcode 0.1.x
+
+### Try it
+
+```bash
+git clone --branch v0.1.6 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+bun run raven --version
+```
+
 ## 0.1.5 — 2026-09-11
 
 Read-only memory review can persist to the project.
