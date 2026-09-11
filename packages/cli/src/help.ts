@@ -6,6 +6,7 @@ Usage:
   raven [options]
   raven exec [--json] [options] <prompt>
   raven acp [options]
+  raven setup
   raven --help
   raven --version
 
@@ -13,6 +14,7 @@ Commands:
   (default)     Interactive TUI (Ink)
   exec          One-shot prompt; forces --dont-ask
   acp           Agent Client Protocol on stdin/stdout; forces --dont-ask
+  setup         Write ~/.ravenclaw/.env (provider + API key)
 
 Options:
   --provider <anthropic|openai_compat>

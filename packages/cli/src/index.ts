@@ -1,11 +1,14 @@
+import { createInterface } from 'node:readline'
 import { createElement } from 'react'
 import { render } from 'ink'
+import { ensureHomeDir } from '@ravenclaw/core'
 import { parseArgv } from './args'
 import { HELP_TEXT, formatVersion } from './help'
 import { runAcpStdio } from './acp-stdio'
 import { App } from './app'
 import { bootCli } from './engine'
 import { runExec } from './exec'
+import { SETUP_HINT, providerConfigured, runFirstRun } from './first-run'
 import { runOpenTuiApp } from './opentui-app'
 
 export { parseArgv } from './args'
@@ -32,6 +35,19 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (parsed.cmd === 'version') {
     process.stdout.write(`${formatVersion()}\n`)
     return 0
+  }
+
+  if (parsed.cmd === 'setup') {
+    const home = await ensureHomeDir()
+    return (await promptFirstRun(home)) ? 0 : 1
+  }
+
+  if (parsed.cmd === 'acp' || parsed.cmd === 'exec') {
+    const home = await ensureHomeDir()
+    if (!providerConfigured(home, parsed.flags)) {
+      process.stderr.write(`${SETUP_HINT}\n`)
+      return 1
+    }
   }
 
   if (parsed.cmd === 'acp') {
@@ -67,6 +83,14 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   }
 
   try {
+    const home = await ensureHomeDir()
+    if (!providerConfigured(home, parsed.flags)) {
+      if (!process.stdin.isTTY) {
+        process.stderr.write(`${SETUP_HINT}\n`)
+        return 1
+      }
+      if (!(await promptFirstRun(home))) return 1
+    }
     const runtime = await bootCli({ flags: parsed.flags })
     if (parsed.cmd === 'interactive' && parsed.tui === 'opentui') {
       return await runOpenTuiApp(runtime)
@@ -77,6 +101,21 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
     return 1
+  }
+}
+
+async function promptFirstRun(home: string): Promise<boolean> {
+  const rl = createInterface({ input: process.stdin, crlfDelay: Infinity })
+  try {
+    return await runFirstRun({
+      home,
+      input: rl,
+      write: (chunk) => {
+        process.stdout.write(chunk)
+      },
+    })
+  } finally {
+    rl.close()
   }
 }
 

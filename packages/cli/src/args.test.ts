@@ -76,6 +76,10 @@ describe('parseArgv', () => {
     })
   })
 
+  test('setup selects the setup command', () => {
+    expect(parseArgv(['setup'])).toEqual({ cmd: 'setup', flags: {} })
+  })
+
   test('--help and -h select the help command', () => {
     expect(parseArgv(['--help'])).toEqual({ cmd: 'help', flags: {} })
     expect(parseArgv(['-h'])).toEqual({ cmd: 'help', flags: {} })

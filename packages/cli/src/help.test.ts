@@ -6,6 +6,7 @@ describe('help text', () => {
     expect(HELP_TEXT).toContain(CLI_VERSION)
     expect(HELP_TEXT).toContain('raven exec')
     expect(HELP_TEXT).toContain('raven acp')
+    expect(HELP_TEXT).toContain('raven setup')
     expect(HELP_TEXT).toContain('--tui')
     expect(HELP_TEXT).toContain('--help')
     expect(HELP_TEXT).toContain('--version')
