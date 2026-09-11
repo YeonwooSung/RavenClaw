@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.5 — 2026-09-11
+
+Read-only memory review can persist to the project.
+
+### Added
+- `forkMemoryReview` appends a dated section to `.ravenclaw/MEMORY.md` (8k cap)
+- Does not run Edit / Write / Bash; empty or failed reviews do not write
+- `/review` in Ink and OpenTUI
+
+### Try it
+
+```bash
+git clone --branch v0.1.5 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+# after a session:
+# /review
+```
+
 ## 0.1.4 — 2026-09-11
 
 First-run setup no longer echoes the API key.
