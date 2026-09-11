@@ -51,7 +51,7 @@ mcp:
       args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
 ```
 
-A server that fails to spawn or list tools is skipped; RavenClaw still boots. Built-in tool names win if an MCP tool collides.
+A server that fails to spawn or list tools is skipped; RavenClaw still boots. Built-in tool names win if an MCP tool collides. CI spawns the in-repo `echo_n` and `fs_list`/`fs_read` fixtures over real stdio.
 
 Optional memory files (context snapshot, 8k/file, 16k total): `~/.ravenclaw/USER.md`, `~/.ravenclaw/MEMORY.md`, and the same names under the project root or `.ravenclaw/`.
 
