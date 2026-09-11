@@ -12,6 +12,8 @@ import {
 import { commandRunnerAgent } from './command-runner'
 import { fileFinderAgent } from './file-finder'
 import { generalAgent } from './general'
+import { researcherWebAgent } from './researcher-web'
+import { reviewerAgent } from './reviewer'
 import { rootAgent } from './root'
 
 function stubTool(name: string): Tool {
@@ -45,14 +47,26 @@ describe('rootAgent', () => {
       'Read',
       'Grep',
       'Glob',
+      'ListDir',
+      'ReadSubtree',
       'Edit',
       'Write',
+      'ApplyPatch',
+      'NotebookEdit',
       'Bash',
       'Skill',
       'Fetch',
+      'WebSearch',
       'TodoWrite',
       'TaskOutput',
       'TaskStop',
+      'AskUser',
+      'SuggestFollowups',
+      'SetOutput',
+      'ToolSearch',
+      'Sleep',
+      'EnterWorktree',
+      'ExitWorktree',
       'CronCreate',
       'CronList',
       'CronDelete',
@@ -61,7 +75,13 @@ describe('rootAgent', () => {
       'EnterPlanMode',
       'ExitPlanMode',
     ])
-    expect(rootAgent.spawnableAgents).toEqual(['general', 'file-finder', 'command-runner'])
+    expect(rootAgent.spawnableAgents).toEqual([
+      'general',
+      'file-finder',
+      'command-runner',
+      'reviewer',
+      'researcher-web',
+    ])
     expect(rootAgent.inheritParentSystemPrompt).toBe(false)
     expect(rootAgent.includeMessageHistory).toBe(false)
     expect(rootAgent.maxRounds).toBe(80)
@@ -78,8 +98,10 @@ describe('generalAgent', () => {
       'Read',
       'Grep',
       'Glob',
+      'ListDir',
       'Edit',
       'Write',
+      'ApplyPatch',
       'Bash',
       'Skill',
     ])
@@ -111,6 +133,42 @@ describe('fileFinderAgent', () => {
     expect(prompt).toMatch(/Glob/)
     expect(prompt).toMatch(/Grep/)
     expect(prompt).toMatch(/Read/)
+  })
+})
+
+describe('reviewerAgent', () => {
+  test('shape: no tools, includes history, maxRounds 4', () => {
+    expect(reviewerAgent.id).toBe('reviewer')
+    expect(reviewerAgent.displayName).toBe('Reviewer')
+    expect(reviewerAgent.toolNames).toEqual([])
+    expect(reviewerAgent.spawnableAgents).toEqual([])
+    expect(reviewerAgent.inheritParentSystemPrompt).toBe(false)
+    expect(reviewerAgent.includeMessageHistory).toBe(true)
+    expect(reviewerAgent.maxRounds).toBe(4)
+    expect(reviewerAgent.outputMode).toBe('last_message')
+    expect(reviewerAgent.model).toBeUndefined()
+    const prompt = reviewerAgent.systemPrompt ?? ''
+    expect(prompt).toMatch(/review/i)
+    expect(prompt).toMatch(/findings/i)
+    expect(prompt).toMatch(/no tools/i)
+  })
+})
+
+describe('researcherWebAgent', () => {
+  test('shape: WebSearch and Fetch, maxRounds 12, own system prompt', () => {
+    expect(researcherWebAgent.id).toBe('researcher-web')
+    expect(researcherWebAgent.displayName).toBe('Web Researcher')
+    expect(researcherWebAgent.toolNames).toEqual(['WebSearch', 'Fetch'])
+    expect(researcherWebAgent.spawnableAgents).toEqual([])
+    expect(researcherWebAgent.inheritParentSystemPrompt).toBe(false)
+    expect(researcherWebAgent.includeMessageHistory).toBe(false)
+    expect(researcherWebAgent.maxRounds).toBe(12)
+    expect(researcherWebAgent.outputMode).toBe('last_message')
+    expect(researcherWebAgent.model).toBeUndefined()
+    const prompt = researcherWebAgent.systemPrompt ?? ''
+    expect(prompt).toMatch(/WebSearch/)
+    expect(prompt).toMatch(/Fetch/)
+    expect(prompt).toMatch(/3/)
   })
 })
 
@@ -158,25 +216,44 @@ describe('resolveChildModel', () => {
 })
 
 describe('child tools', () => {
-  test('childToolNames drops Agent and plan tools', () => {
+  test('childToolNames drops Agent, plan, cron, AskUser, and SetOutput', () => {
     expect(childToolNames(rootAgent)).toEqual([
       'Read',
       'Grep',
       'Glob',
+      'ListDir',
+      'ReadSubtree',
       'Edit',
       'Write',
+      'ApplyPatch',
+      'NotebookEdit',
       'Bash',
       'Skill',
       'Fetch',
+      'WebSearch',
       'TodoWrite',
       'TaskOutput',
       'TaskStop',
-      'CronCreate',
-      'CronList',
-      'CronDelete',
-      'CronSetEnabled',
+      'SuggestFollowups',
+      'ToolSearch',
+      'Sleep',
     ])
+    expect(childToolNames(rootAgent)).not.toContain('CronCreate')
+    expect(childToolNames(rootAgent)).not.toContain('CronList')
+    expect(childToolNames(rootAgent)).not.toContain('CronDelete')
+    expect(childToolNames(rootAgent)).not.toContain('CronSetEnabled')
+    expect(childToolNames(rootAgent)).not.toContain('AskUser')
+    expect(childToolNames(rootAgent)).not.toContain('SetOutput')
+    expect(childToolNames(rootAgent)).not.toContain('EnterWorktree')
+    expect(childToolNames(rootAgent)).not.toContain('ExitWorktree')
     expect(childToolNames(generalAgent)).toEqual(generalAgent.toolNames)
+
+    const withRootOnly: AgentDefinition = {
+      ...rootAgent,
+      toolNames: [...rootAgent.toolNames, 'AskUser', 'SetOutput'],
+    }
+    expect(childToolNames(withRootOnly)).not.toContain('AskUser')
+    expect(childToolNames(withRootOnly)).not.toContain('SetOutput')
   })
 
   test('filterChildTools keeps only the definition allow-list from the parent pool', () => {
@@ -216,6 +293,12 @@ describe('child tools', () => {
       'Read',
       'Bash',
     ])
+    expect(filterChildTools(pool, reviewerAgent).map((tool) => tool.name)).toEqual([])
+    expect(
+      filterChildTools([...pool, stubTool('WebSearch'), stubTool('Fetch')], researcherWebAgent).map(
+        (tool) => tool.name,
+      ),
+    ).toEqual(['WebSearch', 'Fetch'])
   })
 })
 

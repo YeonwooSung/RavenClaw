@@ -20,6 +20,7 @@ export interface FileHistory {
   snapshot(absPath: string): void
   undo(): UndoResult
   pendingCount(): number
+  peekLast?(): { open: boolean } | undefined
 }
 
 interface Generation {
@@ -45,7 +46,7 @@ export function createFileHistory(sessionId: string, home = ravenclawHome()): Fi
     },
 
     snapshot(absPath) {
-      if (!current) {
+      if (!current || !current.open) {
         current = { open: true, rows: [] }
         generations.push(current)
       }
@@ -106,6 +107,12 @@ export function createFileHistory(sessionId: string, home = ravenclawHome()): Fi
 
     pendingCount() {
       return generations.reduce((sum, gen) => sum + gen.rows.length, 0)
+    },
+
+    peekLast() {
+      const gen = generations[generations.length - 1]
+      if (!gen) return undefined
+      return { open: gen.open }
     },
   }
 }

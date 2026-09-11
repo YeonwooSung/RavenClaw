@@ -1,4 +1,4 @@
-import type { CronFireStatus, CronJob, CronStore } from './types'
+import type { CronFireStatus, CronJob, CronLastFirePatch, CronStore } from './types'
 
 export interface CronRunResult {
   ok: boolean
@@ -11,8 +11,6 @@ export interface FireDueResult {
   status: CronFireStatus
 }
 
-const running = new Set<string>()
-
 export async function fireDueJobs(opts: {
   store: CronStore
   run: (job: CronJob) => Promise<CronRunResult>
@@ -22,37 +20,35 @@ export async function fireDueJobs(opts: {
   const claimed = opts.store.claimDue(now)
   const out: FireDueResult[] = []
   for (const job of claimed) {
-    if (running.has(job.id)) {
-      const skipped: CronJob = { ...job, lastFireAt: now, lastStatus: 'skipped' }
-      opts.store.upsert(skipped)
-      out.push({ job: skipped, status: 'skipped' })
-      continue
-    }
-    running.add(job.id)
     try {
       const result = await opts.run(job)
       const status: CronFireStatus = result.ok ? 'ok' : 'error'
-      const updated: CronJob = { ...job, lastFireAt: now, lastStatus: status }
-      if (result.sessionId !== undefined) updated.lastSessionId = result.sessionId
-      if (result.error !== undefined) updated.lastError = result.error
-      else delete updated.lastError
-      opts.store.upsert(updated)
-      out.push({ job: updated, status })
+      const patch: CronLastFirePatch = { lastFireAt: now, lastStatus: status }
+      if (result.sessionId !== undefined) patch.lastSessionId = result.sessionId
+      if (result.error !== undefined) patch.lastError = result.error
+      out.push({ job: persistLastFire(opts.store, job, patch), status })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      const updated: CronJob = {
-        ...job,
-        lastFireAt: now,
-        lastStatus: 'error',
-        lastError: message,
-      }
-      opts.store.upsert(updated)
-      out.push({ job: updated, status: 'error' })
-    } finally {
-      running.delete(job.id)
+      const patch: CronLastFirePatch = { lastFireAt: now, lastStatus: 'error', lastError: message }
+      out.push({ job: persistLastFire(opts.store, job, patch), status: 'error' })
     }
   }
   return out
+}
+
+function persistLastFire(store: CronStore, claimed: CronJob, patch: CronLastFirePatch): CronJob {
+  const updated = store.patchLastFire(claimed.id, patch)
+  if (updated) return updated
+  const ephemeral: CronJob = {
+    ...claimed,
+    lastFireAt: patch.lastFireAt,
+    lastStatus: patch.lastStatus,
+  }
+  delete ephemeral.runningUntil
+  if (patch.lastSessionId !== undefined) ephemeral.lastSessionId = patch.lastSessionId
+  if (patch.lastError !== undefined) ephemeral.lastError = patch.lastError
+  else delete ephemeral.lastError
+  return ephemeral
 }
 
 export function formatCronList(jobs: CronJob[]): string {

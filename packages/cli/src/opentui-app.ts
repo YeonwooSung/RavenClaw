@@ -6,12 +6,15 @@ import {
 } from '@ravenclaw/tui-opentui'
 import {
   buildSystemParts,
+  createJsonCronStore,
+  fireDueJobs,
   formatTasksNotice,
   formatUndoNotice,
   parseTasksArg,
   type StreamEvent,
 } from '@ravenclaw/core'
 import {
+  INTERVIEW_PROMPT,
   LEARN_PROMPT,
   RELOAD_NOTICE,
   REVIEW_PROMPT,
@@ -27,8 +30,24 @@ import { formatMcpList } from './mcp-list'
 import { runSessionReview } from './review'
 import { searchNotice } from './search'
 import { applyCronMutate } from './cron-cmd'
+import { fireCronJob } from './cron-fire'
 import { formatSkillsList } from './skills-list'
 import { openNewSession, parsePermissionMode, resumeRuntime, type CliRuntime } from './engine'
+import { collectUserImages, readClipboardImage } from './image-paste'
+import { parseBangLine, runBangCommand } from './bash-line'
+import { appendPrompt } from './prompt-history'
+import { expandMentions } from './mentions'
+import {
+  createMessageQueue,
+  dequeue,
+  enqueue,
+  formatQueue,
+  parseQueueArg,
+  removeAt,
+} from './message-queue'
+import { copyConversationToClipboard, formatConversationMarkdown } from './copy-conversation'
+import { formatGitDiff } from './diff-cmd'
+import { formatAskUserDialog, parseAskUserAnswer } from './ask-host'
 import { loadIncludedDockLines } from './included-ads'
 import { applySessionTitle, formatResumeSessionLine } from './resume'
 import { formatStatusLine, shortSessionId } from './status-line'
@@ -60,19 +79,43 @@ export async function runOpenTuiApp(
     write(`${lines.join('\n')}\n`)
   }
 
-  current.ask.bind(async (event, signal) => {
-    for (const line of permissionPromptLines(event)) write(`${line}\n`)
-    if (signal.aborted) return 'deny'
-    const answer = await readLine()
-    if (answer === undefined || signal.aborted) return 'deny'
-    return parsePermissionAnswer(answer)
-  })
+  const bindHosts = () => {
+    current.ask.bind(async (event, signal) => {
+      for (const line of permissionPromptLines(event)) write(`${line}\n`)
+      if (signal.aborted) return 'deny'
+      const answer = await readLine()
+      if (answer === undefined || signal.aborted) return 'deny'
+      return parsePermissionAnswer(answer)
+    })
+    current.askQuestions?.bind(async (input, signal) => {
+      write(`${formatAskUserDialog(input)}\n`)
+      if (signal.aborted) throw Object.assign(new Error('aborted'), { name: 'AbortError' })
+      const line = await readLine()
+      if (line === undefined || signal.aborted) {
+        throw Object.assign(new Error('aborted'), { name: 'AbortError' })
+      }
+      return parseAskUserAnswer(input, line)
+    })
+  }
+  bindHosts()
+
+  const queue = createMessageQueue()
+  let turnBusy = false
 
   const runTurn = async (text: string) => {
+    if (turnBusy) {
+      const n = enqueue(queue, text)
+      write(`queued (${n})\n`)
+      return
+    }
+    turnBusy = true
+    const expanded = expandMentions(text, current.cwd)
+    appendPrompt(text, current.config.home)
     view.append(`you  ${text}`)
     flush()
     try {
-      const gen = current.engine.submitMessage(text)
+      const payload = collectUserImages(expanded.text, current.cwd, readClipboardImage)
+      const gen = current.engine.submitMessage(payload)
       while (true) {
         const next = await gen.next()
         if (next.done) {
@@ -88,6 +131,14 @@ export async function runOpenTuiApp(
       const message = error instanceof Error ? error.message : String(error)
       view.append(`error  ${message}`)
       flush()
+    } finally {
+      turnBusy = false
+      const leftover = current.engine.drainSteering()
+      if (leftover.length > 0) await runTurn(leftover.join('\n'))
+      else {
+        const queued = dequeue(queue)
+        if (queued !== undefined) await runTurn(queued)
+      }
     }
     write(`${statusLine(current)}\n`)
   }
@@ -105,6 +156,29 @@ export async function runOpenTuiApp(
     if (lines.length > 0) write(`${lines.join('\n')}\n`)
   }
 
+  let cronInflight = false
+  const cronTimer = setInterval(() => {
+    if (cronInflight) return
+    cronInflight = true
+    void (async () => {
+      try {
+        const home = current.config.home
+        const fired = await fireDueJobs({
+          store: createJsonCronStore(home !== undefined ? { home } : undefined),
+          run: (job) => fireCronJob(current, job),
+        })
+        if (fired.length > 0) {
+          const last = fired[fired.length - 1]
+          if (last) write(`cron ${last.job.id} ${last.status}\n`)
+        }
+      } catch {
+        // ticker must not take down the live session
+      } finally {
+        cronInflight = false
+      }
+    })()
+  }, 15_000)
+
   try {
     await writeIncludedAds(current)
     while (true) {
@@ -114,7 +188,17 @@ export async function runOpenTuiApp(
 
       const parsed = handleSlashCommand(line)
       if (parsed.type === 'prompt') {
-        if (parsed.text === '') continue
+        if (parsed.text === '') {
+          if (!readClipboardImage()) continue
+          await runTurn('')
+          continue
+        }
+        const bang = parseBangLine(parsed.text)
+        if (bang.kind === 'bash') {
+          const result = runBangCommand(bang.command, current.cwd)
+          write(`${result.text || `exit ${result.code}`}\n`)
+          continue
+        }
         await runTurn(parsed.text)
         continue
       }
@@ -161,6 +245,7 @@ export async function runOpenTuiApp(
           try {
             await current.mcpCloser?.()
             current = await startNew(current)
+            bindHosts()
             view.reset()
             write(`new session ${shortSessionId(current.engine.session.id)}\n`)
             await writeIncludedAds(current)
@@ -238,9 +323,83 @@ export async function runOpenTuiApp(
             ...(current.config.home !== undefined ? { home: current.config.home } : {}),
           })}\n`)
           continue
+        case 'rewind':
+          write(`${(await current.engine.rewindLast()).notice}\n`)
+          continue
+        case 'diff':
+          write(`${formatGitDiff(current.cwd)}\n`)
+          continue
+        case 'steer': {
+          if (parsed.arg === undefined || parsed.arg.trim() === '') {
+            write('usage: /steer <text>\n')
+            continue
+          }
+          current.engine.enqueueSteer(parsed.arg)
+          write('steered (next round)\n')
+          continue
+        }
         case 'cron':
           write(`${applyCronMutate(parsed.arg, current.cwd, current.config.home).text}\n`)
           continue
+        case 'queue': {
+          const action = parseQueueArg(parsed.arg)
+          if (action.action === 'error') {
+            write(`${action.message}\n`)
+            continue
+          }
+          if (action.action === 'clear') {
+            queue.items.length = 0
+            write('queue empty\n')
+            continue
+          }
+          if (action.action === 'drop') {
+            const removed = removeAt(queue, action.index - 1)
+            write(`${removed === undefined ? `unknown queue item ${action.index}` : formatQueue(queue)}\n`)
+            continue
+          }
+          write(`${formatQueue(queue)}\n`)
+          continue
+        }
+        case 'copy': {
+          try {
+            const loaded = await current.store.loadSession(current.engine.session.id)
+            const markdown = formatConversationMarkdown(
+              loaded.messages.map((message) => ({
+                role: message.role,
+                text: message.blocks
+                  .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
+                  .map((block) => block.text)
+                  .join(''),
+              })),
+            )
+            const copied = copyConversationToClipboard(markdown)
+            if (copied.method === 'osc52') write(copied.text)
+            write(`${copied.ok ? 'copied conversation' : 'copy failed'}\n`)
+          } catch {
+            write('copy failed\n')
+          }
+          continue
+        }
+        case 'interview':
+          await runTurn(INTERVIEW_PROMPT)
+          continue
+        case 'bash': {
+          if (parsed.arg === undefined || parsed.arg.trim() === '') {
+            write('usage: /bash <cmd>\n')
+            continue
+          }
+          const result = runBangCommand(parsed.arg, current.cwd)
+          write(`${result.text || `exit ${result.code}`}\n`)
+          continue
+        }
+        case 'skill': {
+          if (parsed.arg === undefined || parsed.arg.trim() === '') {
+            write('usage: /skill:<name>\n')
+            continue
+          }
+          await runTurn(`Use the Skill tool to load "${parsed.arg.trim()}" and follow its instructions.`)
+          continue
+        }
         case 'config':
           write(
             current.config.home !== undefined
@@ -273,6 +432,7 @@ export async function runOpenTuiApp(
           if (parsed.arg !== undefined) {
             try {
               current = await resume(current, parsed.arg)
+              bindHosts()
               write(`resumed ${shortSessionId(parsed.arg)}\n`)
               await writeIncludedAds(current)
             } catch (error) {
@@ -297,6 +457,7 @@ export async function runOpenTuiApp(
       }
     }
   } finally {
+    clearInterval(cronTimer)
     close()
   }
 }

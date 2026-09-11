@@ -48,6 +48,21 @@ describe('parseArgv', () => {
     })
   })
 
+  test('--fallback-model --allowed-tools and --worktree parse', () => {
+    expect(parseArgv(['--fallback-model', 'haiku', '--allowed-tools', 'Read,Grep'])).toEqual({
+      cmd: 'interactive',
+      flags: { fallbackModel: 'haiku', allowedTools: ['Read', 'Grep'] },
+    })
+    expect(parseArgv(['--worktree'])).toEqual({
+      cmd: 'interactive',
+      flags: { worktree: true },
+    })
+    expect(parseArgv(['--worktree', 'feat'])).toEqual({
+      cmd: 'interactive',
+      flags: { worktree: 'feat' },
+    })
+  })
+
   test('supports --provider= and --model= forms', () => {
     expect(parseArgv(['--provider=anthropic', '--model=claude'])).toEqual({
       cmd: 'interactive',

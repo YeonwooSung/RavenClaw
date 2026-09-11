@@ -17,6 +17,14 @@ export interface CronJob {
   lastStatus?: CronFireStatus
   lastError?: string
   lastSessionId?: string
+  runningUntil?: number
+}
+
+export interface CronLastFirePatch {
+  lastFireAt: number
+  lastStatus: CronFireStatus
+  lastError?: string
+  lastSessionId?: string
 }
 
 export interface CronStore {
@@ -25,6 +33,7 @@ export interface CronStore {
   upsert(job: CronJob): void
   remove(id: string): CronJob | undefined
   claimDue(now: number): CronJob[]
+  patchLastFire(id: string, patch: CronLastFirePatch): CronJob | undefined
 }
 
 export const CRON_ID_PREFIX = 'c_'

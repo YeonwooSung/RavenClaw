@@ -2,7 +2,9 @@ import { existsSync, mkdirSync, readFileSync, rmdirSync, statSync, writeFileSync
 import { dirname, join } from 'node:path'
 import { ravenclawHome } from '../home'
 import { nextFireAt } from './cron'
-import { CRON_ID_PREFIX, type CronJob, type CronStore } from './types'
+import { CRON_ID_PREFIX, type CronJob, type CronLastFirePatch, type CronStore } from './types'
+
+export const CRON_RUNNING_LEASE_MS = 2 * 60 * 60 * 1000
 
 const LOCK_WAIT_MS = 200
 const LOCK_POLL_MS = 5
@@ -85,9 +87,27 @@ function saveJobs(path: string, jobs: CronJob[]): void {
   writeFileSync(path, `${JSON.stringify({ jobs }, null, 2)}\n`, 'utf8')
 }
 
+function applyLastFirePatch(job: CronJob, patch: CronLastFirePatch): CronJob {
+  const updated: CronJob = {
+    ...job,
+    lastFireAt: patch.lastFireAt,
+    lastStatus: patch.lastStatus,
+  }
+  delete updated.runningUntil
+  if (patch.lastSessionId !== undefined) updated.lastSessionId = patch.lastSessionId
+  if (patch.lastError !== undefined) updated.lastError = patch.lastError
+  else delete updated.lastError
+  return updated
+}
+
 export function createJsonCronStore(opts?: { home?: string }): CronStore {
   const path = cronJobsPath(opts?.home)
   const lockDir = `${path}.lock`
+
+  function withStoreLock<T>(fn: () => T): T {
+    mkdirSync(dirname(path), { recursive: true })
+    return withJobsLock(lockDir, fn)
+  }
 
   return {
     list() {
@@ -97,36 +117,64 @@ export function createJsonCronStore(opts?: { home?: string }): CronStore {
       return loadJobs(path).find((job) => job.id === id)
     },
     upsert(job) {
-      mkdirSync(dirname(path), { recursive: true })
-      const jobs = loadJobs(path)
-      const index = jobs.findIndex((row) => row.id === job.id)
-      const copy = structuredClone(job)
-      if (index === -1) jobs.push(copy)
-      else jobs[index] = copy
-      saveJobs(path, jobs)
+      withStoreLock(() => {
+        const jobs = loadJobs(path)
+        const index = jobs.findIndex((row) => row.id === job.id)
+        const copy = structuredClone(job)
+        if (index === -1) jobs.push(copy)
+        else jobs[index] = copy
+        saveJobs(path, jobs)
+      })
     },
     remove(id) {
-      const jobs = loadJobs(path)
-      const index = jobs.findIndex((row) => row.id === id)
-      if (index === -1) return undefined
-      const [removed] = jobs.splice(index, 1)
-      saveJobs(path, jobs)
-      return removed
+      return withStoreLock(() => {
+        const jobs = loadJobs(path)
+        const index = jobs.findIndex((row) => row.id === id)
+        if (index === -1) return undefined
+        const [removed] = jobs.splice(index, 1)
+        saveJobs(path, jobs)
+        return removed
+      })
     },
     claimDue(now) {
-      mkdirSync(dirname(path), { recursive: true })
-      return withJobsLock(lockDir, () => {
+      return withStoreLock(() => {
         const jobs = loadJobs(path)
         const claimed: CronJob[] = []
         for (let i = 0; i < jobs.length; i++) {
           const job = jobs[i]
           if (!job || !job.enabled || job.nextFireAt > now) continue
-          const updated: CronJob = { ...job, nextFireAt: nextFireAfter(job, now) }
+          if (job.runningUntil !== undefined && job.runningUntil > now) {
+            jobs[i] = {
+              ...job,
+              nextFireAt: nextFireAfter(job, now),
+              lastFireAt: now,
+              lastStatus: 'skipped',
+            }
+            continue
+          }
+          const updated: CronJob = {
+            ...job,
+            nextFireAt: nextFireAfter(job, now),
+            runningUntil: now + CRON_RUNNING_LEASE_MS,
+          }
           jobs[i] = updated
           claimed.push(structuredClone(updated))
         }
         saveJobs(path, jobs)
         return claimed
+      })
+    },
+    patchLastFire(id, patch) {
+      return withStoreLock(() => {
+        const jobs = loadJobs(path)
+        const index = jobs.findIndex((row) => row.id === id)
+        if (index === -1) return undefined
+        const current = jobs[index]
+        if (!current) return undefined
+        const updated = applyLastFirePatch(current, patch)
+        jobs[index] = updated
+        saveJobs(path, jobs)
+        return structuredClone(updated)
       })
     },
   }

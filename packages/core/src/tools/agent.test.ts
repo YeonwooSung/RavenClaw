@@ -28,6 +28,7 @@ import type {
 import { createPlanModeTools } from './plan-mode'
 import { editTool } from './edit'
 import { readTool } from './read'
+import { setChildOutput } from './set-output'
 import { skillTool } from './skill'
 import { createAgentTool } from './agent'
 
@@ -324,6 +325,30 @@ describe('createAgentTool', () => {
 
     const badIsolation = tool.parse({ prompt: 'x', isolation: 'remote' })
     expect(badIsolation.ok).toBe(false)
+
+    const withAgents = tool.parse({
+      prompt: 'ignored',
+      agents: [
+        { prompt: 'one', subagent: 'general' },
+        { prompt: 'two', isolation: 'none', context: 'ctx', description: 'd' },
+      ],
+    })
+    expect(withAgents.ok).toBe(true)
+    if (withAgents.ok) {
+      expect(withAgents.value.agents).toEqual([
+        { prompt: 'one', subagent: 'general' },
+        { prompt: 'two', isolation: 'none', context: 'ctx', description: 'd' },
+      ])
+    }
+
+    const agentsMissingPrompt = tool.parse({ prompt: 'x', agents: [{ subagent: 'general' }] })
+    expect(agentsMissingPrompt.ok).toBe(false)
+
+    const agentsExtraField = tool.parse({
+      prompt: 'x',
+      agents: [{ prompt: 'y', model: 'other' }],
+    })
+    expect(agentsExtraField.ok).toBe(false)
   })
 
   test('child history starts empty; parent messages are not in the child request', async () => {
@@ -979,8 +1004,8 @@ describe('createAgentTool', () => {
     tempDirs.push(cwd)
     mkdirSync(join(cwd, '.ravenclaw', 'agents'), { recursive: true })
     writeFileSync(
-      join(cwd, '.ravenclaw', 'agents', 'reviewer.md'),
-      '---\nname: reviewer\nallowed-tools: Read\n---\nReview only.\n',
+      join(cwd, '.ravenclaw', 'agents', 'disk-helper.md'),
+      '---\nname: disk-helper\nallowed-tools: Read\n---\nReview only.\n',
     )
     const store = createMemoryStore()
     const session = makeSession({ cwd })
@@ -988,7 +1013,7 @@ describe('createAgentTool', () => {
     const provider = createFakeProvider([textThenStop('reviewed')])
     const { tool } = createTestAgent({ store, provider })
     const result = await tool.execute(
-      { prompt: 'review', subagent: 'reviewer' },
+      { prompt: 'review', subagent: 'disk-helper' },
       makeCtx(makeTurn(session, { cwd })),
     )
     expect(result).toBe('reviewed')
@@ -1222,6 +1247,202 @@ describe('createAgentTool', () => {
     const result = await tool.execute({ prompt: 'work' }, makeCtx(turn))
     expect(result).toBe('done')
     expect(turn.usage).toEqual({ input: 15, output: 8, cacheRead: 3, cacheWrite: 3 })
+  })
+
+  test('parallel agents run two children and ignore the top-level prompt', async () => {
+    function replyFromPrompt() {
+      return async function* (req: ProviderRequest) {
+        const texts = req.messages.flatMap((msg) =>
+          msg.role === 'user' || msg.role === 'assistant' || msg.role === 'tool'
+            ? msg.blocks.map((block) => ('text' in block ? block.text : ''))
+            : [],
+        )
+        const prompt = texts.find((text) => text.includes('task-a') || text.includes('task-b')) ?? ''
+        const label = prompt.includes('task-a') ? 'out-a' : 'out-b'
+        yield { type: 'text_delta' as const, text: label }
+        yield { type: 'stop' as const, reason: 'end' }
+      }
+    }
+    const provider = createFakeProvider([replyFromPrompt(), replyFromPrompt()])
+    const store = createMemoryStore()
+    const session = makeSession()
+    await store.createSession(session)
+    const { tool } = createTestAgent({ store, provider })
+    const turn = makeTurn(session, {
+      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+    })
+    const result = await tool.execute(
+      {
+        prompt: 'TOP_LEVEL_SHOULD_NOT_RUN',
+        agents: [
+          { prompt: 'task-a', subagent: 'general' },
+          { prompt: 'task-b', subagent: 'file-finder' },
+        ],
+      },
+      makeCtx(turn),
+    )
+
+    expect(result).toBe('## 1 (general)\nout-a\n\n## 2 (file-finder)\nout-b')
+    expect(provider.streamCount).toBe(2)
+    const children = await store.listSessions({ parentSessionId: session.id })
+    expect(children).toHaveLength(2)
+    const allReqText = provider.requests.flatMap((req) =>
+      req.messages.flatMap((msg) =>
+        msg.role === 'user' || msg.role === 'assistant' || msg.role === 'tool'
+          ? msg.blocks.map((block) => ('text' in block ? block.text : ''))
+          : [],
+      ),
+    )
+    expect(allReqText.some((text) => text.includes('TOP_LEVEL_SHOULD_NOT_RUN'))).toBe(false)
+    expect(tool.isConcurrencySafe({ prompt: 'x', agents: [{ prompt: 'a' }] })).toBe(false)
+  })
+
+  test('parallel agents include rejected reasons', async () => {
+    const store = createMemoryStore()
+    const session = makeSession()
+    await store.createSession(session)
+    const orig = store.persistUser.bind(store)
+    store.persistUser = async (sessionId, message) => {
+      const text =
+        message.blocks[0] && message.blocks[0].type === 'text' ? message.blocks[0].text : ''
+      if (text.includes('fail-child')) {
+        throw new PersistError('readonly', 'second child persist failed')
+      }
+      return orig(sessionId, message)
+    }
+    const provider = createFakeProvider([textThenStop('first-ok'), textThenStop('should-not')])
+    const { tool } = createTestAgent({ store, provider })
+    const result = await tool.execute(
+      {
+        prompt: 'ignored',
+        agents: [{ prompt: 'ok-child' }, { prompt: 'fail-child', subagent: 'general' }],
+      },
+      makeCtx(makeTurn(session)),
+    )
+
+    expect(result).toContain('## 1 (general)\nfirst-ok')
+    expect(result).toContain('## 2 (general)')
+    expect(result).toMatch(/second child persist failed/)
+  })
+
+  test('takeChildOutput is preferred over last assistant text', async () => {
+    const store = createMemoryStore()
+    const session = makeSession()
+    await store.createSession(session)
+    let childId: string | undefined
+    const orig = store.createSession.bind(store)
+    store.createSession = async (next) => {
+      if (next.parentSessionId === session.id) childId = next.id
+      return orig(next)
+    }
+    const provider = createFakeProvider([
+      async function* () {
+        expect(childId).toBeDefined()
+        setChildOutput(childId!, 'structured-out')
+        yield { type: 'text_delta' as const, text: 'last message text' }
+        yield { type: 'stop' as const, reason: 'end' }
+      },
+    ])
+    const { tool } = createTestAgent({ store, provider })
+    const result = await tool.execute({ prompt: 'produce output' }, makeCtx(makeTurn(session)))
+    expect(result).toBe('structured-out')
+    expect(result).not.toBe('last message text')
+  })
+
+  test('unknown subagent in agents[] is reported and does not spawn that child', async () => {
+    const store = createMemoryStore()
+    const session = makeSession()
+    await store.createSession(session)
+    const provider = createFakeProvider([textThenStop('ok')])
+    const { tool } = createTestAgent({ store, provider })
+    const result = await tool.execute(
+      {
+        prompt: 'ignored',
+        agents: [
+          { prompt: 'good', subagent: 'general' },
+          { prompt: 'bad', subagent: 'nope' },
+        ],
+      },
+      makeCtx(makeTurn(session)),
+    )
+
+    expect(result).toContain('## 1 (general)\nok')
+    expect(result).toMatch(/## 2 \(nope\)/)
+    expect(result).toMatch(/unknown subagent|not spawnable/i)
+    expect(provider.streamCount).toBe(1)
+    const children = await store.listSessions({ parentSessionId: session.id })
+    expect(children).toHaveLength(1)
+  })
+
+  test('reviewer has no tools and receives parent history', async () => {
+    const provider = createFakeProvider([textThenStop('no findings')])
+    const store = createMemoryStore()
+    const session = makeSession()
+    await store.createSession(session)
+    const { tool } = createTestAgent({ store, provider })
+    const turn = makeTurn(session, {
+      messages: [
+        {
+          id: 'u_parent',
+          role: 'user',
+          blocks: [{ type: 'text', text: 'PARENT_SECRET recent edit in src/a.ts' }],
+          createdAt: 1,
+        },
+        {
+          id: 'a_parent',
+          role: 'assistant',
+          blocks: [
+            { type: 'text', text: 'delegating review' },
+            {
+              type: 'tool_use',
+              id: 'agent_now',
+              name: 'Agent',
+              input: { prompt: 'review edits', subagent: 'reviewer' },
+            },
+          ],
+          createdAt: 2,
+        },
+      ],
+    })
+    const result = await tool.execute(
+      { prompt: 'review edits', subagent: 'reviewer' },
+      makeCtx(turn),
+    )
+    expect(result).toBe('no findings')
+    expect(provider.requests[0]?.tools.map((entry) => entry.name) ?? []).toEqual([])
+    const texts = (provider.requests[0]?.messages ?? []).flatMap((msg) =>
+      msg.role === 'user' || msg.role === 'assistant' || msg.role === 'tool'
+        ? msg.blocks.map((block) => ('text' in block ? block.text : ''))
+        : [],
+    )
+    expect(texts.some((text) => text.includes('PARENT_SECRET'))).toBe(true)
+    expect(
+      (provider.requests[0]?.messages ?? []).some(
+        (msg) =>
+          msg.role === 'assistant' &&
+          msg.blocks.some((block) => block.type === 'tool_use' && block.id === 'agent_now'),
+      ),
+    ).toBe(false)
+  })
+
+  test('researcher-web child tools are WebSearch and Fetch when present', async () => {
+    const provider = createFakeProvider([textThenStop('cited')])
+    const store = createMemoryStore()
+    const session = makeSession()
+    await store.createSession(session)
+    const { tool } = createTestAgent({
+      store,
+      provider,
+      tools: [...parentPool(), stubTool('WebSearch'), stubTool('Fetch')],
+    })
+    await tool.execute(
+      { prompt: 'research bun test', subagent: 'researcher-web' },
+      makeCtx(makeTurn(session)),
+    )
+    expect(provider.requests[0]?.tools.map((entry) => entry.name) ?? []).toEqual([
+      'WebSearch',
+      'Fetch',
+    ])
   })
 
   test('isolation worktree falls back to parent cwd when not a git repo', async () => {

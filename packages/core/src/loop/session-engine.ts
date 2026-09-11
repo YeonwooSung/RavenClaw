@@ -1,5 +1,6 @@
 import { runAutocompact } from '../compact/prune'
 import { mechanicalSummary } from '../compact/summarize'
+import { loadLifecycleHooks } from '../hooks/lifecycle'
 import { createFileHistory } from '../session/file-history'
 import { createTaskRegistry } from '../tasks/registry'
 import type {
@@ -18,6 +19,8 @@ import type {
 import { abortTurn } from './abort'
 import { queryLoop } from './query-loop'
 import { selectProtectedTail } from './repair'
+import { rewindLastTurn } from '../session/rewind'
+import { getSessionWorktree } from '../tools/session-worktree'
 
 const TITLE_MAX = 50
 
@@ -36,6 +39,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
   const tasks = createTaskRegistry()
   const fileHistory = createFileHistory(session.id)
   const steering: string[] = []
+  const lifecycle = loadLifecycleHooks(session.cwd)
 
   return {
     get session() {
@@ -57,8 +61,27 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       return steering.splice(0)
     },
 
+    async rewindLast() {
+      if (liveTurn) {
+        return { ok: false, notice: 'a turn is in progress' }
+      }
+      if (tasks.list().some((task) => task.status === 'running' && task.type === 'agent')) {
+        return { ok: false, notice: 'a turn is in progress' }
+      }
+      const result = await rewindLastTurn({
+        fileHistory,
+        messages,
+        store: opts.store,
+        sessionId: session.id,
+        generation: session.compactGeneration,
+      })
+      messages = result.messages
+      return { ok: result.ok, notice: result.notice }
+    },
+
     async *submitMessage(input: UserSubmitInput): AsyncGenerator<StreamEvent, RoundEnd> {
       const { text, blocks } = userSubmitToBlocks(input)
+      await lifecycle.run('UserPromptSubmit', { text })
       const userMsg: Extract<Message, { role: 'user' }> = {
         id: crypto.randomUUID(),
         role: 'user',
@@ -84,6 +107,8 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         model: session.model,
         readFiles: new Set(),
       }
+      const worktree = getSessionWorktree(session.id)
+      if (worktree) turn.projectCwd = worktree.originalCwd
       if (session.prePlanMode !== undefined) turn.prePlanMode = session.prePlanMode
       liveTurn = turn
 
@@ -126,6 +151,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         session.compactGeneration = turn.compactGeneration
         session.permissionMode = turn.permissionMode
         if (turn.prePlanMode !== undefined) session.prePlanMode = turn.prePlanMode
+        session.cwd = turn.cwd
         session.updatedAt = Date.now()
         await opts.store.upsertSession(session)
         return end

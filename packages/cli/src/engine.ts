@@ -1,4 +1,6 @@
 import { join } from 'node:path'
+import { filterToolsByAllowList } from './allowed-tools'
+import { createAskUserBridge, type AskUserBridge } from './ask-host'
 import {
   bashTool,
   buildSystemParts,
@@ -30,6 +32,20 @@ import {
   taskStopTool,
   todoWriteTool,
   writeTool,
+  listDirTool,
+  readSubtreeTool,
+  applyPatchTool,
+  webSearchTool,
+  suggestFollowupsTool,
+  askUserTool,
+  createAskUserTool,
+  setOutputTool,
+  notebookEditTool,
+  enterWorktreeTool,
+  exitWorktreeTool,
+  createToolSearchTool,
+  sleepTool,
+  enterSessionWorktree,
   type CompactPolicy,
   type ConfigFlags,
   type Funding,
@@ -160,24 +176,40 @@ function cronToolList(): Tool[] {
   return [cron.create, cron.list, cron.remove, cron.setEnabled]
 }
 
-export function createRootTools(store: SessionStore, bash: Tool = bashTool): Tool[] {
+export function createRootTools(
+  store: SessionStore,
+  bash: Tool = bashTool,
+  ask: Tool = askUserTool,
+): Tool[] {
   const plan = createPlanModeTools(store)
-  return [
+  const list = [
     readTool,
     grepTool,
     globTool,
+    listDirTool,
+    readSubtreeTool,
     editTool,
     writeTool,
+    applyPatchTool,
+    notebookEditTool,
     bash,
     skillTool,
     fetchTool,
+    webSearchTool,
     todoWriteTool,
     taskOutputTool,
     taskStopTool,
+    ask,
+    suggestFollowupsTool,
+    setOutputTool,
+    sleepTool,
+    enterWorktreeTool,
+    exitWorktreeTool,
     ...cronToolList(),
     plan.enter,
     plan.exit,
   ]
+  return [...list, createToolSearchTool(list)]
 }
 
 export function createSessionTools(opts: {
@@ -191,8 +223,9 @@ export function createSessionTools(opts: {
   bash?: Tool
   mcpTools?: Tool[]
   hooks?: PermissionHook[]
+  askTool?: Tool
 }): Tool[] {
-  const base = createRootTools(opts.store, opts.bash ?? bashTool)
+  const base = createRootTools(opts.store, opts.bash ?? bashTool, opts.askTool)
   const mcpTools = opts.mcpTools ?? []
   const childPool = mcpTools.length > 0 ? mergeToolPool(base, mcpTools) : base
   const agentOpts: Parameters<typeof createAgentTool>[0] = {
@@ -268,6 +301,7 @@ export interface CliRuntimeBase {
   config: ResolvedConfig
   cwd: string
   ask: AskBridge
+  askQuestions?: AskUserBridge
   mcpCloser?: () => Promise<void>
   hasPaidCapacityPlan?: boolean
   probe?: EntitlementProbe
@@ -291,7 +325,8 @@ export async function openEngine(opts: {
   funding?: Funding
   tools?: Tool[]
   maxRounds?: number
-}): Promise<{ engine: SessionEngine; mcpCloser?: () => Promise<void> }> {
+}): Promise<{ engine: SessionEngine; mcpCloser?: () => Promise<void>; askQuestions: AskUserBridge }> {
+  const askQuestions = createAskUserBridge()
   const session = opts.session ?? newSessionRecord({
     cwd: opts.cwd,
     model: opts.config.model,
@@ -322,11 +357,11 @@ export async function openEngine(opts: {
     mcpCloser = loaded.close
   }
   if (opts.tools === undefined) {
-    const plugins = loadLocalPlugins(session.cwd)
+    const plugins = loadLocalPlugins(session.cwd, opts.config.home, { project: true })
     if (plugins.length > 0) mcpTools = mergeToolPool(mcpTools, plugins)
   }
   const hooks = loadFileHooks(session.cwd)
-  const tools =
+  const built =
     opts.tools ??
     createSessionTools({
       store: opts.store,
@@ -339,7 +374,9 @@ export async function openEngine(opts: {
       bash,
       mcpTools,
       hooks,
+      askTool: createAskUserTool((input, signal) => askQuestions.ask(input, signal)),
     })
+  const tools = filterToolsByAllowList(built, opts.config.allowedTools)
   const engineOpts: SessionEngineOptions = {
     session,
     provider: opts.provider,
@@ -353,7 +390,7 @@ export async function openEngine(opts: {
   }
   if (opts.messages) engineOpts.messages = opts.messages
   if (hooks.length > 0) engineOpts.hooks = hooks
-  return { engine: createSessionEngine(engineOpts), mcpCloser }
+  return { engine: createSessionEngine(engineOpts), mcpCloser, askQuestions }
 }
 
 export async function providerFromConfig(
@@ -519,8 +556,18 @@ export async function bootCli(
   }
   if (opts.tools !== undefined) engineOpts.tools = opts.tools
   if (opts.maxRounds !== undefined) engineOpts.maxRounds = opts.maxRounds
-  const { engine, mcpCloser } = await openEngine(engineOpts)
-  return { engine, store, provider, config, cwd, ask, mcpCloser, ...extras }
+  const { engine, mcpCloser, askQuestions } = await openEngine(engineOpts)
+  const wt = opts.flags.worktree
+  if (wt !== undefined && wt !== false) {
+    const name = wt === true ? undefined : wt
+    const entered = enterSessionWorktree(engine.session.id, cwd, name)
+    if (entered.ok) {
+      engine.session.cwd = entered.cwd
+      await store.upsertSession(engine.session)
+      return { engine, store, provider, config, cwd: entered.cwd, ask, mcpCloser, askQuestions, ...extras }
+    }
+  }
+  return { engine, store, provider, config, cwd, ask, mcpCloser, askQuestions, ...extras }
 }
 
 export async function resumeRuntime(
@@ -530,7 +577,7 @@ export async function resumeRuntime(
   const loaded = await resumeSession(runtime.store, sessionId)
   await runtime.mcpCloser?.()
   const resumed = await providerForResumedSession(runtime, loaded.session)
-  const { engine, mcpCloser } = await openEngine({
+  const { engine, mcpCloser, askQuestions } = await openEngine({
     provider: resumed.provider,
     store: runtime.store,
     config: runtime.config,
@@ -545,6 +592,7 @@ export async function resumeRuntime(
     provider: resumed.provider,
     cwd: loaded.session.cwd,
     mcpCloser,
+    askQuestions,
     hasPaidCapacityPlan: resumed.hasPaidCapacityPlan,
   }
 }
@@ -571,7 +619,7 @@ export async function openNewSession(
     ...(opts?.sessionId !== undefined ? { id: opts.sessionId } : {}),
   })
   await runtime.store.createSession(session)
-  const { engine, mcpCloser } = await openEngine({
+  const { engine, mcpCloser, askQuestions } = await openEngine({
     provider,
     store: runtime.store,
     config: runtime.config,
@@ -584,6 +632,7 @@ export async function openNewSession(
     engine,
     provider,
     mcpCloser,
+    askQuestions,
     hasPaidCapacityPlan: access.admitted ? access.hasPaidCapacityPlan : false,
     remainingSessions: access.admitted ? access.remainingSessions : undefined,
   }

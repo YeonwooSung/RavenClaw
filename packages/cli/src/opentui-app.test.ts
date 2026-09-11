@@ -115,6 +115,9 @@ function fakeEngine(
     drainSteering() {
       return []
     },
+    async rewindLast() {
+      return { ok: false, notice: 'nothing to rewind' }
+    },
     submitMessage: submit,
     async compactNow() {},
     async setPermissionMode() {},

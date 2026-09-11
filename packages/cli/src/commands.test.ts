@@ -52,11 +52,19 @@ describe('handleSlashCommand', () => {
     ['/tasks', { type: 'command', name: 'tasks' }],
     ['/tasks kill b_abc', { type: 'command', name: 'tasks', arg: 'kill b_abc' }],
     ['/undo', { type: 'command', name: 'undo' }],
+    ['/rewind', { type: 'command', name: 'rewind' }],
+    ['/diff', { type: 'command', name: 'diff' }],
+    ['/steer keep going', { type: 'command', name: 'steer', arg: 'keep going' }],
     ['/reload', { type: 'command', name: 'reload' }],
     ['/mcp', { type: 'command', name: 'mcp' }],
     ['/skills', { type: 'command', name: 'skills' }],
     ['/cron', { type: 'command', name: 'cron' }],
     ['/cron add every 30m lint', { type: 'command', name: 'cron', arg: 'add every 30m lint' }],
+    ['/queue', { type: 'command', name: 'queue' }],
+    ['/copy', { type: 'command', name: 'copy' }],
+    ['/interview', { type: 'command', name: 'interview' }],
+    ['/bash echo hi', { type: 'command', name: 'bash', arg: 'echo hi' }],
+    ['/skill:foo', { type: 'command', name: 'skill', arg: 'foo' }],
     ['/config', { type: 'command', name: 'config' }],
     ['/context', { type: 'command', name: 'context' }],
   ] as const)('%s', (line, expected) => {
@@ -87,10 +95,18 @@ describe('handleSlashCommand', () => {
     expect(SLASH_HELP).toContain('/permissions')
     expect(SLASH_HELP).toContain('/tasks')
     expect(SLASH_HELP).toContain('/undo')
+    expect(SLASH_HELP).toContain('/rewind')
+    expect(SLASH_HELP).toContain('/diff')
+    expect(SLASH_HELP).toContain('/steer')
     expect(SLASH_HELP).toContain('/reload')
     expect(SLASH_HELP).toContain('/mcp')
     expect(SLASH_HELP).toContain('/skills')
     expect(SLASH_HELP).toContain('/cron')
+    expect(SLASH_HELP).toContain('/queue')
+    expect(SLASH_HELP).toContain('/copy')
+    expect(SLASH_HELP).toContain('/interview')
+    expect(SLASH_HELP).toContain('/bash')
+    expect(SLASH_HELP).toContain('/skill:')
     expect(SLASH_HELP).toContain('/config')
     expect(SLASH_HELP).toContain('/context')
   })
@@ -112,10 +128,18 @@ describe('handleSlashCommand', () => {
       'permissions',
       'tasks',
       'undo',
+      'rewind',
+      'diff',
+      'steer',
       'reload',
       'mcp',
       'skills',
       'cron',
+      'queue',
+      'copy',
+      'interview',
+      'bash',
+      'skill',
       'config',
       'context',
       'help',

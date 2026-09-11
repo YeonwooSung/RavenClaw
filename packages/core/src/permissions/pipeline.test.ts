@@ -15,6 +15,7 @@ import { decidePermission } from './pipeline'
 import { editTool } from '../tools/edit'
 import { writeTool } from '../tools/write'
 import { bashTool } from '../tools/bash'
+import { applyPatchTool } from '../tools/apply-patch'
 
 function makeTurn(over: Partial<Turn> = {}): Turn {
   return {
@@ -360,6 +361,17 @@ describe('decidePermission', () => {
       cwd: root,
     })
     expect(decision.behavior).toBe('ask')
+  })
+
+  test('safetyCheck denies ApplyPatch leftover ask for .git/hooks', async () => {
+    const decision = await decide({
+      tool: applyPatchTool,
+      name: 'ApplyPatch',
+      input: { operations: [{ type: 'create_file', path: '.git/hooks/pre-commit', diff: '+x' }] },
+      mode: 'default',
+    })
+    expect(decision.behavior).toBe('deny')
+    if (decision.behavior === 'deny') expect(decision.reason).toBe('safety')
   })
 
   test('safetyCheck can deny after checkPermissions allows', async () => {

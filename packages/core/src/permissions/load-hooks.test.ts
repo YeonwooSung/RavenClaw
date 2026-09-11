@@ -137,4 +137,72 @@ process.stdout.write(JSON.stringify(ok
       message: 'project',
     })
   })
+
+  test('PreToolUse aliases pre_tool', async () => {
+    const home = tempDir('ravenclaw-hooks-alias-')
+    const cwd = tempDir('ravenclaw-hooks-alias-cwd-')
+    process.env[ENV_KEY] = home
+    writeHooks(home, {
+      PreToolUse: [{ command: `printf '%s' '{"behavior":"deny","message":"pascal"}'` }],
+    })
+    const hooks = loadFileHooks(cwd)
+    expect(hooks).toHaveLength(1)
+    expect(await hooks[0]!({ name: 'Bash', input: {} })).toEqual({
+      behavior: 'deny',
+      reason: 'hook',
+      message: 'pascal',
+    })
+  })
+
+  test('pre_tool and PreToolUse both become permission hooks', async () => {
+    const home = tempDir('ravenclaw-hooks-both-')
+    const cwd = tempDir('ravenclaw-hooks-both-cwd-')
+    process.env[ENV_KEY] = home
+    writeHooks(home, {
+      pre_tool: [{ command: `printf '%s' '{"behavior":"allow"}'` }],
+      PreToolUse: [{ command: `printf '%s' '{"behavior":"deny","message":"second"}'` }],
+    })
+    const hooks = loadFileHooks(cwd)
+    expect(hooks).toHaveLength(2)
+    expect(await hooks[0]!({ name: 'Bash', input: {} })).toEqual({
+      behavior: 'allow',
+      reason: 'hook',
+    })
+    expect(await hooks[1]!({ name: 'Bash', input: {} })).toEqual({
+      behavior: 'deny',
+      reason: 'hook',
+      message: 'second',
+    })
+  })
+
+  test('if skips non-matching tool names and Bash(*) matches Bash', async () => {
+    const home = tempDir('ravenclaw-hooks-if-')
+    const cwd = tempDir('ravenclaw-hooks-if-cwd-')
+    process.env[ENV_KEY] = home
+    writeHooks(home, {
+      pre_tool: [
+        { command: `printf '%s' '{"behavior":"deny","message":"bash"}'`, if: 'Bash' },
+        { command: `printf '%s' '{"behavior":"deny","message":"star"}'`, if: 'Bash(*)' },
+        { command: `printf '%s' '{"behavior":"allow"}'`, if: 'Read' },
+      ],
+    })
+    const hooks = loadFileHooks(cwd)
+    expect(hooks).toHaveLength(3)
+    expect(await hooks[0]!({ name: 'Read', input: {} })).toBeUndefined()
+    expect(await hooks[0]!({ name: 'Bash', input: {} })).toEqual({
+      behavior: 'deny',
+      reason: 'hook',
+      message: 'bash',
+    })
+    expect(await hooks[1]!({ name: 'Bash', input: {} })).toEqual({
+      behavior: 'deny',
+      reason: 'hook',
+      message: 'star',
+    })
+    expect(await hooks[2]!({ name: 'Bash', input: {} })).toBeUndefined()
+    expect(await hooks[2]!({ name: 'Read', input: {} })).toEqual({
+      behavior: 'allow',
+      reason: 'hook',
+    })
+  })
 })

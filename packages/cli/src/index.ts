@@ -6,7 +6,7 @@ import { parseArgv } from './args'
 import { HELP_TEXT, formatVersion } from './help'
 import { runAcpStdio } from './acp-stdio'
 import { App } from './app'
-import { bootCli, openEngine, openNewSession, resumeRuntime } from './engine'
+import { bootCli, openNewSession, resumeRuntime } from './engine'
 import { runExec } from './exec'
 import { SETUP_HINT, providerConfigured, runFirstRun } from './first-run'
 import { readSecretLine } from './secret-input'
@@ -31,6 +31,7 @@ import { doctorFailed, formatDoctorReport, probeLocalLlm, runDoctor } from './do
 import { searchCliSessions } from './search'
 import { SMOKE_PROMPT, evaluateSmoke } from './smoke'
 import { handleCronCli, runCronTick } from './cron-cmd'
+import { fireCronJob } from './cron-fire'
 
 export { parseArgv } from './args'
 export { CLI_VERSION, HELP_TEXT, formatVersion } from './help'
@@ -304,21 +305,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       })
       const tickOnce = async () => {
         const text = await runCronTick({
-          run: async (job) => {
-            const { engine, mcpCloser } = await openEngine({
-              provider: runtime.provider,
-              store: runtime.store,
-              config: { ...runtime.config, permissionMode: 'dontAsk' },
-              cwd: job.cwd,
-              askUser: runtime.ask.ask,
-            })
-            try {
-              await runExec({ prompt: job.prompt, engine })
-              return { ok: true, sessionId: engine.session.id }
-            } finally {
-              await mcpCloser?.()
-            }
-          },
+          run: (job) => fireCronJob(runtime, job),
         })
         process.stdout.write(text + (text.endsWith('\n') ? '' : '\n'))
       }

@@ -16,6 +16,7 @@ import {
 } from '@ravenclaw/core'
 import { AdDock } from './ad-dock'
 import {
+  INTERVIEW_PROMPT,
   LEARN_PROMPT,
   RELOAD_NOTICE,
   REVIEW_PROMPT,
@@ -35,14 +36,28 @@ import { formatSkillsList } from './skills-list'
 import { Composer } from './composer'
 import { applySessionTitle } from './resume'
 import { applyCronMutate } from './cron-cmd'
-import { runExec } from './exec'
+import { fireCronJob } from './cron-fire'
 import {
-  openEngine,
   openNewSession,
   parsePermissionMode,
   resumeRuntime,
   type CliRuntime,
 } from './engine'
+import { parseBangLine, runBangCommand } from './bash-line'
+import { appendPrompt, loadPrompts } from './prompt-history'
+import { expandMentions } from './mentions'
+import {
+  createMessageQueue,
+  dequeue,
+  enqueue,
+  formatQueue,
+  parseQueueArg,
+  removeAt,
+} from './message-queue'
+import { copyConversationToClipboard, formatConversationMarkdown } from './copy-conversation'
+import { formatAskUserDialog, parseAskUserAnswer } from './ask-host'
+import { formatGitDiff } from './diff-cmd'
+import type { AskUserInput } from '@ravenclaw/core'
 import { keyToPermission, PermissionDialog, type PermissionAsk } from './permission-dialog'
 import { StatusLine, shortSessionId } from './status-line'
 import {
@@ -65,9 +80,16 @@ type PendingAsk = {
 export function App(props: AppProps) {
   const { exit } = useApp()
   const runtimeRef = useRef(props.runtime)
-  const queueRef = useRef<string[]>([])
+  const queueRef = useRef(createMessageQueue())
   const busyRef = useRef(false)
   const askRef = useRef<PendingAsk | null>(null)
+  const historyRef = useRef<string[]>(loadPrompts(props.runtime.config.home))
+  const historyIndexRef = useRef<number | null>(null)
+  const askUserRef = useRef<{
+    input: AskUserInput
+    resolve: (value: string) => void
+    reject: (error: unknown) => void
+  } | null>(null)
 
   const [rows, setRows] = useState<TranscriptRow[]>([])
   const [draft, setDraft] = useState('')
@@ -89,6 +111,38 @@ export function App(props: AppProps) {
     setSessionId(session.id)
     setModel(session.model)
     setFunding(session.funding)
+  }, [])
+
+  const bindAskQuestions = useCallback(() => {
+    runtimeRef.current.askQuestions?.bind(async (input, signal) => {
+      return await new Promise<string>((resolve, reject) => {
+        const pending = {
+          input,
+          resolve: (value: string) => {
+            cleanup()
+            resolve(value)
+          },
+          reject: (error: unknown) => {
+            cleanup()
+            reject(error)
+          },
+        }
+        const onAbort = () => {
+          pending.reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+        }
+        const cleanup = () => {
+          signal.removeEventListener('abort', onAbort)
+          askUserRef.current = null
+        }
+        if (signal.aborted) {
+          onAbort()
+          return
+        }
+        signal.addEventListener('abort', onAbort, { once: true })
+        askUserRef.current = pending
+        setNotice(formatAskUserDialog(input))
+      })
+    })
   }, [])
 
   useEffect(() => {
@@ -122,23 +176,28 @@ export function App(props: AppProps) {
         setAsk(event)
       })
     })
-  }, [])
+    bindAskQuestions()
+  }, [bindAskQuestions])
 
   const runTurn = useCallback(
     async (text: string) => {
       if (busyRef.current) {
-        runtimeRef.current.engine.enqueueSteer(text)
-        setNotice('steered (next round)')
-        setRows((prev) => [...prev, { kind: 'status', message: `steered: ${text}` }])
+        const n = enqueue(queueRef.current, text)
+        setNotice(`queued (${n})`)
         return
       }
       busyRef.current = true
       setBusy(true)
       setNotice(undefined)
+      const expanded = expandMentions(text, runtimeRef.current.cwd)
+      const prompt = expanded.text
+      appendPrompt(text, runtimeRef.current.config.home)
+      historyRef.current = loadPrompts(runtimeRef.current.config.home)
+      historyIndexRef.current = null
       setRows((prev) => [...prev, { kind: 'user', text }])
       try {
         const payload = collectUserImages(
-          text,
+          prompt,
           runtimeRef.current.cwd,
           readClipboardImage,
         )
@@ -167,7 +226,7 @@ export function App(props: AppProps) {
         const leftover = runtimeRef.current.engine.drainSteering()
         if (leftover.length > 0) void runTurn(leftover.join('\n'))
         else {
-          const queued = queueRef.current.shift()
+          const queued = dequeue(queueRef.current)
           if (queued !== undefined) void runTurn(queued)
         }
       }
@@ -180,6 +239,7 @@ export function App(props: AppProps) {
       try {
         const next = await resumeRuntime(runtimeRef.current, id)
         runtimeRef.current = next
+        bindAskQuestions()
         setRows(rowsFromMessages((await next.store.loadSession(id)).messages))
         syncSession()
         setNotice(`resumed ${shortSessionId(id)}`)
@@ -188,16 +248,33 @@ export function App(props: AppProps) {
         setNotice(message)
       }
     },
-    [syncSession],
+    [syncSession, bindAskQuestions],
   )
 
   const submitLine = useCallback(
     (line: string) => {
+      if (askUserRef.current) {
+        const pending = askUserRef.current
+        const answer = parseAskUserAnswer(pending.input, line)
+        pending.resolve(answer)
+        setNotice(answer)
+        return
+      }
       const parsed = handleSlashCommand(line)
       if (parsed.type === 'prompt') {
         if (parsed.text === '') {
           if (!readClipboardImage()) return
           void runTurn('')
+          return
+        }
+        const bang = parseBangLine(parsed.text)
+        if (bang.kind === 'bash') {
+          const result = runBangCommand(bang.command, runtimeRef.current.cwd)
+          setRows((prev) => [
+            ...prev,
+            { kind: 'user', text: parsed.text },
+            { kind: 'status', message: result.text || `exit ${result.code}` },
+          ])
           return
         }
         void runTurn(parsed.text)
@@ -232,6 +309,7 @@ export function App(props: AppProps) {
             await runtimeRef.current.mcpCloser?.()
             const next = await openNewSession(runtimeRef.current)
             runtimeRef.current = next
+            bindAskQuestions()
             setRows([])
             syncSession()
             setNotice(`new session ${shortSessionId(next.engine.session.id)}`)
@@ -327,6 +405,23 @@ export function App(props: AppProps) {
             }),
           )
           return
+        case 'rewind':
+          void runtimeRef.current.engine.rewindLast().then((result) => {
+            setNotice(result.notice)
+          })
+          return
+        case 'diff':
+          setNotice(formatGitDiff(runtimeRef.current.cwd))
+          return
+        case 'steer': {
+          if (parsed.arg === undefined || parsed.arg.trim() === '') {
+            setNotice('usage: /steer <text>')
+            return
+          }
+          runtimeRef.current.engine.enqueueSteer(parsed.arg)
+          setNotice('steered (next round)')
+          return
+        }
         case 'cron':
           setNotice(
             applyCronMutate(
@@ -336,6 +431,71 @@ export function App(props: AppProps) {
             ).text,
           )
           return
+        case 'queue': {
+          const action = parseQueueArg(parsed.arg)
+          if (action.action === 'error') {
+            setNotice(action.message)
+            return
+          }
+          if (action.action === 'clear') {
+            queueRef.current.items.length = 0
+            setNotice('queue empty')
+            return
+          }
+          if (action.action === 'drop') {
+            const removed = removeAt(queueRef.current, action.index - 1)
+            setNotice(removed === undefined ? `unknown queue item ${action.index}` : formatQueue(queueRef.current))
+            return
+          }
+          setNotice(formatQueue(queueRef.current))
+          return
+        }
+        case 'copy': {
+          void runtimeRef.current.store
+            .loadSession(runtimeRef.current.engine.session.id)
+            .then((loaded) => {
+              const markdown = formatConversationMarkdown(
+                loaded.messages.map((message) => ({
+                  role: message.role,
+                  text: message.blocks
+                    .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
+                    .map((block) => block.text)
+                    .join(''),
+                })),
+              )
+              const copied = copyConversationToClipboard(markdown)
+              if (copied.method === 'osc52') process.stdout.write(copied.text)
+              setNotice(copied.ok ? 'copied conversation' : 'copy failed')
+            })
+            .catch(() => {
+              setNotice('copy failed')
+            })
+          return
+        }
+        case 'interview':
+          void runTurn(INTERVIEW_PROMPT)
+          return
+        case 'bash': {
+          if (parsed.arg === undefined || parsed.arg.trim() === '') {
+            setNotice('usage: /bash <cmd>')
+            return
+          }
+          const result = runBangCommand(parsed.arg, runtimeRef.current.cwd)
+          setRows((prev) => [
+            ...prev,
+            { kind: 'user', text: `!${parsed.arg}` },
+            { kind: 'status', message: result.text || `exit ${result.code}` },
+          ])
+          return
+        }
+        case 'skill': {
+          if (parsed.arg === undefined || parsed.arg.trim() === '') {
+            setNotice('usage: /skill:<name>')
+            return
+          }
+          void runTurn(`Use the Skill tool to load "${parsed.arg.trim()}" and follow its instructions.`)
+          return
+        }
         case 'config':
           setNotice(
             runtimeRef.current.config.home !== undefined
@@ -427,21 +587,7 @@ export function App(props: AppProps) {
           const home = runtimeRef.current.config.home
           const fired = await fireDueJobs({
             store: createJsonCronStore(home !== undefined ? { home } : undefined),
-            run: async (job) => {
-              const { engine, mcpCloser } = await openEngine({
-                provider: runtimeRef.current.provider,
-                store: runtimeRef.current.store,
-                config: { ...runtimeRef.current.config, permissionMode: 'dontAsk' },
-                cwd: job.cwd,
-                askUser: runtimeRef.current.ask.ask,
-              })
-              try {
-                await runExec({ prompt: job.prompt, engine, write: () => {} })
-                return { ok: true, sessionId: engine.session.id }
-              } finally {
-                await mcpCloser?.()
-              }
-            },
+            run: (job) => fireCronJob(runtimeRef.current, job),
           })
           if (!cancelled && fired.length > 0) {
             const last = fired[fired.length - 1]
@@ -505,6 +651,29 @@ export function App(props: AppProps) {
         setPicker(undefined)
         if (chosen) void applyResume(chosen.id)
       }
+      return
+    }
+
+    if (key.upArrow) {
+      const history = historyRef.current
+      if (history.length === 0) return
+      const idx = historyIndexRef.current
+      const next = idx === null ? history.length - 1 : Math.max(0, idx - 1)
+      historyIndexRef.current = next
+      setDraft(history[next] ?? '')
+      return
+    }
+    if (key.downArrow) {
+      const history = historyRef.current
+      const idx = historyIndexRef.current
+      if (idx === null) return
+      if (idx >= history.length - 1) {
+        historyIndexRef.current = null
+        setDraft('')
+        return
+      }
+      historyIndexRef.current = idx + 1
+      setDraft(history[idx + 1] ?? '')
       return
     }
 

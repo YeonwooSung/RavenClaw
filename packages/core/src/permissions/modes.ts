@@ -20,6 +20,13 @@ const READ_ONLY_NAMES = new Set([
   'ListMcpResources',
   'ReadMcpResource',
   'CronList',
+  'ListDir',
+  'ReadSubtree',
+  'WebSearch',
+  'SuggestFollowups',
+  'SetOutput',
+  'ToolSearch',
+  'Sleep',
 ])
 
 const MUTATING_NAMES = new Set([
@@ -32,6 +39,11 @@ const MUTATING_NAMES = new Set([
   'CronCreate',
   'CronDelete',
   'CronSetEnabled',
+  'ApplyPatch',
+  'AskUser',
+  'NotebookEdit',
+  'EnterWorktree',
+  'ExitWorktree',
 ])
 
 export function cyclePermissionMode(mode: PermissionMode): PermissionMode {

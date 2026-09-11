@@ -317,6 +317,7 @@ export interface SessionEngine {
   submitMessage(input: UserSubmitInput): AsyncGenerator<StreamEvent, RoundEnd>
   enqueueSteer(text: string): void
   drainSteering(): string[]
+  rewindLast(): Promise<{ ok: boolean; notice: string }>
   compactNow(): Promise<void>
   setPermissionMode(mode: PermissionMode): Promise<void>
   reloadSystem(system: SystemPart[]): void

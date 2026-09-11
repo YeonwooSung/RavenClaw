@@ -5,11 +5,13 @@ import { fileFinderAgent } from './file-finder'
 import { generalAgent } from './general'
 
 describe('agentCatalog', () => {
-  test('includes general, file-finder, and command-runner', () => {
+  test('includes general, file-finder, command-runner, reviewer, and researcher-web', () => {
     expect(agentCatalog().map((definition) => definition.id)).toEqual([
       'general',
       'file-finder',
       'command-runner',
+      'reviewer',
+      'researcher-web',
     ])
   })
 })
@@ -19,6 +21,8 @@ describe('getAgentDefinition', () => {
     expect(getAgentDefinition('general')).toBe(generalAgent)
     expect(getAgentDefinition('file-finder')).toBe(fileFinderAgent)
     expect(getAgentDefinition('command-runner')).toBe(commandRunnerAgent)
+    expect(getAgentDefinition('reviewer')?.id).toBe('reviewer')
+    expect(getAgentDefinition('researcher-web')?.id).toBe('researcher-web')
   })
 
   test('returns undefined for unknown or non-spawnable ids', () => {

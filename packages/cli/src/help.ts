@@ -57,6 +57,9 @@ Options:
   --tui <ink|opentui>
   --dont-ask
   --json                 exec only: write StreamEvents as JSONL
+  --fallback-model <id>  retry a failed stream on this model
+  --allowed-tools <a,b>  restrict the tool pool to these names
+  --worktree [name]      start the session in a git worktree
   -h, --help
   -V, --version
 

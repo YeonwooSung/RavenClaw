@@ -66,6 +66,16 @@ describe('createFileHistory', () => {
     expect(readFileSync(live, 'utf8')).toBe('old-live\n')
   })
 
+  test('peekLast reports whether the latest generation is open', () => {
+    const home = mkdtempSync(join(tmpdir(), 'raven-fh-peek-'))
+    const history = createFileHistory('sess_peek', home)
+    expect(history.peekLast()).toBeUndefined()
+    history.beginTurn()
+    expect(history.peekLast()).toEqual({ open: true })
+    history.endTurn()
+    expect(history.peekLast()).toEqual({ open: false })
+  })
+
   test('failed restore keeps the generation for retry', () => {
     const home = mkdtempSync(join(tmpdir(), 'raven-fh-fail-'))
     const cwd = mkdtempSync(join(tmpdir(), 'raven-fh-fail-cwd-'))

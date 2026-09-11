@@ -63,6 +63,9 @@ export interface ConfigFlags {
   model?: string
   permissionMode?: PermissionMode
   dontAsk?: boolean
+  fallbackModel?: string
+  allowedTools?: string[]
+  worktree?: boolean | string
 }
 
 export interface ResolvedEnv {
@@ -80,6 +83,8 @@ export interface ResolvedConfig extends RavenClawConfig {
   home: string
   env: ResolvedEnv
   profile: ModelProfile
+  fallbackModel?: string
+  allowedTools?: string[]
 }
 
 const PROVIDERS = new Set<ProviderKind>(['anthropic', 'openai_compat', 'ollama', 'vllm'])
@@ -301,6 +306,10 @@ export function loadConfig(opts?: { home?: string; flags?: ConfigFlags }): Resol
   if (parsed.contextWindow !== undefined) resolved.contextWindow = parsed.contextWindow
   if (parsed.prices !== undefined) resolved.prices = parsed.prices
   if (parsed.terminal !== undefined) resolved.terminal = parsed.terminal
+  if (flags?.fallbackModel !== undefined) resolved.fallbackModel = flags.fallbackModel
+  if (flags?.allowedTools !== undefined && flags.allowedTools.length > 0) {
+    resolved.allowedTools = flags.allowedTools
+  }
   return resolved
 }
 

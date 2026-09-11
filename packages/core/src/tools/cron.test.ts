@@ -34,6 +34,17 @@ function memoryStore(): CronStore {
       return j
     },
     claimDue: () => [],
+    patchLastFire(id, patch) {
+      const job = jobs.get(id)
+      if (!job) return undefined
+      const next = { ...job, lastFireAt: patch.lastFireAt, lastStatus: patch.lastStatus }
+      if (patch.lastError !== undefined) next.lastError = patch.lastError
+      else delete next.lastError
+      if (patch.lastSessionId !== undefined) next.lastSessionId = patch.lastSessionId
+      delete next.runningUntil
+      jobs.set(id, next)
+      return next
+    },
   }
 }
 

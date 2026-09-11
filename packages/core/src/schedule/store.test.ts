@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, rmdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { cronJobsPath, createJsonCronStore, newCronId } from './store'
+import { CRON_RUNNING_LEASE_MS, cronJobsPath, createJsonCronStore, newCronId } from './store'
 import { CRON_ID_PREFIX, type CronJob } from './types'
 
 const ENV_KEY = 'RAVENCLAW_HOME'
@@ -44,6 +44,7 @@ function makeJob(over: Partial<CronJob> = {}): CronJob {
   if (over.lastStatus !== undefined) job.lastStatus = over.lastStatus
   if (over.lastError !== undefined) job.lastError = over.lastError
   if (over.lastSessionId !== undefined) job.lastSessionId = over.lastSessionId
+  if (over.runningUntil !== undefined) job.runningUntil = over.runningUntil
   return job
 }
 
@@ -66,6 +67,38 @@ process.stdout.write(String(claimed.length))`,
   ])
   if (code !== 0) throw new Error(stderr || `child exited ${code}`)
   return Number(stdout)
+}
+
+async function spawnUpsert(home: string, job: CronJob): Promise<void> {
+  const modulePath = new URL('./store.ts', import.meta.url).href
+  const proc = Bun.spawn(
+    [
+      process.execPath,
+      '-e',
+      `import { createJsonCronStore } from ${JSON.stringify(modulePath)}
+createJsonCronStore({ home: ${JSON.stringify(home)} }).upsert(${JSON.stringify(job)})
+process.stdout.write('1')`,
+    ],
+    { stdout: 'pipe', stderr: 'pipe' },
+  )
+  const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited])
+  if (code !== 0) throw new Error(stderr || `child exited ${code}`)
+}
+
+async function spawnRemove(home: string, id: string): Promise<void> {
+  const modulePath = new URL('./store.ts', import.meta.url).href
+  const proc = Bun.spawn(
+    [
+      process.execPath,
+      '-e',
+      `import { createJsonCronStore } from ${JSON.stringify(modulePath)}
+createJsonCronStore({ home: ${JSON.stringify(home)} }).remove(${JSON.stringify(id)})
+process.stdout.write('1')`,
+    ],
+    { stdout: 'pipe', stderr: 'pipe' },
+  )
+  const [stderr, code] = await Promise.all([new Response(proc.stderr).text(), proc.exited])
+  if (code !== 0) throw new Error(stderr || `child exited ${code}`)
 }
 
 describe('cronJobsPath', () => {
@@ -161,10 +194,12 @@ describe('createJsonCronStore', () => {
     expect(claimed[0]?.nextFireAt).toBe(now + 30_000)
     expect(claimed[0]?.lastStatus).toBe('error')
     expect(claimed[0]?.lastError).toBe('boom')
+    expect(claimed[0]?.runningUntil).toBe(now + CRON_RUNNING_LEASE_MS)
 
     const persisted = store.get('c_due00001')
     expect(persisted?.nextFireAt).toBe(now + 30_000)
     expect(persisted?.lastStatus).toBe('error')
+    expect(persisted?.runningUntil).toBe(now + CRON_RUNNING_LEASE_MS)
     expect(store.get('c_off00002')?.nextFireAt).toBe(now)
     expect(store.get('c_later003')?.nextFireAt).toBe(now + 1)
 
@@ -213,5 +248,180 @@ describe('createJsonCronStore', () => {
     expect(() => store.claimDue(1)).toThrow(/cron lock/)
     expect(Date.now() - started).toBeGreaterThanOrEqual(200)
     expect(store.get('c_aaa11111')?.nextFireAt).toBe(1)
+  })
+
+  test('upsert fails after ~200ms if the lock is held', () => {
+    const home = tempHome()
+    const store = createJsonCronStore({ home })
+    store.upsert(makeJob({ nextFireAt: 1 }))
+    const lockDir = `${cronJobsPath(home)}.lock`
+    mkdirSync(lockDir)
+    const started = Date.now()
+    expect(() => store.upsert(makeJob({ nextFireAt: 2, name: 'stale' }))).toThrow(/cron lock/)
+    expect(Date.now() - started).toBeGreaterThanOrEqual(200)
+    expect(store.get('c_aaa11111')?.nextFireAt).toBe(1)
+    expect(store.get('c_aaa11111')?.name).toBe('job')
+  })
+
+  test('remove fails after ~200ms if the lock is held', () => {
+    const home = tempHome()
+    const store = createJsonCronStore({ home })
+    store.upsert(makeJob({ nextFireAt: 1 }))
+    const lockDir = `${cronJobsPath(home)}.lock`
+    mkdirSync(lockDir)
+    const started = Date.now()
+    expect(() => store.remove('c_aaa11111')).toThrow(/cron lock/)
+    expect(Date.now() - started).toBeGreaterThanOrEqual(200)
+    expect(store.get('c_aaa11111')?.id).toBe('c_aaa11111')
+  })
+
+  test('overlapping claimDue and upsert keep the claimed nextFireAt', async () => {
+    const home = tempHome()
+    const now = 90_000
+    const due = makeJob({
+      id: 'c_due00009',
+      schedule: { kind: 'every', everyMs: 15_000 },
+      nextFireAt: now,
+    })
+    const extra = makeJob({
+      id: 'c_extra000',
+      nextFireAt: now + 99_000,
+    })
+    createJsonCronStore({ home }).upsert(due)
+
+    await Promise.all([spawnClaimDue(home, now), spawnUpsert(home, extra)])
+
+    const store = createJsonCronStore({ home })
+    expect(store.get('c_due00009')?.nextFireAt).toBe(now + 15_000)
+    expect(store.get('c_extra000')?.id).toBe('c_extra000')
+  })
+
+  test('overlapping claimDue and remove keep the claimed nextFireAt', async () => {
+    const home = tempHome()
+    const now = 91_000
+    const store = createJsonCronStore({ home })
+    store.upsert(
+      makeJob({
+        id: 'c_due00010',
+        schedule: { kind: 'every', everyMs: 15_000 },
+        nextFireAt: now,
+      }),
+    )
+    store.upsert(makeJob({ id: 'c_extra001', nextFireAt: now + 99_000 }))
+
+    await Promise.all([spawnClaimDue(home, now), spawnRemove(home, 'c_extra001')])
+
+    expect(store.get('c_due00010')?.nextFireAt).toBe(now + 15_000)
+    expect(store.get('c_extra001')).toBeUndefined()
+  })
+
+  test('claimDue skips a due job that is still running and advances nextFireAt', () => {
+    const home = tempHome()
+    const store = createJsonCronStore({ home })
+    const now = 80_000
+    store.upsert(
+      makeJob({
+        id: 'c_run00001',
+        schedule: { kind: 'every', everyMs: 15_000 },
+        nextFireAt: now,
+        runningUntil: now + 1,
+        lastStatus: 'ok',
+      }),
+    )
+
+    expect(store.claimDue(now)).toEqual([])
+    const persisted = store.get('c_run00001')
+    expect(persisted?.nextFireAt).toBe(now + 15_000)
+    expect(persisted?.lastStatus).toBe('skipped')
+    expect(persisted?.lastFireAt).toBe(now)
+    expect(persisted?.runningUntil).toBe(now + 1)
+  })
+
+  test('claimDue claims a due job whose runningUntil lease has expired', () => {
+    const home = tempHome()
+    const store = createJsonCronStore({ home })
+    const now = 81_000
+    store.upsert(
+      makeJob({
+        id: 'c_exp00001',
+        schedule: { kind: 'every', everyMs: 15_000 },
+        nextFireAt: now,
+        runningUntil: now,
+      }),
+    )
+
+    const claimed = store.claimDue(now)
+    expect(claimed.map((job) => job.id)).toEqual(['c_exp00001'])
+    expect(claimed[0]?.runningUntil).toBe(now + CRON_RUNNING_LEASE_MS)
+    expect(store.get('c_exp00001')?.runningUntil).toBe(now + CRON_RUNNING_LEASE_MS)
+  })
+
+  test('patchLastFire does not rewind nextFireAt or re-enable', () => {
+    const home = tempHome()
+    const store = createJsonCronStore({ home })
+    const now = 82_000
+    store.upsert(
+      makeJob({
+        id: 'c_patch001',
+        enabled: true,
+        prompt: 'old',
+        schedule: { kind: 'every', everyMs: 30_000 },
+        nextFireAt: now,
+      }),
+    )
+
+    const claimed = store.claimDue(now)
+    expect(claimed[0]?.nextFireAt).toBe(now + 30_000)
+    expect(claimed[0]?.runningUntil).toBe(now + CRON_RUNNING_LEASE_MS)
+
+    const current = store.get('c_patch001')
+    expect(current).toBeDefined()
+    store.upsert({ ...current!, enabled: false, prompt: 'new' })
+
+    const patched = store.patchLastFire('c_patch001', {
+      lastFireAt: now,
+      lastStatus: 'ok',
+      lastSessionId: 'sess_1',
+    })
+    expect(patched?.enabled).toBe(false)
+    expect(patched?.prompt).toBe('new')
+    expect(patched?.nextFireAt).toBe(now + 30_000)
+    expect(patched?.lastStatus).toBe('ok')
+    expect(patched?.lastSessionId).toBe('sess_1')
+    expect(patched?.runningUntil).toBeUndefined()
+    expect(store.get('c_patch001')?.enabled).toBe(false)
+    expect(store.get('c_patch001')?.nextFireAt).toBe(now + 30_000)
+    expect(store.get('c_patch001')?.runningUntil).toBeUndefined()
+  })
+
+  test('patchLastFire does not resurrect a deleted job', () => {
+    const home = tempHome()
+    const store = createJsonCronStore({ home })
+    expect(
+      store.patchLastFire('c_missing1', { lastFireAt: 1, lastStatus: 'ok' }),
+    ).toBeUndefined()
+    expect(store.list()).toEqual([])
+  })
+
+  test('patchLastFire clears runningUntil after a claimed run', () => {
+    const home = tempHome()
+    const store = createJsonCronStore({ home })
+    const now = 83_000
+    store.upsert(
+      makeJob({
+        id: 'c_lease001',
+        schedule: { kind: 'every', everyMs: 15_000 },
+        nextFireAt: now,
+        lastError: 'old',
+      }),
+    )
+    expect(store.claimDue(now)[0]?.runningUntil).toBe(now + CRON_RUNNING_LEASE_MS)
+
+    const patched = store.patchLastFire('c_lease001', { lastFireAt: now, lastStatus: 'error', lastError: 'boom' })
+    expect(patched?.runningUntil).toBeUndefined()
+    expect(patched?.lastStatus).toBe('error')
+    expect(patched?.lastError).toBe('boom')
+    expect(patched?.nextFireAt).toBe(now + 15_000)
+    expect(store.get('c_lease001')?.runningUntil).toBeUndefined()
   })
 })

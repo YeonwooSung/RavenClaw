@@ -47,4 +47,53 @@ describe('safetyCheck', () => {
     expect(safetyCheck('Read', { path: '.git/config' }, '/tmp/proj')).toBeUndefined()
     expect(safetyCheck('Bash', { command: 'echo hi' }, '/tmp/proj')).toBeUndefined()
   })
+
+  test('denies ApplyPatch operations under .git/, credentials, and shell rc', () => {
+    const git = safetyCheck(
+      'ApplyPatch',
+      { operations: [{ type: 'create_file', path: '.git/hooks/pre-commit', diff: '+x' }] },
+      '/tmp/proj',
+    )
+    expect(git?.behavior).toBe('deny')
+    expect(git?.reason).toBe('safety')
+
+    const pem = safetyCheck(
+      'ApplyPatch',
+      { operations: [{ type: 'create_file', path: 'certs/prod.pem', diff: '+k' }] },
+      '/tmp/proj',
+    )
+    expect(pem?.behavior).toBe('deny')
+
+    const rc = safetyCheck(
+      'ApplyPatch',
+      { operations: [{ type: 'update_file', path: join(homedir(), '.zshrc'), diff: '+x' }] },
+      '/tmp',
+    )
+    expect(rc?.behavior).toBe('deny')
+  })
+
+  test('ApplyPatch denies if any operation path is unsafe', () => {
+    const decision = safetyCheck(
+      'ApplyPatch',
+      {
+        operations: [
+          { type: 'update_file', path: 'src/ok.ts', diff: '+x' },
+          { type: 'create_file', path: 'vendor/.git/hooks/pre-commit', diff: '+x' },
+        ],
+      },
+      '/tmp/proj',
+    )
+    expect(decision?.behavior).toBe('deny')
+    expect(decision?.reason).toBe('safety')
+  })
+
+  test('ApplyPatch allows ordinary in-tree operations', () => {
+    expect(
+      safetyCheck(
+        'ApplyPatch',
+        { operations: [{ type: 'create_file', path: 'src/app.ts', diff: '+x' }] },
+        '/tmp/proj',
+      ),
+    ).toBeUndefined()
+  })
 })

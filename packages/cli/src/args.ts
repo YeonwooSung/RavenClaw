@@ -91,6 +91,25 @@ export function parseArgv(argv: string[]): ParsedArgv {
       i++
       continue
     }
+    if (arg === '--worktree' || arg === '-w') {
+      const value = argv[i + 1]
+      if (value !== undefined && !value.startsWith('-')) {
+        flags.worktree = value
+        i++
+      } else {
+        flags.worktree = true
+      }
+      continue
+    }
+    if (arg === '--allowed-tools' || arg === '--fallback-model') {
+      const value = argv[i + 1]
+      if (value === undefined || value.startsWith('-')) {
+        throw new Error(`${arg} requires a value`)
+      }
+      applyFlag(flags, arg.slice(2), value)
+      i++
+      continue
+    }
     if (arg === '--provider' || arg === '--model') {
       const value = argv[i + 1]
       if (value === undefined || value.startsWith('-')) {
@@ -169,6 +188,22 @@ function applyFlag(flags: ConfigFlags, key: string, value: string): void {
   if (key === 'model') {
     if (value === '') throw new Error('--model requires a value')
     flags.model = value
+    return
+  }
+  if (key === 'fallback-model') {
+    if (value === '') throw new Error('--fallback-model requires a value')
+    flags.fallbackModel = value
+    return
+  }
+  if (key === 'allowed-tools') {
+    flags.allowedTools = value
+      .split(',')
+      .map((part) => part.trim())
+      .filter((part) => part.length > 0)
+    return
+  }
+  if (key === 'worktree') {
+    flags.worktree = value === '' ? true : value
     return
   }
   throw new Error(`unknown flag: --${key}`)

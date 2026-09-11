@@ -3,7 +3,19 @@ import type { AgentDefinition, Funding, Message, SystemPart, TokenUsage, Tool } 
 
 export const CHILD_RESULT_CHAR_BOUND = 32_000
 
-const NESTING_DENIED = new Set(['Agent', 'EnterPlanMode', 'ExitPlanMode'])
+const NESTING_DENIED = new Set([
+  'Agent',
+  'EnterPlanMode',
+  'ExitPlanMode',
+  'CronCreate',
+  'CronList',
+  'CronDelete',
+  'CronSetEnabled',
+  'AskUser',
+  'SetOutput',
+  'EnterWorktree',
+  'ExitWorktree',
+])
 
 export function resolveChildModel(
   parent: { model: string; funding: Funding },

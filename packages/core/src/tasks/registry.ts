@@ -2,9 +2,11 @@ import { readFileSync } from 'node:fs'
 
 export type TaskStatus = 'running' | 'completed' | 'failed' | 'killed'
 
+export type TaskKind = 'bash' | 'agent'
+
 export interface TaskSnapshot {
   id: string
-  type: 'bash'
+  type: TaskKind
   command: string
   description: string
   status: TaskStatus
@@ -18,6 +20,8 @@ export interface RegisterTaskInput {
   command: string
   outputFile: string
   kill: () => void
+  type?: TaskKind
+  description?: string
 }
 
 export interface TaskRegistry {
@@ -42,9 +46,9 @@ export function createTaskRegistry(): TaskRegistry {
       const id = nextTaskId()
       const task: LiveTask = {
         id,
-        type: 'bash',
+        type: input.type ?? 'bash',
         command: input.command,
-        description: summarizeCommand(input.command),
+        description: input.description ?? summarizeCommand(input.command),
         status: 'running',
         outputFile: input.outputFile,
         startedAt: Date.now(),

@@ -2,6 +2,7 @@ import { readFileSync, statSync } from 'node:fs'
 import { extname, resolve } from 'node:path'
 import type { Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
+import { formatNotebookRead, parseNotebook } from './notebook-format'
 
 export interface ReadInput {
   path: string
@@ -85,6 +86,17 @@ export const readTool: Tool<ReadInput, string> = {
 
     if (containsNul(buf.subarray(0, Math.min(buf.length, BINARY_SCAN)))) {
       return 'Read failed: binary file (NUL in first 8 KiB)'
+    }
+
+    if (extname(resolved).toLowerCase() === '.ipynb') {
+      const parsed = parseNotebook(buf.toString('utf8'))
+      if (parsed.ok) {
+        ctx.turn.readFiles.add(resolved)
+        const formatted = formatNotebookRead(parsed.value)
+        return formatted.length > READ_CHAR_CAP
+          ? formatted.slice(0, READ_CHAR_CAP) + TRUNCATION_NOTE
+          : formatted
+      }
     }
 
     const lines = buf.toString('utf8').split(/\r?\n/)

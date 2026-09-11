@@ -23,10 +23,18 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
   { name: 'permissions', usage: '/permissions', summary: 'list extra permission rule files' },
   { name: 'tasks', usage: '/tasks [kill <id>]', summary: 'list or stop background tasks' },
   { name: 'undo', usage: '/undo', summary: 'restore files from the last edit checkpoint' },
+  { name: 'rewind', usage: '/rewind', summary: 'undo last turn files and drop that conversation turn' },
+  { name: 'diff', usage: '/diff', summary: 'show uncommitted git diff' },
+  { name: 'steer', usage: '/steer <text>', summary: 'inject text into the live turn (next tool round)' },
   { name: 'reload', usage: '/reload', summary: 'reload skills on the next turn' },
   { name: 'mcp', usage: '/mcp', summary: 'show configured MCP servers' },
   { name: 'skills', usage: '/skills', summary: 'list discovered skills' },
   { name: 'cron', usage: '/cron [add|rm|on|off]', summary: 'list or edit local scheduled jobs' },
+  { name: 'queue', usage: '/queue [drop n|clear]', summary: 'list or edit the next-turn message queue' },
+  { name: 'copy', usage: '/copy', summary: 'copy this conversation as markdown' },
+  { name: 'interview', usage: '/interview', summary: 'ask clarifying questions before implementing' },
+  { name: 'bash', usage: '/bash <cmd>', summary: 'run a local shell command (also !cmd)' },
+  { name: 'skill', usage: '/skill:<name>', summary: 'invoke a skill by name' },
   { name: 'config', usage: '/config', summary: 'show resolved config' },
   { name: 'context', usage: '/context', summary: 'show compact generation and message count' },
   { name: 'help', aliases: ['?'], usage: '/help', summary: 'this list' },
@@ -49,6 +57,9 @@ export const REVIEW_PROMPT =
 export const LEARN_PROMPT =
   'Write a new skill that captures the reusable procedure we just figured out. Create a SKILL.md with a name, a short description, and a step-by-step body under this project\'s .ravenclaw/skills directory or the user skills directory. Do not add a new built-in tool — just write the skill files.'
 
+export const INTERVIEW_PROMPT =
+  'Interview me before writing code. Use AskUser for multiple-choice questions (at least two options each). Ask only what you need to pin down the spec, then summarize the spec and wait.'
+
 export const TASKS_NOTICE = 'no background tasks'
 export const UNDO_NOTHING_NOTICE = 'nothing to undo'
 export const RELOAD_NOTICE = 'skills reloaded'
@@ -66,6 +77,13 @@ export function handleSlashCommand(line: string): SlashResult {
   if (!match || !match[1]) return { type: 'prompt', text: trimmed }
 
   const raw = match[1].toLowerCase()
+  if (raw.startsWith('skill:')) {
+    const skillName = raw.slice('skill:'.length)
+    const rest = match[2] !== undefined && match[2] !== '' ? ` ${match[2]}` : ''
+    const result: SlashResult = { type: 'command', name: 'skill' }
+    if (skillName !== '' || rest !== '') result.arg = `${skillName}${rest}`.trim()
+    return result
+  }
   const result: SlashResult = { type: 'command', name: CANONICAL_NAME.get(raw) ?? raw }
   if (match[2] !== undefined && match[2] !== '') result.arg = match[2]
   return result
