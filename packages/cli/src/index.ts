@@ -10,7 +10,7 @@ import { bootCli } from './engine'
 import { runExec } from './exec'
 import { SETUP_HINT, providerConfigured, runFirstRun } from './first-run'
 import { readSecretLine } from './secret-input'
-import { formatResumeSessionLine, listCliSessions } from './resume'
+import { formatResumeSessionLine, listCliSessions, showCliSession } from './resume'
 import { runOpenTuiApp } from './opentui-app'
 import { SMOKE_PROMPT, evaluateSmoke } from './smoke'
 
@@ -47,6 +47,16 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       return 0
     }
     for (const row of rows) process.stdout.write(`${formatResumeSessionLine(row)}\n`)
+    return 0
+  }
+
+  if (parsed.cmd === 'show') {
+    const shown = await showCliSession(parsed.prompt ?? '')
+    if ('error' in shown) {
+      process.stderr.write(`${shown.error}\n`)
+      return shown.error.startsWith('usage:') ? 2 : 1
+    }
+    process.stdout.write(`${shown.text}\n`)
     return 0
   }
 

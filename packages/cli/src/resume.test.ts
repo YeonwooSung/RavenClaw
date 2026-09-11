@@ -3,7 +3,12 @@ import { mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSqliteStore, type SessionRecord } from '@ravenclaw/core'
-import { formatResumeSessionLine, listCliSessions } from './resume'
+import {
+  formatMessageLine,
+  formatResumeSessionLine,
+  listCliSessions,
+  showCliSession,
+} from './resume'
 
 function session(over: Partial<SessionRecord> = {}): SessionRecord {
   return {
@@ -64,5 +69,59 @@ describe('listCliSessions', () => {
     const home = join(tmpdir(), `raven-sessions-empty-${Date.now()}`)
     mkdirSync(home, { recursive: true })
     expect(await listCliSessions({ home, cwd: home })).toEqual([])
+  })
+})
+
+describe('showCliSession', () => {
+  test('prints header and messages; accepts an 8-char prefix', async () => {
+    const home = join(tmpdir(), `raven-show-${Date.now()}`)
+    mkdirSync(home, { recursive: true })
+    const store = createSqliteStore(join(home, 'state.db')) as ReturnType<
+      typeof createSqliteStore
+    > & { close(): void }
+    const rec = session({ id: 'showid001234', cwd: home, title: 'Demo', updatedAt: 5 })
+    await store.upsertSession(rec)
+    await store.persistUser(rec.id, {
+      id: 'u1',
+      role: 'user',
+      blocks: [{ type: 'text', text: 'hello' }],
+      createdAt: 1,
+    })
+    await store.persistAssistant(rec.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'text', text: 'hi there' }],
+      createdAt: 2,
+    })
+    store.close()
+
+    const shown = await showCliSession('showid00', { home })
+    expect(shown).toHaveProperty('text')
+    if (!('text' in shown)) throw new Error('expected text')
+    expect(shown.text).toContain('showid00  Demo  5')
+    expect(shown.text).toContain('user: hello')
+    expect(shown.text).toContain('assistant: hi there')
+  })
+
+  test('missing id is an error', async () => {
+    const home = join(tmpdir(), `raven-show-miss-${Date.now()}`)
+    mkdirSync(home, { recursive: true })
+    expect(await showCliSession('nope', { home })).toEqual({
+      error: 'session not found: nope',
+    })
+  })
+
+  test('formatMessageLine clips long tool output', () => {
+    const line = formatMessageLine({
+      id: 't1',
+      role: 'tool',
+      toolUseId: 'c1',
+      ok: true,
+      blocks: [{ type: 'text', text: 'x'.repeat(250) }],
+      createdAt: 1,
+    })
+    expect(line.startsWith('tool(ok): ')).toBe(true)
+    expect(line.endsWith('…')).toBe(true)
+    expect(line.length).toBeLessThan(220)
   })
 })

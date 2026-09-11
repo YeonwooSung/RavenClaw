@@ -11,6 +11,7 @@ Usage:
   raven setup
   raven smoke
   raven sessions
+  raven show <id>
   raven --help
   raven --version
 
@@ -21,6 +22,7 @@ Commands:
   setup         Write ~/.ravenclaw/.env (provider + API key)
   smoke         One live turn (requires a key); expects the model to say pong
   sessions      List recent sessions for this directory (no API key)
+  show <id>     Print a session transcript (prefix ok; no API key)
 
 Options:
   --provider <anthropic|openai_compat>

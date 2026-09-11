@@ -82,7 +82,7 @@ Useful flags: `--help`, `--version`, `--dont-ask`, `--provider anthropic`, `--mo
 
 After setup, `bun run smoke` (or `raven smoke`) does one live turn and expects the model to say `pong`. Without a key it prints the setup hint and exits 1. CI does not run this.
 
-`bun run raven sessions` lists recent sessions for this directory. No API key required.
+`bun run raven sessions` lists recent sessions for this directory. `bun run raven show <id>` prints the transcript. No API key required. Prefix ids are ok.
 
 `bun run raven` or `bun run raven setup` writes `~/.ravenclaw/.env` when no key is configured. On a TTY the key is masked with `*`. `exec` and `acp` print a hint instead of prompting.
 
