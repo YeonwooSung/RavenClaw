@@ -1,0 +1,56 @@
+import {
+  createLspClient,
+  type LspClientOpts,
+  type LspQueryRequest,
+} from '../lsp/client'
+import type { Tool, ToolContext } from '../types'
+import { parseWithSchema } from './parse'
+
+export type LspInput = LspQueryRequest
+export type { LspClientOpts, LspQueryRequest }
+
+const inputSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['operation', 'path', 'line'],
+  properties: {
+    operation: { type: 'string', enum: ['hover', 'definition', 'references'] },
+    path: { type: 'string', minLength: 1 },
+    line: { type: 'integer', minimum: 0 },
+    character: { type: 'integer', minimum: 0 },
+  },
+}
+
+export function createLspTool(opts?: LspClientOpts): Tool<LspInput, string> {
+  const client = createLspClient(opts)
+  return {
+    name: 'LSP',
+    description:
+      'Query a local language server for hover, definition, or references. path is a workspace file; line is 0-based; character defaults to 0. Requires .ravenclaw/lsp.json.',
+    inputSchema,
+    parse(input: unknown) {
+      return parseWithSchema<LspInput>(inputSchema, input)
+    },
+    isConcurrencySafe() {
+      return true
+    },
+    isReadOnly() {
+      return true
+    },
+    interruptBehavior() {
+      return 'block'
+    },
+    async checkPermissions() {
+      return { behavior: 'allow', reason: 'mode' }
+    },
+    async execute(input: LspInput, ctx: ToolContext) {
+      if (ctx.signal.aborted) throw abortError()
+      const root = ctx.turn.projectCwd ?? ctx.turn.cwd
+      return client.query(input, root)
+    },
+  }
+}
+
+function abortError(): Error {
+  return Object.assign(new Error('aborted'), { name: 'AbortError' })
+}

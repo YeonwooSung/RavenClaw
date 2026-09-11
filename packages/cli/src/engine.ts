@@ -45,6 +45,11 @@ import {
   exitWorktreeTool,
   createToolSearchTool,
   sleepTool,
+  thinkDeeplyTool,
+  addDirTool,
+  createTaskV2Tools,
+  createLspTool,
+  createStructuredOutputTool,
   enterSessionWorktree,
   type CompactPolicy,
   type ConfigFlags,
@@ -171,6 +176,11 @@ function includedSessionCap(
   return perDay
 }
 
+function createTaskV2ToolsList(): Tool[] {
+  const tasks = createTaskV2Tools()
+  return [tasks.create, tasks.get, tasks.update, tasks.list]
+}
+
 function cronToolList(): Tool[] {
   const cron = createCronTools(createJsonCronStore())
   return [cron.create, cron.list, cron.remove, cron.setEnabled]
@@ -203,6 +213,10 @@ export function createRootTools(
     suggestFollowupsTool,
     setOutputTool,
     sleepTool,
+    thinkDeeplyTool,
+    addDirTool,
+    ...createTaskV2ToolsList(),
+    createLspTool(),
     enterWorktreeTool,
     exitWorktreeTool,
     ...cronToolList(),
@@ -376,7 +390,16 @@ export async function openEngine(opts: {
       hooks,
       askTool: createAskUserTool((input, signal) => askQuestions.ask(input, signal)),
     })
-  const tools = filterToolsByAllowList(built, opts.config.allowedTools)
+  let pooled = built
+  if (opts.config.jsonSchema !== undefined && opts.config.jsonSchema !== '') {
+    try {
+      const schema = JSON.parse(opts.config.jsonSchema) as unknown
+      pooled = [...pooled, createStructuredOutputTool(schema)]
+    } catch {
+      // invalid schema is ignored; exec still runs
+    }
+  }
+  const tools = filterToolsByAllowList(pooled, opts.config.allowedTools)
   const engineOpts: SessionEngineOptions = {
     session,
     provider: opts.provider,
@@ -390,6 +413,7 @@ export async function openEngine(opts: {
   }
   if (opts.messages) engineOpts.messages = opts.messages
   if (hooks.length > 0) engineOpts.hooks = hooks
+  if (opts.config.fallbackModel !== undefined) engineOpts.fallbackModel = opts.config.fallbackModel
   return { engine: createSessionEngine(engineOpts), mcpCloser, askQuestions }
 }
 
@@ -527,7 +551,7 @@ export async function bootCli(
   // the included gateway while stamping funding: byok.
   const access = createSession ? reserveIncludedFunding(config, probed) : probed
   const provider = await providerFromConfig(config, { access })
-  const cwd = opts.cwd ?? process.cwd()
+  const cwd = opts.flags.cwd ?? opts.cwd ?? process.cwd()
   const ask = opts.ask ?? createAskBridge()
   const paid = access.admitted ? access.hasPaidCapacityPlan : undefined
   const extras: Pick<

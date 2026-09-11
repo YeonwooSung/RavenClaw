@@ -54,25 +54,31 @@ export const editTool: Tool<EditInput, string> = {
       return 'Edit failed: old_string is empty; provide more context to make it unique'
     }
 
-    let text: string
+    let raw: string
     try {
-      text = readFileSync(resolved, 'utf8')
+      raw = readFileSync(resolved, 'utf8')
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return `Edit failed: ${message}`
     }
 
-    const matches = countOccurrences(text, input.old_string)
-    if (matches === 0) {
-      return `Edit failed: old_string not found in ${input.path}`
-    }
-    if (matches > 1) {
-      return `Edit failed: old_string matched ${matches} times; provide more context to make it unique`
+    const crlf = raw.includes('\r\n')
+    const text = normalizeNewlines(raw)
+    const oldString = normalizeNewlines(input.old_string)
+    const newString = normalizeNewlines(input.new_string)
+
+    const replacement = resolveReplacement(text, oldString, newString)
+    if (replacement.ok === false) {
+      if (replacement.matches === 0) {
+        return `Edit failed: old_string not found in ${input.path}`
+      }
+      return `Edit failed: old_string matched ${replacement.matches} times; provide more context to make it unique`
     }
 
     try {
       ctx.fileHistory?.snapshot(resolved)
-      writeFileSync(resolved, text.replace(input.old_string, input.new_string), 'utf8')
+      const updated = text.replace(replacement.oldString, replacement.newString)
+      writeFileSync(resolved, crlf ? restoreCrlf(updated) : updated, 'utf8')
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return `Edit failed: ${message}`
@@ -94,7 +100,92 @@ function wasRead(readFiles: Set<string>, resolved: string, candidate: string): b
   return false
 }
 
+function resolveReplacement(
+  text: string,
+  oldString: string,
+  newString: string,
+):
+  | { ok: true; oldString: string; newString: string }
+  | { ok: false; matches: number } {
+  const exact = countOccurrences(text, oldString)
+  if (exact === 1) return { ok: true, oldString, newString }
+  if (exact > 1) return { ok: false, matches: exact }
+
+  const flexed = indentFlex(text, oldString, newString)
+  if (!flexed) return { ok: false, matches: 0 }
+  if (flexed.matches === 1) {
+    return { ok: true, oldString: flexed.oldString, newString: flexed.newString }
+  }
+  return { ok: false, matches: flexed.matches }
+}
+
+function indentFlex(
+  text: string,
+  oldString: string,
+  newString: string,
+): { matches: number; oldString: string; newString: string } | undefined {
+  const first = firstNonEmptyLine(oldString)
+  if (first === undefined) return undefined
+
+  const oldIndent = leadingWhitespace(first)
+  const content = first.slice(oldIndent.length)
+  const fileIndents = new Set<string>()
+  for (const line of text.split('\n')) {
+    if (line.slice(leadingWhitespace(line).length) === content) {
+      fileIndents.add(leadingWhitespace(line))
+    }
+  }
+  if (fileIndents.size !== 1) return undefined
+
+  const fileIndent = [...fileIndents][0] ?? ''
+  const delta = indentDelta(oldIndent, fileIndent)
+  if (!delta) return undefined
+
+  const flexedOld = applyIndentDelta(oldString, delta)
+  const flexedNew = applyIndentDelta(newString, delta)
+  return {
+    matches: countOccurrences(text, flexedOld),
+    oldString: flexedOld,
+    newString: flexedNew,
+  }
+}
+
+function firstNonEmptyLine(text: string): string | undefined {
+  for (const line of text.split('\n')) {
+    if (line.slice(leadingWhitespace(line).length).length > 0) return line
+  }
+  return undefined
+}
+
+function leadingWhitespace(line: string): string {
+  const match = /^[ \t]*/.exec(line)
+  return match ? match[0] : ''
+}
+
+function indentDelta(oldIndent: string, fileIndent: string): IndentDelta | undefined {
+  if (oldIndent === fileIndent) return undefined
+  if (fileIndent.startsWith(oldIndent)) {
+    return { type: 'add', ws: fileIndent.slice(oldIndent.length) }
+  }
+  if (oldIndent.startsWith(fileIndent)) {
+    return { type: 'remove', ws: oldIndent.slice(fileIndent.length) }
+  }
+  return undefined
+}
+
+function applyIndentDelta(text: string, delta: IndentDelta): string {
+  return text.split('\n').map((line) => applyLineDelta(line, delta)).join('\n')
+}
+
+function applyLineDelta(line: string, delta: IndentDelta): string {
+  if (line.length === 0) return line
+  if (delta.type === 'add') return `${delta.ws}${line}`
+  if (line.startsWith(delta.ws)) return line.slice(delta.ws.length)
+  return line
+}
+
 function countOccurrences(haystack: string, needle: string): number {
+  if (needle.length === 0) return 0
   let count = 0
   let from = 0
   while (from <= haystack.length - needle.length) {
@@ -105,6 +196,16 @@ function countOccurrences(haystack: string, needle: string): number {
   }
   return count
 }
+
+function normalizeNewlines(text: string): string {
+  return text.replace(/\r\n/g, '\n')
+}
+
+function restoreCrlf(text: string): string {
+  return text.replace(/\n/g, '\r\n')
+}
+
+type IndentDelta = { type: 'add'; ws: string } | { type: 'remove'; ws: string }
 
 function abortError(): Error {
   return Object.assign(new Error('aborted'), { name: 'AbortError' })

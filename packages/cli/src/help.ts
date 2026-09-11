@@ -60,6 +60,12 @@ Options:
   --fallback-model <id>  retry a failed stream on this model
   --allowed-tools <a,b>  restrict the tool pool to these names
   --worktree [name]      start the session in a git worktree
+  --json-schema <json>   require StructuredOutput matching this schema
+  --agent <id>           start with this catalog/disk agent
+  --add-dir <path>       extra permission root (repeatable)
+  --cwd <dir>            working directory
+  --effort <level>       thinking effort hint
+  --bare                 skip extra hooks/memory discovery
   -h, --help
   -V, --version
 

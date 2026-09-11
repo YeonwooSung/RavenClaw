@@ -187,6 +187,40 @@ describe('Edit', () => {
     expect(readFileSync(db, 'utf8')).toBe('sessions\n')
   })
 
+  test('matches LF old_string in a CRLF file and writes CRLF back', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'note.txt'), 'hello world\r\nnext line\r\n')
+    const ctx = makeCtx(root)
+    ctx.turn.readFiles.add(resolvedOf(root, 'note.txt'))
+
+    const out = await editTool.execute(
+      { path: 'note.txt', old_string: 'hello world\nnext line', new_string: 'hello raven\nnext line' },
+      ctx,
+    )
+    expect(typeof out).toBe('string')
+    expect(out.toLowerCase()).not.toMatch(/fail|error|deny/)
+    expect(readFileSync(join(root, 'note.txt'), 'utf8')).toBe('hello raven\r\nnext line\r\n')
+  })
+
+  test('matches old_string with two extra spaces of indent', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'src.ts'), 'function f() {\n  const x = 1\n  return x\n}\n')
+    const ctx = makeCtx(root)
+    ctx.turn.readFiles.add(resolvedOf(root, 'src.ts'))
+
+    const out = await editTool.execute(
+      {
+        path: 'src.ts',
+        old_string: '    const x = 1\n    return x',
+        new_string: '    const x = 2\n    return x',
+      },
+      ctx,
+    )
+    expect(typeof out).toBe('string')
+    expect(out.toLowerCase()).not.toMatch(/fail|error|deny/)
+    expect(readFileSync(join(root, 'src.ts'), 'utf8')).toBe('function f() {\n  const x = 2\n  return x\n}\n')
+  })
+
   test('execute refuses when the signal is already aborted', async () => {
     const root = fixtureRoot()
     writeFileSync(join(root, 'a.txt'), 'ok\n')

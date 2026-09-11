@@ -66,6 +66,12 @@ export interface ConfigFlags {
   fallbackModel?: string
   allowedTools?: string[]
   worktree?: boolean | string
+  jsonSchema?: string
+  agent?: string
+  bare?: boolean
+  addDir?: string[]
+  cwd?: string
+  effort?: string
 }
 
 export interface ResolvedEnv {
@@ -85,6 +91,11 @@ export interface ResolvedConfig extends RavenClawConfig {
   profile: ModelProfile
   fallbackModel?: string
   allowedTools?: string[]
+  jsonSchema?: string
+  agent?: string
+  bare?: boolean
+  addDir?: string[]
+  effort?: string
 }
 
 const PROVIDERS = new Set<ProviderKind>(['anthropic', 'openai_compat', 'ollama', 'vllm'])
@@ -310,6 +321,11 @@ export function loadConfig(opts?: { home?: string; flags?: ConfigFlags }): Resol
   if (flags?.allowedTools !== undefined && flags.allowedTools.length > 0) {
     resolved.allowedTools = flags.allowedTools
   }
+  if (flags?.jsonSchema !== undefined) resolved.jsonSchema = flags.jsonSchema
+  if (flags?.agent !== undefined) resolved.agent = flags.agent
+  if (flags?.bare === true) resolved.bare = true
+  if (flags?.addDir !== undefined && flags.addDir.length > 0) resolved.addDir = flags.addDir
+  if (flags?.effort !== undefined) resolved.effort = flags.effort
   return resolved
 }
 

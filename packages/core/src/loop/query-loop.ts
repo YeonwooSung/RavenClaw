@@ -26,6 +26,9 @@ export async function* queryLoop(
     toolResults: [],
     compactFailures: 0,
     overflowCompacted: false,
+    lastStopReason: null,
+    fallbackUsed: false,
+    outputNudges: 0,
   }
 
   while (true) {

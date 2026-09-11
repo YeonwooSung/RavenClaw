@@ -224,7 +224,10 @@ describe('buildSystemParts', () => {
     expect(context).toContain('CWD_AGENT')
     expect(context).toContain('DOT_AGENT')
     expect(context.indexOf('Project instructions:')).toBeLessThan(context.indexOf('project-instructions-body'))
-    expect(context.indexOf('project-instructions-body')).toBeLessThan(context.indexOf('User memory:'))
+    expect(context.indexOf('project-instructions-body')).toBeLessThan(context.indexOf('Project files:'))
+    expect(context).toContain('USER.md')
+    expect(context).toContain('MEMORY.md')
+    expect(context.indexOf('Project files:')).toBeLessThan(context.indexOf('User memory:'))
     expect(context.indexOf('User memory:')).toBeLessThan(context.indexOf('HOME_USER'))
     expect(context.indexOf('HOME_USER')).toBeLessThan(context.indexOf('CWD_USER'))
     expect(context.indexOf('CWD_USER')).toBeLessThan(context.indexOf('DOT_USER'))
@@ -237,6 +240,38 @@ describe('buildSystemParts', () => {
     expect(context).not.toContain('Anthropic')
     expect(context).not.toContain('Hermes')
     expect(context).not.toContain('Freebuff')
+  })
+
+  test('nonempty file tree is appended after project instructions', () => {
+    const cwd = tempDir('ravenclaw-builder-tree-')
+    mkdirSync(join(cwd, 'src'))
+    writeFileSync(join(cwd, 'README.md'), 'x\n')
+    writeFileSync(join(cwd, 'src', 'foo.ts'), 'x\n')
+    const parts = buildSystemParts(
+      input({ cwd, projectFilesText: 'project-instructions-body', git: GIT }),
+    )
+    const context = parts[1]?.text ?? ''
+    expect(context).toContain('Project files:')
+    expect(context).toContain('README.md')
+    expect(context).toContain('src/foo.ts')
+    expect(context.indexOf('Project instructions:')).toBeLessThan(context.indexOf('project-instructions-body'))
+    expect(context.indexOf('project-instructions-body')).toBeLessThan(context.indexOf('Project files:'))
+    expect(context.indexOf('Project files:')).toBeLessThan(context.indexOf('Git snapshot:'))
+    expect(context).toBe(
+      [
+        'Project instructions:',
+        'project-instructions-body',
+        '',
+        'Project files:',
+        'README.md',
+        'src/foo.ts',
+        '',
+        'Git snapshot:',
+        'branch: main',
+        'HEAD: abc123def456',
+        'dirty: false',
+      ].join('\n'),
+    )
   })
 
   test('builder loads user-global memory from RAVENCLAW_HOME', () => {

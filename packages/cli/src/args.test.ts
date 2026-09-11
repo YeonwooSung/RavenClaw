@@ -61,6 +61,10 @@ describe('parseArgv', () => {
       cmd: 'interactive',
       flags: { worktree: 'feat' },
     })
+    expect(parseArgv(['--bare', '--agent', 'general', '--effort', 'high'])).toEqual({
+      cmd: 'interactive',
+      flags: { bare: true, agent: 'general', effort: 'high' },
+    })
   })
 
   test('supports --provider= and --model= forms', () => {

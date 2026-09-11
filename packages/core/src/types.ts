@@ -109,6 +109,8 @@ export interface Turn {
   cwd: string
   /** Project root for permissions/skills. Unset means `cwd`. Isolated worktrees set this to the parent. */
   projectCwd?: string
+  /** Extra working roots for path checks (AddDir). Unset means cwd only. */
+  additionalDirectories?: string[]
   model: string
   readFiles: Set<string>
   skillAllowedTools?: string[]
@@ -211,6 +213,8 @@ export interface CompactPolicy {
   maxCharsRestoredSkillsTotal: number
   maxConsecutiveFailures: number
   llmSummarize: boolean
+  cacheExpiryMs?: number
+  cacheExpiryMinTokens?: number
 }
 
 export interface AgentDefinition {
@@ -304,6 +308,7 @@ export interface SessionEngineOptions {
   maxRounds: number
   system?: SystemPart[]
   hooks?: import('./permissions/hooks').PermissionHook[]
+  fallbackModel?: string
   askUser: (
     e: Extract<StreamEvent, { type: 'permission_ask' }>,
     signal: AbortSignal,
@@ -337,4 +342,12 @@ export interface QueryLoopOptions {
   tasks?: import('./tasks/registry').TaskRegistry
   fileHistory?: import('./session/file-history').FileHistory
   drainSteering?: () => string[]
+  fallbackModel?: string
+  jsonSchema?: unknown
+  lifecycle?: {
+    run(
+      event: string,
+      payload: Record<string, unknown>,
+    ): Promise<{ preventContinuation?: boolean; message?: string } | undefined>
+  }
 }

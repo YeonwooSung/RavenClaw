@@ -65,6 +65,13 @@ describe('rootAgent', () => {
       'SetOutput',
       'ToolSearch',
       'Sleep',
+      'ThinkDeeply',
+      'AddDir',
+      'TaskCreate',
+      'TaskGet',
+      'TaskUpdate',
+      'TaskList',
+      'LSP',
       'EnterWorktree',
       'ExitWorktree',
       'CronCreate',
@@ -237,6 +244,12 @@ describe('child tools', () => {
       'SuggestFollowups',
       'ToolSearch',
       'Sleep',
+      'ThinkDeeply',
+      'TaskCreate',
+      'TaskGet',
+      'TaskUpdate',
+      'TaskList',
+      'LSP',
     ])
     expect(childToolNames(rootAgent)).not.toContain('CronCreate')
     expect(childToolNames(rootAgent)).not.toContain('CronList')
@@ -244,6 +257,7 @@ describe('child tools', () => {
     expect(childToolNames(rootAgent)).not.toContain('CronSetEnabled')
     expect(childToolNames(rootAgent)).not.toContain('AskUser')
     expect(childToolNames(rootAgent)).not.toContain('SetOutput')
+    expect(childToolNames(rootAgent)).not.toContain('AddDir')
     expect(childToolNames(rootAgent)).not.toContain('EnterWorktree')
     expect(childToolNames(rootAgent)).not.toContain('ExitWorktree')
     expect(childToolNames(generalAgent)).toEqual(generalAgent.toolNames)

@@ -10,6 +10,7 @@ import type {
   Tool,
   ToolContext,
 } from '../types'
+import { getLastRequestAt, markLastRequestAt } from '../compact/last-request'
 import { shouldAutocompact } from '../compact/policy'
 import { applyToolResultBudget, microcompact, runAutocompact } from '../compact/prune'
 import { compactSummary } from '../compact/summarize'
@@ -41,6 +42,9 @@ export interface LoopState extends QueryLoopOptions {
   toolResults: Array<Extract<Message, { role: 'tool' }>>
   compactFailures: number
   overflowCompacted: boolean
+  lastStopReason: string | null
+  fallbackUsed: boolean
+  outputNudges: number
 }
 
 export type PhaseResult =
@@ -80,6 +84,12 @@ function isProviderErrorLike(error: unknown): error is ProviderErrorLike {
 function isAuthError(error: unknown): boolean {
   if (!isProviderErrorLike(error)) return false
   return error.status === 401 || error.status === 403
+}
+
+function isTruncatedStop(reason: string | null): boolean {
+  if (reason === null || reason === '') return false
+  const n = reason.toLowerCase()
+  return n.includes('max_token') || n.includes('length') || n === 'max_output_tokens'
 }
 
 function isRetryable(error: unknown): boolean {
@@ -219,6 +229,7 @@ function lastAnchoredTokens(messages: Message[]): number | undefined {
 
 function compactDecision(state: LoopState): 'skip' | 'compact' | 'context_full' {
   const anchoredTokens = lastAnchoredTokens(state.turn.messages)
+  const lastRequestAt = getLastRequestAt(state.turn.sessionId)
   const opts: Parameters<typeof shouldAutocompact>[0] = {
     enabled: state.compact.enabled,
     estimatedTokens: estimateTokens(state.turn.messages),
@@ -227,6 +238,7 @@ function compactDecision(state: LoopState): 'skip' | 'compact' | 'context_full' 
     consecutiveFailures: state.compactFailures,
   }
   if (anchoredTokens !== undefined) opts.anchoredTokens = anchoredTokens
+  if (lastRequestAt !== undefined) opts.lastRequestAt = lastRequestAt
   return shouldAutocompact(opts)
 }
 
@@ -343,11 +355,13 @@ export async function* streamModel(
     state.pendingThinking = ''
     state.pendingToolCalls = []
     state.streamAborted = false
+    state.lastStopReason = null
 
     try {
       const iterator = state.provider
         .stream(current, state.turn.abort.signal)
         [Symbol.asyncIterator]()
+      markLastRequestAt(state.turn.sessionId)
       while (true) {
         const step = await nextOrAbort(iterator, state.turn.abort.signal)
         if (step === 'aborted') {
@@ -384,6 +398,7 @@ export async function* streamModel(
             yield { type: 'usage', usage: chunk.usage }
             break
           case 'stop':
+            state.lastStopReason = chunk.reason
             break
         }
       }
@@ -411,6 +426,21 @@ export async function* streamModel(
         continue
       }
       if (isAuthError(error) || !isRetryable(error) || attempt === maxTries - 1) {
+        const fallback = state.fallbackModel
+        if (
+          fallback !== undefined &&
+          fallback !== '' &&
+          fallback !== state.turn.model &&
+          !state.fallbackUsed &&
+          isRetryable(error)
+        ) {
+          state.fallbackUsed = true
+          state.turn.model = fallback
+          yield { type: 'status', message: `fallback model ${fallback}` }
+          current = assembleRequest(state)
+          attempt = -1
+          continue
+        }
         return { action: 'return', end: { reason: 'model_error', error } }
       }
       const backoff = baseMs * 2 ** attempt
@@ -499,6 +529,29 @@ export async function* normalizeResponse(
   }
 
   if (!hasTools) {
+    if (isTruncatedStop(state.lastStopReason) && state.outputNudges < 3) {
+      state.outputNudges += 1
+      state.turn.messages.push(asst)
+      try {
+        await state.store.persistAssistant(state.turn.sessionId, asst)
+      } catch (error) {
+        return { action: 'return', end: { reason: 'persist_failed', error } }
+      }
+      const nudge: Extract<Message, { role: 'user' }> = {
+        id: crypto.randomUUID(),
+        role: 'user',
+        blocks: [{ type: 'text', text: 'Your previous reply was cut off. Continue from where you left off. Do not recap.' }],
+        createdAt: Date.now(),
+      }
+      state.turn.messages.push(nudge)
+      try {
+        await state.store.persistUser(state.turn.sessionId, nudge)
+      } catch (error) {
+        return { action: 'return', end: { reason: 'persist_failed', error } }
+      }
+      yield { type: 'status', message: 'output truncated; continuing' }
+      return { action: 'continue' }
+    }
     state.turn.messages.push(asst)
     try {
       await state.store.persistAssistant(state.turn.sessionId, asst)
@@ -814,6 +867,23 @@ async function executeOneCall(
     const output = await tool.execute(parsed.value, executeCtx)
     events.push(...progress)
     const formatted = formatOutput(tool, output)
+    if (state.lifecycle) {
+      const hook = await state.lifecycle.run('PostToolUse', {
+        name: call.name,
+        input: parsed.value,
+        output: formatted.content,
+      })
+      if (hook?.preventContinuation === true) {
+        const msg = makeToolMessage(call.id, true, formatted.content, formatted.persistPath)
+        events.push({ type: 'tool_result', id: call.id, result: {
+          toolUseId: call.id,
+          ok: true,
+          content: formatted.content,
+        } })
+        events.push({ type: 'status', message: hook.message ?? 'stopped by hook' })
+        return { messages: [msg], events, abortRest: true }
+      }
+    }
     const result: Extract<StreamEvent, { type: 'tool_result' }>['result'] = {
       toolUseId: call.id,
       ok: true,

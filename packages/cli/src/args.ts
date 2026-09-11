@@ -72,6 +72,10 @@ export function parseArgv(argv: string[]): ParsedArgv {
       project = true
       continue
     }
+    if (arg === '--bare') {
+      flags.bare = true
+      continue
+    }
 
     const eq = splitEq(arg)
     if (eq) {
@@ -101,7 +105,15 @@ export function parseArgv(argv: string[]): ParsedArgv {
       }
       continue
     }
-    if (arg === '--allowed-tools' || arg === '--fallback-model') {
+    if (
+      arg === '--allowed-tools' ||
+      arg === '--fallback-model' ||
+      arg === '--json-schema' ||
+      arg === '--agent' ||
+      arg === '--add-dir' ||
+      arg === '--cwd' ||
+      arg === '--effort'
+    ) {
       const value = argv[i + 1]
       if (value === undefined || value.startsWith('-')) {
         throw new Error(`${arg} requires a value`)
@@ -204,6 +216,26 @@ function applyFlag(flags: ConfigFlags, key: string, value: string): void {
   }
   if (key === 'worktree') {
     flags.worktree = value === '' ? true : value
+    return
+  }
+  if (key === 'json-schema') {
+    flags.jsonSchema = value
+    return
+  }
+  if (key === 'agent') {
+    flags.agent = value
+    return
+  }
+  if (key === 'add-dir') {
+    flags.addDir = [...(flags.addDir ?? []), value]
+    return
+  }
+  if (key === 'cwd') {
+    flags.cwd = value
+    return
+  }
+  if (key === 'effort') {
+    flags.effort = value
     return
   }
   throw new Error(`unknown flag: --${key}`)

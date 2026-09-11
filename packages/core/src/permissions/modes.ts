@@ -27,6 +27,11 @@ const READ_ONLY_NAMES = new Set([
   'SetOutput',
   'ToolSearch',
   'Sleep',
+  'ThinkDeeply',
+  'TaskGet',
+  'TaskList',
+  'LSP',
+  'StructuredOutput',
 ])
 
 const MUTATING_NAMES = new Set([
@@ -44,6 +49,9 @@ const MUTATING_NAMES = new Set([
   'NotebookEdit',
   'EnterWorktree',
   'ExitWorktree',
+  'AddDir',
+  'TaskCreate',
+  'TaskUpdate',
 ])
 
 export function cyclePermissionMode(mode: PermissionMode): PermissionMode {
@@ -58,9 +66,16 @@ export function isMutatingTool(name: string, input?: unknown, tool?: Tool): bool
   return MUTATING_NAMES.has(name)
 }
 
-export function isInTreePath(cwd: string, inputPath: string): boolean {
+export function isInTreePath(cwd: string, inputPath: string, extraRoots?: string[]): boolean {
   const resolved = resolveExisting(cwd, inputPath)
-  const root = resolveExisting(cwd, '.')
+  if (isResolvedInRoot(resolved, resolveExisting(cwd, '.'))) return true
+  for (const extra of extraRoots ?? []) {
+    if (isResolvedInRoot(resolved, resolveExisting(cwd, extra))) return true
+  }
+  return false
+}
+
+function isResolvedInRoot(resolved: string, root: string): boolean {
   if (resolved === root) return true
   const prefix = root.endsWith(sep) ? root : root + sep
   return resolved.startsWith(prefix)

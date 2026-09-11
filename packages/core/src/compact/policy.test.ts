@@ -39,6 +39,8 @@ describe('defaultCompactPolicy', () => {
       maxCharsRestoredSkillsTotal: 25_000,
       maxConsecutiveFailures: 3,
       llmSummarize: false,
+      cacheExpiryMs: 3_600_000,
+      cacheExpiryMinTokens: 2000,
     })
   })
 })
@@ -152,5 +154,103 @@ describe('shouldAutocompact', () => {
         consecutiveFailures: 3,
       }),
     ).toBe('context_full')
+  })
+
+  test('cache expiry + enough tokens → compact', () => {
+    expect(
+      shouldAutocompact({
+        enabled: true,
+        estimatedTokens: 2000,
+        model: model(),
+        compact: compact(),
+        consecutiveFailures: 0,
+        lastRequestAt: 0,
+        now: 3_600_000,
+      }),
+    ).toBe('compact')
+  })
+
+  test('cache expiry just under the idle window → skip', () => {
+    expect(
+      shouldAutocompact({
+        enabled: true,
+        estimatedTokens: 2000,
+        model: model(),
+        compact: compact(),
+        consecutiveFailures: 0,
+        lastRequestAt: 0,
+        now: 3_599_999,
+      }),
+    ).toBe('skip')
+  })
+
+  test('cache expiry under cacheExpiryMinTokens → skip', () => {
+    expect(
+      shouldAutocompact({
+        enabled: true,
+        estimatedTokens: 1999,
+        model: model(),
+        compact: compact(),
+        consecutiveFailures: 0,
+        lastRequestAt: 0,
+        now: 3_600_000,
+      }),
+    ).toBe('skip')
+  })
+
+  test('cache expiry without lastRequestAt does not compact', () => {
+    expect(
+      shouldAutocompact({
+        enabled: true,
+        estimatedTokens: 2000,
+        model: model(),
+        compact: compact(),
+        consecutiveFailures: 0,
+        now: 3_600_000,
+      }),
+    ).toBe('skip')
+  })
+
+  test('cache expiry off when cacheExpiryMs is unset', () => {
+    expect(
+      shouldAutocompact({
+        enabled: true,
+        estimatedTokens: 2000,
+        model: model(),
+        compact: compact({ cacheExpiryMs: undefined }),
+        consecutiveFailures: 0,
+        lastRequestAt: 0,
+        now: 3_600_000,
+      }),
+    ).toBe('skip')
+  })
+
+  test('cache expiry does not override circuit-breaker', () => {
+    expect(
+      shouldAutocompact({
+        enabled: true,
+        estimatedTokens: 2000,
+        model: model(),
+        compact: compact(),
+        consecutiveFailures: 3,
+        lastRequestAt: 0,
+        now: 3_600_000,
+      }),
+    ).toBe('skip')
+  })
+
+  test('fresh cache still autocompacts when anchored over threshold', () => {
+    expect(
+      shouldAutocompact({
+        enabled: true,
+        anchoredTokens: 167_000,
+        estimatedTokens: 10,
+        model: model(),
+        compact: compact(),
+        consecutiveFailures: 0,
+        lastRequestAt: 3_600_000,
+        now: 3_600_000,
+      }),
+    ).toBe('compact')
   })
 })

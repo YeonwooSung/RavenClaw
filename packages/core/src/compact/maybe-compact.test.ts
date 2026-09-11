@@ -10,6 +10,7 @@ import type {
   StreamEvent,
   TokenUsage,
 } from '../types'
+import { clearLastRequestAt, markLastRequestAt } from './last-request'
 import { defaultCompactPolicy } from './policy'
 
 function model(over: Partial<ModelProfile> = {}): ModelProfile {
@@ -96,6 +97,7 @@ async function makeState(over: {
 }): Promise<LoopState> {
   const store = createMemoryStore()
   const sess = session()
+  clearLastRequestAt(sess.id)
   await store.createSession(sess)
   if (over.persist !== false) {
     for (const msg of over.messages) {
@@ -208,6 +210,39 @@ describe('maybeCompact', () => {
       model: model({ contextWindow: 200, reserveOutputTokens: 20 }),
       compactFailures: 3,
     })
+    const { events, result } = await drain(state)
+    expect(result).toEqual({ action: 'continue' })
+    expect(events).toEqual([])
+    expect(state.turn.compactGeneration).toBe(0)
+    expect(state.turn.messages.map((msg) => msg.id)).toEqual(['u0', 'a0', 'u1', 'a1'])
+  })
+
+  test('cache expiry with enough tokens yields compact', async () => {
+    const messages = [
+      user('u0', 'x'.repeat(4_000), 1),
+      asstText('a0', 'y'.repeat(4_000), 2),
+      user('u1', 'recent', 3),
+      asstText('a1', 'ok', 4),
+    ]
+    const state = await makeState({ messages })
+    markLastRequestAt(state.turn.sessionId, Date.now() - 4_000_000)
+    const { events, result } = await drain(state)
+    expect(result).toEqual({ action: 'continue' })
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({ type: 'compact', generation: 1 })
+    expect(state.turn.compactGeneration).toBe(1)
+    expect(state.turn.messages.some((msg) => msg.id === 'u0')).toBe(false)
+  })
+
+  test('fresh last request does not compact under the token window', async () => {
+    const messages = [
+      user('u0', 'x'.repeat(4_000), 1),
+      asstText('a0', 'y'.repeat(4_000), 2),
+      user('u1', 'recent', 3),
+      asstText('a1', 'ok', 4),
+    ]
+    const state = await makeState({ messages })
+    markLastRequestAt(state.turn.sessionId, Date.now())
     const { events, result } = await drain(state)
     expect(result).toEqual({ action: 'continue' })
     expect(events).toEqual([])

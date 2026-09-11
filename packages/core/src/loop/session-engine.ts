@@ -40,6 +40,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
   const fileHistory = createFileHistory(session.id)
   const steering: string[] = []
   const lifecycle = loadLifecycleHooks(session.cwd)
+  void lifecycle.run('SessionStart', { sessionId: session.id, cwd: session.cwd })
 
   return {
     get session() {
@@ -81,7 +82,11 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
 
     async *submitMessage(input: UserSubmitInput): AsyncGenerator<StreamEvent, RoundEnd> {
       const { text, blocks } = userSubmitToBlocks(input)
-      await lifecycle.run('UserPromptSubmit', { text })
+      const blocked = await lifecycle.run('UserPromptSubmit', { text })
+      if (blocked?.preventContinuation === true) {
+        yield { type: 'status', message: blocked.message ?? 'stopped by hook' }
+        return { reason: 'completed' }
+      }
       const userMsg: Extract<Message, { role: 'user' }> = {
         id: crypto.randomUUID(),
         role: 'user',
@@ -145,6 +150,8 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         loopOpts.tasks = tasks
         loopOpts.fileHistory = fileHistory
         loopOpts.drainSteering = () => steering.splice(0)
+        loopOpts.lifecycle = lifecycle
+        if (opts.fallbackModel !== undefined) loopOpts.fallbackModel = opts.fallbackModel
         const end = yield* queryLoop(loopOpts)
         messages = turn.messages
         session.usage = turn.usage

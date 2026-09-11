@@ -49,12 +49,15 @@ export async function decidePermission(opts: DecidePermissionOpts): Promise<Perm
 
   if (leftover.behavior !== 'ask') return leftover
 
-  if (opts.mode === 'acceptEdits' && isAcceptEditsPromote(opts.name, opts.input, opts.ctx.turn.cwd)) {
+  if (
+    opts.mode === 'acceptEdits' &&
+    isAcceptEditsPromote(opts.name, opts.input, opts.ctx.turn.cwd, opts.ctx.turn.additionalDirectories)
+  ) {
     return { behavior: 'allow', reason: 'mode' }
   }
   if (opts.mode === 'dontAsk' && opts.name !== 'ExitPlanMode') {
     if (opts.tool.isReadOnly()) return { behavior: 'allow', reason: 'mode' }
-    if (isAcceptEditsPromote(opts.name, opts.input, opts.ctx.turn.cwd)) {
+    if (isAcceptEditsPromote(opts.name, opts.input, opts.ctx.turn.cwd, opts.ctx.turn.additionalDirectories)) {
       return { behavior: 'allow', reason: 'mode' }
     }
     return { behavior: 'deny', reason: 'mode', message: leftover.message }
@@ -62,12 +65,17 @@ export async function decidePermission(opts: DecidePermissionOpts): Promise<Perm
   return leftover
 }
 
-function isAcceptEditsPromote(name: string, input: unknown, cwd: string): boolean {
+function isAcceptEditsPromote(
+  name: string,
+  input: unknown,
+  cwd: string,
+  extraRoots?: string[],
+): boolean {
   if (name !== 'Edit' && name !== 'Write') return false
   if (!input || typeof input !== 'object') return false
   const path = (input as { path?: unknown }).path
   if (typeof path !== 'string' || path.length === 0) return false
-  return isInTreePath(cwd, path)
+  return isInTreePath(cwd, path, extraRoots)
 }
 
 /** Plan-mode one-path exception: Edit/Write of cwd/.ravenclaw/plan.md only. */

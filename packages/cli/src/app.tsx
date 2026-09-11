@@ -7,6 +7,8 @@ import {
   formatTasksNotice,
   formatUndoNotice,
   parseTasksArg,
+  agentCatalog,
+  LIFECYCLE_EVENTS,
   type Funding,
   type PermissionMode,
   type SessionRecord,
@@ -412,6 +414,26 @@ export function App(props: AppProps) {
           return
         case 'diff':
           setNotice(formatGitDiff(runtimeRef.current.cwd))
+          return
+        case 'add-dir':
+          setNotice(
+            parsed.arg === undefined || parsed.arg.trim() === ''
+              ? 'usage: /add-dir <path> (or use the AddDir tool / --add-dir)'
+              : `will allow extra root after AddDir tool: ${parsed.arg}`,
+          )
+          return
+        case 'effort':
+          setNotice(
+            parsed.arg === undefined || parsed.arg.trim() === ''
+              ? 'usage: /effort low|medium|high|max'
+              : `effort ${parsed.arg.trim()} (hint only)`,
+          )
+          return
+        case 'agents':
+          setNotice(agentCatalog(runtimeRef.current.cwd).map((agent) => `${agent.id}  ${agent.displayName}`).join('\n'))
+          return
+        case 'hooks':
+          setNotice(LIFECYCLE_EVENTS.join('\n'))
           return
         case 'steer': {
           if (parsed.arg === undefined || parsed.arg.trim() === '') {

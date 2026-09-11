@@ -13,6 +13,8 @@ export function defaultCompactPolicy(): CompactPolicy {
     maxCharsRestoredSkillsTotal: 25_000,
     maxConsecutiveFailures: 3,
     llmSummarize: false,
+    cacheExpiryMs: 3_600_000,
+    cacheExpiryMinTokens: 2000,
   }
 }
 
@@ -32,6 +34,8 @@ export function shouldAutocompact(opts: {
   compact: CompactPolicy
   consecutiveFailures: number
   forceReactive?: boolean
+  lastRequestAt?: number
+  now?: number
 }): 'skip' | 'compact' | 'context_full' {
   const limit = hardLimit(opts.model, opts.compact)
   const broken =
@@ -42,6 +46,17 @@ export function shouldAutocompact(opts: {
   }
 
   if (opts.forceReactive) return 'compact'
+
+  const expiryMs = opts.compact.cacheExpiryMs
+  const minTokens = opts.compact.cacheExpiryMinTokens ?? 0
+  if (
+    expiryMs !== undefined &&
+    opts.lastRequestAt !== undefined &&
+    (opts.now ?? Date.now()) - opts.lastRequestAt >= expiryMs &&
+    opts.estimatedTokens >= minTokens
+  ) {
+    return 'compact'
+  }
 
   if (opts.anchoredTokens === undefined) {
     return opts.estimatedTokens >= limit ? 'context_full' : 'skip'
