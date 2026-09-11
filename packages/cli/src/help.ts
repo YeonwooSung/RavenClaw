@@ -19,6 +19,7 @@ Usage:
   raven title <id> <name>
   raven doctor
   raven config
+  raven init
   raven --help
   raven --version
 
@@ -37,6 +38,7 @@ Commands:
   title <id>    Set a session title (no API key)
   doctor        Check home, .env, config.yaml, and Bun (no secrets printed)
   config        Print resolved settings with secrets redacted
+  init          Write AGENTS.md in this directory if missing
 
 Options:
   --provider <anthropic|openai_compat>

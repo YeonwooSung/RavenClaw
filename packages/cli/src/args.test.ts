@@ -84,6 +84,10 @@ describe('parseArgv', () => {
     expect(parseArgv(['sessions'])).toEqual({ cmd: 'sessions', flags: {} })
   })
 
+  test('init selects the init command', () => {
+    expect(parseArgv(['init'])).toEqual({ cmd: 'init', flags: {} })
+  })
+
   test('config selects the config command', () => {
     expect(parseArgv(['config'])).toEqual({ cmd: 'config', flags: {} })
   })
