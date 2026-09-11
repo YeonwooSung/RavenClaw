@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.12 — 2026-09-11
+
+Search saved sessions from the shell.
+
+### Added
+- `raven search <query>` runs FTS5 over this directory's sessions
+- `--all` searches every session in the database
+- No API key required; empty query exits 2 with usage
+
+### Try it
+
+```bash
+git clone --branch v0.1.12 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+bun run raven search pairing
+bun run raven search --all persist
+```
+
 ## 0.1.11 — 2026-09-11
 
 Resume a saved session from the shell.
