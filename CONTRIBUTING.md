@@ -73,4 +73,4 @@ Versions come from each package's `package.json` (`readPackageVersion`). Do not 
 - Do not print API keys. `doctor` and `config` may print `set (N chars)`.
 - Keep PRs independently reviewable.
 
-Apache-2.0. Open an issue or PR on [YeonwooSung/RavenClaw](https://github.com/YeonwooSung/RavenClaw). Use the Bug / Feature issue forms and the pull request checklist.
+Apache-2.0. Open an issue or PR on [YeonwooSung/RavenClaw](https://github.com/YeonwooSung/RavenClaw). Use the Bug / Feature issue forms and the pull request checklist. Security reports go to [SECURITY.md](SECURITY.md), not a public issue.
