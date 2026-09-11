@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.16 — 2026-09-11
+
+Print resolved settings without leaking secrets.
+
+### Added
+- `raven config` shows home, provider, model, modes, MCP server names, and key presence
+- API keys are `set (N chars)` or `unset`, never the value
+- Works before `raven setup`
+
+### Try it
+
+```bash
+git clone --branch v0.1.16 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+bun run raven config
+```
+
 ## 0.1.15 — 2026-09-11
 
 Check the local install without printing secrets.
