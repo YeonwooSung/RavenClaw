@@ -95,12 +95,14 @@ export function createAgentTool(opts: {
         childSession.id,
         input.isolation ?? 'none',
       )
-      childSession.cwd = isolated.cwd
       const userMessage = buildChildUserMessage(input, now)
 
       const childAbort = new AbortController()
       const unlink = linkAbort(ctx.signal, childAbort)
       const childTurn = buildChildTurn(childSession, userMessage, childAbort, maxRounds)
+      // Worktree path is live-only. session.cwd stays the parent so resume
+      // still has a real directory after cleanup removes the worktree.
+      childTurn.cwd = isolated.cwd
 
       try {
         await opts.store.createSession(childSession)

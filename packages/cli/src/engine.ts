@@ -44,7 +44,7 @@ import { includedCapReached, recordIncludedSession } from './included-usage'
 import { loadConfiguredMcpTools, type McpSpawnFn } from './mcp'
 
 export type IncludedAccess =
-  | { admitted: true; gatewayUrl: string; token: string }
+  | { admitted: true; gatewayUrl: string; token: string; defaultModel?: string }
   | { admitted: false }
 
 export type EntitlementProbe = (
@@ -76,7 +76,11 @@ export async function resolveIncludedAccess(
   if (!entitlement.admitted) return { admitted: false }
   if (includedCapacityExhausted(config, entitlement)) return { admitted: false }
   recordIncludedSession(config.home)
-  return { admitted: true, gatewayUrl, token }
+  const access: Extract<IncludedAccess, { admitted: true }> = { admitted: true, gatewayUrl, token }
+  if (typeof entitlement.defaultModel === 'string' && entitlement.defaultModel !== '') {
+    access.defaultModel = entitlement.defaultModel
+  }
+  return access
 }
 
 function includedCapacityExhausted(
@@ -289,7 +293,11 @@ export async function providerFromConfig(
       provider: 'included',
       apiKey: access.token,
       gatewayUrl: access.gatewayUrl,
-      defaultModel: config.included?.defaultModel ?? config.model,
+      defaultModel: firstNonEmpty(
+        access.defaultModel,
+        config.included?.defaultModel,
+        config.model,
+      ),
     })
   }
   return byokProviderFromConfig(config)

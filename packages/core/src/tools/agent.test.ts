@@ -4,6 +4,7 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createMemoryStore } from '../session/memory-store'
+import { resumeSession } from '../session/resume'
 import { createSessionEngine } from '../loop/session-engine'
 import { INCOMPLETE_TEXT } from '../loop/pairing'
 import { PersistError } from '../types'
@@ -755,30 +756,42 @@ describe('createAgentTool', () => {
     const session = makeSession({ cwd })
     await store.createSession(session)
 
-    let seenCwd: string | undefined
+    let liveCwd: string | undefined
     let existedDuring = false
-    const provider = createFakeProvider([
-      async function* () {
-        const children = await store.listSessions({ parentSessionId: session.id })
-        seenCwd = children[0]?.cwd
-        existedDuring = Boolean(seenCwd && existsSync(seenCwd))
-        yield { type: 'text_delta' as const, text: 'isolated-ok' }
-        yield { type: 'stop' as const, reason: 'end' }
+    const recorder: Tool = {
+      ...stubTool('Read'),
+      async execute(_input, ctx) {
+        liveCwd = ctx.turn.cwd
+        existedDuring = Boolean(liveCwd && existsSync(liveCwd))
+        return 'ok'
       },
+    }
+    const provider = createFakeProvider([
+      toolThenStop('r1', 'Read', { path: 'unused.txt' }),
+      textThenStop('isolated-ok'),
     ])
-    const { tool } = createTestAgent({ store, provider })
+    const { tool } = createTestAgent({
+      store,
+      provider,
+      tools: parentPool().map((item) => (item.name === 'Read' ? recorder : item)),
+    })
     const result = await tool.execute(
       { prompt: 'work isolated', isolation: 'worktree' },
       makeCtx(makeTurn(session, { cwd })),
     )
 
     expect(result).toBe('isolated-ok')
-    expect(seenCwd?.startsWith(join(cwd, '.ravenclaw', 'worktrees') + '/')).toBe(true)
+    expect(liveCwd?.startsWith(join(cwd, '.ravenclaw', 'worktrees') + '/')).toBe(true)
     expect(existedDuring).toBe(true)
-    expect(seenCwd && existsSync(seenCwd)).toBe(false)
+    expect(liveCwd && existsSync(liveCwd)).toBe(false)
 
     const child = (await store.listSessions({ parentSessionId: session.id }))[0]
-    expect(child?.cwd).toBe(seenCwd)
+    expect(child?.cwd).toBe(cwd)
+    expect(existsSync(child!.cwd)).toBe(true)
+
+    const loaded = await resumeSession(store, child!.id)
+    expect(loaded.session.cwd).toBe(cwd)
+    expect(existsSync(loaded.session.cwd)).toBe(true)
   })
 
   test('isolation worktree falls back to parent cwd when not a git repo', async () => {

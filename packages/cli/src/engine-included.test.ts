@@ -89,6 +89,12 @@ function stubProvider(): Provider {
   }
 }
 
+async function drainProvider(stream: AsyncIterable<{ type: string }>): Promise<void> {
+  for await (const _chunk of stream) {
+    // exhaust
+  }
+}
+
 describe('included gateway access', () => {
   const originalToken = process.env.RAVENCLAW_INCLUDED_TOKEN
 
@@ -295,6 +301,125 @@ describe('included gateway access', () => {
     const probe = async () => admitted()
     expect((await resolveIncludedAccess(cfg, { probe })).admitted).toBe(true)
     expect((await resolveIncludedAccess(cfg, { probe })).admitted).toBe(false)
+  })
+
+  test('forwards entitlement defaultModel and catalog-coerces to it', async () => {
+    const originalFetch = globalThis.fetch
+    const sse = [
+      'data: {"choices":[{"delta":{"content":"ok"}}]}',
+      '',
+      'data: [DONE]',
+      '',
+    ].join('\n')
+    const models: string[] = []
+    globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
+      const raw = typeof init?.body === 'string' ? init.body : ''
+      const parsed = JSON.parse(raw) as { model?: string }
+      models.push(parsed.model ?? '')
+      if (parsed.model === 'gone/model') {
+        return Promise.resolve(
+          new Response(JSON.stringify({ error: 'unknown model' }), { status: 404 }),
+        )
+      }
+      return Promise.resolve(
+        new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } }),
+      )
+    }) as typeof fetch
+
+    try {
+      const cfg = config({
+        model: 'local/byok-model',
+        included: includedOn({ defaultModel: 'config/included-model' }),
+      })
+      const access = await resolveIncludedAccess(cfg, {
+        probe: async () => admitted({ defaultModel: 'entitlement/catalog-model' }),
+      })
+      expect(access.admitted).toBe(true)
+      if (access.admitted) expect(access.defaultModel).toBe('entitlement/catalog-model')
+
+      const provider = await providerFromConfig(cfg, { access })
+      expect(provider.id).toBe('included-gateway')
+      await drainProvider(
+        provider.stream(
+          {
+            model: 'gone/model',
+            system: [],
+            messages: [
+              {
+                id: 'u1',
+                role: 'user',
+                blocks: [{ type: 'text', text: 'hi' }],
+                createdAt: 1,
+              },
+            ],
+            tools: [],
+            maxTokens: 16,
+          },
+          new AbortController().signal,
+        ),
+      )
+      expect(models).toEqual(['gone/model', 'entitlement/catalog-model'])
+    } finally {
+      globalThis.fetch = originalFetch
+    }
+  })
+
+  test('catalog coerce falls back to included.defaultModel when entitlement omits it', async () => {
+    const originalFetch = globalThis.fetch
+    const sse = [
+      'data: {"choices":[{"delta":{"content":"ok"}}]}',
+      '',
+      'data: [DONE]',
+      '',
+    ].join('\n')
+    const models: string[] = []
+    globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
+      const raw = typeof init?.body === 'string' ? init.body : ''
+      const parsed = JSON.parse(raw) as { model?: string }
+      models.push(parsed.model ?? '')
+      if (parsed.model === 'gone/model') {
+        return Promise.resolve(
+          new Response(JSON.stringify({ error: 'unknown model' }), { status: 404 }),
+        )
+      }
+      return Promise.resolve(
+        new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } }),
+      )
+    }) as typeof fetch
+
+    try {
+      const cfg = config({
+        model: 'local/byok-model',
+        included: includedOn({ defaultModel: 'config/included-model' }),
+      })
+      const access = await resolveIncludedAccess(cfg, { probe: async () => admitted() })
+      expect(access.admitted).toBe(true)
+      if (access.admitted) expect(access.defaultModel).toBeUndefined()
+
+      const provider = await providerFromConfig(cfg, { access })
+      await drainProvider(
+        provider.stream(
+          {
+            model: 'gone/model',
+            system: [],
+            messages: [
+              {
+                id: 'u1',
+                role: 'user',
+                blocks: [{ type: 'text', text: 'hi' }],
+                createdAt: 1,
+              },
+            ],
+            tools: [],
+            maxTokens: 16,
+          },
+          new AbortController().signal,
+        ),
+      )
+      expect(models).toEqual(['gone/model', 'config/included-model'])
+    } finally {
+      globalThis.fetch = originalFetch
+    }
   })
 
   test('openEngine stamps funding onto a new session', async () => {
