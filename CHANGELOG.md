@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.30 — 2026-09-11
+
+Catalog coerce keeps the gateway entitlement model, and worktree children resume from the parent cwd.
+
+### Fixed
+- Included-gateway catalog coerce retries with entitlement `defaultModel` before `included.defaultModel` / `config.model`
+- `Agent` `isolation: worktree` persists the parent cwd so child resume does not point at a deleted worktree
+
+### Try it
+
+```bash
+git clone --branch v0.1.30 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+bun test
+bun run raven --version
+```
+
 ## 0.1.29 — 2026-09-11
 
 The leftover v1.x seams: optional included gateway, embeddable SDK, plan.md, skill tool pools, worktrees, images, Responses, local plugins.
