@@ -20,7 +20,7 @@ body:
     attributes:
       label: Version
       description: Output of `bun run raven --version`
-      placeholder: raven 0.1.27
+      placeholder: raven 0.1.28
     validations:
       required: true
   - type: textarea

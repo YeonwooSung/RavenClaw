@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.28 — 2026-09-11
 
 Local LLM smoke is text-only, and `raven doctor` probes Ollama / vLLM.
 
@@ -10,6 +10,17 @@ Local LLM smoke is text-only, and `raven doctor` probes Ollama / vLLM.
 ### Added
 - `raven doctor` reaches Ollama `/api/tags` or vLLM `/models` when that provider is configured
 - Env-gated live tests: `OLLAMA_HOST` / `VLLM_BASE_URL` (optional `OLLAMA_MODEL` / `VLLM_MODEL`)
+
+### Try it
+
+```bash
+ollama pull llama3.2:1b
+git clone --branch v0.1.28 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+echo 'OLLAMA_HOST=http://127.0.0.1:11434' >> ~/.ravenclaw/.env
+bun run raven smoke --provider ollama --model llama3.2:1b
+bun run raven doctor
+```
 
 ## 0.1.27 — 2026-09-11
 
