@@ -8,12 +8,14 @@ import type { StreamEvent } from '@ravenclaw/core'
 import { LEARN_PROMPT, handleSlashCommand } from './commands'
 import { formatCostNotice } from './cost-format'
 import { searchNotice } from './search'
-import { parsePermissionMode, type CliRuntime } from './engine'
-import { formatStatusLine } from './status-line'
+import { parsePermissionMode, resumeRuntime, type CliRuntime } from './engine'
+import { formatResumeSessionLine } from './resume'
+import { formatStatusLine, shortSessionId } from './status-line'
 
 export interface OpenTuiAppIo {
   input?: AsyncIterable<string>
   write?: (chunk: string) => void
+  resumeRuntime?: (runtime: CliRuntime, sessionId: string) => Promise<CliRuntime>
 }
 
 export async function runOpenTuiApp(
@@ -23,9 +25,11 @@ export async function runOpenTuiApp(
   const write = io.write ?? ((chunk: string) => {
     process.stdout.write(chunk)
   })
+  const resume = io.resumeRuntime ?? resumeRuntime
   const { input, close } = openInput(io.input)
   const readLine = lineReader(input)
   const view = createOpenTuiView()
+  let current = runtime
 
   const flush = () => {
     const lines = view.lines()
@@ -33,7 +37,7 @@ export async function runOpenTuiApp(
     write(`${lines.join('\n')}\n`)
   }
 
-  runtime.ask.bind(async (event, signal) => {
+  current.ask.bind(async (event, signal) => {
     for (const line of permissionPromptLines(event)) write(`${line}\n`)
     if (signal.aborted) return 'deny'
     const answer = await readLine()
@@ -45,7 +49,7 @@ export async function runOpenTuiApp(
     view.append(`you  ${text}`)
     flush()
     try {
-      const gen = runtime.engine.submitMessage(text)
+      const gen = current.engine.submitMessage(text)
       while (true) {
         const next = await gen.next()
         if (next.done) {
@@ -62,7 +66,7 @@ export async function runOpenTuiApp(
       view.append(`error  ${message}`)
       flush()
     }
-    write(`${statusLine(runtime)}\n`)
+    write(`${statusLine(current)}\n`)
   }
 
   try {
@@ -82,28 +86,28 @@ export async function runOpenTuiApp(
         case 'quit':
           return 0
         case 'cancel':
-          runtime.engine.abort()
+          current.engine.abort()
           write('cancelled\n')
           continue
         case 'learn':
           await runTurn(LEARN_PROMPT)
           continue
         case 'compact':
-          await runtime.engine.compactNow()
+          await current.engine.compactNow()
           write('compact requested\n')
           continue
         case 'cost':
           write(`${formatCostNotice({
-            usage: runtime.engine.session.usage,
-            profile: runtime.config.profile,
-            funding: runtime.engine.session.funding,
+            usage: current.engine.session.usage,
+            profile: current.config.profile,
+            funding: current.engine.session.funding,
           })}\n`)
           continue
         case 'search':
           write(`${searchNotice({
-            store: runtime.store,
+            store: current.store,
             arg: parsed.arg,
-            sessionId: runtime.engine.session.id,
+            sessionId: current.engine.session.id,
           })}\n`)
           continue
         case 'mode': {
@@ -116,8 +120,30 @@ export async function runOpenTuiApp(
             write(`unknown mode: ${parsed.arg}\n`)
             continue
           }
-          await runtime.engine.setPermissionMode(next)
+          await current.engine.setPermissionMode(next)
           write(`mode ${next}\n`)
+          continue
+        }
+        case 'resume': {
+          if (parsed.arg !== undefined) {
+            try {
+              current = await resume(current, parsed.arg)
+              write(`resumed ${shortSessionId(parsed.arg)}\n`)
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error)
+              write(`${message}\n`)
+            }
+            continue
+          }
+          const sessions = await current.store.listSessions({
+            cwd: current.cwd,
+            limit: 20,
+          })
+          if (sessions.length === 0) {
+            write('no sessions to resume\n')
+            continue
+          }
+          write(`${sessions.map(formatResumeSessionLine).join('\n')}\n`)
           continue
         }
         default:
