@@ -19,6 +19,7 @@ export interface ParsedArgv {
     | 'resume'
     | 'search'
     | 'export'
+    | 'title'
   prompt?: string
   json?: boolean
   all?: boolean
@@ -101,7 +102,8 @@ export function parseArgv(argv: string[]): ParsedArgv {
         arg === 'rm' ||
         arg === 'resume' ||
         arg === 'search' ||
-        arg === 'export') &&
+        arg === 'export' ||
+        arg === 'title') &&
       cmd === 'interactive' &&
       positional.length === 0
     ) {

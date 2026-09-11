@@ -10,7 +10,7 @@ import { formatCostNotice } from './cost-format'
 import { runSessionReview } from './review'
 import { searchNotice } from './search'
 import { parsePermissionMode, resumeRuntime, type CliRuntime } from './engine'
-import { formatResumeSessionLine } from './resume'
+import { applySessionTitle, formatResumeSessionLine } from './resume'
 import { formatStatusLine, shortSessionId } from './status-line'
 
 export interface OpenTuiAppIo {
@@ -96,6 +96,14 @@ export async function runOpenTuiApp(
           continue
         case 'learn':
           await runTurn(LEARN_PROMPT)
+          continue
+        case 'title':
+          if (parsed.arg === undefined || parsed.arg.trim() === '') {
+            write('usage: /title <name>\n')
+            continue
+          }
+          await applySessionTitle(current.store, current.engine.session, parsed.arg.trim())
+          write(`title ${parsed.arg.trim()}\n`)
           continue
         case 'review':
           write(`${await runSessionReview(current, parsed.arg ?? REVIEW_PROMPT)}\n`)

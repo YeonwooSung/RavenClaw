@@ -17,6 +17,7 @@ import {
   listCliSessions,
   resolveCliSessionId,
   showCliSession,
+  titleCliSession,
 } from './resume'
 import { runOpenTuiApp } from './opentui-app'
 import { searchCliSessions } from './search'
@@ -108,6 +109,16 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
       return 1
     }
+  }
+
+  if (parsed.cmd === 'title') {
+    const titled = await titleCliSession(parsed.prompt ?? '')
+    if ('error' in titled) {
+      process.stderr.write(`${titled.error}\n`)
+      return titled.error.startsWith('usage:') ? 2 : 1
+    }
+    process.stdout.write(`${titled.id.slice(0, 8)}  ${titled.title}\n`)
+    return 0
   }
 
   if (parsed.cmd === 'export') {

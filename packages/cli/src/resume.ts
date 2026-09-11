@@ -97,6 +97,48 @@ export function formatSessionMarkdown(
   return lines.join('\n').trimEnd() + '\n'
 }
 
+export async function applySessionTitle(
+  store: { upsertSession: (session: SessionRecord) => Promise<void> },
+  session: SessionRecord,
+  title: string,
+): Promise<void> {
+  session.title = title
+  session.updatedAt = Date.now()
+  await store.upsertSession(session)
+}
+
+export function parseTitleArg(raw: string): { id: string; title: string } | undefined {
+  const trimmed = raw.trim()
+  const space = trimmed.search(/\s/)
+  if (space <= 0) return undefined
+  const id = trimmed.slice(0, space).trim()
+  const title = trimmed.slice(space).trim()
+  if (id === '' || title === '') return undefined
+  return { id, title }
+}
+
+export async function titleCliSession(
+  raw: string,
+  opts?: { home?: string },
+): Promise<{ id: string; title: string } | { error: string }> {
+  const parsed = parseTitleArg(raw)
+  if (!parsed) return { error: 'usage: raven title <session-id> <title>' }
+  const home = opts?.home ?? ravenclawHome()
+  const store = openStore(home)
+  try {
+    const resolved = await resolveSessionId(store, parsed.id)
+    if (typeof resolved !== 'string') return resolved
+    const loaded = await store.loadSession(resolved)
+    const next = { ...loaded.session, title: parsed.title, updatedAt: Date.now() }
+    await store.upsertSession(next)
+    return { id: resolved, title: parsed.title }
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) }
+  } finally {
+    store.close()
+  }
+}
+
 export async function exportCliSession(
   prefix: string,
   opts?: { home?: string },

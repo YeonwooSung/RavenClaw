@@ -16,6 +16,7 @@ Usage:
   raven resume [id]
   raven search [--all] <query>
   raven export <id>
+  raven title <id> <name>
   raven --help
   raven --version
 
@@ -31,6 +32,7 @@ Commands:
   resume [id]   List sessions, or open one in the TUI (id needs a key)
   search <q>    Search session text (this directory; --all for every session)
   export <id>   Print a session as Markdown (full tool bodies; no API key)
+  title <id>    Set a session title (no API key)
 
 Options:
   --provider <anthropic|openai_compat>

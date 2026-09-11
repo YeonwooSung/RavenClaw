@@ -84,6 +84,14 @@ describe('parseArgv', () => {
     expect(parseArgv(['sessions'])).toEqual({ cmd: 'sessions', flags: {} })
   })
 
+  test('title takes id and the rest as the title', () => {
+    expect(parseArgv(['title', 'abc', 'Fix', 'login'])).toEqual({
+      cmd: 'title',
+      prompt: 'abc Fix login',
+      flags: {},
+    })
+  })
+
   test('export takes the remaining args as the session id', () => {
     expect(parseArgv(['export', 'abc123'])).toEqual({
       cmd: 'export',

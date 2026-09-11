@@ -10,8 +10,10 @@ import {
   deleteCliSession,
   exportCliSession,
   formatSessionMarkdown,
+  parseTitleArg,
   resolveCliSessionId,
   showCliSession,
+  titleCliSession,
 } from './resume'
 
 function session(over: Partial<SessionRecord> = {}): SessionRecord {
@@ -201,6 +203,31 @@ describe('exportCliSession', () => {
     expect(md).toContain('### Tool (ok)')
     expect(md).toContain('```')
     expect(md).toContain('x'.repeat(250))
+  })
+})
+
+describe('titleCliSession', () => {
+  test('parseTitleArg splits id and the rest of the line', () => {
+    expect(parseTitleArg('abc Fix login')).toEqual({ id: 'abc', title: 'Fix login' })
+    expect(parseTitleArg('abc')).toBeUndefined()
+    expect(parseTitleArg('')).toBeUndefined()
+  })
+
+  test('updates the stored title', async () => {
+    const home = join(tmpdir(), `raven-title-${Date.now()}`)
+    mkdirSync(home, { recursive: true })
+    const store = createSqliteStore(join(home, 'state.db')) as ReturnType<
+      typeof createSqliteStore
+    > & { close(): void }
+    await store.upsertSession(session({ id: 'titleid01234', cwd: home, title: 'Old' }))
+    store.close()
+
+    const result = await titleCliSession('titleid0 New name', { home })
+    expect(result).toEqual({ id: 'titleid01234', title: 'New name' })
+    const shown = await showCliSession('titleid0', { home })
+    if (!('text' in shown)) throw new Error('expected text')
+    expect(shown.text).toContain('New name')
+    expect(shown.text).not.toContain('Old')
   })
 })
 

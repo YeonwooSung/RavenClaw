@@ -5,6 +5,7 @@ export const SLASH_HELP = `/resume [id]   list or restore a session
 /mode <mode>   default | acceptEdits | plan | dontAsk
 /learn         write a skill from this session
 /review        append a read-only review to .ravenclaw/MEMORY.md
+/title <name>  set this session's title
 /cancel        abort the current turn (OpenTUI)
 /help          this list
 /quit          exit`

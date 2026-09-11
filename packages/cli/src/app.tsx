@@ -14,6 +14,7 @@ import { formatCostNotice } from './cost-format'
 import { runSessionReview } from './review'
 import { searchNotice } from './search'
 import { Composer } from './composer'
+import { applySessionTitle } from './resume'
 import {
   parsePermissionMode,
   resumeRuntime,
@@ -197,6 +198,19 @@ export function App(props: AppProps) {
           return
         case 'learn':
           void runTurn(LEARN_PROMPT)
+          return
+        case 'title':
+          if (parsed.arg === undefined || parsed.arg.trim() === '') {
+            setNotice('usage: /title <name>')
+            return
+          }
+          void applySessionTitle(
+            runtimeRef.current.store,
+            runtimeRef.current.engine.session,
+            parsed.arg.trim(),
+          ).then(() => {
+            setNotice(`title ${parsed.arg?.trim()}`)
+          })
           return
         case 'review':
           void runSessionReview(
