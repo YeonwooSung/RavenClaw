@@ -80,6 +80,10 @@ describe('parseArgv', () => {
     expect(parseArgv(['setup'])).toEqual({ cmd: 'setup', flags: {} })
   })
 
+  test('smoke selects smoke and forces dontAsk', () => {
+    expect(parseArgv(['smoke'])).toEqual({ cmd: 'smoke', flags: { dontAsk: true } })
+  })
+
   test('--help and -h select the help command', () => {
     expect(parseArgv(['--help'])).toEqual({ cmd: 'help', flags: {} })
     expect(parseArgv(['-h'])).toEqual({ cmd: 'help', flags: {} })

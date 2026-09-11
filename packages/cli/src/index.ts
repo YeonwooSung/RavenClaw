@@ -11,6 +11,7 @@ import { runExec } from './exec'
 import { SETUP_HINT, providerConfigured, runFirstRun } from './first-run'
 import { readSecretLine } from './secret-input'
 import { runOpenTuiApp } from './opentui-app'
+import { SMOKE_PROMPT, evaluateSmoke } from './smoke'
 
 export { parseArgv } from './args'
 export { CLI_VERSION, HELP_TEXT, formatVersion } from './help'
@@ -43,10 +44,23 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     return (await promptFirstRun(home)) ? 0 : 1
   }
 
-  if (parsed.cmd === 'acp' || parsed.cmd === 'exec') {
+  if (parsed.cmd === 'acp' || parsed.cmd === 'exec' || parsed.cmd === 'smoke') {
     const home = await ensureHomeDir()
     if (!providerConfigured(home, parsed.flags)) {
       process.stderr.write(`${SETUP_HINT}\n`)
+      return 1
+    }
+  }
+
+  if (parsed.cmd === 'smoke') {
+    try {
+      const runtime = await bootCli({ flags: parsed.flags })
+      const result = await runExec({ prompt: SMOKE_PROMPT, engine: runtime.engine })
+      const verdict = evaluateSmoke(result.text)
+      process.stdout.write(`${verdict.detail}\n`)
+      return verdict.code
+    } catch (error) {
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
       return 1
     }
   }

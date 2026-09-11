@@ -9,6 +9,7 @@ Usage:
   raven exec [--json] [options] <prompt>
   raven acp [options]
   raven setup
+  raven smoke
   raven --help
   raven --version
 
@@ -17,6 +18,7 @@ Commands:
   exec          One-shot prompt; forces --dont-ask
   acp           Agent Client Protocol on stdin/stdout; forces --dont-ask
   setup         Write ~/.ravenclaw/.env (provider + API key)
+  smoke         One live turn (requires a key); expects the model to say pong
 
 Options:
   --provider <anthropic|openai_compat>
