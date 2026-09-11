@@ -798,6 +798,76 @@ describe('queryLoop via SessionEngine', () => {
       rmSync(cwd, { recursive: true, force: true })
     }
   })
+
+  test('Skill allowed-tools: Read does not execute a later Edit tool_call', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'ravenclaw-ql-skill-jail-home-'))
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-ql-skill-jail-cwd-'))
+    const savedHome = process.env.RAVENCLAW_HOME
+    process.env.RAVENCLAW_HOME = home
+    try {
+      const skillDir = join(cwd, '.ravenclaw', 'skills', 'readonly')
+      mkdirSync(skillDir, { recursive: true })
+      writeFileSync(
+        join(skillDir, 'SKILL.md'),
+        [
+          '---',
+          'name: readonly',
+          'description: Read-only skill',
+          'allowed-tools: Read',
+          '---',
+          '',
+          'Use Read only.',
+        ].join('\n'),
+      )
+
+      const store = createMemoryStore()
+      const session = makeSession({ id: 'sess_skill_jail', cwd })
+      await store.createSession(session)
+      const edit = stubNamedTool('Edit')
+      let editCount = 0
+      const origExecute = edit.execute.bind(edit)
+      edit.execute = async (input, ctx) => {
+        editCount += 1
+        return origExecute(input, ctx)
+      }
+      const provider = createFakeProvider([
+        toolThenStop('sk1', 'Skill', { name: 'readonly' }),
+        toolThenStop('ed1', 'Edit', { path: 'secret.txt', old_string: 'a', new_string: 'b' }),
+        textThenStop('recovered'),
+      ])
+      const tools = [
+        stubNamedTool('Read'),
+        stubNamedTool('Grep'),
+        edit,
+        stubNamedTool('Write'),
+        stubNamedTool('Bash'),
+        skillTool,
+        stubNamedTool('Agent'),
+        stubNamedTool('EnterPlanMode'),
+        stubNamedTool('ExitPlanMode'),
+      ]
+      const engine = createSessionEngine(engineOpts({ provider, store, session, tools }))
+
+      const { result } = await collect(engine.submitMessage('use readonly then edit'))
+
+      expect(result).toEqual({ reason: 'completed' })
+      expect(editCount).toBe(0)
+
+      const loaded = await store.loadSession(session.id)
+      expect(pairingHolds(loaded.messages)).toBe(true)
+      const editResult = loaded.messages.find(
+        (m): m is Extract<Message, { role: 'tool' }> =>
+          m.role === 'tool' && m.toolUseId === 'ed1',
+      )
+      expect(editResult?.ok).toBe(false)
+      expect(editResult?.blocks[0]?.text.startsWith('unknown_tool:')).toBe(true)
+    } finally {
+      if (savedHome === undefined) delete process.env.RAVENCLAW_HOME
+      else process.env.RAVENCLAW_HOME = savedHome
+      rmSync(home, { recursive: true, force: true })
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
 })
 
 function stubNamedTool(name: string): Tool {

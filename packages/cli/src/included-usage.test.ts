@@ -4,7 +4,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   includedCapReached,
+  readIncludedUsage,
   recordIncludedSession,
+  tryRecordIncludedSession,
   utcDay,
   type IncludedUsage,
 } from './included-usage'
@@ -35,6 +37,51 @@ describe('included usage ledger', () => {
     const raw = JSON.parse(readFileSync(join(home, 'included-usage.json'), 'utf8')) as IncludedUsage
     expect(raw.count).toBe(2)
     expect(raw.day).toBe(utcDay())
+  })
+
+  test('tryRecordIncludedSession admits the last slot then denies', () => {
+    const home = tempHome()
+    expect(tryRecordIncludedSession(home, 1)).toBe(true)
+    expect(tryRecordIncludedSession(home, 1)).toBe(false)
+    expect(readIncludedUsage(home).count).toBe(1)
+  })
+
+  test('in-process Promise.all tryRecordIncludedSession respects cap 2', async () => {
+    const home = tempHome()
+    const results = await Promise.all(
+      Array.from({ length: 8 }, async () => tryRecordIncludedSession(home, 2)),
+    )
+    expect(results.filter((ok) => ok).length).toBeLessThanOrEqual(2)
+    expect(readIncludedUsage(home).count).toBeLessThanOrEqual(2)
+  })
+
+  test('concurrent tryRecordIncludedSession at cap 2 never overshoots', async () => {
+    const home = tempHome()
+    const modulePath = new URL('./included-usage.ts', import.meta.url).href
+    const results = await Promise.all(
+      Array.from({ length: 8 }, async () => {
+        const proc = Bun.spawn(
+          [
+            process.execPath,
+            '-e',
+            `import { tryRecordIncludedSession } from ${JSON.stringify(modulePath)}
+const ok = tryRecordIncludedSession(${JSON.stringify(home)}, 2)
+process.stdout.write(ok ? '1' : '0')`,
+          ],
+          { stdout: 'pipe', stderr: 'pipe' },
+        )
+        const [stdout, stderr, code] = await Promise.all([
+          new Response(proc.stdout).text(),
+          new Response(proc.stderr).text(),
+          proc.exited,
+        ])
+        if (code !== 0) throw new Error(stderr || `child exited ${code}`)
+        return stdout === '1'
+      }),
+    )
+    expect(results.filter((ok) => ok).length).toBeLessThanOrEqual(2)
+    expect(readIncludedUsage(home).count).toBeLessThanOrEqual(2)
+    expect(readIncludedUsage(home).count).toBe(results.filter((ok) => ok).length)
   })
 
   test('day rollover resets the count', () => {

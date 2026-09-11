@@ -40,11 +40,11 @@ import {
 } from '@ravenclaw/core'
 import { createProvider } from '@ravenclaw/providers'
 import { probeEntitlement, type Entitlement } from '@ravenclaw/ads'
-import { includedCapReached, recordIncludedSession } from './included-usage'
+import { includedCapReached, tryRecordIncludedSession } from './included-usage'
 import { loadConfiguredMcpTools, type McpSpawnFn } from './mcp'
 
 export type IncludedAccess =
-  | { admitted: true; gatewayUrl: string; token: string; defaultModel?: string }
+  | { admitted: true; gatewayUrl: string; token: string; defaultModel?: string; sessionCap: number }
   | { admitted: false }
 
 export type EntitlementProbe = (
@@ -56,14 +56,15 @@ export interface IncludedAccessOptions {
   probe?: EntitlementProbe
   fetch?: typeof fetch
   access?: IncludedAccess
+  consumeCap?: boolean
 }
 
 export async function resolveIncludedAccess(
   config: ResolvedConfig,
   opts?: IncludedAccessOptions,
 ): Promise<IncludedAccess> {
-  const gatewayUrl = includedGatewayUrl(config)
-  if (gatewayUrl === undefined) return { admitted: false }
+  const gateway = includedGatewayUrl(config)
+  if (gateway === undefined) return { admitted: false }
   // Gateway is opt-in; OSS/CI stay BYOK unless included.enabled is true.
   if (config.included?.enabled !== true) return { admitted: false }
 
@@ -71,12 +72,16 @@ export async function resolveIncludedAccess(
   const probe = opts?.probe ?? probeEntitlement
   const probeOpts: { token?: string; fetch?: typeof fetch } = { token }
   if (opts?.fetch !== undefined) probeOpts.fetch = opts.fetch
-  const entitlement = await probe(gatewayUrl, probeOpts)
+  const entitlement = await probe(gateway.probeBase, probeOpts)
   // hasPaidCapacityPlan raises caps; it does not silence ads.
   if (!entitlement.admitted) return { admitted: false }
-  if (includedCapacityExhausted(config, entitlement)) return { admitted: false }
-  recordIncludedSession(config.home)
-  const access: Extract<IncludedAccess, { admitted: true }> = { admitted: true, gatewayUrl, token }
+  if (includedCapacityExhausted(config, entitlement, opts?.consumeCap)) return { admitted: false }
+  const access: Extract<IncludedAccess, { admitted: true }> = {
+    admitted: true,
+    gatewayUrl: gateway.chatBase,
+    token,
+    sessionCap: includedRecordCap(config, entitlement),
+  }
   if (typeof entitlement.defaultModel === 'string' && entitlement.defaultModel !== '') {
     access.defaultModel = entitlement.defaultModel
   }
@@ -86,11 +91,23 @@ export async function resolveIncludedAccess(
 function includedCapacityExhausted(
   config: ResolvedConfig,
   entitlement: Partial<Pick<Entitlement, 'hasPaidCapacityPlan' | 'sessionCap' | 'remainingSessions'>>,
+  consumeCap?: boolean,
 ): boolean {
   if (typeof entitlement.remainingSessions === 'number' && Number.isFinite(entitlement.remainingSessions)) {
     return entitlement.remainingSessions <= 0
   }
+  if (consumeCap === false) return false
   return includedCapReached(config.home, includedSessionCap(config, entitlement))
+}
+
+function includedRecordCap(
+  config: ResolvedConfig,
+  entitlement: Partial<Pick<Entitlement, 'hasPaidCapacityPlan' | 'sessionCap' | 'remainingSessions'>>,
+): number {
+  if (typeof entitlement.remainingSessions === 'number' && Number.isFinite(entitlement.remainingSessions)) {
+    return Number.MAX_SAFE_INTEGER
+  }
+  return includedSessionCap(config, entitlement)
 }
 
 function includedSessionCap(
@@ -199,8 +216,8 @@ export function createAskBridge(): AskBridge {
   }
 }
 
-export interface CliRuntime {
-  engine: SessionEngine
+export interface CliRuntimeBase {
+  engine?: SessionEngine
   store: SessionStore
   provider: Provider
   config: ResolvedConfig
@@ -208,6 +225,8 @@ export interface CliRuntime {
   ask: AskBridge
   mcpCloser?: () => Promise<void>
 }
+
+export type CliRuntime = CliRuntimeBase & { engine: SessionEngine }
 
 export async function openEngine(opts: {
   provider: Provider
@@ -342,16 +361,33 @@ function byokProviderFromConfig(config: ResolvedConfig): Provider {
   return createProvider(ctor)
 }
 
-function includedGatewayUrl(config: ResolvedConfig): string | undefined {
-  const raw = config.included?.gatewayUrl?.trim() ?? ''
-  if (raw === '') return undefined
+export function normalizeIncludedGatewayUrl(
+  raw: string,
+): { probeBase: string; chatBase: string } | undefined {
+  const trimmed = raw.trim()
+  if (trimmed === '') return undefined
   try {
-    const parsed = new URL(raw)
+    const parsed = new URL(trimmed)
     if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined
-    return raw
+    const path = parsed.pathname.replace(/\/+$/, '')
+    const withOrigin = `${parsed.origin}${path === '/' ? '' : path}`
+    const probeBase = withOrigin.replace(/\/v1$/, '') || parsed.origin
+    return { probeBase, chatBase: `${probeBase}/v1` }
   } catch {
     return undefined
   }
+}
+
+function includedGatewayUrl(config: ResolvedConfig): { probeBase: string; chatBase: string } | undefined {
+  return normalizeIncludedGatewayUrl(config.included?.gatewayUrl ?? '')
+}
+
+function reserveIncludedFunding(
+  config: ResolvedConfig,
+  access: IncludedAccess,
+): Extract<IncludedAccess, { admitted: true }> | { admitted: false } {
+  if (!access.admitted) return access
+  return tryRecordIncludedSession(config.home, access.sessionCap) ? access : { admitted: false }
 }
 
 function includedApiKey(config: ResolvedConfig): string {
@@ -365,20 +401,37 @@ function firstNonEmpty(...values: Array<string | undefined>): string | undefined
   return undefined
 }
 
-export async function bootCli(opts: {
+type BootCliOpts = {
   flags: ConfigFlags
   cwd?: string
   ask?: AskBridge
   tools?: Tool[]
   maxRounds?: number
-}): Promise<CliRuntime> {
+} & IncludedAccessOptions
+
+export async function bootCli(opts: BootCliOpts & { createSession: false }): Promise<CliRuntimeBase>
+export async function bootCli(opts: BootCliOpts): Promise<CliRuntime>
+export async function bootCli(
+  opts: BootCliOpts & { createSession?: boolean },
+): Promise<CliRuntime | CliRuntimeBase> {
   const home = await ensureHomeDir()
   const config = loadConfig({ home, flags: opts.flags })
   const store = createSqliteStore(join(home, 'state.db'))
-  const access = await resolveIncludedAccess(config)
+  const createSession = opts.createSession !== false
+  const probed =
+    opts.access ??
+    (await resolveIncludedAccess(config, {
+      probe: opts.probe,
+      fetch: opts.fetch,
+      consumeCap: createSession,
+    }))
+  // Reserve before picking the provider so a failed local cap cannot keep
+  // the included gateway while stamping funding: byok.
+  const access = createSession ? reserveIncludedFunding(config, probed) : probed
   const provider = await providerFromConfig(config, { access })
   const cwd = opts.cwd ?? process.cwd()
   const ask = opts.ask ?? createAskBridge()
+  if (!createSession) return { store, provider, config, cwd, ask }
   const engineOpts: Parameters<typeof openEngine>[0] = {
     provider,
     store,
@@ -394,7 +447,7 @@ export async function bootCli(opts: {
 }
 
 export async function resumeRuntime(
-  runtime: CliRuntime,
+  runtime: CliRuntimeBase,
   sessionId: string,
 ): Promise<CliRuntime> {
   const loaded = await resumeSession(runtime.store, sessionId)

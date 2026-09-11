@@ -107,6 +107,8 @@ export interface Turn {
   compactGeneration: number
   funding: Funding
   cwd: string
+  /** Project root for permissions/skills. Unset means `cwd`. Isolated worktrees set this to the parent. */
+  projectCwd?: string
   model: string
   readFiles: Set<string>
   skillAllowedTools?: string[]

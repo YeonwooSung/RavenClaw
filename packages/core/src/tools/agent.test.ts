@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createMemoryStore } from '../session/memory-store'
@@ -25,6 +25,7 @@ import type {
 import { createPlanModeTools } from './plan-mode'
 import { editTool } from './edit'
 import { readTool } from './read'
+import { skillTool } from './skill'
 import { createAgentTool } from './agent'
 
 const RESULT_BOUND = 32_000
@@ -792,6 +793,149 @@ describe('createAgentTool', () => {
     const loaded = await resumeSession(store, child!.id)
     expect(loaded.session.cwd).toBe(cwd)
     expect(existsSync(loaded.session.cwd)).toBe(true)
+  })
+
+  test('isolation worktree child sees parent project skills and permissions', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'ravenclaw-agent-wt-home-'))
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-agent-wt-proj-'))
+    tempDirs.push(home, cwd)
+    const savedHome = process.env.RAVENCLAW_HOME
+    process.env.RAVENCLAW_HOME = home
+    initGitRepo(cwd)
+
+    const skillDir = join(cwd, '.ravenclaw', 'skills', 'from-parent')
+    mkdirSync(skillDir, { recursive: true })
+    writeFileSync(
+      join(skillDir, 'SKILL.md'),
+      [
+        '---',
+        'name: from-parent',
+        'description: Project skill in the parent cwd',
+        '---',
+        '',
+        'PARENT_PROJECT_SKILL_BODY',
+      ].join('\n'),
+    )
+    writeFileSync(
+      join(cwd, '.ravenclaw', 'permissions.json'),
+      JSON.stringify([{ tool: 'Write', spec: {}, behavior: 'deny' }]),
+    )
+
+    const store = createMemoryStore()
+    const session = makeSession({ cwd })
+    await store.createSession(session)
+
+    let liveCwd: string | undefined
+    let childProjectCwd: string | undefined
+    const recorder: Tool = {
+      ...stubTool('Read'),
+      async execute(_input, ctx) {
+        liveCwd = ctx.turn.cwd
+        childProjectCwd = ctx.turn.projectCwd
+        return 'ok'
+      },
+    }
+    const writeStub = stubTool('Write')
+    let writeCount = 0
+    writeStub.execute = async () => {
+      writeCount += 1
+      return 'wrote'
+    }
+
+    const provider = createFakeProvider([
+      toolThenStop('sk1', 'Skill', { name: 'from-parent' }),
+      toolThenStop('w1', 'Write', { path: 'x.txt' }),
+      toolThenStop('r1', 'Read', { path: 'unused.txt' }),
+      textThenStop('isolated-ok'),
+    ])
+    const { tool } = createTestAgent({
+      store,
+      provider,
+      tools: parentPool().map((item) => {
+        if (item.name === 'Read') return recorder
+        if (item.name === 'Skill') return skillTool
+        if (item.name === 'Write') return writeStub
+        return item
+      }),
+    })
+
+    try {
+      const result = await tool.execute(
+        { prompt: 'use parent project files', isolation: 'worktree' },
+        makeCtx(makeTurn(session, { cwd })),
+      )
+
+      expect(result).toBe('isolated-ok')
+      expect(liveCwd?.startsWith(join(cwd, '.ravenclaw', 'worktrees') + '/')).toBe(true)
+      expect(childProjectCwd).toBe(cwd)
+      expect(writeCount).toBe(0)
+
+      const children = await store.listSessions({ parentSessionId: session.id })
+      expect(children).toHaveLength(1)
+      const loaded = await store.loadSession(children[0]!.id)
+      const skillResult = loaded.messages.find(
+        (msg): msg is Extract<Message, { role: 'tool' }> =>
+          msg.role === 'tool' && msg.toolUseId === 'sk1',
+      )
+      expect(skillResult?.ok).toBe(true)
+      expect(skillResult?.blocks[0]?.text).toContain('PARENT_PROJECT_SKILL_BODY')
+
+      const writeResult = loaded.messages.find(
+        (msg): msg is Extract<Message, { role: 'tool' }> =>
+          msg.role === 'tool' && msg.toolUseId === 'w1',
+      )
+      expect(writeResult?.ok).toBe(false)
+      expect(writeResult?.blocks[0]?.text).toMatch(/denied by project rule/)
+
+      expect(existsSync(join(skillDir, 'SKILL.md'))).toBe(true)
+      expect(existsSync(join(cwd, '.ravenclaw', 'permissions.json'))).toBe(true)
+      expect(liveCwd && existsSync(liveCwd)).toBe(false)
+      expect(existsSync(cwd)).toBe(true)
+    } finally {
+      if (savedHome === undefined) delete process.env.RAVENCLAW_HOME
+      else process.env.RAVENCLAW_HOME = savedHome
+    }
+  })
+
+  test('parent skillAllowedTools binds the child tool list and turn', async () => {
+    const store = createMemoryStore()
+    const session = makeSession()
+    await store.createSession(session)
+
+    let childAllowed: string[] | undefined
+    const recorder: Tool = {
+      ...stubTool('Read'),
+      async execute(_input, ctx) {
+        childAllowed = ctx.turn.skillAllowedTools
+        return 'ok'
+      },
+    }
+    const provider = createFakeProvider([
+      toolThenStop('r1', 'Read', { path: 'unused.txt' }),
+      textThenStop('bound'),
+    ])
+    const { tool } = createTestAgent({
+      store,
+      provider,
+      tools: parentPool().map((item) => (item.name === 'Read' ? recorder : item)),
+    })
+    const result = await tool.execute(
+      { prompt: 'stay read-only' },
+      makeCtx(makeTurn(session, { skillAllowedTools: ['Read'] })),
+    )
+
+    expect(result).toBe('bound')
+    expect(childAllowed).toEqual(['Read'])
+
+    const names = provider.requests[0]?.tools.map((entry) => entry.name) ?? []
+    expect(names).toContain('Read')
+    expect(names).toContain('Skill')
+    expect(names).not.toContain('Edit')
+    expect(names).not.toContain('Write')
+    expect(names).not.toContain('Bash')
+    expect(names).not.toContain('Agent')
+    expect(names).not.toContain('EnterPlanMode')
+    expect(names).not.toContain('ExitPlanMode')
   })
 
   test('isolation worktree falls back to parent cwd when not a git repo', async () => {

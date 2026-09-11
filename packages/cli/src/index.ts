@@ -106,7 +106,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         }
         if (!(await promptFirstRun(home))) return 1
       }
-      const booted = await bootCli({ flags: parsed.flags })
+      const booted = await bootCli({ flags: parsed.flags, createSession: false })
       const runtime = await resumeRuntime(booted, resolved)
       process.stdout.write(`resumed ${resolved.slice(0, 8)}\n`)
       if (parsed.tui === 'opentui') return await runOpenTuiApp(runtime)

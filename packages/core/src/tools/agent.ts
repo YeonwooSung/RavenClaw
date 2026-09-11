@@ -26,6 +26,7 @@ import type {
   Turn,
 } from '../types'
 import { parseWithSchema } from './parse'
+import { filterToolsForTurn } from './skill'
 import { prepareChildWorktree, type IsolationMode } from './worktree'
 
 export interface AgentInput {
@@ -85,7 +86,6 @@ export function createAgentTool(opts: {
       const definition = getAgentDefinition(input.subagent ?? 'general')
       if (!definition) return `Unknown subagent: ${input.subagent}`
 
-      const childTools = filterChildTools(opts.tools, definition)
       const maxRounds = opts.childMaxRounds ?? definition.maxRounds
       const now = Date.now()
       const childModel = resolveChildModel(ctx.turn, definition)
@@ -99,10 +99,12 @@ export function createAgentTool(opts: {
 
       const childAbort = new AbortController()
       const unlink = linkAbort(ctx.signal, childAbort)
-      const childTurn = buildChildTurn(childSession, userMessage, childAbort, maxRounds)
+      const childTurn = buildChildTurn(childSession, userMessage, childAbort, maxRounds, ctx.turn)
       // Worktree path is live-only. session.cwd stays the parent so resume
       // still has a real directory after cleanup removes the worktree.
       childTurn.cwd = isolated.cwd
+      childTurn.projectCwd = ctx.turn.projectCwd ?? ctx.turn.cwd
+      const childTools = filterToolsForTurn(filterChildTools(opts.tools, definition), childTurn)
 
       try {
         await opts.store.createSession(childSession)
@@ -184,6 +186,7 @@ function buildChildTurn(
   user: Extract<Message, { role: 'user' }>,
   abort: AbortController,
   maxRounds: number,
+  parent: Turn,
 ): Turn {
   const turn: Turn = {
     id: crypto.randomUUID(),
@@ -202,6 +205,9 @@ function buildChildTurn(
     readFiles: new Set(),
   }
   if (session.prePlanMode !== undefined) turn.prePlanMode = session.prePlanMode
+  if (parent.skillAllowedTools !== undefined) {
+    turn.skillAllowedTools = [...parent.skillAllowedTools]
+  }
   return turn
 }
 

@@ -48,7 +48,9 @@ export const skillTool: Tool<SkillInput, string> = {
   },
   async execute(input: SkillInput, ctx: ToolContext) {
     if (ctx.signal.aborted) throw abortError()
-    const found = discoverSkills(ctx.turn.cwd).find((skill) => skill.name === input.name)
+    const found = discoverSkills(ctx.turn.projectCwd ?? ctx.turn.cwd).find(
+      (skill) => skill.name === input.name,
+    )
     if (!found) return `Skill failed: unknown skill: ${input.name}`
     applySkillAllowedTools(found.dir, ctx.turn)
     if (input.path !== undefined) return readSkillFile(found.dir, input.path)

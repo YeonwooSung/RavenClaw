@@ -211,19 +211,30 @@ function buildOpenAIMessages(
     for (const part of system) text += part.text
     out.push({ role: 'system', content: text })
   }
-  for (const msg of messages) {
+  let i = 0
+  while (i < messages.length) {
+    const msg = messages[i]
+    if (!msg) break
     if (msg.role === 'user') {
       out.push({ role: 'user', content: mapOpenAIMultimodal(msg.blocks) })
+      i += 1
       continue
     }
     if (msg.role === 'tool') {
-      out.push({
-        role: 'tool',
-        tool_call_id: msg.toolUseId,
-        content: joinText(msg.blocks, false),
-      })
-      if (msg.blocks.some(isImageBlock)) {
-        out.push({ role: 'user', content: mapOpenAIMultimodal(msg.blocks) })
+      const imageBlocks: Array<{ type: string; text?: string; mediaType?: string; data?: string }> = []
+      while (i < messages.length) {
+        const tool = messages[i]
+        if (!tool || tool.role !== 'tool') break
+        out.push({
+          role: 'tool',
+          tool_call_id: tool.toolUseId,
+          content: joinText(tool.blocks, false),
+        })
+        if (tool.blocks.some(isImageBlock)) imageBlocks.push(...tool.blocks)
+        i += 1
+      }
+      if (imageBlocks.length > 0) {
+        out.push({ role: 'user', content: mapOpenAIMultimodal(imageBlocks) })
       }
       continue
     }
@@ -244,6 +255,7 @@ function buildOpenAIMessages(
     } else {
       out.push({ role: 'assistant', content })
     }
+    i += 1
   }
   return out
 }

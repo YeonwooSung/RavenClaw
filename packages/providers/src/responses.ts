@@ -254,8 +254,18 @@ function isImageBlock(block: {
 
 function buildResponsesInput(messages: Message[], includeThinking: boolean): unknown[] {
   const out: unknown[] = []
+  const pendingImageBlocks: Array<{ type: string; text?: string; mediaType?: string; data?: string }> =
+    []
+
+  const flushToolImages = () => {
+    if (pendingImageBlocks.length === 0) return
+    out.push({ role: 'user', content: mapResponsesUserContent(pendingImageBlocks) })
+    pendingImageBlocks.length = 0
+  }
+
   for (const msg of messages) {
     if (msg.role === 'user') {
+      flushToolImages()
       out.push({ role: 'user', content: mapResponsesUserContent(msg.blocks) })
       continue
     }
@@ -265,8 +275,10 @@ function buildResponsesInput(messages: Message[], includeThinking: boolean): unk
         call_id: msg.toolUseId,
         output: joinText(msg.blocks, false),
       })
+      if (msg.blocks.some(isImageBlock)) pendingImageBlocks.push(...msg.blocks)
       continue
     }
+    flushToolImages()
     const text = joinText(msg.blocks, includeThinking)
     if (text.length > 0) out.push({ role: 'assistant', content: text })
     for (const block of msg.blocks) {
@@ -280,6 +292,7 @@ function buildResponsesInput(messages: Message[], includeThinking: boolean): unk
       }
     }
   }
+  flushToolImages()
   return out
 }
 

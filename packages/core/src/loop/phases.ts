@@ -473,7 +473,7 @@ export async function* runToolRound(
   const calls = state.pendingToolCalls
   const box: { rules: PermissionRuleSet } = {
     rules: await loadPermissionRules({
-      cwd: state.turn.cwd,
+      cwd: state.turn.projectCwd ?? state.turn.cwd,
       store: state.store,
       sessionId: state.turn.sessionId,
     }),
@@ -575,7 +575,7 @@ async function executeOneCall(
     return { messages: pairMissing([call.id], 'aborted'), events, abortRest: true }
   }
 
-  const tool = state.tools.find((entry) => entry.name === call.name)
+  const tool = filterToolsForTurn(state.tools, state.turn).find((entry) => entry.name === call.name)
   if (!tool) {
     return {
       messages: [makeToolMessage(call.id, false, unknownToolText(call.name))],
@@ -640,16 +640,17 @@ async function executeOneCall(
         }
         if (answer === 'allow_always') {
           const scope = decision.saveAs ?? 'session'
+          const policyCwd = state.turn.projectCwd ?? state.turn.cwd
           await persistAllowAlways({
             store: state.store,
             sessionId: state.turn.sessionId,
-            cwd: state.turn.cwd,
+            cwd: policyCwd,
             scope,
             tool: call.name,
             spec: commandOrPath(parsed.value) ?? {},
           })
           box.rules = await loadPermissionRules({
-            cwd: state.turn.cwd,
+            cwd: policyCwd,
             store: state.store,
             sessionId: state.turn.sessionId,
           })

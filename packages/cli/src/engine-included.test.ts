@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -11,12 +11,14 @@ import {
 } from '@ravenclaw/core'
 import type { Entitlement } from '@ravenclaw/ads'
 import {
+  bootCli,
   newSessionRecord,
+  normalizeIncludedGatewayUrl,
   openEngine,
   providerFromConfig,
   resolveIncludedAccess,
 } from './engine'
-import { utcDay } from './included-usage'
+import { utcDay, type IncludedUsage } from './included-usage'
 
 const GATEWAY = 'https://gw.example.com/v1'
 const tempDirs: string[] = []
@@ -191,8 +193,87 @@ describe('included gateway access', () => {
     expect(provider.id).toBe('included-gateway')
     expect(session.funding).toBe('included')
     expect(access.admitted).toBe(true)
-    expect(seen).toEqual([{ url: GATEWAY, token: 'sk-oai' }])
+    expect(seen).toEqual([{ url: 'https://gw.example.com', token: 'sk-oai' }])
   })
+
+  test.each(['https://gw.example.com/v1', 'https://gw.example.com'] as const)(
+    'normalizeIncludedGatewayUrl(%s) strips /v1 for probe and adds /v1 for chat',
+    (gatewayUrl) => {
+      const normalized = normalizeIncludedGatewayUrl(gatewayUrl)
+      expect(normalized).toEqual({
+        probeBase: 'https://gw.example.com',
+        chatBase: 'https://gw.example.com/v1',
+      })
+    },
+  )
+
+  test.each(['https://gw.example.com/v1', 'https://gw.example.com'] as const)(
+    'resolveIncludedAccess probes origin for %s without /v1/v1',
+    async (gatewayUrl) => {
+      const probed: string[] = []
+      const access = await resolveIncludedAccess(config({ included: includedOn({ gatewayUrl }) }), {
+        probe: async (url) => {
+          probed.push(url)
+          return admitted()
+        },
+      })
+      expect(access.admitted).toBe(true)
+      expect(probed).toEqual(['https://gw.example.com'])
+      expect(probed.some((url) => url.includes('/v1/v1'))).toBe(false)
+      if (access.admitted) expect(access.gatewayUrl).toBe('https://gw.example.com/v1')
+    },
+  )
+
+  test.each(['https://gw.example.com/v1', 'https://gw.example.com'] as const)(
+    'providerFromConfig chats to /v1/chat/completions for %s',
+    async (gatewayUrl) => {
+      const originalFetch = globalThis.fetch
+      const sse = [
+        'data: {"choices":[{"delta":{"content":"ok"}}]}',
+        '',
+        'data: [DONE]',
+        '',
+      ].join('\n')
+      const urls: string[] = []
+      globalThis.fetch = ((input: string | URL | Request) => {
+        const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+        urls.push(url)
+        return Promise.resolve(
+          new Response(sse, { status: 200, headers: { 'Content-Type': 'text/event-stream' } }),
+        )
+      }) as typeof fetch
+
+      try {
+        const cfg = config({ included: includedOn({ gatewayUrl }) })
+        const access = await resolveIncludedAccess(cfg, { probe: async () => admitted() })
+        const provider = await providerFromConfig(cfg, { access })
+        expect(provider.id).toBe('included-gateway')
+        await drainProvider(
+          provider.stream(
+            {
+              model: 'openai/gpt-4o',
+              system: [],
+              messages: [
+                {
+                  id: 'u1',
+                  role: 'user',
+                  blocks: [{ type: 'text', text: 'hi' }],
+                  createdAt: 1,
+                },
+              ],
+              tools: [],
+              maxTokens: 16,
+            },
+            new AbortController().signal,
+          ),
+        )
+        expect(urls).toContain('https://gw.example.com/v1/chat/completions')
+        expect(urls.some((url) => url.includes('/v1/v1'))).toBe(false)
+      } finally {
+        globalThis.fetch = originalFetch
+      }
+    },
+  )
 
   test('gatewayUrl + admitted false falls back to BYOK and byok funding', async () => {
     const cfg = config({
@@ -295,12 +376,111 @@ describe('included gateway access', () => {
     ).toBe(true)
   })
 
-  test('admitted session is recorded against the daily cap', async () => {
+  test('resolveIncludedAccess admit does not increment the usage file', async () => {
     const home = tempHome()
     const cfg = config({ home, included: includedOn({ sessionCapPerDay: 1 }) })
     const probe = async () => admitted()
     expect((await resolveIncludedAccess(cfg, { probe })).admitted).toBe(true)
-    expect((await resolveIncludedAccess(cfg, { probe })).admitted).toBe(false)
+    expect(existsSync(join(home, 'included-usage.json'))).toBe(false)
+    expect((await resolveIncludedAccess(cfg, { probe })).admitted).toBe(true)
+    expect(existsSync(join(home, 'included-usage.json'))).toBe(false)
+  })
+
+  test('at-cap + consumeCap false still admits when the probe admits', async () => {
+    const home = tempHome()
+    writeFileSync(join(home, 'included-usage.json'), JSON.stringify({ day: utcDay(), count: 4 }))
+    const cfg = config({ home, included: includedOn({ sessionCapPerDay: 4 }) })
+    const access = await resolveIncludedAccess(cfg, {
+      probe: async () => admitted(),
+      consumeCap: false,
+    })
+    expect(access.admitted).toBe(true)
+    expect((await providerFromConfig(cfg, { access })).id).toBe('included-gateway')
+    const raw = JSON.parse(readFileSync(join(home, 'included-usage.json'), 'utf8')) as IncludedUsage
+    expect(raw.count).toBe(4)
+  })
+
+  test('bootCli new included session increments once and stamps included funding', async () => {
+    const home = tempHome()
+    const previousHome = process.env.RAVENCLAW_HOME
+    process.env.RAVENCLAW_HOME = home
+    writeFileSync(join(home, '.env'), 'ANTHROPIC_API_KEY=sk-ant\n')
+    writeFileSync(
+      join(home, 'config.yaml'),
+      ['included:', '  enabled: true', '  gatewayUrl: https://gw.example.com/v1', ''].join('\n'),
+    )
+    let store: { close?: () => void; listSessions: () => Promise<unknown[]> } | undefined
+    try {
+      const runtime = await bootCli({
+        flags: {},
+        cwd: '/tmp/new-included',
+        probe: async () => admitted(),
+      })
+      store = runtime.store
+      expect(runtime.engine.session.funding).toBe('included')
+      expect((await runtime.store.listSessions()).length).toBe(1)
+      const raw = JSON.parse(readFileSync(join(home, 'included-usage.json'), 'utf8')) as IncludedUsage
+      expect(raw.count).toBe(1)
+      expect(raw.day).toBe(utcDay())
+    } finally {
+      store?.close?.()
+      if (previousHome === undefined) delete process.env.RAVENCLAW_HOME
+      else process.env.RAVENCLAW_HOME = previousHome
+    }
+  })
+
+  test('openEngine with an existing session does not increment', async () => {
+    const home = tempHome()
+    const store = createMemoryStore()
+    const cfg = config({ home, included: includedOn() })
+    const session = newSessionRecord({
+      cwd: '/tmp',
+      model: cfg.model,
+      permissionMode: cfg.permissionMode,
+      funding: 'included',
+    })
+    await store.createSession(session)
+    await openEngine({
+      provider: stubProvider(),
+      store,
+      config: cfg,
+      cwd: '/tmp',
+      session,
+      funding: 'included',
+      async askUser() {
+        return 'deny'
+      },
+    })
+    expect(existsSync(join(home, 'included-usage.json'))).toBe(false)
+    expect((await store.listSessions()).length).toBe(1)
+  })
+
+  test('resume-style boot (createSession: false) does not create a store row and does not increment', async () => {
+    const home = tempHome()
+    const previousHome = process.env.RAVENCLAW_HOME
+    process.env.RAVENCLAW_HOME = home
+    writeFileSync(join(home, '.env'), 'ANTHROPIC_API_KEY=sk-ant\n')
+    writeFileSync(
+      join(home, 'config.yaml'),
+      ['included:', '  enabled: true', '  gatewayUrl: https://gw.example.com/v1', ''].join('\n'),
+    )
+    let store: { close?: () => void } | undefined
+    try {
+      const runtime = await bootCli({
+        flags: {},
+        cwd: '/tmp/resume-boot',
+        createSession: false,
+        probe: async () => admitted(),
+      })
+      store = runtime.store
+      expect(runtime.engine).toBeUndefined()
+      expect((await runtime.store.listSessions()).length).toBe(0)
+      expect(existsSync(join(home, 'included-usage.json'))).toBe(false)
+    } finally {
+      store?.close?.()
+      if (previousHome === undefined) delete process.env.RAVENCLAW_HOME
+      else process.env.RAVENCLAW_HOME = previousHome
+    }
   })
 
   test('forwards entitlement defaultModel and catalog-coerces to it', async () => {

@@ -243,6 +243,65 @@ describe('OpenAICompatProvider', () => {
     })
   })
 
+  test('defers tool-result images until after a contiguous tool run', async () => {
+    const body = await fixture('openai-text-only.sse')
+    const { calls } = mockFetch(() => sseResponse(body))
+    const provider = new OpenAICompatProvider({ apiKey: 'sk-test' })
+    const messages: Message[] = [
+      userMsg('read these'),
+      {
+        id: 'a1',
+        role: 'assistant',
+        blocks: [
+          { type: 'tool_use', id: 'call_img', name: 'Read', input: { path: 'dot.png' } },
+          { type: 'tool_use', id: 'call_txt', name: 'Read', input: { path: 'notes.txt' } },
+        ],
+        createdAt: 2,
+      },
+      {
+        id: 't1',
+        role: 'tool',
+        toolUseId: 'call_img',
+        ok: true,
+        blocks: [
+          { type: 'text', text: '[image image/png]' },
+          { type: 'image', mediaType: 'image/png', data: 'abc' },
+        ],
+        createdAt: 3,
+      },
+      {
+        id: 't2',
+        role: 'tool',
+        toolUseId: 'call_txt',
+        ok: true,
+        blocks: [{ type: 'text', text: 'hello notes' }],
+        createdAt: 4,
+      },
+    ]
+    await collect(provider.stream(baseReq({ messages }), new AbortController().signal))
+    const payload = JSON.parse(String(calls[0]?.init?.body)) as {
+      messages: Array<Record<string, unknown>>
+    }
+    expect(payload.messages.map((m) => m.role)).toEqual(['user', 'assistant', 'tool', 'tool', 'user'])
+    expect(payload.messages[2]).toEqual({
+      role: 'tool',
+      tool_call_id: 'call_img',
+      content: '[image image/png]',
+    })
+    expect(payload.messages[3]).toEqual({
+      role: 'tool',
+      tool_call_id: 'call_txt',
+      content: 'hello notes',
+    })
+    const followUp = payload.messages[4]
+    expect(followUp?.role).toBe('user')
+    expect(JSON.stringify(followUp)).toContain('data:image/png;base64,abc')
+    for (const row of [payload.messages[2], payload.messages[3]]) {
+      expect(Array.isArray(row?.content)).toBe(false)
+      expect(JSON.stringify(row)).not.toContain('image_url')
+    }
+  })
+
   test('401 is ProviderError retryable false; 429 is retryable true', async () => {
     const provider = new OpenAICompatProvider({ apiKey: 'sk-test' })
 

@@ -174,6 +174,116 @@ describe('OpenAIResponsesProvider', () => {
     ])
   })
 
+  test('tool image result stays function_call_output text plus a following user input_image', async () => {
+    const body = await fixture('openai-responses-text-only.sse')
+    const { calls } = mockFetch(() => sseResponse(body))
+    const provider = new OpenAIResponsesProvider({ apiKey: 'sk-test' })
+    const messages: Message[] = [
+      userMsg('what is this?'),
+      {
+        id: 'a1',
+        role: 'assistant',
+        blocks: [{ type: 'tool_use', id: 'call_1', name: 'Read', input: { path: 'dot.png' } }],
+        createdAt: 2,
+      },
+      {
+        id: 't1',
+        role: 'tool',
+        toolUseId: 'call_1',
+        ok: true,
+        blocks: [
+          { type: 'text', text: '[image image/png]' },
+          { type: 'image', mediaType: 'image/png', data: 'abc' },
+        ],
+        createdAt: 3,
+      },
+    ]
+    await collect(provider.stream(baseReq({ messages }), new AbortController().signal))
+
+    const payload = JSON.parse(String(calls[0]?.init?.body)) as { input: unknown[] }
+    expect(payload.input).toEqual([
+      { role: 'user', content: 'what is this?' },
+      {
+        type: 'function_call',
+        call_id: 'call_1',
+        name: 'Read',
+        arguments: '{"path":"dot.png"}',
+      },
+      { type: 'function_call_output', call_id: 'call_1', output: '[image image/png]' },
+      {
+        role: 'user',
+        content: [
+          { type: 'input_text', text: '[image image/png]' },
+          { type: 'input_image', image_url: 'data:image/png;base64,abc' },
+        ],
+      },
+    ])
+  })
+
+  test('contiguous tool results emit both function_call_outputs before one user image item', async () => {
+    const body = await fixture('openai-responses-text-only.sse')
+    const { calls } = mockFetch(() => sseResponse(body))
+    const provider = new OpenAIResponsesProvider({ apiKey: 'sk-test' })
+    const messages: Message[] = [
+      userMsg('read both'),
+      {
+        id: 'a1',
+        role: 'assistant',
+        blocks: [
+          { type: 'tool_use', id: 'call_img', name: 'Read', input: { path: 'dot.png' } },
+          { type: 'tool_use', id: 'call_txt', name: 'Read', input: { path: 'note.txt' } },
+        ],
+        createdAt: 2,
+      },
+      {
+        id: 't1',
+        role: 'tool',
+        toolUseId: 'call_img',
+        ok: true,
+        blocks: [
+          { type: 'text', text: '[image image/png]' },
+          { type: 'image', mediaType: 'image/png', data: 'abc' },
+        ],
+        createdAt: 3,
+      },
+      {
+        id: 't2',
+        role: 'tool',
+        toolUseId: 'call_txt',
+        ok: true,
+        blocks: [{ type: 'text', text: 'plain text' }],
+        createdAt: 4,
+      },
+    ]
+    await collect(provider.stream(baseReq({ messages }), new AbortController().signal))
+
+    const payload = JSON.parse(String(calls[0]?.init?.body)) as { input: unknown[] }
+    expect(payload.input).toEqual([
+      { role: 'user', content: 'read both' },
+      {
+        type: 'function_call',
+        call_id: 'call_img',
+        name: 'Read',
+        arguments: '{"path":"dot.png"}',
+      },
+      {
+        type: 'function_call',
+        call_id: 'call_txt',
+        name: 'Read',
+        arguments: '{"path":"note.txt"}',
+      },
+      { type: 'function_call_output', call_id: 'call_img', output: '[image image/png]' },
+      { type: 'function_call_output', call_id: 'call_txt', output: 'plain text' },
+      {
+        role: 'user',
+        content: [
+          { type: 'input_text', text: '[image image/png]' },
+          { type: 'input_image', image_url: 'data:image/png;base64,abc' },
+        ],
+      },
+    ])
+  })
+
   test('401 is ProviderError retryable false; 429 is retryable true', async () => {
     const provider = new OpenAIResponsesProvider({ apiKey: 'sk-test' })
 
