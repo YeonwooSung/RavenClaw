@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.14 — 2026-09-11
+
+Set a session title from the shell or the TUI.
+
+### Added
+- `raven title <id> <name>` updates the stored title (prefix ok)
+- `/title <name>` in Ink and OpenTUI
+- No API key required
+
+### Try it
+
+```bash
+git clone --branch v0.1.14 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+bun run raven title <id> Fix the login bug
+bun run raven sessions
+```
+
 ## 0.1.13 — 2026-09-11
 
 Export a session as Markdown, and list times in ISO-8601.
