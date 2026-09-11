@@ -16,6 +16,7 @@ export interface ParsedArgv {
     | 'sessions'
     | 'show'
     | 'rm'
+    | 'resume'
   prompt?: string
   json?: boolean
   flags: ConfigFlags
@@ -89,7 +90,8 @@ export function parseArgv(argv: string[]): ParsedArgv {
         arg === 'smoke' ||
         arg === 'sessions' ||
         arg === 'show' ||
-        arg === 'rm') &&
+        arg === 'rm' ||
+        arg === 'resume') &&
       cmd === 'interactive' &&
       positional.length === 0
     ) {

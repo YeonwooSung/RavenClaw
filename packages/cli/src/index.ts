@@ -6,7 +6,7 @@ import { parseArgv } from './args'
 import { HELP_TEXT, formatVersion } from './help'
 import { runAcpStdio } from './acp-stdio'
 import { App } from './app'
-import { bootCli } from './engine'
+import { bootCli, resumeRuntime } from './engine'
 import { runExec } from './exec'
 import { SETUP_HINT, providerConfigured, runFirstRun } from './first-run'
 import { readSecretLine } from './secret-input'
@@ -14,6 +14,7 @@ import {
   deleteCliSession,
   formatResumeSessionLine,
   listCliSessions,
+  resolveCliSessionId,
   showCliSession,
 } from './resume'
 import { runOpenTuiApp } from './opentui-app'
@@ -45,6 +46,10 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     return 0
   }
 
+  if (parsed.cmd === 'resume' && (parsed.prompt === undefined || parsed.prompt.trim() === '')) {
+    parsed = { ...parsed, cmd: 'sessions' }
+  }
+
   if (parsed.cmd === 'sessions') {
     const rows = await listCliSessions()
     if (rows.length === 0) {
@@ -73,6 +78,34 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     }
     process.stdout.write(`deleted ${deleted.id.slice(0, 8)}\n`)
     return 0
+  }
+
+  if (parsed.cmd === 'resume') {
+    const resolved = await resolveCliSessionId(parsed.prompt ?? '')
+    if (typeof resolved !== 'string') {
+      process.stderr.write(`${resolved.error}\n`)
+      return resolved.error.startsWith('usage:') ? 2 : 1
+    }
+    try {
+      const home = await ensureHomeDir()
+      if (!providerConfigured(home, parsed.flags)) {
+        if (!process.stdin.isTTY) {
+          process.stderr.write(`${SETUP_HINT}\n`)
+          return 1
+        }
+        if (!(await promptFirstRun(home))) return 1
+      }
+      const booted = await bootCli({ flags: parsed.flags })
+      const runtime = await resumeRuntime(booted, resolved)
+      process.stdout.write(`resumed ${resolved.slice(0, 8)}\n`)
+      if (parsed.tui === 'opentui') return await runOpenTuiApp(runtime)
+      const instance = render(createElement(App, { runtime }))
+      await instance.waitUntilExit()
+      return 0
+    } catch (error) {
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
+      return 1
+    }
   }
 
   if (parsed.cmd === 'setup') {

@@ -99,6 +99,21 @@ export async function showCliSession(
   }
 }
 
+export async function resolveCliSessionId(
+  prefix: string,
+  opts?: { home?: string },
+): Promise<string | { error: string }> {
+  const id = prefix.trim()
+  if (id === '') return { error: 'usage: raven resume <session-id>' }
+  const home = opts?.home ?? ravenclawHome()
+  const store = openStore(home)
+  try {
+    return await resolveSessionId(store, id)
+  } finally {
+    store.close()
+  }
+}
+
 async function resolveSessionId(
   store: { loadSession: (id: string) => Promise<unknown>; listSessions: (f?: object) => Promise<SessionRecord[]> },
   prefix: string,

@@ -8,6 +8,7 @@ import {
   formatResumeSessionLine,
   listCliSessions,
   deleteCliSession,
+  resolveCliSessionId,
   showCliSession,
 } from './resume'
 
@@ -142,6 +143,22 @@ describe('deleteCliSession', () => {
     expect(deleted).toEqual({ id: 'rmid00001234' })
     expect(await showCliSession('rmid0000', { home })).toEqual({
       error: 'session not found: rmid0000',
+    })
+  })
+})
+
+describe('resolveCliSessionId', () => {
+  test('resolves a prefix to the full id', async () => {
+    const home = join(tmpdir(), `raven-resume-id-${Date.now()}`)
+    mkdirSync(home, { recursive: true })
+    const store = createSqliteStore(join(home, 'state.db')) as ReturnType<
+      typeof createSqliteStore
+    > & { close(): void }
+    await store.upsertSession(session({ id: 'resumeid0123', cwd: home, title: 'R' }))
+    store.close()
+    expect(await resolveCliSessionId('resumeid', { home })).toBe('resumeid0123')
+    expect(await resolveCliSessionId('nope', { home })).toEqual({
+      error: 'session not found: nope',
     })
   })
 })

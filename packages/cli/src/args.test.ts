@@ -84,6 +84,15 @@ describe('parseArgv', () => {
     expect(parseArgv(['sessions'])).toEqual({ cmd: 'sessions', flags: {} })
   })
 
+  test('resume takes the remaining args as the session id', () => {
+    expect(parseArgv(['resume', 'abc123'])).toEqual({
+      cmd: 'resume',
+      prompt: 'abc123',
+      flags: {},
+    })
+    expect(parseArgv(['resume'])).toEqual({ cmd: 'resume', flags: {} })
+  })
+
   test('rm takes the remaining args as the session id', () => {
     expect(parseArgv(['rm', 'abc123'])).toEqual({
       cmd: 'rm',
