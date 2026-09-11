@@ -1,5 +1,26 @@
 # Changelog
 
+## 0.1.27 — 2026-09-11
+
+Local LLMs via Ollama and vLLM, plus `raven skills rm`.
+
+### Added
+- `--provider ollama` (default `http://127.0.0.1:11434/v1`, model `llama3.2`)
+- `--provider vllm` (default `http://127.0.0.1:8000/v1`, model `local-model`)
+- Infer from `OLLAMA_HOST` / `VLLM_BASE_URL`; no cloud API key
+- `raven setup` choices 3 and 4 write those env vars
+- `raven skills rm <name>` deletes a user or `--project` skill (realpath-confined)
+
+### Try it
+
+```bash
+ollama pull llama3.2
+git clone --branch v0.1.27 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+echo 'OLLAMA_HOST=http://127.0.0.1:11434' >> ~/.ravenclaw/.env
+bun run raven exec --provider ollama --model llama3.2 "Reply with the single word pong"
+```
+
 ## 0.1.26 — 2026-09-11
 
 Scaffold a skill.
