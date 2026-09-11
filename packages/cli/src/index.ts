@@ -24,6 +24,7 @@ import { formatPublicConfig } from './config-print'
 import { completionsScript } from './completions'
 import { formatMcpList, loadMcpServers } from './mcp-list'
 import { formatMcpToolsReport } from './mcp-probe'
+import { formatSkillsList } from './skills-list'
 import { initProject } from './init'
 import { doctorFailed, formatDoctorReport, runDoctor } from './doctor'
 import { searchCliSessions } from './search'
@@ -115,6 +116,11 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
       return 1
     }
+  }
+
+  if (parsed.cmd === 'skills') {
+    process.stdout.write(`${formatSkillsList()}\n`)
+    return 0
   }
 
   if (parsed.cmd === 'mcp') {

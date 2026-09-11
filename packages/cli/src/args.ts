@@ -25,6 +25,7 @@ export interface ParsedArgv {
     | 'init'
     | 'completions'
     | 'mcp'
+    | 'skills'
   prompt?: string
   json?: boolean
   all?: boolean
@@ -113,7 +114,8 @@ export function parseArgv(argv: string[]): ParsedArgv {
         arg === 'config' ||
         arg === 'init' ||
         arg === 'completions' ||
-        arg === 'mcp') &&
+        arg === 'mcp' ||
+        arg === 'skills') &&
       cmd === 'interactive' &&
       positional.length === 0
     ) {

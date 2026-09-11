@@ -84,6 +84,10 @@ describe('parseArgv', () => {
     expect(parseArgv(['sessions'])).toEqual({ cmd: 'sessions', flags: {} })
   })
 
+  test('skills lists discovered skills', () => {
+    expect(parseArgv(['skills'])).toEqual({ cmd: 'skills', flags: {} })
+  })
+
   test('mcp lists configured servers', () => {
     expect(parseArgv(['mcp'])).toEqual({ cmd: 'mcp', flags: {} })
     expect(parseArgv(['mcp', 'list'])).toEqual({ cmd: 'mcp', prompt: 'list', flags: {} })
