@@ -24,6 +24,7 @@ import { formatPublicConfig } from './config-print'
 import { completionsScript } from './completions'
 import { formatMcpList, loadMcpServers } from './mcp-list'
 import { formatMcpToolsReport } from './mcp-probe'
+import { createSkill } from './skill-new'
 import { formatSkillsList } from './skills-list'
 import { initProject } from './init'
 import { doctorFailed, formatDoctorReport, runDoctor } from './doctor'
@@ -119,6 +120,23 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   }
 
   if (parsed.cmd === 'skills') {
+    const parts = (parsed.prompt ?? '').trim().split(/\s+/).filter((p) => p !== '')
+    if (parts[0] === 'new') {
+      const created = createSkill({
+        name: parts.slice(1).join(' '),
+        project: parsed.project === true,
+      })
+      if ('error' in created) {
+        process.stderr.write(`${created.error}\n`)
+        return 2
+      }
+      process.stdout.write(created.created ? `wrote ${created.path}\n` : `exists ${created.path}\n`)
+      return 0
+    }
+    if (parts.length > 0) {
+      process.stderr.write('usage: raven skills [new <name>] [--project]\n')
+      return 2
+    }
     process.stdout.write(`${formatSkillsList()}\n`)
     return 0
   }

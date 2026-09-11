@@ -88,6 +88,20 @@ describe('parseArgv', () => {
     expect(parseArgv(['skills'])).toEqual({ cmd: 'skills', flags: {} })
   })
 
+  test('skills new takes the name and optional --project', () => {
+    expect(parseArgv(['skills', 'new', 'demo'])).toEqual({
+      cmd: 'skills',
+      prompt: 'new demo',
+      flags: {},
+    })
+    expect(parseArgv(['skills', 'new', 'demo', '--project'])).toEqual({
+      cmd: 'skills',
+      prompt: 'new demo',
+      project: true,
+      flags: {},
+    })
+  })
+
   test('mcp lists configured servers', () => {
     expect(parseArgv(['mcp'])).toEqual({ cmd: 'mcp', flags: {} })
     expect(parseArgv(['mcp', 'list'])).toEqual({ cmd: 'mcp', prompt: 'list', flags: {} })

@@ -29,6 +29,7 @@ export interface ParsedArgv {
   prompt?: string
   json?: boolean
   all?: boolean
+  project?: boolean
   flags: ConfigFlags
   tui?: TuiKind
 }
@@ -37,6 +38,7 @@ export function parseArgv(argv: string[]): ParsedArgv {
   let cmd: ParsedArgv['cmd'] = 'interactive'
   let json = false
   let all = false
+  let project = false
   let tui: TuiKind | undefined
   const flags: ConfigFlags = {}
   const positional: string[] = []
@@ -63,6 +65,10 @@ export function parseArgv(argv: string[]): ParsedArgv {
     }
     if (arg === '--all') {
       all = true
+      continue
+    }
+    if (arg === '--project') {
+      project = true
       continue
     }
 
@@ -130,6 +136,7 @@ export function parseArgv(argv: string[]): ParsedArgv {
   const out: ParsedArgv = { cmd, flags }
   if (json) out.json = true
   if (all) out.all = true
+  if (project) out.project = true
   if (tui !== undefined) out.tui = tui
   if (positional.length > 0) out.prompt = positional.join(' ')
   return out
