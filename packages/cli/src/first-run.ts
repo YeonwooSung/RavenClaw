@@ -3,7 +3,7 @@ import { join } from 'node:path'
 import { loadConfig, type ConfigFlags } from '@ravenclaw/core'
 
 export const SETUP_HINT =
-  'No provider configured. Run `raven` in a terminal to write ~/.ravenclaw/.env, or set ANTHROPIC_API_KEY / OPENAI_API_KEY.'
+  'No provider configured. Run `raven` in a terminal, or set ANTHROPIC_API_KEY / OPENAI_API_KEY / OLLAMA_HOST / VLLM_BASE_URL.'
 
 const ANTHROPIC_KEY = 'ANTHROPIC_API_KEY'
 const OPENAI_KEY = 'OPENAI_API_KEY'
@@ -25,12 +25,24 @@ export async function runFirstRun(opts: {
 }): Promise<boolean> {
   const read = lineReader(opts.input)
   opts.write('No API key found. Set one up to use RavenClaw.\n')
-  opts.write('Provider [1] Anthropic  [2] OpenAI-compatible: ')
+  opts.write('Provider [1] Anthropic  [2] OpenAI  [3] Ollama  [4] vLLM: ')
   const choice = (await read())?.trim() ?? ''
   const kind = parseProviderChoice(choice)
   if (!kind) {
-    opts.write('Cancelled. Expected 1 or 2.\n')
+    opts.write('Cancelled. Expected 1, 2, 3, or 4.\n')
     return false
+  }
+
+  if (kind === 'ollama') {
+    writeEnvKey(join(opts.home, '.env'), 'OLLAMA_HOST', 'http://127.0.0.1:11434')
+    opts.write(`Wrote OLLAMA_HOST to ${join(opts.home, '.env')}. Default model llama3.2.\n`)
+    opts.write('Pull a model first: ollama pull llama3.2\n')
+    return true
+  }
+  if (kind === 'vllm') {
+    writeEnvKey(join(opts.home, '.env'), 'VLLM_BASE_URL', 'http://127.0.0.1:8000/v1')
+    opts.write(`Wrote VLLM_BASE_URL to ${join(opts.home, '.env')}. Pass --model <served-name>.\n`)
+    return true
   }
 
   const envName = kind === 'anthropic' ? ANTHROPIC_KEY : OPENAI_KEY
@@ -47,12 +59,16 @@ export async function runFirstRun(opts: {
   return true
 }
 
-export function parseProviderChoice(raw: string): 'anthropic' | 'openai_compat' | undefined {
+export function parseProviderChoice(
+  raw: string,
+): 'anthropic' | 'openai_compat' | 'ollama' | 'vllm' | undefined {
   const key = raw.trim().toLowerCase()
   if (key === '1' || key === 'anthropic' || key === 'a') return 'anthropic'
   if (key === '2' || key === 'openai' || key === 'openai_compat' || key === 'o') {
     return 'openai_compat'
   }
+  if (key === '3' || key === 'ollama') return 'ollama'
+  if (key === '4' || key === 'vllm') return 'vllm'
   return undefined
 }
 

@@ -47,7 +47,7 @@ Commands:
   skills        List skills; new writes SKILL.md, rm deletes it (--project = cwd)
 
 Options:
-  --provider <anthropic|openai_compat>
+  --provider <anthropic|openai_compat|ollama|vllm>
   --model <id>
   --tui <ink|opentui>
   --dont-ask

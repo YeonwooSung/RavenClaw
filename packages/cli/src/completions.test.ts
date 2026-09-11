@@ -7,7 +7,7 @@ describe('completionsScript', () => {
     expect(result).toHaveProperty('text')
     if (!('text' in result)) throw new Error('expected text')
     expect(result.text).toContain('complete -F _raven raven')
-    expect(result.text).toContain('anthropic openai_compat')
+    expect(result.text).toContain('anthropic openai_compat ollama vllm')
     for (const cmd of COMPLETION_COMMANDS) {
       expect(result.text).toContain(cmd)
     }

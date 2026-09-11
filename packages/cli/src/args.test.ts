@@ -212,6 +212,16 @@ describe('parseArgv', () => {
     expect(() => parseArgv(['--provider', 'mystery'])).toThrow(/provider/)
   })
 
+  test('accepts ollama and vllm providers', () => {
+    expect(parseArgv(['--provider', 'ollama', '--model', 'llama3.2']).flags).toEqual({
+      provider: 'ollama',
+      model: 'llama3.2',
+    })
+    expect(parseArgv(['--provider', 'vllm', '--model', 'local-model']).flags.provider).toBe(
+      'vllm',
+    )
+  })
+
   test('--tui opentui is recorded on ParsedArgv, not flags', () => {
     expect(parseArgv(['--tui', 'opentui'])).toEqual({
       cmd: 'interactive',

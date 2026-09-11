@@ -15,10 +15,16 @@ export type { MessageSearchHit } from './session/search'
 export { ensureHomeDir, ravenclawHome } from './home'
 export {
   defaultConfig,
+  defaultModelForProvider,
   loadConfig,
   loadDotEnv,
+  normalizeOpenAiBaseUrl,
   parseConfigYaml,
   resolveProviderModel,
+  OLLAMA_DEFAULT_HOST,
+  OLLAMA_DEFAULT_MODEL,
+  VLLM_DEFAULT_BASE_URL,
+  VLLM_DEFAULT_MODEL,
 } from './config'
 export type {
   ConfigFlags,

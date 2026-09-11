@@ -25,10 +25,11 @@ export interface OpenAICompatProviderOptions {
   apiKey: string
   baseUrl?: string
   defaultModel?: string
+  id?: string
 }
 
 export class OpenAICompatProvider implements Provider {
-  readonly id = 'openai_compat'
+  readonly id: string
   readonly apiMode = 'openai_compat' as const
 
   private readonly apiKey: string
@@ -36,6 +37,7 @@ export class OpenAICompatProvider implements Provider {
   private readonly defaultModel?: string
 
   constructor(opts: OpenAICompatProviderOptions) {
+    this.id = opts.id ?? 'openai_compat'
     this.apiKey = opts.apiKey
     this.baseUrl = (opts.baseUrl ?? DEFAULT_BASE_URL).replace(/\/+$/, '')
     if (opts.defaultModel !== undefined) this.defaultModel = opts.defaultModel

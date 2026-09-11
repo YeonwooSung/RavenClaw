@@ -15,6 +15,9 @@ import {
   grepTool,
   loadConfig,
   mergeToolPool,
+  normalizeOpenAiBaseUrl,
+  OLLAMA_DEFAULT_HOST,
+  VLLM_DEFAULT_BASE_URL,
   readTool,
   resumeSession,
   skillTool,
@@ -255,6 +258,22 @@ export async function providerFromConfig(
 }
 
 function byokProviderFromConfig(config: ResolvedConfig): Provider {
+  if (config.provider === 'ollama') {
+    return createProvider({
+      provider: 'ollama',
+      apiKey: firstNonEmpty(config.env.OLLAMA_API_KEY) ?? 'ollama',
+      baseUrl: normalizeOpenAiBaseUrl(config.env.OLLAMA_HOST ?? OLLAMA_DEFAULT_HOST),
+      defaultModel: config.model,
+    })
+  }
+  if (config.provider === 'vllm') {
+    return createProvider({
+      provider: 'vllm',
+      apiKey: firstNonEmpty(config.env.VLLM_API_KEY, config.env.OPENAI_API_KEY) ?? 'vllm',
+      baseUrl: normalizeOpenAiBaseUrl(config.env.VLLM_BASE_URL ?? VLLM_DEFAULT_BASE_URL),
+      defaultModel: config.model,
+    })
+  }
   const apiKey =
     config.provider === 'anthropic'
       ? config.env.ANTHROPIC_API_KEY

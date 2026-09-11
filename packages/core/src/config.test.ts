@@ -6,6 +6,7 @@ import {
   defaultConfig,
   loadConfig,
   loadDotEnv,
+  normalizeOpenAiBaseUrl,
   parseConfigYaml,
   resolveProviderModel,
 } from './config'
@@ -15,6 +16,10 @@ const ENV_KEYS = [
   'OPENAI_API_KEY',
   'ANTHROPIC_API_KEY',
   'OPENAI_BASE_URL',
+  'OLLAMA_HOST',
+  'OLLAMA_API_KEY',
+  'VLLM_BASE_URL',
+  'VLLM_API_KEY',
 ] as const
 
 let savedEnv: Record<string, string | undefined>
@@ -110,7 +115,24 @@ describe('loadConfig', () => {
     expect(withUrl.env.ANTHROPIC_API_KEY).toBe('sk-ant-test')
 
     delete process.env.ANTHROPIC_API_KEY
-    expect(() => loadConfig({ home: tempHome() })).toThrow(/config\.yaml|API key/i)
+    expect(() => loadConfig({ home: tempHome() })).toThrow(/config\.yaml|API key|OLLAMA_HOST|VLLM_BASE_URL/i)
+  })
+
+  test('yaml provider ollama loads without cloud API keys', () => {
+    const home = tempHome()
+    writeFileSync(join(home, 'config.yaml'), 'provider: ollama\nmodel: qwen2.5-coder\n')
+    const cfg = loadConfig({ home })
+    expect(cfg.provider).toBe('ollama')
+    expect(cfg.model).toBe('qwen2.5-coder')
+  })
+
+  test('OLLAMA_HOST in .env infers ollama', () => {
+    const home = tempHome()
+    writeFileSync(join(home, '.env'), 'OLLAMA_HOST=127.0.0.1:11434\n')
+    const cfg = loadConfig({ home })
+    expect(cfg.provider).toBe('ollama')
+    expect(cfg.model).toBe('llama3.2')
+    expect(cfg.env.OLLAMA_HOST).toBe('127.0.0.1:11434')
   })
 
   test('empty ads.feedUrl stays empty from defaults and from yaml', () => {
@@ -308,6 +330,38 @@ describe('resolveProviderModel', () => {
       env: { OPENAI_BASE_URL: 'http://127.0.0.1:8080/v1' },
     })
     expect(resolved.provider).toBe('openai_compat')
+  })
+
+  test('OLLAMA_HOST infers ollama and default model llama3.2', () => {
+    const resolved = resolveProviderModel({
+      config: {},
+      env: { OLLAMA_HOST: 'http://127.0.0.1:11434' },
+    })
+    expect(resolved).toEqual({ provider: 'ollama', model: 'llama3.2' })
+  })
+
+  test('VLLM_BASE_URL infers vllm and default model local-model', () => {
+    const resolved = resolveProviderModel({
+      config: {},
+      env: { VLLM_BASE_URL: 'http://127.0.0.1:8000/v1' },
+    })
+    expect(resolved).toEqual({ provider: 'vllm', model: 'local-model' })
+  })
+
+  test('yaml provider ollama wins without cloud keys', () => {
+    const resolved = resolveProviderModel({
+      config: { provider: 'ollama', model: 'qwen2.5-coder' },
+      env: {},
+    })
+    expect(resolved).toEqual({ provider: 'ollama', model: 'qwen2.5-coder' })
+  })
+})
+
+describe('normalizeOpenAiBaseUrl', () => {
+  test('adds http and /v1', () => {
+    expect(normalizeOpenAiBaseUrl('127.0.0.1:11434')).toBe('http://127.0.0.1:11434/v1')
+    expect(normalizeOpenAiBaseUrl('http://localhost:11434/')).toBe('http://localhost:11434/v1')
+    expect(normalizeOpenAiBaseUrl('http://localhost:8000/v1')).toBe('http://localhost:8000/v1')
   })
 })
 

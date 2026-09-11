@@ -4,17 +4,29 @@ import { createIncludedGatewayProvider } from './gateway'
 import { OpenAICompatProvider } from './openai-compat'
 
 export function createProvider(opts: {
-  provider: 'anthropic' | 'openai_compat' | 'included'
+  provider: 'anthropic' | 'openai_compat' | 'included' | 'ollama' | 'vllm'
   apiKey: string
   baseUrl?: string
   gatewayUrl?: string
   defaultModel?: string
 }): Provider {
-  const ctor: { apiKey: string; baseUrl?: string; defaultModel?: string } = {
+  const ctor: { apiKey: string; baseUrl?: string; defaultModel?: string; id?: string } = {
     apiKey: opts.apiKey,
   }
   if (opts.baseUrl !== undefined) ctor.baseUrl = opts.baseUrl
   if (opts.defaultModel !== undefined) ctor.defaultModel = opts.defaultModel
+  if (opts.provider === 'ollama') {
+    ctor.id = 'ollama'
+    ctor.apiKey = opts.apiKey === '' ? 'ollama' : opts.apiKey
+    ctor.baseUrl = opts.baseUrl ?? 'http://127.0.0.1:11434/v1'
+    return new OpenAICompatProvider(ctor)
+  }
+  if (opts.provider === 'vllm') {
+    ctor.id = 'vllm'
+    ctor.apiKey = opts.apiKey === '' ? 'vllm' : opts.apiKey
+    ctor.baseUrl = opts.baseUrl ?? 'http://127.0.0.1:8000/v1'
+    return new OpenAICompatProvider(ctor)
+  }
   if (opts.provider === 'anthropic') return new AnthropicMessagesProvider(ctor)
   if (opts.provider === 'included') {
     const baseUrl = firstNonEmpty(opts.baseUrl, opts.gatewayUrl)

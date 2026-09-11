@@ -4,7 +4,7 @@ import { getModelProfile } from './cost/models'
 import { ravenclawHome } from './home'
 import type { ModelProfile, PermissionMode } from './types'
 
-export type ProviderKind = 'anthropic' | 'openai_compat'
+export type ProviderKind = 'anthropic' | 'openai_compat' | 'ollama' | 'vllm'
 
 export type TerminalBackendKind = 'local' | 'docker'
 
@@ -61,6 +61,10 @@ export interface ResolvedEnv {
   OPENAI_API_KEY?: string
   ANTHROPIC_API_KEY?: string
   OPENAI_BASE_URL?: string
+  OLLAMA_HOST?: string
+  OLLAMA_API_KEY?: string
+  VLLM_BASE_URL?: string
+  VLLM_API_KEY?: string
 }
 
 export interface ResolvedConfig extends RavenClawConfig {
@@ -69,7 +73,12 @@ export interface ResolvedConfig extends RavenClawConfig {
   profile: ModelProfile
 }
 
-const PROVIDERS = new Set<ProviderKind>(['anthropic', 'openai_compat'])
+const PROVIDERS = new Set<ProviderKind>(['anthropic', 'openai_compat', 'ollama', 'vllm'])
+
+export const OLLAMA_DEFAULT_HOST = 'http://127.0.0.1:11434'
+export const OLLAMA_DEFAULT_MODEL = 'llama3.2'
+export const VLLM_DEFAULT_BASE_URL = 'http://127.0.0.1:8000/v1'
+export const VLLM_DEFAULT_MODEL = 'local-model'
 const PERMISSION_MODES = new Set<PermissionMode>([
   'default',
   'acceptEdits',
@@ -78,7 +87,15 @@ const PERMISSION_MODES = new Set<PermissionMode>([
 ])
 const TERMINAL_BACKENDS = new Set<TerminalBackendKind>(['local', 'docker'])
 
-const ENV_KEYS = ['OPENAI_API_KEY', 'ANTHROPIC_API_KEY', 'OPENAI_BASE_URL'] as const
+const ENV_KEYS = [
+  'OPENAI_API_KEY',
+  'ANTHROPIC_API_KEY',
+  'OPENAI_BASE_URL',
+  'OLLAMA_HOST',
+  'OLLAMA_API_KEY',
+  'VLLM_BASE_URL',
+  'VLLM_API_KEY',
+] as const
 
 export function defaultConfig(): RavenClawConfig {
   return {
@@ -206,11 +223,27 @@ export function resolveProviderModel(opts: {
     opts.flags?.provider ?? opts.config.provider ?? inferProviderFromEnv(opts.env)
   if (provider === undefined) {
     throw new Error(
-      'No provider configured. Set provider in config.yaml or export ANTHROPIC_API_KEY / OPENAI_API_KEY (or OPENAI_BASE_URL).',
+      'No provider configured. Set provider in config.yaml (anthropic | openai_compat | ollama | vllm) or export ANTHROPIC_API_KEY / OPENAI_API_KEY / OLLAMA_HOST / VLLM_BASE_URL.',
     )
   }
-  const model = opts.flags?.model ?? opts.config.model ?? defaultConfig().model
+  const model =
+    opts.flags?.model ?? opts.config.model ?? defaultModelForProvider(provider)
   return { provider, model }
+}
+
+export function defaultModelForProvider(provider: ProviderKind): string {
+  if (provider === 'ollama') return OLLAMA_DEFAULT_MODEL
+  if (provider === 'vllm') return VLLM_DEFAULT_MODEL
+  return defaultConfig().model
+}
+
+export function normalizeOpenAiBaseUrl(raw: string): string {
+  let url = raw.trim()
+  if (url === '') return url
+  if (!/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(url)) url = `http://${url}`
+  url = url.replace(/\/+$/, '')
+  if (!url.endsWith('/v1')) url = `${url}/v1`
+  return url
 }
 
 export function loadConfig(opts?: { home?: string; flags?: ConfigFlags }): ResolvedConfig {
@@ -286,6 +319,8 @@ function resolveEnv(fileEnv: Record<string, string>): ResolvedEnv {
 
 function inferProviderFromEnv(env: ResolvedEnv): ProviderKind | undefined {
   if (firstNonEmpty(env.ANTHROPIC_API_KEY) !== undefined) return 'anthropic'
+  if (firstNonEmpty(env.OLLAMA_HOST, env.OLLAMA_API_KEY) !== undefined) return 'ollama'
+  if (firstNonEmpty(env.VLLM_BASE_URL, env.VLLM_API_KEY) !== undefined) return 'vllm'
   if (
     firstNonEmpty(env.OPENAI_API_KEY) !== undefined ||
     firstNonEmpty(env.OPENAI_BASE_URL) !== undefined

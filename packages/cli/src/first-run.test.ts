@@ -26,6 +26,8 @@ describe('parseProviderChoice', () => {
     expect(parseProviderChoice('Anthropic')).toBe('anthropic')
     expect(parseProviderChoice('2')).toBe('openai_compat')
     expect(parseProviderChoice('openai')).toBe('openai_compat')
+    expect(parseProviderChoice('3')).toBe('ollama')
+    expect(parseProviderChoice('vllm')).toBe('vllm')
     expect(parseProviderChoice('nope')).toBeUndefined()
   })
 })
@@ -85,6 +87,18 @@ describe('runFirstRun', () => {
     expect(ok).toBe(true)
     expect(out.join('')).not.toContain('sk-ant-secret-value')
     expect(readFileSync(join(home, '.env'), 'utf8')).toContain('sk-ant-secret-value')
+  })
+
+  test('ollama writes OLLAMA_HOST and does not ask for a key', async () => {
+    const home = tempHome('ollama')
+    const ok = await runFirstRun({
+      home,
+      input: lines('3'),
+      write: () => {},
+    })
+    expect(ok).toBe(true)
+    expect(readFileSync(join(home, '.env'), 'utf8')).toContain('OLLAMA_HOST=http://127.0.0.1:11434')
+    expect(providerConfigured(home)).toBe(true)
   })
 
   test('empty key cancels without writing', async () => {

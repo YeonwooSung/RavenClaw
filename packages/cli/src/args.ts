@@ -1,6 +1,6 @@
 import type { ConfigFlags, ProviderKind } from '@ravenclaw/core'
 
-const PROVIDERS = new Set<ProviderKind>(['anthropic', 'openai_compat'])
+const PROVIDERS = new Set<ProviderKind>(['anthropic', 'openai_compat', 'ollama', 'vllm'])
 
 export type TuiKind = 'ink' | 'opentui'
 
@@ -157,7 +157,9 @@ function splitEq(arg: string): { key: string; value: string } | undefined {
 function applyFlag(flags: ConfigFlags, key: string, value: string): void {
   if (key === 'provider') {
     if (!PROVIDERS.has(value as ProviderKind)) {
-      throw new Error(`unknown provider: ${value} (expected anthropic or openai_compat)`)
+      throw new Error(
+        `unknown provider: ${value} (expected anthropic, openai_compat, ollama, or vllm)`,
+      )
     }
     flags.provider = value as ProviderKind
     return

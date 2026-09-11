@@ -23,6 +23,8 @@ export function formatPublicConfig(opts?: { home?: string; flags?: ConfigFlags }
     flags?.provider ??
     parsed.provider ??
     (fileEnv.ANTHROPIC_API_KEY ? 'anthropic' : undefined) ??
+    (fileEnv.OLLAMA_HOST || fileEnv.OLLAMA_API_KEY ? 'ollama' : undefined) ??
+    (fileEnv.VLLM_BASE_URL || fileEnv.VLLM_API_KEY ? 'vllm' : undefined) ??
     (fileEnv.OPENAI_API_KEY || fileEnv.OPENAI_BASE_URL ? 'openai_compat' : undefined) ??
     '(unset)'
   const model = flags?.model ?? parsed.model ?? base.model
@@ -53,6 +55,8 @@ export function formatPublicConfig(opts?: { home?: string; flags?: ConfigFlags }
     `ANTHROPIC_API_KEY: ${present(fileEnv.ANTHROPIC_API_KEY)}`,
     `OPENAI_API_KEY: ${present(fileEnv.OPENAI_API_KEY)}`,
     `OPENAI_BASE_URL: ${present(fileEnv.OPENAI_BASE_URL)}`,
+    `OLLAMA_HOST: ${present(fileEnv.OLLAMA_HOST)}`,
+    `VLLM_BASE_URL: ${present(fileEnv.VLLM_BASE_URL)}`,
   ].join('\n')
 }
 

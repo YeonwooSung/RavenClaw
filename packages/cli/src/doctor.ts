@@ -38,19 +38,39 @@ function checkHome(home: string): DoctorCheck {
 }
 
 function checkEnv(home: string): DoctorCheck {
+  const yamlPath = join(home, 'config.yaml')
+  if (existsSync(yamlPath)) {
+    try {
+      const parsed = parseConfigYaml(readFileSync(yamlPath, 'utf8'))
+      if (parsed.provider === 'ollama' || parsed.provider === 'vllm') {
+        return { name: 'env', ok: true, detail: `provider ${parsed.provider} (no cloud key)` }
+      }
+    } catch {
+      /* config check reports yaml errors */
+    }
+  }
   const path = join(home, '.env')
   if (!existsSync(path)) {
     return { name: 'env', ok: false, detail: `${path} is missing (run raven setup)` }
   }
   const text = readFileSync(path, 'utf8')
-  const keys = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY'] as const
+  const keys = [
+    'ANTHROPIC_API_KEY',
+    'OPENAI_API_KEY',
+    'OLLAMA_HOST',
+    'VLLM_BASE_URL',
+  ] as const
   for (const key of keys) {
     const value = envValue(text, key)
     if (value !== undefined && value !== '') {
       return { name: 'env', ok: true, detail: `${key} is set (${value.length} chars)` }
     }
   }
-  return { name: 'env', ok: false, detail: '.env has no ANTHROPIC_API_KEY or OPENAI_API_KEY' }
+  return {
+    name: 'env',
+    ok: false,
+    detail: '.env has no API key or OLLAMA_HOST / VLLM_BASE_URL',
+  }
 }
 
 function checkConfigYaml(home: string): DoctorCheck {

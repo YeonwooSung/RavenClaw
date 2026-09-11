@@ -64,6 +64,22 @@ describe('createProvider', () => {
     expect(viaGateway.apiMode).toBe('openai_compat')
   })
 
+  test('ollama and vllm are OpenAI-compat adapters with local ids', () => {
+    const ollama = createProvider({ provider: 'ollama', apiKey: '' })
+    expect(ollama).toBeInstanceOf(OpenAICompatProvider)
+    expect(ollama.id).toBe('ollama')
+    expect(ollama.apiMode).toBe('openai_compat')
+
+    const vllm = createProvider({
+      provider: 'vllm',
+      apiKey: '',
+      baseUrl: 'http://127.0.0.1:8000/v1',
+      defaultModel: 'Qwen/Qwen2.5-7B-Instruct',
+    })
+    expect(vllm.id).toBe('vllm')
+    expect(vllm.apiMode).toBe('openai_compat')
+  })
+
   test('included without baseUrl or gatewayUrl throws a setup error', () => {
     expect(() => createProvider({ provider: 'included', apiKey: 'k' })).toThrow(
       /included\.gatewayUrl|baseUrl|BYOK/i,

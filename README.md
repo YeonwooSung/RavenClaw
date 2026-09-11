@@ -7,7 +7,7 @@ Licensed under Apache-2.0.
 ## Requirements
 
 - [Bun](https://bun.sh) 1.x
-- An `ANTHROPIC_API_KEY` or `OPENAI_API_KEY` (OpenAI-compatible hosts also work via `OPENAI_BASE_URL`)
+- An `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or a local server: [Ollama](https://ollama.com) / [vLLM](https://docs.vllm.ai)
 
 ## Install
 
@@ -36,7 +36,7 @@ Optional `~/.ravenclaw/config.yaml`:
 
 ```yaml
 model: anthropic/claude-sonnet-4
-provider: anthropic          # anthropic | openai_compat
+provider: anthropic          # anthropic | openai_compat | ollama | vllm
 permissionMode: default      # default | acceptEdits | plan | dontAsk
 maxRounds: 80
 terminal:
@@ -55,7 +55,39 @@ A server that fails to spawn or list tools is skipped; RavenClaw still boots. Bu
 
 Optional memory files (context snapshot, 8k/file, 16k total): `~/.ravenclaw/USER.md`, `~/.ravenclaw/MEMORY.md`, and the same names under the project root or `.ravenclaw/`.
 
-Resolution: `--provider` / `--model` flags beat `config.yaml`, which beats env for the *choice* of provider. Env still supplies the secret.
+Resolution: `--provider` / `--model` flags beat `config.yaml`, which beats env for the *choice* of provider. Env still supplies the secret (except Ollama/vLLM, which do not need a cloud key).
+
+## Local LLMs (Ollama / vLLM)
+
+Both use the OpenAI Chat Completions API. No cloud key is required.
+
+**Ollama** (default `http://127.0.0.1:11434/v1`, model `llama3.2`):
+
+```bash
+ollama pull llama3.2
+# or: ollama pull qwen2.5-coder
+bun run raven setup          # choose 3) Ollama
+# or:
+echo 'OLLAMA_HOST=http://127.0.0.1:11434' >> ~/.ravenclaw/.env
+bun run raven --provider ollama --model llama3.2
+bun run raven exec --provider ollama --model qwen2.5-coder "say hi"
+```
+
+**vLLM** (default `http://127.0.0.1:8000/v1`, model `local-model` — pass the name you served):
+
+```bash
+# example
+python -m vllm.entrypoints.openai.api_server --model Qwen/Qwen2.5-Coder-7B-Instruct
+echo 'VLLM_BASE_URL=http://127.0.0.1:8000/v1' >> ~/.ravenclaw/.env
+bun run raven --provider vllm --model Qwen/Qwen2.5-Coder-7B-Instruct
+```
+
+`config.yaml`:
+
+```yaml
+provider: ollama
+model: qwen2.5-coder
+```
 
 ## Run
 
