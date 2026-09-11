@@ -21,7 +21,7 @@ Usage:
   raven config
   raven init
   raven completions bash|zsh
-  raven mcp
+  raven mcp [list|tools]
   raven --help
   raven --version
 
@@ -42,7 +42,7 @@ Commands:
   config        Print resolved settings with secrets redacted
   init          Write AGENTS.md in this directory if missing
   completions   Print bash or zsh completion script to stdout
-  mcp           List configured MCP servers without spawning them
+  mcp           List configured MCP servers (list) or spawn and list tool names (tools)
 
 Options:
   --provider <anthropic|openai_compat>
