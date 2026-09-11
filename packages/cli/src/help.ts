@@ -14,6 +14,7 @@ Usage:
   raven show <id>
   raven rm <id>
   raven resume [id]
+  raven search [--all] <query>
   raven --help
   raven --version
 
@@ -27,6 +28,7 @@ Commands:
   show <id>     Print a session transcript (prefix ok; no API key)
   rm <id>       Delete a session and its child agents (prefix ok; no API key)
   resume [id]   List sessions, or open one in the TUI (id needs a key)
+  search <q>    Search session text (this directory; --all for every session)
 
 Options:
   --provider <anthropic|openai_compat>

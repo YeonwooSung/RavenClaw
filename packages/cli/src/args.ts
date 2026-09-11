@@ -17,8 +17,10 @@ export interface ParsedArgv {
     | 'show'
     | 'rm'
     | 'resume'
+    | 'search'
   prompt?: string
   json?: boolean
+  all?: boolean
   flags: ConfigFlags
   tui?: TuiKind
 }
@@ -26,6 +28,7 @@ export interface ParsedArgv {
 export function parseArgv(argv: string[]): ParsedArgv {
   let cmd: ParsedArgv['cmd'] = 'interactive'
   let json = false
+  let all = false
   let tui: TuiKind | undefined
   const flags: ConfigFlags = {}
   const positional: string[] = []
@@ -48,6 +51,10 @@ export function parseArgv(argv: string[]): ParsedArgv {
     }
     if (arg === '--dont-ask') {
       flags.dontAsk = true
+      continue
+    }
+    if (arg === '--all') {
+      all = true
       continue
     }
 
@@ -91,7 +98,8 @@ export function parseArgv(argv: string[]): ParsedArgv {
         arg === 'sessions' ||
         arg === 'show' ||
         arg === 'rm' ||
-        arg === 'resume') &&
+        arg === 'resume' ||
+        arg === 'search') &&
       cmd === 'interactive' &&
       positional.length === 0
     ) {
@@ -105,6 +113,7 @@ export function parseArgv(argv: string[]): ParsedArgv {
 
   const out: ParsedArgv = { cmd, flags }
   if (json) out.json = true
+  if (all) out.all = true
   if (tui !== undefined) out.tui = tui
   if (positional.length > 0) out.prompt = positional.join(' ')
   return out

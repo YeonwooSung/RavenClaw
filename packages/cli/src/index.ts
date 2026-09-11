@@ -18,6 +18,7 @@ import {
   showCliSession,
 } from './resume'
 import { runOpenTuiApp } from './opentui-app'
+import { searchCliSessions } from './search'
 import { SMOKE_PROMPT, evaluateSmoke } from './smoke'
 
 export { parseArgv } from './args'
@@ -106,6 +107,15 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
       return 1
     }
+  }
+
+  if (parsed.cmd === 'search') {
+    const text = await searchCliSessions({
+      query: parsed.prompt ?? '',
+      all: parsed.all === true,
+    })
+    process.stdout.write(`${text}\n`)
+    return text.startsWith('usage:') ? 2 : 0
   }
 
   if (parsed.cmd === 'setup') {

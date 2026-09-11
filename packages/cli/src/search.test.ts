@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createMemoryStore, createSqliteStore, type MessageSearchHit } from '@ravenclaw/core'
-import { formatSearchNotice, searchNotice } from './search'
+import { formatSearchNotice, searchCliSessions, searchNotice } from './search'
 
 const tempDirs: string[] = []
 
@@ -147,5 +147,68 @@ describe('searchNotice', () => {
     } finally {
       ;(store as { close(): void }).close()
     }
+  })
+})
+
+describe('searchCliSessions', () => {
+  test('empty query is usage', async () => {
+    expect(await searchCliSessions({ query: '  ', home: tmpdir() })).toBe(
+      'usage: raven search [--all] <query>',
+    )
+  })
+
+  test('defaults to cwd sessions; --all includes every session', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ravenclaw-search-home-'))
+    tempDirs.push(dir)
+    const cwd = join(dir, 'proj')
+    const other = join(dir, 'else')
+    const { mkdirSync } = await import('node:fs')
+    mkdirSync(cwd)
+    mkdirSync(other)
+    const store = createSqliteStore(join(dir, 'state.db'))
+    try {
+      await store.createSession({
+        id: 'here00000001',
+        createdAt: 1,
+        updatedAt: 1,
+        cwd,
+        model: 'dummy',
+        permissionMode: 'default',
+        compactGeneration: 0,
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        funding: 'byok',
+      })
+      await store.createSession({
+        id: 'away00000001',
+        createdAt: 2,
+        updatedAt: 2,
+        cwd: other,
+        model: 'dummy',
+        permissionMode: 'default',
+        compactGeneration: 0,
+        usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+        funding: 'byok',
+      })
+      await store.persistUser('here00000001', {
+        id: 'u1',
+        role: 'user',
+        blocks: [{ type: 'text', text: 'clitoken here' }],
+        createdAt: 1,
+      })
+      await store.persistUser('away00000001', {
+        id: 'u2',
+        role: 'user',
+        blocks: [{ type: 'text', text: 'clitoken away' }],
+        createdAt: 2,
+      })
+    } finally {
+      ;(store as { close(): void }).close()
+    }
+
+    const local = await searchCliSessions({ query: 'clitoken', home: dir, cwd })
+    expect(local).toBe('here0000  clitoken here')
+    const all = await searchCliSessions({ query: 'clitoken', home: dir, cwd, all: true })
+    expect(all).toContain('here0000  clitoken here')
+    expect(all).toContain('away0000  clitoken away')
   })
 })
