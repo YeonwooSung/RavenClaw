@@ -10,6 +10,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
+    "@ravenclaw/acp": "workspace:*",
     "@ravenclaw/core": "workspace:*",
     "@ravenclaw/providers": "workspace:*",
     "@ravenclaw/ads": "workspace:*",

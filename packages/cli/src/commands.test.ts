@@ -22,6 +22,9 @@ describe('handleSlashCommand', () => {
     ['/compact', { type: 'command', name: 'compact' }],
     ['/mode plan', { type: 'command', name: 'mode', arg: 'plan' }],
     ['/cost', { type: 'command', name: 'cost' }],
+    ['/search', { type: 'command', name: 'search' }],
+    ['/search foo', { type: 'command', name: 'search', arg: 'foo' }],
+    ['/search --all bar', { type: 'command', name: 'search', arg: '--all bar' }],
     ['/quit', { type: 'command', name: 'quit' }],
     ['/learn', { type: 'command', name: 'learn' }],
   ] as const)('%s', (line, expected) => {

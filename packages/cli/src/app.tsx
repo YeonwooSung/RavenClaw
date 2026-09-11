@@ -11,6 +11,7 @@ import {
 import { AdDock } from './ad-dock'
 import { LEARN_PROMPT, handleSlashCommand } from './commands'
 import { formatCostNotice } from './cost-format'
+import { searchNotice } from './search'
 import { Composer } from './composer'
 import {
   parsePermissionMode,
@@ -177,6 +178,15 @@ export function App(props: AppProps) {
               usage: runtimeRef.current.engine.session.usage,
               profile: runtimeRef.current.config.profile,
               funding: runtimeRef.current.engine.session.funding,
+            }),
+          )
+          return
+        case 'search':
+          setNotice(
+            searchNotice({
+              store: runtimeRef.current.store,
+              arg: parsed.arg,
+              sessionId: runtimeRef.current.engine.session.id,
             }),
           )
           return

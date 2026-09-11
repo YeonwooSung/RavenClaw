@@ -12,7 +12,12 @@ import type {
 } from '../types'
 import { repairRoleAlternation } from '../loop/repair'
 import { applyMigrations } from './schema'
-import { indexMessageFts, unindexMessagesFts } from './search'
+import {
+  indexMessageFts,
+  searchMessages,
+  unindexMessagesFts,
+  type MessageSearchHit,
+} from './search'
 
 type SessionRow = {
   id: string
@@ -200,6 +205,22 @@ function messageBind(sessionId: string, message: Message) {
       message.role === 'assistant' && message.usage !== undefined
         ? JSON.stringify(message.usage)
         : null,
+  }
+}
+
+const sqliteStoreDbs = new WeakMap<object, Database>()
+
+export function searchSessionStore(
+  store: SessionStore,
+  query: string,
+  opts?: { sessionId?: string; limit?: number },
+): MessageSearchHit[] {
+  const db = sqliteStoreDbs.get(store)
+  if (!db) return []
+  try {
+    return searchMessages(db, query, opts)
+  } catch {
+    return []
   }
 }
 
@@ -503,5 +524,6 @@ export function createSqliteStore(dbPath: string): SessionStore {
     },
   }
 
+  sqliteStoreDbs.set(store, db)
   return store
 }

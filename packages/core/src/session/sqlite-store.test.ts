@@ -5,8 +5,9 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { PersistError, type Message, type SessionRecord, type SessionStore } from '../types'
 import { INCOMPLETE_TEXT } from '../loop/pairing'
+import { createMemoryStore } from './memory-store'
 import { searchMessages } from './search'
-import { createSqliteStore } from './sqlite-store'
+import { createSqliteStore, searchSessionStore } from './sqlite-store'
 
 type ClosableStore = SessionStore & { close(): void }
 
@@ -363,6 +364,29 @@ describe('createSqliteStore', () => {
 
     const loaded = await store.loadSession('s1')
     expect(loaded.messages.map((m) => m.id).sort()).toEqual(['a1', 'a2', 't1'])
+  })
+
+  test('searchSessionStore finds sqlite hits, skips memory, and fail-opens', async () => {
+    const path = tempDbPath()
+    const store = openStore(path)
+    await store.createSession(session({ id: 'sess123456' }))
+    await store.persistUser('sess123456', {
+      id: 'u1',
+      role: 'user',
+      blocks: [{ type: 'text', text: 'searchableunique' }],
+      createdAt: 1,
+    })
+
+    const hits = searchSessionStore(store, 'searchableunique')
+    expect(hits.map((h) => h.messageId)).toEqual(['u1'])
+    expect(hits[0]?.sessionId).toBe('sess123456')
+    expect(searchSessionStore(store, 'searchableunique', { sessionId: 'other' })).toEqual([])
+    expect(searchSessionStore(createMemoryStore(), 'searchableunique')).toEqual([])
+
+    const db = new Database(path)
+    db.exec('DROP TABLE messages_fts')
+    db.close()
+    expect(searchSessionStore(store, 'searchableunique')).toEqual([])
   })
 
   test('second store instance on the same file may read', async () => {

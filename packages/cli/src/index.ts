@@ -1,6 +1,7 @@
 import { createElement } from 'react'
 import { render } from 'ink'
 import { parseArgv } from './args'
+import { runAcpStdio } from './acp-stdio'
 import { App } from './app'
 import { bootCli } from './engine'
 import { runExec } from './exec'
@@ -10,6 +11,7 @@ export { parseArgv } from './args'
 export { handleSlashCommand, LEARN_PROMPT } from './commands'
 export { formatStatusLine } from './status-line'
 export { runExec } from './exec'
+export { runAcpStdio } from './acp-stdio'
 export { runOpenTuiApp } from './opentui-app'
 
 export async function main(argv = process.argv.slice(2)): Promise<number> {
@@ -19,6 +21,18 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
     return 2
+  }
+
+  if (parsed.cmd === 'acp') {
+    try {
+      await runAcpStdio({
+        boot: () => bootCli({ flags: parsed.flags }),
+      })
+      return 0
+    } catch (error) {
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
+      return 1
+    }
   }
 
   if (parsed.cmd === 'exec') {

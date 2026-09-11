@@ -7,7 +7,7 @@ export {
   selectProtectedTail,
 } from './loop/repair'
 export { createMemoryStore } from './session/memory-store'
-export { createSqliteStore } from './session/sqlite-store'
+export { createSqliteStore, searchSessionStore } from './session/sqlite-store'
 export { resumeSession } from './session/resume'
 export { rebuildMessagesFts, searchMessages } from './session/search'
 export type { MessageSearchHit } from './session/search'

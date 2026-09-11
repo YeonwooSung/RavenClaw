@@ -7,6 +7,7 @@ import {
 import type { StreamEvent } from '@ravenclaw/core'
 import { LEARN_PROMPT, handleSlashCommand } from './commands'
 import { formatCostNotice } from './cost-format'
+import { searchNotice } from './search'
 import { parsePermissionMode, type CliRuntime } from './engine'
 import { formatStatusLine } from './status-line'
 
@@ -96,6 +97,13 @@ export async function runOpenTuiApp(
             usage: runtime.engine.session.usage,
             profile: runtime.config.profile,
             funding: runtime.engine.session.funding,
+          })}\n`)
+          continue
+        case 'search':
+          write(`${searchNotice({
+            store: runtime.store,
+            arg: parsed.arg,
+            sessionId: runtime.engine.session.id,
           })}\n`)
           continue
         case 'mode': {

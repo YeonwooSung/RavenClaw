@@ -62,6 +62,20 @@ describe('parseArgv', () => {
     })
   })
 
+  test('acp is unattended like exec', () => {
+    expect(parseArgv(['acp'])).toEqual({
+      cmd: 'acp',
+      flags: { dontAsk: true },
+    })
+  })
+
+  test('acp keeps provider and model flags and still forces dontAsk', () => {
+    expect(parseArgv(['acp', '--provider', 'anthropic', '--model', 'claude'])).toEqual({
+      cmd: 'acp',
+      flags: { dontAsk: true, provider: 'anthropic', model: 'claude' },
+    })
+  })
+
   test('rejects an unknown provider', () => {
     expect(() => parseArgv(['--provider', 'mystery'])).toThrow(/provider/)
   })

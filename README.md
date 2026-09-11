@@ -71,7 +71,12 @@ Headless (forces `dontAsk`):
 ```bash
 bun run raven exec "list the TypeScript files in this repo"
 bun run raven exec --json "summarize README.md"
+bun run raven acp
 ```
+
+Editor ACP is newline-delimited JSON-RPC on stdin/stdout (`dontAsk`).
+
+In the TUI, `/search <query>` searches this session (FTS5). `/search --all <query>` searches all sessions.
 
 Useful flags: `--dont-ask`, `--provider anthropic`, `--model anthropic/claude-sonnet-4`, `--tui ink|opentui`.
 
@@ -81,7 +86,9 @@ This process is the same OS user as you. There is no network sandbox. Writes und
 
 SQLite WAL at `$RAVENCLAW_HOME/state.db`. **One live writer per session id.** A second `raven` process may read the same database and may create a different session; it must not write the same session id.
 
-In the TUI: `/resume`, `/compact`, `/cost`, `/learn`, `/quit`. Shift+Tab cycles `default → acceptEdits → plan → default`. Escape aborts the current turn.
+In the TUI: `/resume`, `/compact`, `/cost`, `/search`, `/learn`, `/quit`. Shift+Tab cycles `default → acceptEdits → plan → default`. Escape aborts the current turn.
+
+If `included.gatewayUrl` is a real URL and `GET /v1/entitlement` admits the session, the CLI uses the included-model gateway and `funding: included` (ads may mount). A denied probe falls back to BYOK.
 
 ## Packages
 

@@ -21,6 +21,7 @@ import {
   writeTool,
   type CompactPolicy,
   type ConfigFlags,
+  type Funding,
   type Message,
   type ModelProfile,
   type PermissionMode,
@@ -34,7 +35,40 @@ import {
   type Tool,
 } from '@ravenclaw/core'
 import { createProvider } from '@ravenclaw/providers'
+import { probeEntitlement, type Entitlement } from '@ravenclaw/ads'
 import { loadConfiguredMcpTools, type McpSpawnFn } from './mcp'
+
+export type IncludedAccess =
+  | { admitted: true; gatewayUrl: string; token: string }
+  | { admitted: false }
+
+export type EntitlementProbe = (
+  baseUrl: string,
+  opts?: { token?: string; fetch?: typeof fetch },
+) => Promise<Pick<Entitlement, 'admitted'>>
+
+export interface IncludedAccessOptions {
+  probe?: EntitlementProbe
+  fetch?: typeof fetch
+  access?: IncludedAccess
+}
+
+export async function resolveIncludedAccess(
+  config: ResolvedConfig,
+  opts?: IncludedAccessOptions,
+): Promise<IncludedAccess> {
+  const gatewayUrl = includedGatewayUrl(config)
+  if (gatewayUrl === undefined) return { admitted: false }
+
+  const token = includedApiKey(config)
+  const probe = opts?.probe ?? probeEntitlement
+  const probeOpts: { token?: string; fetch?: typeof fetch } = { token }
+  if (opts?.fetch !== undefined) probeOpts.fetch = opts.fetch
+  const entitlement = await probe(gatewayUrl, probeOpts)
+  // hasPaidCapacityPlan raises caps; it does not silence ads.
+  if (!entitlement.admitted) return { admitted: false }
+  return { admitted: true, gatewayUrl, token }
+}
 
 export function createRootTools(store: SessionStore, bash: Tool = bashTool): Tool[] {
   const plan = createPlanModeTools(store)
@@ -95,6 +129,7 @@ export function newSessionRecord(opts: {
   cwd: string
   model: string
   permissionMode: PermissionMode
+  funding?: Funding
 }): SessionRecord {
   const now = Date.now()
   return {
@@ -106,7 +141,7 @@ export function newSessionRecord(opts: {
     permissionMode: opts.permissionMode,
     compactGeneration: 0,
     usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    funding: 'byok',
+    funding: opts.funding ?? 'byok',
   }
 }
 
@@ -147,11 +182,13 @@ export async function openEngine(opts: {
   session?: SessionRecord
   messages?: Message[]
   spawnMcp?: McpSpawnFn
+  funding?: Funding
 }): Promise<{ engine: SessionEngine; mcpCloser?: () => Promise<void> }> {
   const session = opts.session ?? newSessionRecord({
     cwd: opts.cwd,
     model: opts.config.model,
     permissionMode: opts.config.permissionMode,
+    funding: opts.funding ?? 'byok',
   })
   if (!opts.session) await opts.store.createSession(session)
 
@@ -201,7 +238,23 @@ export async function openEngine(opts: {
   return { engine: createSessionEngine(engineOpts), mcpCloser }
 }
 
-export function providerFromConfig(config: ResolvedConfig): Provider {
+export async function providerFromConfig(
+  config: ResolvedConfig,
+  opts?: IncludedAccessOptions,
+): Promise<Provider> {
+  const access = opts?.access ?? (await resolveIncludedAccess(config, opts))
+  if (access.admitted) {
+    return createProvider({
+      provider: 'included',
+      apiKey: access.token,
+      gatewayUrl: access.gatewayUrl,
+      defaultModel: config.model,
+    })
+  }
+  return byokProviderFromConfig(config)
+}
+
+function byokProviderFromConfig(config: ResolvedConfig): Provider {
   const apiKey =
     config.provider === 'anthropic'
       ? config.env.ANTHROPIC_API_KEY
@@ -224,6 +277,29 @@ export function providerFromConfig(config: ResolvedConfig): Provider {
   return createProvider(ctor)
 }
 
+function includedGatewayUrl(config: ResolvedConfig): string | undefined {
+  const raw = config.included?.gatewayUrl?.trim() ?? ''
+  if (raw === '') return undefined
+  try {
+    const parsed = new URL(raw)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return undefined
+    return raw
+  } catch {
+    return undefined
+  }
+}
+
+function includedApiKey(config: ResolvedConfig): string {
+  return firstNonEmpty(process.env.RAVENCLAW_INCLUDED_TOKEN, config.env.OPENAI_API_KEY) ?? 'included'
+}
+
+function firstNonEmpty(...values: Array<string | undefined>): string | undefined {
+  for (const value of values) {
+    if (value !== undefined && value !== '') return value
+  }
+  return undefined
+}
+
 export async function bootCli(opts: {
   flags: ConfigFlags
   cwd?: string
@@ -232,7 +308,8 @@ export async function bootCli(opts: {
   const home = await ensureHomeDir()
   const config = loadConfig({ home, flags: opts.flags })
   const store = createSqliteStore(join(home, 'state.db'))
-  const provider = providerFromConfig(config)
+  const access = await resolveIncludedAccess(config)
+  const provider = await providerFromConfig(config, { access })
   const cwd = opts.cwd ?? process.cwd()
   const ask = opts.ask ?? createAskBridge()
   const { engine, mcpCloser } = await openEngine({
@@ -241,6 +318,7 @@ export async function bootCli(opts: {
     config,
     cwd,
     askUser: ask.ask,
+    funding: access.admitted ? 'included' : 'byok',
   })
   return { engine, store, provider, config, cwd, ask, mcpCloser }
 }
