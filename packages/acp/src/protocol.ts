@@ -5,6 +5,7 @@ export const PROTOCOL_VERSION = 1
 export const ACP_METHODS = {
   initialize: 'initialize',
   sessionNew: 'session/new',
+  sessionLoad: 'session/load',
   sessionPrompt: 'session/prompt',
   sessionCancel: 'session/cancel',
   sessionUpdate: 'session/update',
@@ -95,6 +96,14 @@ export interface SessionNewParams {
 }
 
 export interface SessionNewResult {
+  sessionId: string
+}
+
+export interface SessionLoadParams {
+  sessionId: string
+}
+
+export interface SessionLoadResult {
   sessionId: string
 }
 

@@ -74,7 +74,7 @@ bun run raven exec --json "summarize README.md"
 bun run raven acp
 ```
 
-Editor ACP is newline-delimited JSON-RPC on stdin/stdout (`dontAsk`).
+Editor ACP is newline-delimited JSON-RPC on stdin/stdout (`dontAsk`). `session/load` resumes an existing SQLite session id.
 
 In the TUI, `/search <query>` searches this session (FTS5). `/search --all <query>` searches all sessions.
 

@@ -30,6 +30,7 @@ export type AcpEngine = {
 
 export type AcpServerOptions = {
   engineFactory: (sessionId: string) => AcpEngine
+  loadEngine?: (sessionId: string) => AcpEngine | Promise<AcpEngine>
   notify?: (notification: JsonRpcNotification) => void
 }
 
@@ -37,14 +38,13 @@ export type AcpServer = {
   handle(message: unknown): Promise<JsonRpcResponse>
 }
 
-const AGENT_CAPABILITIES: AgentCapabilities = {
-  loadSession: false,
-  promptCapabilities: { image: false, audio: false, embeddedContext: false },
-}
-
 export function createAcpServer(opts: AcpServerOptions): AcpServer {
   const sessions = new Map<string, AcpEngine>()
   const notify = opts.notify
+  const capabilities: AgentCapabilities = {
+    loadSession: opts.loadEngine !== undefined,
+    promptCapabilities: { image: false, audio: false, embeddedContext: false },
+  }
 
   function emit(sessionId: string, update: SessionUpdate): void {
     if (!notify) return
@@ -58,7 +58,7 @@ export function createAcpServer(opts: AcpServerOptions): AcpServer {
   async function handleInitialize(id: JsonRpcId | null): Promise<JsonRpcResponse> {
     const result: InitializeResult = {
       protocolVersion: PROTOCOL_VERSION,
-      agentCapabilities: AGENT_CAPABILITIES,
+      agentCapabilities: capabilities,
       agentInfo: AGENT_INFO,
       authMethods: [],
     }
@@ -107,6 +107,32 @@ export function createAcpServer(opts: AcpServerOptions): AcpServer {
     return jsonRpcResult(id, { stopReason })
   }
 
+  async function handleSessionLoad(
+    id: JsonRpcId | null,
+    params: unknown,
+  ): Promise<JsonRpcResponse> {
+    const parsed = parseSessionParams(params)
+    if (!parsed) {
+      return jsonRpcError(id, JSON_RPC_INVALID_PARAMS, 'Invalid params')
+    }
+    if (sessions.has(parsed.sessionId)) {
+      return jsonRpcResult(id, { sessionId: parsed.sessionId })
+    }
+    if (!opts.loadEngine) {
+      return jsonRpcError(id, JSON_RPC_METHOD_NOT_FOUND, 'Method not found')
+    }
+    try {
+      sessions.set(parsed.sessionId, await opts.loadEngine(parsed.sessionId))
+      return jsonRpcResult(id, { sessionId: parsed.sessionId })
+    } catch (error) {
+      return jsonRpcError(
+        id,
+        JSON_RPC_INVALID_PARAMS,
+        error instanceof Error ? error.message : 'Unknown session',
+      )
+    }
+  }
+
   function handleSessionCancel(id: JsonRpcId | null, params: unknown): JsonRpcResponse {
     const parsed = parseSessionParams(params)
     if (parsed) sessions.get(parsed.sessionId)?.abort()
@@ -125,6 +151,8 @@ export function createAcpServer(opts: AcpServerOptions): AcpServer {
           return handleInitialize(id)
         case ACP_METHODS.sessionNew:
           return handleSessionNew(id)
+        case ACP_METHODS.sessionLoad:
+          return handleSessionLoad(id, incoming.params)
         case ACP_METHODS.sessionPrompt:
           return handleSessionPrompt(id, incoming.params)
         case ACP_METHODS.sessionCancel:

@@ -155,4 +155,56 @@ describe('runAcpStdio', () => {
       ]),
     )
   })
+
+  test('session/load uses boot.load and then accepts prompt', async () => {
+    const input = new PassThrough()
+    const output = new PassThrough()
+    const { waitFor } = jsonLines(output)
+    const loaded: string[] = []
+
+    const running = runAcpStdio({
+      input,
+      output,
+      boot: async () => ({
+        engine: fakeEngine({}),
+        load: async (sessionId) => {
+          loaded.push(sessionId)
+          return fakeEngine({
+            events: [{ type: 'text_delta', text: 'from load' }],
+          })
+        },
+      }),
+    })
+
+    writeJson(input, {
+      jsonrpc: '2.0',
+      id: 0,
+      method: 'initialize',
+      params: { protocolVersion: PROTOCOL_VERSION },
+    })
+    const init = (await waitFor(1))[0] as {
+      result?: { agentCapabilities?: { loadSession?: boolean } }
+    }
+    expect(init.result?.agentCapabilities?.loadSession).toBe(true)
+
+    writeJson(input, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'session/load',
+      params: { sessionId: 'sess_saved' },
+    })
+    await waitFor(2)
+    writeJson(input, {
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'session/prompt',
+      params: { sessionId: 'sess_saved', prompt: 'hi' },
+    })
+    const messages = await waitFor(5)
+    input.end()
+    await running
+
+    expect(loaded).toEqual(['sess_saved'])
+    expect(JSON.stringify(messages)).toContain('from load')
+  })
 })

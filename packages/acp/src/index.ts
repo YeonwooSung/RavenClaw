@@ -32,6 +32,8 @@ export type {
   PromptCapabilities,
   PromptContentBlock,
   SessionCancelParams,
+  SessionLoadParams,
+  SessionLoadResult,
   SessionNewParams,
   SessionNewResult,
   SessionPromptParams,

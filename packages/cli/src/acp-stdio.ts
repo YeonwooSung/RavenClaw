@@ -6,9 +6,12 @@ import {
   type AcpEngine,
   type JsonRpcId,
 } from '@ravenclaw/acp'
-import { bootCli } from './engine'
+import { bootCli, resumeRuntime, type CliRuntime } from './engine'
 
-export type AcpStdioBoot = () => Promise<{ engine: AcpEngine }>
+export type AcpStdioBoot = () => Promise<{
+  engine: AcpEngine
+  load?: (sessionId: string) => Promise<AcpEngine>
+}>
 
 export type RunAcpStdioOpts = {
   input?: AsyncIterable<string | Uint8Array>
@@ -26,7 +29,14 @@ export async function runAcpStdio(opts: RunAcpStdioOpts = {}): Promise<void> {
   }
 
   const server = createAcpServer({
-    engineFactory: () => wrapBoot(boot()),
+    engineFactory: () => wrapBoot(boot().then((runtime) => runtime.engine)),
+    loadEngine: (sessionId) =>
+      wrapBoot(
+        boot().then(async (runtime) => {
+          if (runtime.load) return runtime.load(sessionId)
+          throw new Error(`session not found: ${sessionId}`)
+        }),
+      ),
     notify: writeLine,
   })
 
@@ -70,12 +80,19 @@ async function* readLines(
   if (buf.length > 0) yield buf
 }
 
-async function defaultBoot(): Promise<{ engine: AcpEngine }> {
-  return bootCli({ flags: { dontAsk: true } })
+async function defaultBoot(): Promise<{
+  engine: AcpEngine
+  load: (sessionId: string) => Promise<AcpEngine>
+}> {
+  const runtime = await bootCli({ flags: { dontAsk: true } })
+  return {
+    engine: runtime.engine,
+    load: async (sessionId) => (await resumeRuntime(runtime as CliRuntime, sessionId)).engine,
+  }
 }
 
-function wrapBoot(booted: Promise<{ engine: AcpEngine }>): AcpEngine {
-  const ready = booted.then((runtime) => runtime.engine)
+function wrapBoot(booted: Promise<AcpEngine>): AcpEngine {
+  const ready = booted
   void ready.catch(() => {})
   return {
     async *submitMessage(text) {

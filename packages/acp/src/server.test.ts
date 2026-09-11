@@ -190,6 +190,84 @@ describe('createAcpServer', () => {
     expect(engines.get(sessionId)).toBeDefined()
   })
 
+  test('session/load attaches an existing engine and then accepts prompt', async () => {
+    const loaded: string[] = []
+    const server = createAcpServer({
+      engineFactory: () => fakeEngine({}),
+      loadEngine: (sessionId) => {
+        loaded.push(sessionId)
+        return fakeEngine({
+          events: [{ type: 'text_delta', text: 'resumed' }],
+          end: { reason: 'completed' },
+        })
+      },
+    })
+    const init = resultOf(
+      await server.handle({
+        jsonrpc: '2.0',
+        id: 0,
+        method: ACP_METHODS.initialize,
+        params: { protocolVersion: PROTOCOL_VERSION },
+      }),
+    )
+    expect((init.agentCapabilities as { loadSession?: boolean }).loadSession).toBe(true)
+
+    const loadedId = 'sess_existing'
+    const load = resultOf(
+      await server.handle({
+        jsonrpc: '2.0',
+        id: 1,
+        method: ACP_METHODS.sessionLoad,
+        params: { sessionId: loadedId },
+      }),
+    )
+    expect(load).toEqual({ sessionId: loadedId })
+    expect(loaded).toEqual([loadedId])
+
+    const prompt = await server.handle({
+      jsonrpc: '2.0',
+      id: 2,
+      method: ACP_METHODS.sessionPrompt,
+      params: { sessionId: loadedId, prompt: 'continue' },
+    })
+    expect(resultOf(prompt)).toEqual({ stopReason: 'end_turn' })
+  })
+
+  test('session/load without a loader is method-not-found', async () => {
+    const server = createAcpServer({ engineFactory: () => fakeEngine({}) })
+    const response = await server.handle({
+      jsonrpc: '2.0',
+      id: 3,
+      method: ACP_METHODS.sessionLoad,
+      params: { sessionId: 'sess_x' },
+    })
+    expect(response).toEqual({
+      jsonrpc: '2.0',
+      id: 3,
+      error: { code: JSON_RPC_METHOD_NOT_FOUND, message: 'Method not found' },
+    })
+  })
+
+  test('session/load surfaces loader errors as invalid params', async () => {
+    const server = createAcpServer({
+      engineFactory: () => fakeEngine({}),
+      loadEngine: async () => {
+        throw new Error('session not found: missing')
+      },
+    })
+    const response = await server.handle({
+      jsonrpc: '2.0',
+      id: 4,
+      method: ACP_METHODS.sessionLoad,
+      params: { sessionId: 'missing' },
+    })
+    expect(response).toMatchObject({
+      jsonrpc: '2.0',
+      id: 4,
+      error: { code: -32602, message: 'session not found: missing' },
+    })
+  })
+
   test('unknown method returns a JSON-RPC error', async () => {
     const server = createAcpServer({
       engineFactory: () => fakeEngine({}),
