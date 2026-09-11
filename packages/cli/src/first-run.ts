@@ -21,6 +21,7 @@ export async function runFirstRun(opts: {
   home: string
   input: AsyncIterable<string>
   write: (chunk: string) => void
+  readSecret?: () => Promise<string | undefined>
 }): Promise<boolean> {
   const read = lineReader(opts.input)
   opts.write('No API key found. Set one up to use RavenClaw.\n')
@@ -34,7 +35,8 @@ export async function runFirstRun(opts: {
 
   const envName = kind === 'anthropic' ? ANTHROPIC_KEY : OPENAI_KEY
   opts.write(`${envName}: `)
-  const key = (await read())?.trim() ?? ''
+  const raw = opts.readSecret ? await opts.readSecret() : await read()
+  const key = raw?.trim() ?? ''
   if (key === '') {
     opts.write('Cancelled. Empty key.\n')
     return false

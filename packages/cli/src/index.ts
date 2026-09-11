@@ -9,6 +9,7 @@ import { App } from './app'
 import { bootCli } from './engine'
 import { runExec } from './exec'
 import { SETUP_HINT, providerConfigured, runFirstRun } from './first-run'
+import { readSecretLine } from './secret-input'
 import { runOpenTuiApp } from './opentui-app'
 
 export { parseArgv } from './args'
@@ -106,12 +107,21 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
 
 async function promptFirstRun(home: string): Promise<boolean> {
   const rl = createInterface({ input: process.stdin, crlfDelay: Infinity })
+  const write = (chunk: string) => {
+    process.stdout.write(chunk)
+  }
   try {
     return await runFirstRun({
       home,
       input: rl,
-      write: (chunk) => {
-        process.stdout.write(chunk)
+      write,
+      readSecret: async () => {
+        rl.pause()
+        try {
+          return await readSecretLine({ input: process.stdin, write })
+        } finally {
+          rl.resume()
+        }
       },
     })
   } finally {

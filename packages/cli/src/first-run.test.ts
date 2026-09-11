@@ -71,6 +71,22 @@ describe('runFirstRun', () => {
     expect(providerConfigured(home)).toBe(true)
   })
 
+  test('readSecret is used and the key is never written to the prompt stream', async () => {
+    const home = tempHome('secret')
+    const out: string[] = []
+    const ok = await runFirstRun({
+      home,
+      input: lines('1'),
+      write: (chunk) => {
+        out.push(chunk)
+      },
+      readSecret: async () => 'sk-ant-secret-value',
+    })
+    expect(ok).toBe(true)
+    expect(out.join('')).not.toContain('sk-ant-secret-value')
+    expect(readFileSync(join(home, '.env'), 'utf8')).toContain('sk-ant-secret-value')
+  })
+
   test('empty key cancels without writing', async () => {
     const home = tempHome('cancel')
     const ok = await runFirstRun({
