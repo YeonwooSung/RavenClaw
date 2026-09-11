@@ -17,6 +17,7 @@ Usage:
   raven search [--all] <query>
   raven export <id>
   raven title <id> <name>
+  raven doctor
   raven --help
   raven --version
 
@@ -33,6 +34,7 @@ Commands:
   search <q>    Search session text (this directory; --all for every session)
   export <id>   Print a session as Markdown (full tool bodies; no API key)
   title <id>    Set a session title (no API key)
+  doctor        Check home, .env, config.yaml, and Bun (no secrets printed)
 
 Options:
   --provider <anthropic|openai_compat>
