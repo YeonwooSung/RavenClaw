@@ -2,6 +2,9 @@ export interface Entitlement {
   admitted: boolean
   placementRequired: boolean
   hasPaidCapacityPlan: boolean
+  sessionCap?: number
+  remainingSessions?: number
+  defaultModel?: string
 }
 
 export interface ProbeEntitlementOptions {
@@ -44,11 +47,23 @@ export async function probeEntitlement(
 function parseEntitlement(raw: unknown): Entitlement {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return { ...DENIED }
   const rec = raw as Record<string, unknown>
-  return {
+  const out: Entitlement = {
     admitted: rec.admitted === true,
     placementRequired: rec.placementRequired === true,
     hasPaidCapacityPlan: rec.hasPaidCapacityPlan === true,
   }
+  const sessionCap = asFiniteNumber(rec.sessionCap)
+  if (sessionCap !== undefined) out.sessionCap = sessionCap
+  const remainingSessions = asFiniteNumber(rec.remainingSessions)
+  if (remainingSessions !== undefined) out.remainingSessions = remainingSessions
+  if (typeof rec.defaultModel === 'string' && rec.defaultModel !== '') {
+    out.defaultModel = rec.defaultModel
+  }
+  return out
+}
+
+function asFiniteNumber(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
 }
 
 function stripTrailingSlash(baseUrl: string): string {

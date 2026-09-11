@@ -5,6 +5,7 @@ import {
   getModelProfile,
   ravenclawHome,
   reserveOutputTokens,
+  type ApiMode,
   type Funding,
   type Message,
   type PermissionMode,
@@ -88,6 +89,34 @@ describe('Message', () => {
     expect(tool.ok).toBe(true)
     expect(tool.blocks).toEqual([{ type: 'text', text: 'README.md' }])
     expect(tool.createdAt).toBe(3)
+
+    const imageTool: Message = {
+      id: 'msg_tool_img',
+      role: 'tool',
+      toolUseId: 'call_img',
+      ok: true,
+      blocks: [
+        { type: 'text', text: '[image image/png]' },
+        { type: 'image', mediaType: 'image/png', data: 'abc' },
+      ],
+      createdAt: 4,
+    }
+    expect(imageTool.blocks[1]).toEqual({
+      type: 'image',
+      mediaType: 'image/png',
+      data: 'abc',
+    })
+  })
+})
+
+describe('ApiMode', () => {
+  test("includes openai_compat, anthropic_messages, and openai_responses", () => {
+    const values = [
+      'openai_compat',
+      'anthropic_messages',
+      'openai_responses',
+    ] as const satisfies readonly ApiMode[]
+    expect(values).toEqual(['openai_compat', 'anthropic_messages', 'openai_responses'])
   })
 })
 

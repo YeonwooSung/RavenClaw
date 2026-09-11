@@ -1,6 +1,8 @@
 export { ProviderError } from './errors'
 export { OpenAICompatProvider } from './openai-compat'
 export type { OpenAICompatProviderOptions } from './openai-compat'
+export { OpenAIResponsesProvider } from './responses'
+export type { OpenAIResponsesProviderOptions } from './responses'
 export { AnthropicMessagesProvider } from './anthropic'
 export type { AnthropicMessagesProviderOptions } from './anthropic'
 export { createProvider } from './registry'

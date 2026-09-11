@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { conservativeProfile, getModelProfile } from '@ravenclaw/core'
 import { AnthropicMessagesProvider } from './anthropic'
 import { OpenAICompatProvider } from './openai-compat'
+import { OpenAIResponsesProvider } from './responses'
 import { createProvider } from './registry'
 
 describe('profile()', () => {
@@ -44,6 +45,11 @@ describe('createProvider', () => {
     expect(ant).toBeInstanceOf(AnthropicMessagesProvider)
     expect(ant.id).toBe('anthropic')
     expect(ant.apiMode).toBe('anthropic_messages')
+
+    const responses = createProvider({ provider: 'openai_responses', apiKey: 'k' })
+    expect(responses).toBeInstanceOf(OpenAIResponsesProvider)
+    expect(responses.id).toBe('openai_responses')
+    expect(responses.apiMode).toBe('openai_responses')
   })
 
   test('included requires a gateway URL and returns included-gateway', () => {

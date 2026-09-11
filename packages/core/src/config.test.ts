@@ -61,7 +61,7 @@ describe('defaultConfig', () => {
     expect(cfg.childMaxRounds).toBe(30)
     expect(cfg.compact).toEqual({ enabled: true, llmSummarize: true })
     expect(cfg.ads.feedUrl).toBe('')
-    expect(cfg.included).toEqual({ gatewayUrl: '' })
+    expect(cfg.included).toEqual({ gatewayUrl: '', enabled: false, sessionCapPerDay: 4 })
     expect(cfg.terminal).toBeUndefined()
     expect(cfg.mcp).toEqual({ servers: [] })
   })
@@ -78,7 +78,7 @@ describe('loadConfig', () => {
     expect(cfg.childMaxRounds).toBe(30)
     expect(cfg.permissionMode).toBe('default')
     expect(cfg.ads.feedUrl).toBe('')
-    expect(cfg.included).toEqual({ gatewayUrl: '' })
+    expect(cfg.included).toEqual({ gatewayUrl: '', enabled: false, sessionCapPerDay: 4 })
     expect(cfg.mcp).toEqual({ servers: [] })
     expect(cfg.home).toBe(home)
   })
@@ -98,7 +98,7 @@ describe('loadConfig', () => {
     )
     const empty = loadConfig({ home: emptyHome })
     expect(empty.provider).toBe('anthropic')
-    expect(empty.included).toEqual({ gatewayUrl: '' })
+    expect(empty.included).toEqual({ gatewayUrl: '', enabled: false, sessionCapPerDay: 4 })
 
     const urlHome = tempHome()
     writeFileSync(
@@ -111,11 +111,41 @@ describe('loadConfig', () => {
     )
     const withUrl = loadConfig({ home: urlHome })
     expect(withUrl.provider).toBe('anthropic')
-    expect(withUrl.included).toEqual({ gatewayUrl: 'https://gw.example.com/v1' })
+    expect(withUrl.included).toEqual({
+      gatewayUrl: 'https://gw.example.com/v1',
+      enabled: false,
+      sessionCapPerDay: 4,
+    })
     expect(withUrl.env.ANTHROPIC_API_KEY).toBe('sk-ant-test')
 
     delete process.env.ANTHROPIC_API_KEY
     expect(() => loadConfig({ home: tempHome() })).toThrow(/config\.yaml|API key|OLLAMA_HOST|VLLM_BASE_URL/i)
+  })
+
+  test('included.enabled is false by default and yaml overlay works', () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test'
+    const defaults = loadConfig({ home: tempHome() })
+    expect(defaults.included).toEqual({ gatewayUrl: '', enabled: false, sessionCapPerDay: 4 })
+
+    const home = tempHome()
+    writeFileSync(
+      join(home, 'config.yaml'),
+      [
+        'included:',
+        '  gatewayUrl: https://gw.example.com/v1',
+        '  enabled: true',
+        '  sessionCapPerDay: 8',
+        '  defaultModel: openai/gpt-4o',
+        '',
+      ].join('\n'),
+    )
+    const overlay = loadConfig({ home })
+    expect(overlay.included).toEqual({
+      gatewayUrl: 'https://gw.example.com/v1',
+      enabled: true,
+      sessionCapPerDay: 8,
+      defaultModel: 'openai/gpt-4o',
+    })
   })
 
   test('yaml provider ollama loads without cloud API keys', () => {
@@ -389,6 +419,25 @@ describe('parseConfigYaml', () => {
       ['included:', '  gatewayUrl: https://gw.example.com/v1', ''].join('\n'),
     )
     expect(set.included).toEqual({ gatewayUrl: 'https://gw.example.com/v1' })
+  })
+
+  test('parses included.enabled, sessionCapPerDay, and defaultModel', () => {
+    const parsed = parseConfigYaml(
+      [
+        'included:',
+        '  gatewayUrl: https://gw.example.com/v1',
+        '  enabled: true',
+        '  sessionCapPerDay: 8',
+        '  defaultModel: openai/gpt-4o',
+        '',
+      ].join('\n'),
+    )
+    expect(parsed.included).toEqual({
+      gatewayUrl: 'https://gw.example.com/v1',
+      enabled: true,
+      sessionCapPerDay: 8,
+      defaultModel: 'openai/gpt-4o',
+    })
   })
 
   test('parses terminal.backend docker and terminal.image', () => {

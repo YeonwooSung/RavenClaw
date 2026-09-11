@@ -14,6 +14,7 @@ import {
   globTool,
   grepTool,
   loadConfig,
+  loadLocalPlugins,
   mergeToolPool,
   normalizeOpenAiBaseUrl,
   OLLAMA_DEFAULT_HOST,
@@ -39,6 +40,7 @@ import {
 } from '@ravenclaw/core'
 import { createProvider } from '@ravenclaw/providers'
 import { probeEntitlement, type Entitlement } from '@ravenclaw/ads'
+import { includedCapReached, recordIncludedSession } from './included-usage'
 import { loadConfiguredMcpTools, type McpSpawnFn } from './mcp'
 
 export type IncludedAccess =
@@ -48,7 +50,7 @@ export type IncludedAccess =
 export type EntitlementProbe = (
   baseUrl: string,
   opts?: { token?: string; fetch?: typeof fetch },
-) => Promise<Pick<Entitlement, 'admitted'>>
+) => Promise<Pick<Entitlement, 'admitted'> & Partial<Entitlement>>
 
 export interface IncludedAccessOptions {
   probe?: EntitlementProbe
@@ -62,6 +64,8 @@ export async function resolveIncludedAccess(
 ): Promise<IncludedAccess> {
   const gatewayUrl = includedGatewayUrl(config)
   if (gatewayUrl === undefined) return { admitted: false }
+  // Gateway is opt-in; OSS/CI stay BYOK unless included.enabled is true.
+  if (config.included?.enabled !== true) return { admitted: false }
 
   const token = includedApiKey(config)
   const probe = opts?.probe ?? probeEntitlement
@@ -70,7 +74,32 @@ export async function resolveIncludedAccess(
   const entitlement = await probe(gatewayUrl, probeOpts)
   // hasPaidCapacityPlan raises caps; it does not silence ads.
   if (!entitlement.admitted) return { admitted: false }
+  if (includedCapacityExhausted(config, entitlement)) return { admitted: false }
+  recordIncludedSession(config.home)
   return { admitted: true, gatewayUrl, token }
+}
+
+function includedCapacityExhausted(
+  config: ResolvedConfig,
+  entitlement: Partial<Pick<Entitlement, 'hasPaidCapacityPlan' | 'sessionCap' | 'remainingSessions'>>,
+): boolean {
+  if (typeof entitlement.remainingSessions === 'number' && Number.isFinite(entitlement.remainingSessions)) {
+    return entitlement.remainingSessions <= 0
+  }
+  return includedCapReached(config.home, includedSessionCap(config, entitlement))
+}
+
+function includedSessionCap(
+  config: ResolvedConfig,
+  entitlement: Partial<Pick<Entitlement, 'hasPaidCapacityPlan' | 'sessionCap'>>,
+): number {
+  const perDay = config.included?.sessionCapPerDay ?? 4
+  if (entitlement.hasPaidCapacityPlan === true) {
+    const fromProbe = entitlement.sessionCap
+    if (typeof fromProbe === 'number' && Number.isFinite(fromProbe)) return fromProbe
+    return perDay * 4
+  }
+  return perDay
 }
 
 export function createRootTools(store: SessionStore, bash: Tool = bashTool): Tool[] {
@@ -218,6 +247,10 @@ export async function openEngine(opts: {
     mcpTools = loaded.tools
     mcpCloser = loaded.close
   }
+  if (opts.tools === undefined) {
+    const plugins = loadLocalPlugins(session.cwd)
+    if (plugins.length > 0) mcpTools = mergeToolPool(mcpTools, plugins)
+  }
   const tools =
     opts.tools ??
     createSessionTools({
@@ -256,7 +289,7 @@ export async function providerFromConfig(
       provider: 'included',
       apiKey: access.token,
       gatewayUrl: access.gatewayUrl,
-      defaultModel: config.model,
+      defaultModel: config.included?.defaultModel ?? config.model,
     })
   }
   return byokProviderFromConfig(config)

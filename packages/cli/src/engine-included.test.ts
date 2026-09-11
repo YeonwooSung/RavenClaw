@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, test } from 'bun:test'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   createMemoryStore,
   defaultConfig,
@@ -13,8 +16,16 @@ import {
   providerFromConfig,
   resolveIncludedAccess,
 } from './engine'
+import { utcDay } from './included-usage'
 
 const GATEWAY = 'https://gw.example.com/v1'
+const tempDirs: string[] = []
+
+function tempHome(): string {
+  const dir = mkdtempSync(join(tmpdir(), 'ravenclaw-included-'))
+  tempDirs.push(dir)
+  return dir
+}
 
 function profile(id = 'anthropic/claude-sonnet-4'): ModelProfile {
   return {
@@ -30,17 +41,24 @@ function profile(id = 'anthropic/claude-sonnet-4'): ModelProfile {
 }
 
 function config(over: Partial<ResolvedConfig> = {}): ResolvedConfig {
+  const home = over.home ?? tempHome()
   return {
     ...defaultConfig(),
-    home: '/tmp',
     profile: profile(),
     ...over,
+    home,
     included: over.included ?? { gatewayUrl: '' },
     env:
       over.env !== undefined
         ? over.env
         : { ANTHROPIC_API_KEY: 'sk-ant', OPENAI_API_KEY: 'sk-oai' },
   }
+}
+
+function includedOn(
+  over: Partial<NonNullable<ResolvedConfig['included']>> = {},
+): NonNullable<ResolvedConfig['included']> {
+  return { gatewayUrl: GATEWAY, enabled: true, ...over }
 }
 
 function admitted(over: Partial<Entitlement> = {}): Entitlement {
@@ -77,6 +95,10 @@ describe('included gateway access', () => {
   afterEach(() => {
     if (originalToken === undefined) delete process.env.RAVENCLAW_INCLUDED_TOKEN
     else process.env.RAVENCLAW_INCLUDED_TOKEN = originalToken
+    while (tempDirs.length > 0) {
+      const dir = tempDirs.pop()
+      if (dir) rmSync(dir, { recursive: true, force: true })
+    }
   })
 
   test.each(['anthropic', 'openai_compat'] as const)(
@@ -121,8 +143,32 @@ describe('included gateway access', () => {
     expect(probed).toEqual([])
   })
 
-  test('gatewayUrl + admitted true uses included-gateway and included funding', async () => {
+  test('disabled + gatewayUrl stays BYOK and does not probe', async () => {
+    const probed: string[] = []
+    const probe = async (url: string) => {
+      probed.push(url)
+      return admitted()
+    }
     const cfg = config({ included: { gatewayUrl: GATEWAY } })
+    const access = await resolveIncludedAccess(cfg, { probe })
+    expect(access.admitted).toBe(false)
+    expect((await providerFromConfig(cfg, { probe })).id).toBe('anthropic')
+    expect(probed).toEqual([])
+  })
+
+  test('enabled + denied probe stays BYOK', async () => {
+    const cfg = config({
+      provider: 'openai_compat',
+      included: includedOn(),
+    })
+    const probe = async () => denied()
+    const access = await resolveIncludedAccess(cfg, { probe })
+    expect(access.admitted).toBe(false)
+    expect((await providerFromConfig(cfg, { probe })).id).toBe('openai_compat')
+  })
+
+  test('gatewayUrl + admitted true uses included-gateway and included funding', async () => {
+    const cfg = config({ included: includedOn() })
     const seen: Array<{ url: string; token?: string }> = []
     const probe = async (url: string, opts?: { token?: string }) => {
       seen.push({ url, token: opts?.token })
@@ -145,7 +191,7 @@ describe('included gateway access', () => {
   test('gatewayUrl + admitted false falls back to BYOK and byok funding', async () => {
     const cfg = config({
       provider: 'openai_compat',
-      included: { gatewayUrl: GATEWAY },
+      included: includedOn(),
     })
     const probe = async () => denied()
     const access = await resolveIncludedAccess(cfg, { probe })
@@ -162,7 +208,7 @@ describe('included gateway access', () => {
   })
 
   test('hasPaidCapacityPlan true still uses included (capacity does not silence ads)', async () => {
-    const cfg = config({ included: { gatewayUrl: GATEWAY } })
+    const cfg = config({ included: includedOn() })
     const probe = async () => admitted({ hasPaidCapacityPlan: true })
     const access = await resolveIncludedAccess(cfg, { probe })
     const provider = await providerFromConfig(cfg, { access })
@@ -187,33 +233,68 @@ describe('included gateway access', () => {
 
     process.env.RAVENCLAW_INCLUDED_TOKEN = 'tok-env'
     await resolveIncludedAccess(
-      config({ env: { OPENAI_API_KEY: 'sk-oai' }, included: { gatewayUrl: GATEWAY } }),
+      config({ env: { OPENAI_API_KEY: 'sk-oai' }, included: includedOn() }),
       { probe },
     )
     expect(seen.at(-1)).toBe('tok-env')
 
     delete process.env.RAVENCLAW_INCLUDED_TOKEN
     await resolveIncludedAccess(
-      config({ env: { OPENAI_API_KEY: 'sk-oai' }, included: { gatewayUrl: GATEWAY } }),
+      config({ env: { OPENAI_API_KEY: 'sk-oai' }, included: includedOn() }),
       { probe },
     )
     expect(seen.at(-1)).toBe('sk-oai')
 
-    await resolveIncludedAccess(config({ env: {}, included: { gatewayUrl: GATEWAY } }), { probe })
+    await resolveIncludedAccess(config({ env: {}, included: includedOn() }), { probe })
     expect(seen.at(-1)).toBe('included')
   })
 
   test('admitted included works without a BYOK key', async () => {
-    const cfg = config({ included: { gatewayUrl: GATEWAY }, env: {} })
+    const cfg = config({ included: includedOn(), env: {} })
     const provider = await providerFromConfig(cfg, { probe: async () => admitted() })
     expect(provider.id).toBe('included-gateway')
   })
 
   test('denied included does not throw; missing BYOK key still errors', async () => {
-    const cfg = config({ included: { gatewayUrl: GATEWAY }, env: {}, provider: 'anthropic' })
+    const cfg = config({ included: includedOn(), env: {}, provider: 'anthropic' })
     await expect(providerFromConfig(cfg, { probe: async () => denied() })).rejects.toThrow(
       /ANTHROPIC_API_KEY/,
     )
+  })
+
+  test('cap reached stays BYOK and does not throw', async () => {
+    const home = tempHome()
+    writeFileSync(join(home, 'included-usage.json'), JSON.stringify({ day: utcDay(), count: 4 }))
+    const cfg = config({ home, included: includedOn({ sessionCapPerDay: 4 }) })
+    const access = await resolveIncludedAccess(cfg, { probe: async () => admitted() })
+    expect(access.admitted).toBe(false)
+    expect((await providerFromConfig(cfg, { probe: async () => admitted() })).id).toBe('anthropic')
+  })
+
+  test('remainingSessions 0 stays BYOK even when the local ledger is empty', async () => {
+    const access = await resolveIncludedAccess(config({ included: includedOn() }), {
+      probe: async () => admitted({ remainingSessions: 0 }),
+    })
+    expect(access.admitted).toBe(false)
+  })
+
+  test('paid plan uses a higher cap than sessionCapPerDay', async () => {
+    const home = tempHome()
+    writeFileSync(join(home, 'included-usage.json'), JSON.stringify({ day: utcDay(), count: 4 }))
+    const cfg = config({ home, included: includedOn({ sessionCapPerDay: 4 }) })
+    expect((await resolveIncludedAccess(cfg, { probe: async () => admitted() })).admitted).toBe(false)
+    expect(
+      (await resolveIncludedAccess(cfg, { probe: async () => admitted({ hasPaidCapacityPlan: true }) }))
+        .admitted,
+    ).toBe(true)
+  })
+
+  test('admitted session is recorded against the daily cap', async () => {
+    const home = tempHome()
+    const cfg = config({ home, included: includedOn({ sessionCapPerDay: 1 }) })
+    const probe = async () => admitted()
+    expect((await resolveIncludedAccess(cfg, { probe })).admitted).toBe(true)
+    expect((await resolveIncludedAccess(cfg, { probe })).admitted).toBe(false)
   })
 
   test('openEngine stamps funding onto a new session', async () => {

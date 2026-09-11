@@ -1,4 +1,7 @@
 import { describe, expect, test } from 'bun:test'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   PersistError,
   type CompactPolicy,
@@ -15,6 +18,7 @@ import {
 } from '../types'
 import { createSessionEngine } from './session-engine'
 import { createMemoryStore } from '../session/memory-store'
+import { skillTool } from '../tools/skill'
 import { GRACE_NOTICE } from './budget'
 
 const INCOMPLETE_TEXT =
@@ -709,4 +713,108 @@ describe('queryLoop via SessionEngine', () => {
     )
     expect(provider.streamCount).toBe(0)
   })
+
+  test('Skill allowed-tools shrinks the live pool on the next assemble', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'ravenclaw-ql-skill-home-'))
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-ql-skill-cwd-'))
+    const savedHome = process.env.RAVENCLAW_HOME
+    process.env.RAVENCLAW_HOME = home
+    try {
+      const skillDir = join(cwd, '.ravenclaw', 'skills', 'narrow')
+      mkdirSync(skillDir, { recursive: true })
+      writeFileSync(
+        join(skillDir, 'SKILL.md'),
+        [
+          '---',
+          'name: narrow',
+          'description: Narrow skill',
+          'allowed-tools: [Read, Grep]',
+          '---',
+          '',
+          'Use Read and Grep only.',
+        ].join('\n'),
+      )
+
+      const store = createMemoryStore()
+      const session = makeSession({ id: 'sess_skill_shrink', cwd })
+      await store.createSession(session)
+      const provider = createFakeProvider([
+        toolThenStop('sk1', 'Skill', { name: 'narrow' }),
+        textThenStop('done'),
+      ])
+      const tools = [
+        stubNamedTool('Read'),
+        stubNamedTool('Grep'),
+        stubNamedTool('Edit'),
+        stubNamedTool('Write'),
+        stubNamedTool('Bash'),
+        skillTool,
+        stubNamedTool('Agent'),
+        stubNamedTool('EnterPlanMode'),
+        stubNamedTool('ExitPlanMode'),
+      ]
+      const engine = createSessionEngine(engineOpts({ provider, store, session, tools }))
+
+      const { result } = await collect(engine.submitMessage('use narrow'))
+
+      expect(result).toEqual({ reason: 'completed' })
+      expect(provider.requests).toHaveLength(2)
+      expect(provider.requests[0]?.tools.map((tool) => tool.name)).toEqual([
+        'Read',
+        'Grep',
+        'Edit',
+        'Write',
+        'Bash',
+        'Skill',
+        'Agent',
+        'EnterPlanMode',
+        'ExitPlanMode',
+      ])
+      expect(provider.requests[1]?.tools.map((tool) => tool.name)).toEqual([
+        'Read',
+        'Grep',
+        'Skill',
+        'Agent',
+        'EnterPlanMode',
+        'ExitPlanMode',
+      ])
+      expect(provider.requests[1]?.tools.map((tool) => tool.name)).not.toContain('Edit')
+      expect(provider.requests[1]?.tools.map((tool) => tool.name)).not.toContain('Write')
+      expect(provider.requests[1]?.tools.map((tool) => tool.name)).not.toContain('Bash')
+
+      const loaded = await store.loadSession(session.id)
+      expect(pairingHolds(loaded.messages)).toBe(true)
+      const skillResult = loaded.messages.find(
+        (m): m is Extract<Message, { role: 'tool' }> =>
+          m.role === 'tool' && m.toolUseId === 'sk1',
+      )
+      expect(skillResult?.ok).toBe(true)
+      expect(skillResult?.blocks[0]?.text).toContain('This skill suggests: Read, Grep.')
+      expect(skillResult?.blocks[0]?.text).toContain('Use Read and Grep only.')
+    } finally {
+      if (savedHome === undefined) delete process.env.RAVENCLAW_HOME
+      else process.env.RAVENCLAW_HOME = savedHome
+      rmSync(home, { recursive: true, force: true })
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
 })
+
+function stubNamedTool(name: string): Tool {
+  return {
+    name,
+    description: name,
+    inputSchema: { type: 'object' },
+    parse(input: unknown) {
+      return { ok: true as const, value: input }
+    },
+    isConcurrencySafe: () => true,
+    isReadOnly: () => true,
+    async checkPermissions() {
+      return { behavior: 'allow' as const, reason: 'mode' as const }
+    },
+    async execute() {
+      return name
+    },
+  }
+}

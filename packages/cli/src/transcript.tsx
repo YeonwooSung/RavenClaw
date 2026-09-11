@@ -79,7 +79,10 @@ export function rowsFromMessages(messages: Message[]): TranscriptRow[] {
   const rows: TranscriptRow[] = []
   for (const msg of messages) {
     if (msg.role === 'user') {
-      const text = msg.blocks.map((b) => b.text).join('')
+      const text = msg.blocks
+        .filter((b): b is { type: 'text'; text: string } => b.type === 'text')
+        .map((b) => b.text)
+        .join('')
       if (text) rows.push({ kind: 'user', text })
       continue
     }
@@ -106,7 +109,13 @@ export function rowsFromMessages(messages: Message[]): TranscriptRow[] {
       if (row?.kind === 'tool') {
         const next: TranscriptRow = {
           ...row,
-          result: { toolUseId: msg.toolUseId, ok: msg.ok, content: msg.blocks[0]?.text ?? '' },
+          result: {
+            toolUseId: msg.toolUseId,
+            ok: msg.ok,
+            content:
+              msg.blocks.find((block): block is { type: 'text'; text: string } => block.type === 'text')
+                ?.text ?? '',
+          },
         }
         rows[idx] = next
       }

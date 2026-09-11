@@ -27,8 +27,9 @@ bun run smoke
 | Package | Role |
 |---|---|
 | `packages/core` | query loop, tools, permissions, sessions, MCP merge |
-| `packages/providers` | Anthropic, OpenAI-compat, included gateway |
+| `packages/providers` | Anthropic, OpenAI-compat, Responses, included gateway |
 | `packages/ads` | first-party ads (must not import `@ravenclaw/core`) |
+| `packages/sdk` | `createRavenSession` (no Ink, ads, or CLI) |
 | `packages/cli` | `raven` Ink TUI and commands |
 | `packages/tui-opentui` | StreamEvent line view |
 | `packages/acp` | editor JSON-RPC adapter |

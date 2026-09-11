@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createMemoryStore } from '../session/memory-store'
@@ -278,6 +279,13 @@ describe('createAgentTool', () => {
     const withSubagent = tool.parse({ prompt: 'x', subagent: 'file-finder' })
     expect(withSubagent.ok).toBe(true)
     if (withSubagent.ok) expect(withSubagent.value.subagent).toBe('file-finder')
+
+    const withIsolation = tool.parse({ prompt: 'x', isolation: 'worktree' })
+    expect(withIsolation.ok).toBe(true)
+    if (withIsolation.ok) expect(withIsolation.value.isolation).toBe('worktree')
+
+    const badIsolation = tool.parse({ prompt: 'x', isolation: 'remote' })
+    expect(badIsolation.ok).toBe(false)
   })
 
   test('child history starts empty; parent messages are not in the child request', async () => {
@@ -737,4 +745,69 @@ describe('createAgentTool', () => {
     ).rejects.toBeInstanceOf(PersistError)
     expect(provider.streamCount).toBe(0)
   })
+
+  test('isolation worktree creates then removes a git worktree', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-agent-wt-'))
+    tempDirs.push(cwd)
+    initGitRepo(cwd)
+
+    const store = createMemoryStore()
+    const session = makeSession({ cwd })
+    await store.createSession(session)
+
+    let seenCwd: string | undefined
+    let existedDuring = false
+    const provider = createFakeProvider([
+      async function* () {
+        const children = await store.listSessions({ parentSessionId: session.id })
+        seenCwd = children[0]?.cwd
+        existedDuring = Boolean(seenCwd && existsSync(seenCwd))
+        yield { type: 'text_delta' as const, text: 'isolated-ok' }
+        yield { type: 'stop' as const, reason: 'end' }
+      },
+    ])
+    const { tool } = createTestAgent({ store, provider })
+    const result = await tool.execute(
+      { prompt: 'work isolated', isolation: 'worktree' },
+      makeCtx(makeTurn(session, { cwd })),
+    )
+
+    expect(result).toBe('isolated-ok')
+    expect(seenCwd?.startsWith(join(cwd, '.ravenclaw', 'worktrees') + '/')).toBe(true)
+    expect(existedDuring).toBe(true)
+    expect(seenCwd && existsSync(seenCwd)).toBe(false)
+
+    const child = (await store.listSessions({ parentSessionId: session.id }))[0]
+    expect(child?.cwd).toBe(seenCwd)
+  })
+
+  test('isolation worktree falls back to parent cwd when not a git repo', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-agent-nowt-'))
+    tempDirs.push(cwd)
+    const store = createMemoryStore()
+    const session = makeSession({ cwd })
+    await store.createSession(session)
+    const provider = createFakeProvider([textThenStop('fallback')])
+    const { tool } = createTestAgent({ store, provider })
+    const result = await tool.execute(
+      { prompt: 'no git', isolation: 'worktree' },
+      makeCtx(makeTurn(session, { cwd })),
+    )
+    expect(result).toBe('fallback')
+    const child = (await store.listSessions({ parentSessionId: session.id }))[0]
+    expect(child?.cwd).toBe(cwd)
+  })
 })
+
+function initGitRepo(dir: string): void {
+  const run = (args: string[]) => {
+    const result = spawnSync('git', args, { cwd: dir, encoding: 'utf8' })
+    expect(result.status).toBe(0)
+  }
+  run(['init'])
+  run(['config', 'user.email', 'test@example.com'])
+  run(['config', 'user.name', 'Test'])
+  run(['config', 'commit.gpgsign', 'false'])
+  run(['commit', '--allow-empty', '-m', 'init'])
+}
+

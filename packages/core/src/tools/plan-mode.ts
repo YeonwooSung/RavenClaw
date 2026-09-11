@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname } from 'node:path'
+import { lastAssistantText } from '../agent/definition'
 import type {
   PermissionMode,
   SessionRecord,
@@ -7,6 +8,7 @@ import type {
   Tool,
   ToolContext,
 } from '../types'
+import { planFilePath } from './plan-file'
 
 const EMPTY_SCHEMA = {}
 
@@ -59,6 +61,7 @@ export function createPlanModeTools(store: SessionStore): { enter: Tool; exit: T
     async execute(_input, ctx) {
       const restored = ctx.turn.prePlanMode ?? 'default'
       await applyMode(store, ctx, restored)
+      maybeRefreshPlanFile(ctx)
       return `mode=${restored}`
     },
   }
@@ -66,14 +69,28 @@ export function createPlanModeTools(store: SessionStore): { enter: Tool; exit: T
   return { enter, exit }
 }
 
+const PLAN_STUB = '# Plan\n'
+
 function maybeWritePlanStub(cwd: string): void {
   try {
     if (!existsSync(cwd)) return
-    const dir = join(cwd, '.ravenclaw')
-    const path = join(dir, 'plan.md')
+    const path = planFilePath(cwd)
     if (existsSync(path)) return
-    mkdirSync(dir, { recursive: true })
-    writeFileSync(path, '# Plan\n', { flag: 'wx' })
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, PLAN_STUB, { flag: 'wx' })
+  } catch {
+    // best-effort seam; the mode switch still succeeds
+  }
+}
+
+function maybeRefreshPlanFile(ctx: ToolContext): void {
+  try {
+    const path = planFilePath(ctx.turn.cwd)
+    if (!existsSync(path)) return
+    if (readFileSync(path, 'utf8') !== PLAN_STUB) return
+    const text = lastAssistantText(ctx.turn.messages)
+    if (!text) return
+    writeFileSync(path, text, 'utf8')
   } catch {
     // best-effort seam; the mode switch still succeeds
   }

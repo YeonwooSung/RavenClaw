@@ -44,6 +44,10 @@ terminal:
   image: bash:5              # required when backend is docker
 ads:
   feedUrl: ""                # empty ⇒ no ad network; house floor only if included
+included:
+  enabled: false             # stay BYOK until a real gateway exists
+  gatewayUrl: ""
+  sessionCapPerDay: 4
 mcp:
   servers:
     - name: filesystem
@@ -126,6 +130,15 @@ eval "$(bun run raven completions zsh)"
 ```
 
 `bun run raven` or `bun run raven setup` writes `~/.ravenclaw/.env` when no key is configured. On a TTY the key is masked with `*`. `exec` and `acp` print a hint instead of prompting.
+
+Embed the same engine without Ink:
+
+```ts
+import { createRavenSession } from '@ravenclaw/sdk'
+const session = await createRavenSession({ cwd: process.cwd(), store: 'memory', provider })
+```
+
+Local plugins are `~/.ravenclaw/plugins/<name>/plugin.json` (or `.ravenclaw/plugins` in the repo). Skill `allowed-tools` shrinks the live pool for the rest of the turn. `Agent` can take `isolation: "worktree"`. Plan mode may write only `.ravenclaw/plan.md`.
 
 This process is the same OS user as you. There is no network sandbox. Writes under `~/.ssh/id_*` and `$RAVENCLAW_HOME/state.db` are hard-denied; `.env` writes ask first.
 

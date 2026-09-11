@@ -123,6 +123,46 @@ describe('probeEntitlement', () => {
     ).resolves.toEqual(DENIED)
   })
 
+  test('parses optional sessionCap, remainingSessions, and defaultModel', async () => {
+    const entitlement = await probeEntitlement('https://gw.example.com', {
+      fetch: () =>
+        jsonResponse({
+          admitted: true,
+          sessionCap: 16,
+          remainingSessions: 3,
+          defaultModel: 'openai/gpt-4o',
+        }),
+    })
+    expect(entitlement).toEqual({
+      admitted: true,
+      placementRequired: false,
+      hasPaidCapacityPlan: false,
+      sessionCap: 16,
+      remainingSessions: 3,
+      defaultModel: 'openai/gpt-4o',
+    })
+  })
+
+  test('invalid extras are omitted and do not deny when admitted is true', async () => {
+    const entitlement = await probeEntitlement('https://gw.example.com', {
+      fetch: () =>
+        jsonResponse({
+          admitted: true,
+          sessionCap: '16',
+          remainingSessions: null,
+          defaultModel: 1,
+        }),
+    })
+    expect(entitlement).toEqual({
+      admitted: true,
+      placementRequired: false,
+      hasPaidCapacityPlan: false,
+    })
+    expect(entitlement.sessionCap).toBeUndefined()
+    expect(entitlement.remainingSessions).toBeUndefined()
+    expect(entitlement.defaultModel).toBeUndefined()
+  })
+
   test('network, timeout, and invalid JSON coerce to denied', async () => {
     await expect(
       probeEntitlement('https://gw.example.com', {

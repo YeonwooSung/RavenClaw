@@ -230,6 +230,58 @@ function mapAnthropicSystem(parts: SystemPart[]): unknown[] {
   })
 }
 
+function isImageBlock(block: {
+  type: string
+  mediaType?: string
+  data?: string
+}): block is { type: 'image'; mediaType: string; data: string } {
+  return (
+    block.type === 'image' &&
+    typeof block.mediaType === 'string' &&
+    block.mediaType.length > 0 &&
+    typeof block.data === 'string' &&
+    block.data.length > 0
+  )
+}
+
+function anthropicImagePart(block: { mediaType: string; data: string }): unknown {
+  return {
+    type: 'image',
+    source: { type: 'base64', media_type: block.mediaType, data: block.data },
+  }
+}
+
+function mapAnthropicUserContent(
+  blocks: Array<{ type: string; text?: string; mediaType?: string; data?: string }>,
+): unknown[] {
+  const content: unknown[] = []
+  for (const block of blocks) {
+    if (block.type === 'text' && typeof block.text === 'string') {
+      content.push({ type: 'text', text: block.text })
+    } else if (isImageBlock(block)) {
+      content.push(anthropicImagePart(block))
+    }
+  }
+  if (content.length === 0) content.push({ type: 'text', text: '' })
+  return content
+}
+
+function mapAnthropicToolContent(
+  blocks: Array<{ type: string; text?: string; mediaType?: string; data?: string }>,
+): string | unknown[] {
+  const hasImage = blocks.some((block) => isImageBlock(block))
+  if (!hasImage) return joinText(blocks)
+  const content: unknown[] = []
+  for (const block of blocks) {
+    if (block.type === 'text' && typeof block.text === 'string') {
+      content.push({ type: 'text', text: block.text })
+    } else if (isImageBlock(block)) {
+      content.push(anthropicImagePart(block))
+    }
+  }
+  return content
+}
+
 function joinText(blocks: Array<{ type: string; text?: string }>): string {
   let out = ''
   for (const block of blocks) {
@@ -252,7 +304,7 @@ function buildAnthropicMessages(messages: Message[], includeThinking: boolean): 
         results.push({
           type: 'tool_result',
           tool_use_id: tool.toolUseId,
-          content: joinText(tool.blocks),
+          content: mapAnthropicToolContent(tool.blocks),
           is_error: !tool.ok,
         })
         i += 1
@@ -263,7 +315,7 @@ function buildAnthropicMessages(messages: Message[], includeThinking: boolean): 
     if (msg.role === 'user') {
       out.push({
         role: 'user',
-        content: [{ type: 'text', text: joinText(msg.blocks) }],
+        content: mapAnthropicUserContent(msg.blocks),
       })
       i += 1
       continue
@@ -273,7 +325,7 @@ function buildAnthropicMessages(messages: Message[], includeThinking: boolean): 
       if (block.type === 'text') content.push({ type: 'text', text: block.text })
       else if (block.type === 'thinking') {
         if (includeThinking) content.push({ type: 'thinking', thinking: block.text })
-      } else {
+      } else if (block.type === 'tool_use') {
         content.push({
           type: 'tool_use',
           id: block.id,

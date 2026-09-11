@@ -32,14 +32,31 @@ export function makeToolMessage(
   ok: boolean,
   text: string,
 ): Extract<Message, { role: 'tool' }> {
+  const image = parseImageResult(text)
   return {
     id: crypto.randomUUID(),
     role: 'tool',
     toolUseId,
     ok,
-    blocks: [{ type: 'text', text }],
+    blocks: image
+      ? [
+          { type: 'text', text: `[image ${image.mediaType}]` },
+          { type: 'image', mediaType: image.mediaType, data: image.data },
+        ]
+      : [{ type: 'text', text }],
     createdAt: Date.now(),
   }
+}
+
+function parseImageResult(text: string): { mediaType: string; data: string } | undefined {
+  if (!text.startsWith('IMAGE::')) return undefined
+  const rest = text.slice('IMAGE::'.length)
+  const sep = rest.indexOf('::')
+  if (sep <= 0) return undefined
+  const mediaType = rest.slice(0, sep)
+  const data = rest.slice(sep + 2)
+  if (mediaType.length === 0 || data.length === 0) return undefined
+  return { mediaType, data }
 }
 
 export function pairMissing(

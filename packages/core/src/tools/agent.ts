@@ -26,12 +26,14 @@ import type {
   Turn,
 } from '../types'
 import { parseWithSchema } from './parse'
+import { prepareChildWorktree, type IsolationMode } from './worktree'
 
 export interface AgentInput {
   prompt: string
   context?: string
   description?: string
   subagent?: string
+  isolation?: IsolationMode
 }
 
 const inputSchema = {
@@ -43,6 +45,7 @@ const inputSchema = {
     context: { type: 'string' },
     description: { type: 'string' },
     subagent: { type: 'string', minLength: 1 },
+    isolation: { type: 'string', enum: ['none', 'worktree'] },
   },
 }
 
@@ -87,16 +90,22 @@ export function createAgentTool(opts: {
       const now = Date.now()
       const childModel = resolveChildModel(ctx.turn, definition)
       const childSession = buildChildSession(ctx.turn, childModel, now, input.description)
+      const isolated = prepareChildWorktree(
+        ctx.turn.cwd,
+        childSession.id,
+        input.isolation ?? 'none',
+      )
+      childSession.cwd = isolated.cwd
       const userMessage = buildChildUserMessage(input, now)
-
-      await opts.store.createSession(childSession)
-      await opts.store.persistUser(childSession.id, userMessage)
 
       const childAbort = new AbortController()
       const unlink = linkAbort(ctx.signal, childAbort)
       const childTurn = buildChildTurn(childSession, userMessage, childAbort, maxRounds)
 
       try {
+        await opts.store.createSession(childSession)
+        await opts.store.persistUser(childSession.id, userMessage)
+
         const loopOpts: QueryLoopOptions = {
           turn: childTurn,
           tools: childTools,
@@ -122,6 +131,7 @@ export function createAgentTool(opts: {
         return text ? boundChildResult(text) : INCOMPLETE_TEXT
       } finally {
         unlink()
+        isolated.cleanup()
       }
     },
   }

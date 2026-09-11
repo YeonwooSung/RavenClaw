@@ -156,6 +156,77 @@ describe('decidePermission', () => {
     expect((await decide({ tool, name: 'ExitPlanMode', mode: 'plan' })).behavior).toBe('allow')
   })
 
+  test('plan allows Write of the plan file and denies Write of other files', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ravenclaw-perm-plan-write-'))
+    const write = mockTool({
+      name: 'Write',
+      readOnly: false,
+      check: { behavior: 'allow', reason: 'mode' },
+    })
+    const planWrite = await decide({
+      tool: write,
+      name: 'Write',
+      input: { path: '.ravenclaw/plan.md', content: '# Real plan\n' },
+      mode: 'plan',
+      cwd: root,
+    })
+    expect(planWrite.behavior).toBe('allow')
+
+    const otherWrite = await decide({
+      tool: write,
+      name: 'Write',
+      input: { path: 'src/a.ts', content: 'x' },
+      mode: 'plan',
+      cwd: root,
+    })
+    expect(otherWrite.behavior).toBe('deny')
+    if (otherWrite.behavior === 'deny') expect(otherWrite.reason).toBe('mode')
+  })
+
+  test('plan allows Edit of the plan file and denies Edit of other files', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ravenclaw-perm-plan-edit-'))
+    const edit = mockTool({
+      name: 'Edit',
+      readOnly: false,
+      check: { behavior: 'allow', reason: 'mode' },
+    })
+    const planEdit = await decide({
+      tool: edit,
+      name: 'Edit',
+      input: { path: '.ravenclaw/plan.md', old_string: '# Plan\n', new_string: '# Real\n' },
+      mode: 'plan',
+      cwd: root,
+    })
+    expect(planEdit.behavior).toBe('allow')
+
+    const otherEdit = await decide({
+      tool: edit,
+      name: 'Edit',
+      input: { path: 'src/a.ts', old_string: 'a', new_string: 'b' },
+      mode: 'plan',
+      cwd: root,
+    })
+    expect(otherEdit.behavior).toBe('deny')
+    if (otherEdit.behavior === 'deny') expect(otherEdit.reason).toBe('mode')
+  })
+
+  test('plan Write leftover ask for the plan file is not a plan-deny', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ravenclaw-perm-plan-ask-'))
+    const write = mockTool({
+      name: 'Write',
+      readOnly: false,
+      check: { behavior: 'ask', message: 'write?' },
+    })
+    const decision = await decide({
+      tool: write,
+      name: 'Write',
+      input: { path: '.ravenclaw/plan.md', content: '# Real plan\n' },
+      mode: 'plan',
+      cwd: root,
+    })
+    expect(decision).toEqual({ behavior: 'ask', message: 'write?' })
+  })
+
   test('plan denies mutating Edit even when checkPermissions allows', async () => {
     const tool = mockTool({
       name: 'Edit',

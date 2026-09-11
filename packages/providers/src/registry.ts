@@ -2,9 +2,10 @@ import type { Provider } from '@ravenclaw/core'
 import { AnthropicMessagesProvider } from './anthropic'
 import { createIncludedGatewayProvider } from './gateway'
 import { OpenAICompatProvider } from './openai-compat'
+import { OpenAIResponsesProvider } from './responses'
 
 export function createProvider(opts: {
-  provider: 'anthropic' | 'openai_compat' | 'included' | 'ollama' | 'vllm'
+  provider: 'anthropic' | 'openai_compat' | 'openai_responses' | 'included' | 'ollama' | 'vllm'
   apiKey: string
   baseUrl?: string
   gatewayUrl?: string
@@ -28,6 +29,7 @@ export function createProvider(opts: {
     return new OpenAICompatProvider(ctor)
   }
   if (opts.provider === 'anthropic') return new AnthropicMessagesProvider(ctor)
+  if (opts.provider === 'openai_responses') return new OpenAIResponsesProvider(ctor)
   if (opts.provider === 'included') {
     const baseUrl = firstNonEmpty(opts.baseUrl, opts.gatewayUrl)
     if (baseUrl === undefined) {

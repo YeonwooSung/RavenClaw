@@ -186,6 +186,59 @@ describe('OpenAICompatProvider', () => {
     ])
   })
 
+  test('maps image blocks on user and tool messages to image_url data URLs', async () => {
+    const body = await fixture('openai-text-only.sse')
+    const { calls } = mockFetch(() => sseResponse(body))
+    const provider = new OpenAICompatProvider({ apiKey: 'sk-test' })
+    const messages: Message[] = [
+      {
+        id: 'u1',
+        role: 'user',
+        blocks: [
+          { type: 'text', text: 'what is this?' },
+          { type: 'image', mediaType: 'image/png', data: 'abc' },
+        ],
+        createdAt: 1,
+      },
+      {
+        id: 'a1',
+        role: 'assistant',
+        blocks: [{ type: 'tool_use', id: 'call_1', name: 'Read', input: { path: 'dot.png' } }],
+        createdAt: 2,
+      },
+      {
+        id: 't1',
+        role: 'tool',
+        toolUseId: 'call_1',
+        ok: true,
+        blocks: [
+          { type: 'text', text: '[image image/png]' },
+          { type: 'image', mediaType: 'image/png', data: 'abc' },
+        ],
+        createdAt: 3,
+      },
+    ]
+    await collect(provider.stream(baseReq({ messages }), new AbortController().signal))
+    const payload = JSON.parse(String(calls[0]?.init?.body)) as {
+      messages: Array<Record<string, unknown>>
+    }
+    expect(payload.messages[0]).toEqual({
+      role: 'user',
+      content: [
+        { type: 'text', text: 'what is this?' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } },
+      ],
+    })
+    expect(payload.messages[2]).toEqual({
+      role: 'tool',
+      tool_call_id: 'call_1',
+      content: [
+        { type: 'text', text: '[image image/png]' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,abc' } },
+      ],
+    })
+  })
+
   test('401 is ProviderError retryable false; 429 is retryable true', async () => {
     const provider = new OpenAICompatProvider({ apiKey: 'sk-test' })
 

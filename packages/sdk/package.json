@@ -1,0 +1,13 @@
+{
+  "name": "@ravenclaw/sdk",
+  "version": "0.1.28",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@ravenclaw/core": "workspace:*",
+    "@ravenclaw/providers": "workspace:*"
+  }
+}

@@ -1,5 +1,5 @@
 import { readFileSync, statSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { extname, resolve } from 'node:path'
 import type { Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
 
@@ -11,7 +11,15 @@ export interface ReadInput {
 
 const BINARY_SCAN = 8192
 const READ_CHAR_CAP = 100_000
+const IMAGE_BYTE_CAP = 512_000
 const TRUNCATION_NOTE = '\n... [truncated: output exceeds 100000 characters]'
+const IMAGE_MEDIA: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+}
 
 const inputSchema = {
   type: 'object',
@@ -27,7 +35,7 @@ const inputSchema = {
 export const readTool: Tool<ReadInput, string> = {
   name: 'Read',
   description:
-    'Read a utf-8 text file. path is resolved relative to the turn cwd. offset is a 1-based line number; limit is the maximum number of lines to return. Binary files (NUL in the first 8 KiB) are rejected. Output is capped around 100000 characters. Exempt from disk persist.',
+    'Read a utf-8 text file or a small image (png/jpeg/gif/webp, ≤ 512000 bytes). path is resolved relative to the turn cwd. offset is a 1-based line number; limit is the maximum number of lines to return. Binary files (NUL in the first 8 KiB) are rejected. Output is capped around 100000 characters. Exempt from disk persist.',
   inputSchema,
   parse(input: unknown) {
     return parseWithSchema<ReadInput>(inputSchema, input)
@@ -66,6 +74,15 @@ export const readTool: Tool<ReadInput, string> = {
       return `Read failed: ${message}`
     }
 
+    const mediaType = imageMediaType(resolved)
+    if (mediaType) {
+      if (buf.length > IMAGE_BYTE_CAP) {
+        return `Read failed: image too large (${buf.length} bytes)`
+      }
+      ctx.turn.readFiles.add(resolved)
+      return `IMAGE::${mediaType}::${buf.toString('base64')}`
+    }
+
     if (containsNul(buf.subarray(0, Math.min(buf.length, BINARY_SCAN)))) {
       return 'Read failed: binary file (NUL in first 8 KiB)'
     }
@@ -82,6 +99,10 @@ export const readTool: Tool<ReadInput, string> = {
     ctx.turn.readFiles.add(resolved)
     return text
   },
+}
+
+function imageMediaType(path: string): string | undefined {
+  return IMAGE_MEDIA[extname(path).toLowerCase()]
 }
 
 function containsNul(buf: Uint8Array): boolean {

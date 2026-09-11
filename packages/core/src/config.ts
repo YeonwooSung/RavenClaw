@@ -15,6 +15,9 @@ export interface TerminalConfig {
 
 export interface IncludedConfig {
   gatewayUrl: string
+  enabled?: boolean
+  sessionCapPerDay?: number
+  defaultModel?: string
 }
 
 export interface McpServerConfig {
@@ -106,7 +109,7 @@ export function defaultConfig(): RavenClawConfig {
     childMaxRounds: 30,
     compact: { enabled: true, llmSummarize: true },
     ads: { feedUrl: '' },
-    included: { gatewayUrl: '' },
+    included: { gatewayUrl: '', enabled: false, sessionCapPerDay: 4 },
     mcp: { servers: [] },
   }
 }
@@ -154,9 +157,16 @@ export function parseConfigYaml(text: string): Partial<RavenClawConfig> {
   const includedRaw = asMap(raw.included)
   if (includedRaw) {
     const gatewayUrl = includedRaw.gatewayUrl
-    out.included = {
+    const included: IncludedConfig = {
       gatewayUrl: gatewayUrl === undefined || gatewayUrl === null ? '' : String(gatewayUrl),
     }
+    const enabled = asBoolean(includedRaw.enabled)
+    if (enabled !== undefined) included.enabled = enabled
+    const sessionCapPerDay = asNumber(includedRaw.sessionCapPerDay)
+    if (sessionCapPerDay !== undefined) included.sessionCapPerDay = sessionCapPerDay
+    const defaultModel = asString(includedRaw.defaultModel)
+    if (defaultModel !== undefined) included.defaultModel = defaultModel
+    out.included = included
   }
 
   const terminalRaw = asMap(raw.terminal)
@@ -275,7 +285,7 @@ export function loadConfig(opts?: { home?: string; flags?: ConfigFlags }): Resol
       llmSummarize: parsed.compact?.llmSummarize ?? base.compact.llmSummarize,
     },
     ads: { feedUrl: parsed.ads?.feedUrl ?? base.ads.feedUrl },
-    included: { gatewayUrl: parsed.included?.gatewayUrl ?? base.included?.gatewayUrl ?? '' },
+    included: resolveIncluded(parsed.included, base.included),
     mcp: { servers: parsed.mcp?.servers ?? base.mcp.servers },
     home,
     env,
@@ -285,6 +295,20 @@ export function loadConfig(opts?: { home?: string; flags?: ConfigFlags }): Resol
   if (parsed.prices !== undefined) resolved.prices = parsed.prices
   if (parsed.terminal !== undefined) resolved.terminal = parsed.terminal
   return resolved
+}
+
+function resolveIncluded(
+  parsed: IncludedConfig | undefined,
+  base: IncludedConfig | undefined,
+): IncludedConfig {
+  const included: IncludedConfig = {
+    gatewayUrl: parsed?.gatewayUrl ?? base?.gatewayUrl ?? '',
+    enabled: parsed?.enabled ?? base?.enabled ?? false,
+    sessionCapPerDay: parsed?.sessionCapPerDay ?? base?.sessionCapPerDay ?? 4,
+  }
+  const defaultModel = parsed?.defaultModel ?? base?.defaultModel
+  if (defaultModel !== undefined && defaultModel !== '') included.defaultModel = defaultModel
+  return included
 }
 
 function pickedProviderModel(

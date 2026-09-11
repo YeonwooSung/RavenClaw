@@ -188,6 +188,69 @@ describe('AnthropicMessagesProvider', () => {
     ])
   })
 
+  test('maps image blocks on user and tool messages to base64 source', async () => {
+    const sse = await fixture('anthropic-text-only.sse')
+    const { calls } = mockFetch(() => sseResponse(sse))
+    const provider = new AnthropicMessagesProvider({ apiKey: 'sk-ant-test' })
+    const messages: Message[] = [
+      {
+        id: 'u1',
+        role: 'user',
+        blocks: [
+          { type: 'text', text: 'what is this?' },
+          { type: 'image', mediaType: 'image/png', data: 'abc' },
+        ],
+        createdAt: 1,
+      },
+      {
+        id: 'a1',
+        role: 'assistant',
+        blocks: [{ type: 'tool_use', id: 'tu_1', name: 'Read', input: { path: 'dot.png' } }],
+        createdAt: 2,
+      },
+      {
+        id: 't1',
+        role: 'tool',
+        toolUseId: 'tu_1',
+        ok: true,
+        blocks: [
+          { type: 'text', text: '[image image/png]' },
+          { type: 'image', mediaType: 'image/png', data: 'abc' },
+        ],
+        createdAt: 3,
+      },
+    ]
+    await collect(provider.stream(baseReq({ messages }), new AbortController().signal))
+    const req = await lastPayload(calls)
+    expect(req.body.messages[0]).toEqual({
+      role: 'user',
+      content: [
+        { type: 'text', text: 'what is this?' },
+        {
+          type: 'image',
+          source: { type: 'base64', media_type: 'image/png', data: 'abc' },
+        },
+      ],
+    })
+    expect(req.body.messages[2]).toEqual({
+      role: 'user',
+      content: [
+        {
+          type: 'tool_result',
+          tool_use_id: 'tu_1',
+          content: [
+            { type: 'text', text: '[image image/png]' },
+            {
+              type: 'image',
+              source: { type: 'base64', media_type: 'image/png', data: 'abc' },
+            },
+          ],
+          is_error: false,
+        },
+      ],
+    })
+  })
+
   test('text stream yields text_deltas, usage, and stop; split tool JSON is one tool_call', async () => {
     const provider = new AnthropicMessagesProvider({ apiKey: 'sk-ant-test' })
 

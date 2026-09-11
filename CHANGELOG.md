@@ -1,5 +1,19 @@
 # Changelog
 
+## Unreleased
+
+The leftover v1.x seams: optional included gateway, embeddable SDK, plan.md, skill tool pools, worktrees, images, Responses, local plugins.
+
+### Added
+- `included.enabled` (default false), daily session cap, and catalog coerce on the included-model gateway client
+- `@ravenclaw/sdk` `createRavenSession` — same engine as the CLI, no Ink/ads
+- Plan mode may Edit/Write only `.ravenclaw/plan.md`; ExitPlanMode fills the stub from assistant text
+- Skill `allowed-tools` intersects and shrinks the live pool; builtin prefix stays contiguous
+- `Agent` `isolation: worktree` (git worktree, removed after the child)
+- Image tool results (`Read` of small png/jpeg/gif/webp) mapped on OpenAI and Anthropic
+- `createProvider({ provider: 'openai_responses' })` for the OpenAI Responses API
+- Local plugins from `~/.ravenclaw/plugins/<name>/plugin.json` (project overrides user)
+
 ## 0.1.28 — 2026-09-11
 
 Local LLM smoke is text-only, and `raven doctor` probes Ollama / vLLM.

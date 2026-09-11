@@ -102,7 +102,14 @@ function applySkillAllowedTools(skillDir: string, turn: Turn): void {
   const markdown = readUtf8File(join(skillDir, 'SKILL.md'))
   if (markdown === undefined) return
   const allowed = parseSkillFrontmatter(markdown).allowedTools
-  if (allowed !== undefined) turn.skillAllowedTools = allowed
+  // Empty allowed-tools is a no-op. A later skill intersects and cannot widen.
+  if (allowed === undefined || allowed.length === 0) return
+  if (turn.skillAllowedTools === undefined) {
+    turn.skillAllowedTools = allowed
+    return
+  }
+  const next = new Set(allowed)
+  turn.skillAllowedTools = turn.skillAllowedTools.filter((name) => next.has(name))
 }
 
 function loadSkillRoot(root: string, into: Map<string, DiscoveredSkill>): void {

@@ -1,4 +1,5 @@
 import type { PermissionDecision, PermissionRule } from '../types'
+import { isPlanFilePath } from '../tools/plan-file'
 import { runPermissionHooks } from './hooks'
 import { isInTreePath, isMutatingTool } from './modes'
 import { ruleMatches } from './rules'
@@ -31,7 +32,8 @@ export async function decidePermission(opts: DecidePermissionOpts): Promise<Perm
   if (
     opts.mode === 'plan' &&
     opts.name !== 'ExitPlanMode' &&
-    isMutatingTool(opts.name, opts.input, opts.tool)
+    isMutatingTool(opts.name, opts.input, opts.tool) &&
+    !isPlanFileMutation(opts.name, opts.input, opts.ctx.turn.cwd)
   ) {
     return {
       behavior: 'deny',
@@ -62,6 +64,15 @@ function isAcceptEditsPromote(name: string, input: unknown, cwd: string): boolea
   const path = (input as { path?: unknown }).path
   if (typeof path !== 'string' || path.length === 0) return false
   return isInTreePath(cwd, path)
+}
+
+/** Plan-mode one-path exception: Edit/Write of cwd/.ravenclaw/plan.md only. */
+export function isPlanFileMutation(name: string, input: unknown, cwd: string): boolean {
+  if (name !== 'Edit' && name !== 'Write') return false
+  if (!input || typeof input !== 'object') return false
+  const path = (input as { path?: unknown }).path
+  if (typeof path !== 'string' || path.length === 0) return false
+  return isPlanFilePath(cwd, path)
 }
 
 function firstMatch(

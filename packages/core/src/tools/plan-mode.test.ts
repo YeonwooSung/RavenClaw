@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createMemoryStore } from '../session/memory-store'
 import { decidePermission } from '../permissions/pipeline'
 import type { SessionRecord, ToolContext, Turn } from '../types'
+import { isPlanFilePath, planFilePath } from './plan-file'
 import { createPlanModeTools } from './plan-mode'
 
 const tempDirs: string[] = []
@@ -85,7 +86,7 @@ describe('createPlanModeTools', () => {
     expect(loaded.session.permissionMode).toBe('plan')
     expect(loaded.session.prePlanMode).toBe('acceptEdits')
     expect(existsSync(join(cwd, 'plan.md'))).toBe(false)
-    const planPath = join(cwd, '.ravenclaw', 'plan.md')
+    const planPath = planFilePath(cwd)
     expect(existsSync(planPath)).toBe(true)
     expect(readFileSync(planPath, 'utf8')).toBe('# Plan\n')
   })
@@ -99,7 +100,7 @@ describe('createPlanModeTools', () => {
     const { enter } = createPlanModeTools(store)
     const turn = makeTurn(session)
     const ctx = makeCtx(turn)
-    const planPath = join(cwd, '.ravenclaw', 'plan.md')
+    const planPath = planFilePath(cwd)
 
     await enter.execute({}, ctx)
     expect(readFileSync(planPath, 'utf8')).toBe('# Plan\n')
@@ -131,11 +132,57 @@ describe('createPlanModeTools', () => {
     const turn = makeTurn(session)
     const ctx = makeCtx(turn)
     await enter.execute({}, ctx)
-    const planPath = join(cwd, '.ravenclaw', 'plan.md')
+    const planPath = planFilePath(cwd)
     expect(existsSync(planPath)).toBe(true)
     await exit.execute({}, ctx)
     expect(existsSync(planPath)).toBe(true)
     expect(readFileSync(planPath, 'utf8')).toBe('# Plan\n')
+  })
+
+  test('ExitPlanMode writes last assistant text when the file is still the stub', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-plan-'))
+    tempDirs.push(cwd)
+    const store = createMemoryStore()
+    const session = makeSession({ cwd, permissionMode: 'default' })
+    await store.createSession(session)
+    const { enter, exit } = createPlanModeTools(store)
+    const turn = makeTurn(session)
+    const ctx = makeCtx(turn)
+    await enter.execute({}, ctx)
+    turn.messages.push({
+      id: 'asst_1',
+      role: 'assistant',
+      blocks: [{ type: 'text', text: '# Ship it\n1. Do the work\n' }],
+      createdAt: 2,
+    })
+
+    const out = await exit.execute({}, ctx)
+    expect(out).toBe('mode=default')
+    expect(readFileSync(planFilePath(cwd), 'utf8')).toBe('# Ship it\n1. Do the work\n')
+  })
+
+  test('ExitPlanMode does not overwrite a longer plan file', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-plan-'))
+    tempDirs.push(cwd)
+    const store = createMemoryStore()
+    const session = makeSession({ cwd, permissionMode: 'default' })
+    await store.createSession(session)
+    const { enter, exit } = createPlanModeTools(store)
+    const turn = makeTurn(session)
+    const ctx = makeCtx(turn)
+    await enter.execute({}, ctx)
+    const custom = '# Custom plan\nModel already wrote this via Write\n'
+    writeFileSync(planFilePath(cwd), custom)
+    turn.messages.push({
+      id: 'asst_1',
+      role: 'assistant',
+      blocks: [{ type: 'text', text: 'should not clobber' }],
+      createdAt: 2,
+    })
+
+    const out = await exit.execute({}, ctx)
+    expect(out).toBe('mode=default')
+    expect(readFileSync(planFilePath(cwd), 'utf8')).toBe(custom)
   })
 
   test('ExitPlanMode restores prePlanMode, upserts, and is allow in dontAsk', async () => {
@@ -234,5 +281,32 @@ describe('createPlanModeTools', () => {
       rules: { session: [], user: [], project: [] },
     })
     expect(after.behavior).toBe('allow')
+  })
+})
+
+describe('isPlanFilePath', () => {
+  test('is true for cwd/.ravenclaw/plan.md and false for other paths or missing cwd', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-plan-path-'))
+    tempDirs.push(cwd)
+    mkdirSync(join(cwd, '.ravenclaw'))
+    writeFileSync(planFilePath(cwd), '# Plan\n')
+
+    expect(isPlanFilePath(cwd, planFilePath(cwd))).toBe(true)
+    expect(isPlanFilePath(cwd, '.ravenclaw/plan.md')).toBe(true)
+    expect(isPlanFilePath(cwd, join('..', 'plan.md'))).toBe(false)
+    expect(isPlanFilePath(cwd, 'src/a.ts')).toBe(false)
+    expect(isPlanFilePath(cwd, 'plan.md')).toBe(false)
+    expect(isPlanFilePath(join(cwd, 'missing-cwd'), '.ravenclaw/plan.md')).toBe(false)
+  })
+
+  test('is false when a symlink escapes the plan file', () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-plan-link-'))
+    const outside = mkdtempSync(join(tmpdir(), 'ravenclaw-plan-out-'))
+    tempDirs.push(cwd, outside)
+    mkdirSync(join(cwd, '.ravenclaw'))
+    writeFileSync(join(outside, 'plan.md'), 'escaped\n')
+    symlinkSync(join(outside, 'plan.md'), planFilePath(cwd))
+    expect(isPlanFilePath(cwd, '.ravenclaw/plan.md')).toBe(false)
+    expect(isPlanFilePath(cwd, planFilePath(cwd))).toBe(false)
   })
 })

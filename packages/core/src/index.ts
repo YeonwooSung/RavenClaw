@@ -85,6 +85,7 @@ export { cyclePermissionMode, isMutatingTool } from './permissions/modes'
 export { loadPermissionRules, persistAllowAlways } from './permissions/rules'
 export { safetyCheck } from './permissions/safety'
 export { createPlanModeTools } from './tools/plan-mode'
+export { planFilePath, isPlanFilePath } from './tools/plan-file'
 export {
   discoverSkills,
   filterToolsForTurn,
@@ -105,6 +106,8 @@ export type { PromptBuildInput } from './prompt/builder'
 export { loadMemorySnapshot } from './prompt/memory'
 export { createAgentTool } from './tools/agent'
 export type { AgentInput } from './tools/agent'
+export { loadLocalPlugins } from './plugins/load'
+export type { PluginManifest, PluginToolSpec } from './plugins/load'
 export { rootAgent } from './agent/root'
 export { generalAgent } from './agent/general'
 export {

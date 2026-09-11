@@ -81,6 +81,20 @@ describe('Read', () => {
     expect(out).not.toContain('delta')
   })
 
+  test('small png returns IMAGE::image/png::<base64> and records readFiles', async () => {
+    const root = fixtureRoot()
+    const png = Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64',
+    )
+    writeFileSync(join(root, 'dot.png'), png)
+    const ctx = makeCtx(root)
+
+    const out = await readTool.execute({ path: 'dot.png' }, ctx)
+    expect(out).toBe(`IMAGE::image/png::${png.toString('base64')}`)
+    expect(ctx.turn.readFiles.has(resolve(root, 'dot.png'))).toBe(true)
+  })
+
   test('binary files return an error string and are not added to readFiles', async () => {
     const root = fixtureRoot()
     writeFileSync(join(root, 'blob.bin'), Buffer.from([0x00, 0x01, 0x02, 0xff]))

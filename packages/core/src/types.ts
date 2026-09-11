@@ -1,4 +1,4 @@
-export type ApiMode = 'openai_compat' | 'anthropic_messages'
+export type ApiMode = 'openai_compat' | 'anthropic_messages' | 'openai_responses'
 export type SystemTier = 'stable' | 'context' | 'volatile'
 
 export interface SystemPart {
@@ -63,12 +63,17 @@ export type ContentBlock =
   | { type: 'text'; text: string }
   | { type: 'thinking'; text: string }
   | { type: 'tool_use'; id: string; name: string; input: unknown }
+  | { type: 'image'; mediaType: string; data: string }
+
+export type UserOrToolBlock =
+  | { type: 'text'; text: string }
+  | { type: 'image'; mediaType: string; data: string }
 
 export type Message =
   | {
       id: string
       role: 'user'
-      blocks: Array<{ type: 'text'; text: string }>
+      blocks: UserOrToolBlock[]
       createdAt: number
     }
   | {
@@ -83,7 +88,7 @@ export type Message =
       role: 'tool'
       toolUseId: string
       ok: boolean
-      blocks: Array<{ type: 'text'; text: string }>
+      blocks: UserOrToolBlock[]
       persistPath?: string
       createdAt: number
     }

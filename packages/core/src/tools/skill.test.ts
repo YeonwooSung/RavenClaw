@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { mergeToolPool } from '../mcp/tools'
 import type { Tool, ToolContext, Turn } from '../types'
 import {
   discoverSkills,
@@ -109,6 +110,18 @@ describe('parseSkillFrontmatter', () => {
     expect('description' in empty).toBe(false)
     expect('version' in empty).toBe(false)
     expect('allowedTools' in empty).toBe(false)
+  })
+
+  test('empty allowed-tools is omitted so it cannot deny every tool', () => {
+    const bracket = parseSkillFrontmatter(
+      ['---', 'name: empty', 'allowed-tools: []', '---', '', 'body'].join('\n'),
+    )
+    expect('allowedTools' in bracket).toBe(false)
+
+    const bare = parseSkillFrontmatter(
+      ['---', 'name: empty', 'allowed-tools:', '---', '', 'body'].join('\n'),
+    )
+    expect('allowedTools' in bare).toBe(false)
   })
 })
 
@@ -314,6 +327,85 @@ describe('Skill', () => {
     expect(ctx.turn.skillAllowedTools).toBeUndefined()
   })
 
+  test('empty allowed-tools does not mutate the turn pool', async () => {
+    const home = tempDir('ravenclaw-skill-home-')
+    const cwd = tempDir('ravenclaw-skill-cwd-')
+    process.env[ENV_KEY] = home
+    writeSkill(
+      join(cwd, '.ravenclaw', 'skills'),
+      'empty',
+      ['---', 'name: empty', 'description: Empty list', 'allowed-tools: []', '---', '', 'empty body'].join(
+        '\n',
+      ),
+    )
+    writeSkill(
+      join(cwd, '.ravenclaw', 'skills'),
+      'narrow',
+      [
+        '---',
+        'name: narrow',
+        'description: Narrow list',
+        'allowed-tools: Read, Grep',
+        '---',
+        '',
+        'narrow body',
+      ].join('\n'),
+    )
+
+    const unset = makeCtx(cwd)
+    const emptyOut = await skillTool.execute({ name: 'empty' }, unset)
+    expect(emptyOut).toContain('empty body')
+    expect(emptyOut).not.toMatch(/This skill suggests/)
+    expect(unset.turn.skillAllowedTools).toBeUndefined()
+
+    const already = makeCtx(cwd)
+    await skillTool.execute({ name: 'narrow' }, already)
+    expect(already.turn.skillAllowedTools).toEqual(['Read', 'Grep'])
+    await skillTool.execute({ name: 'empty' }, already)
+    expect(already.turn.skillAllowedTools).toEqual(['Read', 'Grep'])
+  })
+
+  test('a second skill intersects allowed-tools and cannot widen', async () => {
+    const home = tempDir('ravenclaw-skill-home-')
+    const cwd = tempDir('ravenclaw-skill-cwd-')
+    process.env[ENV_KEY] = home
+    writeSkill(
+      join(cwd, '.ravenclaw', 'skills'),
+      'first',
+      [
+        '---',
+        'name: first',
+        'description: First skill',
+        'allowed-tools: Read, Grep, Edit',
+        '---',
+        '',
+        'first body',
+      ].join('\n'),
+    )
+    writeSkill(
+      join(cwd, '.ravenclaw', 'skills'),
+      'second',
+      [
+        '---',
+        'name: second',
+        'description: Second skill',
+        'allowed-tools: Grep, Write, Skill, Agent',
+        '---',
+        '',
+        'second body',
+      ].join('\n'),
+    )
+
+    const ctx = makeCtx(cwd)
+    await skillTool.execute({ name: 'first' }, ctx)
+    expect(ctx.turn.skillAllowedTools).toEqual(['Read', 'Grep', 'Edit'])
+    await skillTool.execute({ name: 'second' }, ctx)
+    expect(ctx.turn.skillAllowedTools).toEqual(['Grep'])
+    expect(ctx.turn.skillAllowedTools).not.toContain('Write')
+    expect(ctx.turn.skillAllowedTools).not.toContain('Skill')
+    expect(ctx.turn.skillAllowedTools).not.toContain('Agent')
+  })
+
   test('unknown skill name returns an error string', async () => {
     const home = tempDir('ravenclaw-skill-home-')
     const cwd = tempDir('ravenclaw-skill-cwd-')
@@ -386,5 +478,62 @@ describe('filterToolsForTurn', () => {
     const before = pool.map((tool) => tool.name)
     filterToolsForTurn(pool, turn)
     expect(pool.map((tool) => tool.name)).toEqual(before)
+  })
+
+  test('keeps remaining builtins as a contiguous sorted prefix ahead of surviving MCP tools', () => {
+    const builtins = [
+      namedTool('Write'),
+      namedTool('Read'),
+      namedTool('Grep'),
+      namedTool('Bash'),
+      namedTool('Skill'),
+      namedTool('Agent'),
+      namedTool('EnterPlanMode'),
+      namedTool('ExitPlanMode'),
+      namedTool('Edit'),
+      namedTool('Glob'),
+    ]
+    const mcp = [namedTool('zeta'), namedTool('alpha'), namedTool('mcp_read')]
+    const merged = mergeToolPool(builtins, mcp)
+    expect(merged.map((tool) => tool.name)).toEqual([
+      'Agent',
+      'Bash',
+      'Edit',
+      'EnterPlanMode',
+      'ExitPlanMode',
+      'Glob',
+      'Grep',
+      'Read',
+      'Skill',
+      'Write',
+      'alpha',
+      'mcp_read',
+      'zeta',
+    ])
+
+    const turn = makeTurn('/tmp')
+    turn.skillAllowedTools = ['Read', 'Grep', 'zeta', 'alpha']
+    const names = filterToolsForTurn(merged, turn).map((tool) => tool.name)
+    const builtinNames = new Set(builtins.map((tool) => tool.name))
+    const prefix = names.filter((name) => builtinNames.has(name))
+    const suffix = names.filter((name) => !builtinNames.has(name))
+
+    expect(names.slice(0, prefix.length)).toEqual(prefix)
+    expect(prefix).toEqual([...prefix].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)))
+    expect(suffix).toEqual([...suffix].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0)))
+    expect(names).toEqual([
+      'Agent',
+      'EnterPlanMode',
+      'ExitPlanMode',
+      'Grep',
+      'Read',
+      'Skill',
+      'alpha',
+      'zeta',
+    ])
+    expect(names).not.toContain('Edit')
+    expect(names).not.toContain('Write')
+    expect(names).not.toContain('Bash')
+    expect(names).not.toContain('mcp_read')
   })
 })

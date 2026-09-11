@@ -155,6 +155,40 @@ function abortLike(): DOMException {
   return new DOMException('The operation was aborted.', 'AbortError')
 }
 
+function isImageBlock(block: {
+  type: string
+  mediaType?: string
+  data?: string
+}): block is { type: 'image'; mediaType: string; data: string } {
+  return (
+    block.type === 'image' &&
+    typeof block.mediaType === 'string' &&
+    block.mediaType.length > 0 &&
+    typeof block.data === 'string' &&
+    block.data.length > 0
+  )
+}
+
+function mapOpenAIMultimodal(
+  blocks: Array<{ type: string; text?: string; mediaType?: string; data?: string }>,
+): string | unknown[] {
+  const parts: unknown[] = []
+  let hasImage = false
+  for (const block of blocks) {
+    if (block.type === 'text' && typeof block.text === 'string') {
+      parts.push({ type: 'text', text: block.text })
+    } else if (isImageBlock(block)) {
+      hasImage = true
+      parts.push({
+        type: 'image_url',
+        image_url: { url: `data:${block.mediaType};base64,${block.data}` },
+      })
+    }
+  }
+  if (!hasImage) return joinText(blocks, false)
+  return parts
+}
+
 function joinText(blocks: Array<{ type: string; text?: string }>, includeThinking: boolean): string {
   let out = ''
   for (const block of blocks) {
@@ -179,14 +213,14 @@ function buildOpenAIMessages(
   }
   for (const msg of messages) {
     if (msg.role === 'user') {
-      out.push({ role: 'user', content: joinText(msg.blocks, false) })
+      out.push({ role: 'user', content: mapOpenAIMultimodal(msg.blocks) })
       continue
     }
     if (msg.role === 'tool') {
       out.push({
         role: 'tool',
         tool_call_id: msg.toolUseId,
-        content: joinText(msg.blocks, false),
+        content: mapOpenAIMultimodal(msg.blocks),
       })
       continue
     }
