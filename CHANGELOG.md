@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.20 — 2026-09-11
+
+GitHub issue and pull request templates.
+
+### Added
+- Bug form: version, repro, `raven doctor` (no secrets)
+- Feature form: problem, proposal, whether a key is required
+- PR checklist: tests, no keys in the diff, ads isolation, pairing tests
+
+### Try it
+
+https://github.com/YeonwooSung/RavenClaw/issues/new/choose
+
 ## 0.1.19 — 2026-09-11
 
 Contributor guide.
