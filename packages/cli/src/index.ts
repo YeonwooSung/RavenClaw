@@ -21,6 +21,7 @@ import {
 } from './resume'
 import { runOpenTuiApp } from './opentui-app'
 import { formatPublicConfig } from './config-print'
+import { completionsScript } from './completions'
 import { initProject } from './init'
 import { doctorFailed, formatDoctorReport, runDoctor } from './doctor'
 import { searchCliSessions } from './search'
@@ -112,6 +113,16 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
       return 1
     }
+  }
+
+  if (parsed.cmd === 'completions') {
+    const script = completionsScript(parsed.prompt ?? '')
+    if ('error' in script) {
+      process.stderr.write(`${script.error}\n`)
+      return 2
+    }
+    process.stdout.write(script.text)
+    return 0
   }
 
   if (parsed.cmd === 'init') {

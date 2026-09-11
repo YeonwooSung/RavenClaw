@@ -84,6 +84,15 @@ After setup, `bun run smoke` (or `raven smoke`) does one live turn and expects t
 
 `bun run raven sessions` lists recent sessions for this directory. `bun run raven show <id>` prints the transcript. `bun run raven rm <id>` deletes it (and child Agent sessions). `bun run raven resume` lists; `raven resume <id>` opens that session in the TUI (needs a key). `bun run raven search <query>` searches this directory (`--all` for every session). `bun run raven export <id>` prints Markdown. `bun run raven title <id> <name>` sets the title. `bun run raven doctor` checks home, `.env`, and config without printing secrets. `bun run raven config` prints the resolved settings with secrets redacted. `bun run raven init` writes `AGENTS.md` if missing. Prefix ids are ok.
 
+Shell completion:
+
+```bash
+# bash
+eval "$(bun run raven completions bash)"
+# zsh
+eval "$(bun run raven completions zsh)"
+```
+
 `bun run raven` or `bun run raven setup` writes `~/.ravenclaw/.env` when no key is configured. On a TTY the key is masked with `*`. `exec` and `acp` print a hint instead of prompting.
 
 This process is the same OS user as you. There is no network sandbox. Writes under `~/.ssh/id_*` and `$RAVENCLAW_HOME/state.db` are hard-denied; `.env` writes ask first.

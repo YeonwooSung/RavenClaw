@@ -84,6 +84,14 @@ describe('parseArgv', () => {
     expect(parseArgv(['sessions'])).toEqual({ cmd: 'sessions', flags: {} })
   })
 
+  test('completions takes bash or zsh as the prompt', () => {
+    expect(parseArgv(['completions', 'zsh'])).toEqual({
+      cmd: 'completions',
+      prompt: 'zsh',
+      flags: {},
+    })
+  })
+
   test('init selects the init command', () => {
     expect(parseArgv(['init'])).toEqual({ cmd: 'init', flags: {} })
   })

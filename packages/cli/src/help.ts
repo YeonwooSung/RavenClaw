@@ -20,6 +20,7 @@ Usage:
   raven doctor
   raven config
   raven init
+  raven completions bash|zsh
   raven --help
   raven --version
 
@@ -39,6 +40,7 @@ Commands:
   doctor        Check home, .env, config.yaml, and Bun (no secrets printed)
   config        Print resolved settings with secrets redacted
   init          Write AGENTS.md in this directory if missing
+  completions   Print bash or zsh completion script to stdout
 
 Options:
   --provider <anthropic|openai_compat>
