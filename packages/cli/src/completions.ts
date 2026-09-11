@@ -14,6 +14,7 @@ export const COMPLETION_COMMANDS = [
   'config',
   'init',
   'completions',
+  'mcp',
   'help',
   'version',
 ] as const

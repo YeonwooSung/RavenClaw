@@ -22,6 +22,7 @@ import {
 import { runOpenTuiApp } from './opentui-app'
 import { formatPublicConfig } from './config-print'
 import { completionsScript } from './completions'
+import { formatMcpList, loadMcpServers } from './mcp-list'
 import { initProject } from './init'
 import { doctorFailed, formatDoctorReport, runDoctor } from './doctor'
 import { searchCliSessions } from './search'
@@ -113,6 +114,16 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
       return 1
     }
+  }
+
+  if (parsed.cmd === 'mcp') {
+    const sub = (parsed.prompt ?? 'list').trim().toLowerCase()
+    if (sub !== '' && sub !== 'list') {
+      process.stderr.write('usage: raven mcp [list]\n')
+      return 2
+    }
+    process.stdout.write(`${formatMcpList(loadMcpServers())}\n`)
+    return 0
   }
 
   if (parsed.cmd === 'completions') {

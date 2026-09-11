@@ -19,6 +19,7 @@ describe('help text', () => {
     expect(HELP_TEXT).toContain('raven config')
     expect(HELP_TEXT).toContain('raven init')
     expect(HELP_TEXT).toContain('raven completions')
+    expect(HELP_TEXT).toContain('raven mcp')
     expect(HELP_TEXT).toContain('--tui')
     expect(HELP_TEXT).toContain('--help')
     expect(HELP_TEXT).toContain('--version')

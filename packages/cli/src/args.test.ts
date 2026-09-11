@@ -84,6 +84,11 @@ describe('parseArgv', () => {
     expect(parseArgv(['sessions'])).toEqual({ cmd: 'sessions', flags: {} })
   })
 
+  test('mcp lists configured servers', () => {
+    expect(parseArgv(['mcp'])).toEqual({ cmd: 'mcp', flags: {} })
+    expect(parseArgv(['mcp', 'list'])).toEqual({ cmd: 'mcp', prompt: 'list', flags: {} })
+  })
+
   test('completions takes bash or zsh as the prompt', () => {
     expect(parseArgv(['completions', 'zsh'])).toEqual({
       cmd: 'completions',
