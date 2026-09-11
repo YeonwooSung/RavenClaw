@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.10 — 2026-09-11
+
+Delete a saved session from the shell.
+
+### Added
+- `raven rm <id>` deletes a session, its child Agent sessions, messages, and permission rules
+- Accepts an id prefix; missing ids exit 1
+- `SessionStore.deleteSession` on SQLite and memory stores
+- No API key required
+
+### Try it
+
+```bash
+git clone --branch v0.1.10 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+bun run raven sessions
+bun run raven rm <id>
+```
+
 ## 0.1.9 — 2026-09-11
 
 Print a saved session transcript from the shell.
