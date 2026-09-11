@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.21 — 2026-09-11
+
+Security policy and Dependabot.
+
+### Added
+- [SECURITY.md](SECURITY.md): do not paste keys; use GitHub Security Advisories for exfil / path-escape / permission-bypass
+- Weekly Dependabot updates for GitHub Actions
+
+### Try it
+
+https://github.com/YeonwooSung/RavenClaw/security/advisories/new
+
 ## 0.1.20 — 2026-09-11
 
 GitHub issue and pull request templates.
