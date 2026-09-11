@@ -15,6 +15,7 @@ Usage:
   raven rm <id>
   raven resume [id]
   raven search [--all] <query>
+  raven export <id>
   raven --help
   raven --version
 
@@ -29,6 +30,7 @@ Commands:
   rm <id>       Delete a session and its child agents (prefix ok; no API key)
   resume [id]   List sessions, or open one in the TUI (id needs a key)
   search <q>    Search session text (this directory; --all for every session)
+  export <id>   Print a session as Markdown (full tool bodies; no API key)
 
 Options:
   --provider <anthropic|openai_compat>

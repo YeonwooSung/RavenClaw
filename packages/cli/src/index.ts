@@ -12,6 +12,7 @@ import { SETUP_HINT, providerConfigured, runFirstRun } from './first-run'
 import { readSecretLine } from './secret-input'
 import {
   deleteCliSession,
+  exportCliSession,
   formatResumeSessionLine,
   listCliSessions,
   resolveCliSessionId,
@@ -107,6 +108,16 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
       return 1
     }
+  }
+
+  if (parsed.cmd === 'export') {
+    const exported = await exportCliSession(parsed.prompt ?? '')
+    if ('error' in exported) {
+      process.stderr.write(`${exported.error}\n`)
+      return exported.error.startsWith('usage:') ? 2 : 1
+    }
+    process.stdout.write(exported.text)
+    return 0
   }
 
   if (parsed.cmd === 'search') {

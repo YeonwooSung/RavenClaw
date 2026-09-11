@@ -170,8 +170,8 @@ describe('runOpenTuiApp', () => {
     expect(code).toBe(0)
     expect(store.filters).toEqual([{ cwd: '/proj', limit: 20 }])
     const out = written.join('')
-    expect(out).toContain('session-  Fix login  1700000000000')
-    expect(out).toContain('otherid1  claude-sonnet  1700000001000')
+    expect(out).toContain('session-  Fix login  2023-11-14T22:13:20.000Z')
+    expect(out).toContain('otherid1  claude-sonnet  2023-11-14T22:13:21.000Z')
     expect(out).not.toContain('unknown command')
   })
 

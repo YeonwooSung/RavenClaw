@@ -12,10 +12,14 @@ function openStore(home: string) {
   }
 }
 
+export function formatSessionWhen(ms: number): string {
+  return new Date(ms).toISOString()
+}
+
 export function formatResumeSessionLine(session: SessionRecord): string {
   const label =
     session.title !== undefined && session.title !== '' ? session.title : session.model
-  return `${session.id.slice(0, 8)}  ${label}  ${session.updatedAt}`
+  return `${session.id.slice(0, 8)}  ${label}  ${formatSessionWhen(session.updatedAt)}`
 }
 
 export async function listCliSessions(opts?: {
@@ -57,6 +61,60 @@ export function formatSessionTranscript(
   const header = formatResumeSessionLine(session)
   const body = messages.map(formatMessageLine).join('\n')
   return body === '' ? header : `${header}\n${body}`
+}
+
+export function formatSessionMarkdown(
+  session: SessionRecord,
+  messages: Message[],
+): string {
+  const title =
+    session.title !== undefined && session.title !== '' ? session.title : session.model
+  const lines = [
+    `# ${title}`,
+    '',
+    `- id: \`${session.id}\``,
+    `- updated: ${formatSessionWhen(session.updatedAt)}`,
+    `- model: ${session.model}`,
+    '',
+  ]
+  for (const message of messages) {
+    if (message.role === 'user') {
+      lines.push('## User', '', textOf(message), '')
+      continue
+    }
+    if (message.role === 'assistant') {
+      const tools = message.blocks.filter((b) => b.type === 'tool_use')
+      const text = textOf(message)
+      const names = tools.map((b) => (b.type === 'tool_use' ? b.name : '')).join(', ')
+      lines.push('## Assistant', '')
+      if (text !== '') lines.push(text, '')
+      if (names !== '') lines.push(`Tools: ${names}`, '')
+      continue
+    }
+    const body = textOf(message)
+    lines.push(`### Tool (${message.ok ? 'ok' : 'err'})`, '', '```', body, '```', '')
+  }
+  return lines.join('\n').trimEnd() + '\n'
+}
+
+export async function exportCliSession(
+  prefix: string,
+  opts?: { home?: string },
+): Promise<{ text: string } | { error: string }> {
+  const id = prefix.trim()
+  if (id === '') return { error: 'usage: raven export <session-id>' }
+  const home = opts?.home ?? ravenclawHome()
+  const store = openStore(home)
+  try {
+    const resolved = await resolveSessionId(store, id)
+    if (typeof resolved !== 'string') return resolved
+    const loaded = await store.loadSession(resolved)
+    return { text: formatSessionMarkdown(loaded.session, loaded.messages) }
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) }
+  } finally {
+    store.close()
+  }
 }
 
 export async function deleteCliSession(

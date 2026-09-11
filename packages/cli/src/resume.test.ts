@@ -8,6 +8,8 @@ import {
   formatResumeSessionLine,
   listCliSessions,
   deleteCliSession,
+  exportCliSession,
+  formatSessionMarkdown,
   resolveCliSessionId,
   showCliSession,
 } from './resume'
@@ -30,13 +32,17 @@ function session(over: Partial<SessionRecord> = {}): SessionRecord {
 describe('formatResumeSessionLine', () => {
   test('uses title when present', () => {
     expect(formatResumeSessionLine(session({ title: 'Fix login' }))).toBe(
-      'abcdefgh  Fix login  99',
+      'abcdefgh  Fix login  1970-01-01T00:00:00.099Z',
     )
   })
 
   test('falls back to model when title is missing or empty', () => {
-    expect(formatResumeSessionLine(session())).toBe('abcdefgh  dummy-model  99')
-    expect(formatResumeSessionLine(session({ title: '' }))).toBe('abcdefgh  dummy-model  99')
+    expect(formatResumeSessionLine(session())).toBe(
+      'abcdefgh  dummy-model  1970-01-01T00:00:00.099Z',
+    )
+    expect(formatResumeSessionLine(session({ title: '' }))).toBe(
+      'abcdefgh  dummy-model  1970-01-01T00:00:00.099Z',
+    )
   })
 })
 
@@ -100,7 +106,7 @@ describe('showCliSession', () => {
     const shown = await showCliSession('showid00', { home })
     expect(shown).toHaveProperty('text')
     if (!('text' in shown)) throw new Error('expected text')
-    expect(shown.text).toContain('showid00  Demo  5')
+    expect(shown.text).toContain('showid00  Demo  1970-01-01T00:00:00.005Z')
     expect(shown.text).toContain('user: hello')
     expect(shown.text).toContain('assistant: hi there')
   })
@@ -144,6 +150,57 @@ describe('deleteCliSession', () => {
     expect(await showCliSession('rmid0000', { home })).toEqual({
       error: 'session not found: rmid0000',
     })
+  })
+})
+
+describe('exportCliSession', () => {
+  test('writes markdown with full tool bodies', async () => {
+    const home = join(tmpdir(), `raven-export-${Date.now()}`)
+    mkdirSync(home, { recursive: true })
+    const store = createSqliteStore(join(home, 'state.db')) as ReturnType<
+      typeof createSqliteStore
+    > & { close(): void }
+    const rec = session({ id: 'expid0001234', cwd: home, title: 'Export me', updatedAt: 5 })
+    await store.upsertSession(rec)
+    await store.persistUser(rec.id, {
+      id: 'u1',
+      role: 'user',
+      blocks: [{ type: 'text', text: 'hello' }],
+      createdAt: 1,
+    })
+    await store.persistAssistant(rec.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'text', text: 'hi there' }],
+      createdAt: 2,
+    })
+    store.close()
+
+    const exported = await exportCliSession('expid000', { home })
+    expect(exported).toHaveProperty('text')
+    if (!('text' in exported)) throw new Error('expected text')
+    expect(exported.text).toContain('# Export me')
+    expect(exported.text).toContain('## User')
+    expect(exported.text).toContain('hello')
+    expect(exported.text).toContain('## Assistant')
+    expect(exported.text).toContain('hi there')
+    expect(exported.text).toContain('1970-01-01T00:00:00.005Z')
+  })
+
+  test('formatSessionMarkdown includes a fenced tool body', () => {
+    const md = formatSessionMarkdown(session({ title: 'T' }), [
+      {
+        id: 't1',
+        role: 'tool',
+        toolUseId: 'c1',
+        ok: true,
+        blocks: [{ type: 'text', text: 'x'.repeat(250) }],
+        createdAt: 1,
+      },
+    ])
+    expect(md).toContain('### Tool (ok)')
+    expect(md).toContain('```')
+    expect(md).toContain('x'.repeat(250))
   })
 })
 

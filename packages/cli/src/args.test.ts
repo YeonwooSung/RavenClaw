@@ -84,6 +84,14 @@ describe('parseArgv', () => {
     expect(parseArgv(['sessions'])).toEqual({ cmd: 'sessions', flags: {} })
   })
 
+  test('export takes the remaining args as the session id', () => {
+    expect(parseArgv(['export', 'abc123'])).toEqual({
+      cmd: 'export',
+      prompt: 'abc123',
+      flags: {},
+    })
+  })
+
   test('search takes the query and optional --all', () => {
     expect(parseArgv(['search', 'pairing'])).toEqual({
       cmd: 'search',
