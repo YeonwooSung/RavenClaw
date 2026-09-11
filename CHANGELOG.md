@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.11 — 2026-09-11
+
+Resume a saved session from the shell.
+
+### Added
+- `raven resume` with no id lists sessions (same as `raven sessions`)
+- `raven resume <id>` opens that session in the TUI (prefix ok)
+- `--tui opentui` works on resume
+- Listing needs no key; opening a session does
+
+### Try it
+
+```bash
+git clone --branch v0.1.11 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+bun run raven resume
+bun run raven resume <id>
+```
+
 ## 0.1.10 — 2026-09-11
 
 Delete a saved session from the shell.
