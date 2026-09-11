@@ -60,7 +60,7 @@ function handleMessage(message: unknown): void {
     reply(rec.id, {
       protocolVersion: PROTOCOL_VERSION,
       capabilities: { tools: {} },
-      serverInfo: { name: 'fs', version: '0.1.3' },
+      serverInfo: { name: 'fs', version: '0.1.4' },
     })
     return
   }

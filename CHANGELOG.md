@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.4 — 2026-09-11
+
+First-run setup no longer echoes the API key.
+
+### Added
+- TTY `raven setup` / first-run uses raw mode and prints `*` per character
+- Backspace and Ctrl-C on the secret prompt
+- The key is never written back to the prompt stream
+
+### Try it
+
+```bash
+git clone --branch v0.1.4 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+bun run raven setup
+```
+
 ## 0.1.3 — 2026-09-11
 
 CI covers a real stdio MCP filesystem server, not just echo.
