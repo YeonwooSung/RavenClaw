@@ -26,7 +26,7 @@ bun run smoke
 
 | Package | Role |
 |---|---|
-| `packages/core` | query loop, tools, permissions, sessions, MCP merge |
+| `packages/core` | query loop, tools, permissions, sessions, MCP, skills |
 | `packages/providers` | Anthropic, OpenAI-compat, Responses, included gateway |
 | `packages/ads` | first-party ads (must not import `@ravenclaw/core`) |
 | `packages/sdk` | `createRavenSession` (no Ink, ads, or CLI) |
@@ -57,6 +57,10 @@ bun test packages/cli/src/doctor.test.ts
 4. Add parse + behavior tests.
 
 Commands that must not require a key: `help`, `version`, `sessions`, `show`, `rm`, `search`, `export`, `title`, `doctor`, `config`, `init`, `completions`, `mcp`, `skills`, `cron` (list/add/rm/on/off; `tick`/`watch` need a key if a job fires).
+
+In-session slash commands live in `packages/cli/src/commands.ts` (`SLASH_COMMANDS`). Add `/loop` and `/skills` subcommands there, then handle them in `app.tsx` and `opentui-app.ts`. Builtin skills are `packages/core/src/skills/builtin/<name>/SKILL.md` — keep frontmatter `name` + `description`, no vendor brand strings. `bun test packages/core/src/skills/` checks that.
+
+When you add a user-facing flag or slash, update `README.md` in the same PR.
 
 ## Releases
 

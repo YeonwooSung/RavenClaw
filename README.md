@@ -28,6 +28,8 @@ ANTHROPIC_API_KEY=sk-ant-...
 # or:
 # OPENAI_API_KEY=sk-...
 # OPENAI_BASE_URL=https://api.openai.com/v1
+# BRAVE_API_KEY=...          # optional WebSearch
+# SERPER_API_KEY=...         # optional WebSearch
 EOF
 chmod 600 ~/.ravenclaw/.env
 ```
@@ -53,9 +55,12 @@ mcp:
     - name: filesystem
       command: npx
       args: ["-y", "@modelcontextprotocol/server-filesystem", "."]
+    # - name: remote
+    #   type: http                 # http | sse | stdio (default)
+    #   url: https://example/mcp
 ```
 
-A server that fails to spawn or list tools is skipped; RavenClaw still boots. Built-in tool names win if an MCP tool collides. CI spawns the in-repo `echo_n` and `fs_list`/`fs_read` fixtures over real stdio.
+A server that fails to spawn or list tools is skipped; RavenClaw still boots. Built-in tool names win if an MCP tool collides.
 
 Optional memory files (context snapshot, 8k/file, 16k total): `~/.ravenclaw/USER.md`, `~/.ravenclaw/MEMORY.md`, and the same names under the project root or `.ravenclaw/`.
 
@@ -69,58 +74,76 @@ Both use the OpenAI Chat Completions API. No cloud key is required.
 
 ```bash
 ollama pull llama3.2
-# or: ollama pull qwen2.5-coder
 bun run raven setup          # choose 3) Ollama
-# or:
-echo 'OLLAMA_HOST=http://127.0.0.1:11434' >> ~/.ravenclaw/.env
 bun run raven --provider ollama --model llama3.2
-bun run raven exec --provider ollama --model qwen2.5-coder "say hi"
 ```
 
-**vLLM** (default `http://127.0.0.1:8000/v1`, model `local-model` — pass the name you served):
+**vLLM** (default `http://127.0.0.1:8000/v1`):
 
 ```bash
-# example
-python -m vllm.entrypoints.openai.api_server --model Qwen/Qwen2.5-Coder-7B-Instruct
 echo 'VLLM_BASE_URL=http://127.0.0.1:8000/v1' >> ~/.ravenclaw/.env
 bun run raven --provider vllm --model Qwen/Qwen2.5-Coder-7B-Instruct
 ```
 
-`config.yaml`:
-
-```yaml
-provider: ollama
-model: qwen2.5-coder
-```
-
 ## Run
 
-Interactive TUI:
-
 ```bash
-bun run raven
+bun run raven                          # Ink TUI (default)
 bun run raven --tui opentui
-```
-
-Headless (forces `dontAsk`):
-
-```bash
-bun run raven exec "list the TypeScript files in this repo"
+bun run raven exec "list TypeScript files"
 bun run raven exec --json "summarize README.md"
-bun run raven acp
+bun run raven acp                      # editor JSON-RPC, dontAsk
 ```
 
-Editor ACP is newline-delimited JSON-RPC on stdin/stdout (`dontAsk`). `session/load` resumes an existing SQLite session id.
+`bun run raven` or `bun run raven setup` writes `~/.ravenclaw/.env` when no key is configured. `exec` and `acp` print a hint instead of prompting.
 
-In the TUI, `/search <query>` searches this session (FTS5). `/search --all <query>` searches all sessions.
+After setup, `bun run smoke` does one live text-only turn and expects `pong`. CI does not run this.
 
-Useful flags: `--help`, `--version`, `--dont-ask`, `--provider anthropic`, `--model anthropic/claude-sonnet-4`, `--tui ink|opentui`.
+### CLI commands
 
-After setup, `bun run smoke` (or `raven smoke`) does one live text-only turn and expects the model to say `pong`. Without a key it prints the setup hint and exits 1. CI does not run this.
+| Command | Key? | What it does |
+|---|---|---|
+| `(default)` | yes | Interactive TUI |
+| `exec <prompt>` | yes | One-shot; forces `dontAsk` |
+| `acp` | yes | Agent Client Protocol on stdin/stdout |
+| `setup` | no | Write `~/.ravenclaw/.env` |
+| `smoke` | yes | Live ping; expects `pong` |
+| `sessions` | no | List recent sessions for this directory |
+| `show <id>` | no | Print transcript |
+| `rm <id>` | no | Delete a session and child Agent sessions |
+| `resume [id]` | list no / open yes | List or open a session |
+| `search [--all] <q>` | no | FTS5 search (this directory, or all) |
+| `export <id>` | no | Markdown transcript |
+| `title <id> <name>` | no | Set session title |
+| `doctor` | no | Home, `.env`, config, local LLM reachability (secrets redacted) |
+| `config` | no | Resolved settings, secrets redacted |
+| `init` | no | Write `AGENTS.md` if missing |
+| `completions bash\|zsh` | no | Shell completion script |
+| `mcp [list\|tools]` | no | List MCP servers, or spawn and list tool names |
+| `skills [new\|rm <name>]` | no | List / create / delete skills (`--project` = cwd) |
+| `cron list\|add\|rm\|on\|off` | no | Local scheduled jobs |
+| `cron tick\|watch` | if a job fires | Run due jobs once, or poll |
 
-`bun run raven sessions` lists recent sessions for this directory. `bun run raven show <id>` prints the transcript. `bun run raven rm <id>` deletes it (and child Agent sessions). `bun run raven resume` lists; `raven resume <id>` opens that session in the TUI (needs a key). `bun run raven search <query>` searches this directory (`--all` for every session). `bun run raven export <id>` prints Markdown. `bun run raven title <id> <name>` sets the title. `bun run raven doctor` checks home, `.env`, config, and (when configured) whether Ollama or vLLM answers, without printing secrets. `bun run raven config` prints the resolved settings with secrets redacted. `bun run raven mcp` lists configured MCP servers without spawning them. `bun run raven mcp tools` spawns each server and prints tool names. `bun run raven skills` lists user and project skills. `bun run raven skills new <name>` writes `SKILL.md` (`--project` for this repo). `bun run raven skills rm <name>` deletes it. `bun run raven init` writes `AGENTS.md` if missing. Prefix ids are ok.
+Prefix session ids are ok.
 
-Shell completion:
+### Flags
+
+| Flag | Meaning |
+|---|---|
+| `--provider` | `anthropic` \| `openai_compat` \| `ollama` \| `vllm` |
+| `--model <id>` | Model id |
+| `--tui ink\|opentui` | TUI host (default Ink) |
+| `--dont-ask` | Leftover asks become denials (except in-tree Edit/Write and read-only tools) |
+| `--json` | `exec` only: StreamEvents as JSONL |
+| `--fallback-model <id>` | On a retryable stream failure, switch to this model |
+| `--allowed-tools a,b` | Restrict the tool pool (plan tools stay) |
+| `--worktree [name]` | Start in a detached git worktree under `.ravenclaw/worktrees` |
+| `--json-schema <json>` | Require a `StructuredOutput` call matching this object schema |
+| `--agent <id>` | Start with that catalog or disk agent's tools |
+| `--add-dir <path>` | Extra permission root (repeatable) |
+| `--cwd <dir>` | Working directory |
+| `--effort <level>` | Thinking-effort hint in the system prompt |
+| `--bare` | Skip file hooks, lifecycle hooks, and MEMORY/USER load |
 
 ```bash
 # bash
@@ -129,40 +152,203 @@ eval "$(bun run raven completions bash)"
 eval "$(bun run raven completions zsh)"
 ```
 
-`bun run raven` or `bun run raven setup` writes `~/.ravenclaw/.env` when no key is configured. On a TTY the key is masked with `*`. `exec` and `acp` print a hint instead of prompting.
+## TUI
 
-Embed the same engine without Ink:
+Ink is the default. OpenTUI is `--tui opentui`.
+
+- Shift+Tab cycles `default → acceptEdits → plan → default`.
+- Escape aborts the current turn.
+- `!cmd` or `/bash cmd` runs a local shell without the model.
+- ↑↓ walks prompt history (`~/.ravenclaw/prompt-history.jsonl`).
+- `@path` / `@agent` expands file contents or names a specialist.
+- Empty submit pastes a clipboard image on macOS (PNG).
+- Mid-turn text is queued for the next turn (`/queue`). `/steer <text>` injects into the live turn.
+
+### Slash commands
+
+| Command | Summary |
+|---|---|
+| `/help` | This list |
+| `/resume [id]` | List or restore a session |
+| `/clear` `/new` | New session |
+| `/compact` | Compact the conversation |
+| `/cost` | Token and USD estimate |
+| `/search [ --all] <q>` | FTS5 search |
+| `/mode <mode>` | `default` \| `acceptEdits` \| `plan` \| `dontAsk` |
+| `/model [id]` | Show or set model |
+| `/title <name>` | Session title |
+| `/learn` | Ask the model to write a skill from this session |
+| `/review` | Append a read-only review to `.ravenclaw/MEMORY.md` |
+| `/interview` | Ask clarifying questions (`AskUser`) before coding |
+| `/undo` | Restore files from the last closed edit checkpoint |
+| `/rewind` | Undo those files **and** drop the last user turn (persisted) |
+| `/diff` | Uncommitted + staged git diff |
+| `/steer <text>` | Inject into the live turn |
+| `/queue [drop n\|clear]` | Next-turn message queue |
+| `/loop <n> <prompt>` | Repeat a prompt n times (max 20). `/loop` status, `/loop stop` |
+| `/tasks [kill <id>]` | Background Bash / Agent tasks |
+| `/cron [add\|rm\|on\|off]` | Local scheduled jobs |
+| `/add-dir <path>` | Extra permission root (or use the `AddDir` tool / `--add-dir`) |
+| `/effort [low\|medium\|high\|max]` | Thinking-effort hint |
+| `/agents` | Built-in and disk agents |
+| `/hooks` | Lifecycle event names |
+| `/skills [show\|disable\|enable <name>]` | List, show, or disable skills |
+| `/skill:<name>` | Load that skill |
+| `/mcp` | Configured MCP servers |
+| `/reload` | Rebuild system parts (skills, memory) |
+| `/permissions` | Extra rule files |
+| `/config` | Resolved config |
+| `/context` | Compact generation and message count |
+| `/copy` | Copy the conversation as markdown |
+| `/bash <cmd>` | Local shell (also `!cmd`) |
+| `/cancel` | Abort (OpenTUI) |
+| `/quit` | Exit |
+
+## Tools
+
+The root session can call:
+
+| Tool | Notes |
+|---|---|
+| `Read` `Grep` `Glob` `ListDir` `ReadSubtree` | Read. `.ipynb` is shown as cells |
+| `Edit` `Write` `ApplyPatch` `NotebookEdit` | Write. `Edit` tolerates CRLF and indent. ApplyPatch/NotebookEdit leftover-ask |
+| `Bash` | Shell. `run_in_background` + `TaskOutput` / `TaskStop` |
+| `Skill` | Load a skill body or a file under that skill dir |
+| `Fetch` | HTTP GET with SSRF guards |
+| `WebSearch` | BYOK Brave or Serper (`BRAVE_API_KEY` / `SERPER_API_KEY`) |
+| `TodoWrite` | Session checklist |
+| `TaskCreate` `TaskGet` `TaskUpdate` `TaskList` | Durable `.ravenclaw/tasks.json` |
+| `AskUser` | Multiple-choice questions (TUI host) |
+| `SuggestFollowups` | Follow-up prompts |
+| `SetOutput` | Structured child output |
+| `StructuredOutput` | Only when `--json-schema` is set; required before complete |
+| `ToolSearch` | Search the tool pool |
+| `Sleep` | Abortable wait (≤60s) |
+| `ThinkDeeply` | Log a thought, no files |
+| `AddDir` | Extra permission root for this session |
+| `LSP` | Hover/definition/references if `.ravenclaw/lsp.json` exists |
+| `EnterWorktree` `ExitWorktree` | Session git worktree (cwd persists) |
+| `CronCreate` `CronList` `CronDelete` `CronSetEnabled` | Local cron (root only) |
+| `Agent` | Nested agent. `agents[]` parallel; `run_in_background`; `isolation: worktree` |
+| `EnterPlanMode` `ExitPlanMode` | Plan file `.ravenclaw/plan.md` |
+| `ListMcpResources` `ReadMcpResource` | When MCP is configured |
+
+`safetyCheck` denies writes under `.git/`, credential-like names, and shell rc for `Edit` / `Write` / `ApplyPatch`. Hard-deny: `~/.ssh/id_*`, `$RAVENCLAW_HOME/state.db`, `/etc/shadow`. `.env` writes still ask.
+
+## Agents
+
+Spawnable from the root `Agent` tool:
+
+| Id | Role |
+|---|---|
+| `general` | Default nested worker |
+| `file-finder` | Locate files |
+| `command-runner` | One shell command |
+| `reviewer` | Same-model, no tools, parent history |
+| `researcher-web` | `WebSearch` + `Fetch` (at least 3 pages) |
+
+Disk agents: `<project>/.ravenclaw/agents/*.md` (or `~/.ravenclaw/agents`). `--agent <id>` starts the session as that definition.
+
+## Skills
+
+Load order (later wins): **builtin → user → project**.
+
+| Source | Path |
+|---|---|
+| Builtin | shipped with `@ravenclaw/core` |
+| User | `~/.ravenclaw/skills/<name>/SKILL.md` |
+| Project | `<cwd>/.ravenclaw/skills/<name>/SKILL.md` |
+
+Frontmatter: `name`, `description`, `allowed-tools` (intersects the live pool for the rest of the turn). Disabled names live in `~/.ravenclaw/skills-disabled.json`.
+
+Builtin skills:
+
+| Name | Use |
+|---|---|
+| `review` | Read-only review of recent edits |
+| `test` | Smallest tests that cover the change |
+| `commit` | Conventional commit from the diff (no push) |
+| `debug` | Reproduce, hypothesize, then a minimal fix |
+| `tdd` | Red-green-refactor |
+| `plan` | Write a plan before editing |
+
+```bash
+bun run raven skills
+bun run raven skills new my-flow --project
+/skills show review
+/skills disable review
+/skill:tdd
+```
+
+`/learn` asks the model to write a new skill from this session.
+
+## Loop
+
+`/loop <n> <prompt>` runs the same prompt up to 20 times. Each turn is tagged `[loop i/n]`. After a turn finishes, the next iteration starts (after any `/queue` items). `/loop` prints status. `/loop stop` cancels remaining iterations.
+
+## Cron
+
+Jobs live in `~/.ravenclaw/cron/jobs.json`. Schedules are 5-field UTC cron or `every <duration>` (min 15s). A fire opens a new `dontAsk` session (same pairing as `raven exec`: headless stays BYOK when the gateway sets `placementRequired`).
+
+```bash
+bun run raven cron add every 30m "run the unit tests"
+bun run raven cron list
+bun run raven cron on <id>
+bun run raven cron tick          # one pass
+bun run raven cron watch         # poll
+```
+
+The Ink/OpenTUI ticker also fires due jobs every 15s. Claim-before-execute; overlapping runs of the same id are skipped.
+
+## Permissions
+
+| Mode | Behavior |
+|---|---|
+| `default` | Ask before leftover-ask tools |
+| `acceptEdits` | In-tree Edit/Write (and extra `--add-dir` roots) proceed |
+| `plan` | Mutating tools denied; write `.ravenclaw/plan.md` |
+| `dontAsk` | Leftover asks become denials, except in-tree Edit/Write and read-only tools |
+
+There is no `bypass` mode. File hooks: `~/.ravenclaw/hooks.json` and `<cwd>/.ravenclaw/hooks.json`. `pre_tool` / `PreToolUse` can allow or deny. Lifecycle events: `UserPromptSubmit`, `PostToolUse`, `SessionStart`, `Stop`, `Subagent*`, `PreCompact` / `PostCompact`. `--bare` skips them.
+
+## MCP
+
+stdio, streamable HTTP, and SSE. Resources: `ListMcpResources` / `ReadMcpResource`. Optional headers on HTTP servers. No company OAuth broker; a future PKCE loopback is not required for stdio.
+
+## Sessions
+
+SQLite WAL at `$RAVENCLAW_HOME/state.db`. **One live writer per session id.**
+
+Embed without Ink:
 
 ```ts
 import { createRavenSession } from '@ravenclaw/sdk'
 const session = await createRavenSession({ cwd: process.cwd(), store: 'memory', provider })
 ```
 
-Local plugins are `~/.ravenclaw/plugins/<name>/plugin.json` (user-installed only; they ask before running). Skill `allowed-tools` shrinks the live pool for the rest of the turn. `Agent` can take `isolation: "worktree"`. Plan mode may write only `.ravenclaw/plan.md`.
+Local plugins: `~/.ravenclaw/plugins/<name>/plugin.json` and project `.ravenclaw/plugins` (they ask before running).
 
-This process is the same OS user as you. There is no network sandbox. Writes under `~/.ssh/id_*` and `$RAVENCLAW_HOME/state.db` are hard-denied; `.env` writes ask first.
+This process is the same OS user as you. There is no network sandbox.
 
-## Sessions
-
-SQLite WAL at `$RAVENCLAW_HOME/state.db`. **One live writer per session id.** A second `raven` process may read the same database and may create a different session; it must not write the same session id.
-
-In the TUI: `/help`, `/resume`, `/compact`, `/cost`, `/search`, `/learn`, `/review`, `/quit`. `/review` appends a read-only summary to `.ravenclaw/MEMORY.md`. Shift+Tab cycles `default → acceptEdits → plan → default`. Escape aborts the current turn.
+## Included gateway (optional)
 
 If `included.gatewayUrl` is a real URL and `GET /v1/entitlement` admits the session, the CLI uses the included-model gateway and `funding: included` (ads may mount). A denied probe falls back to BYOK. Interactive surfaces only: `raven exec`, `raven smoke`, and `raven acp` stay BYOK when the gateway sets `placementRequired`. Resume of an already-included session still uses the gateway. Prompts and messages may be used to choose first-party ads for included-model sessions. Repository contents are not sent to the ad feed. BYOK sessions do not contact the ad feed. An empty ad feed URL never opens a socket.
 
 ## Packages
 
-- `@ravenclaw/core` — query loop, tools, permissions, sessions, Provider port, MCP merge, specialists
+- `@ravenclaw/core` — query loop, tools, permissions, sessions, Provider port, MCP, specialists, skills
 - `@ravenclaw/providers` — OpenAI-compatible, Anthropic, optional included-model gateway
 - `@ravenclaw/ads` — first-party ad layout, house floor, entitlement probe (included sessions only)
 - `@ravenclaw/cli` — `raven` Ink TUI (default)
 - `@ravenclaw/tui-opentui` — StreamEvent view-swap seam
 - `@ravenclaw/acp` — Agent Client Protocol JSON-RPC adapter
+- `@ravenclaw/sdk` — `createRavenSession` (no Ink, ads, or CLI)
 
 ## Docs
 
 - [System design](docs/superpowers/specs/2026-09-08-ravenclaw-coding-agent-design.md)
-- Prior art notes: [Hermes](docs/research/hermes-agent-analysis.md), [Freebuff](docs/research/freebuff-analysis.md), [loop semantics](docs/research/claude-code-analysis.md)
+- [Cron / scheduler](docs/superpowers/specs/2026-09-12-ravenclaw-cron-scheduler-design.md)
+- Prior art notes: [Hermes](docs/research/hermes-agent-analysis.md), [Freebuff](docs/research/freebuff-analysis.md), [Claude Code loop](docs/research/claude-code-analysis.md)
 
 ## Develop
 
@@ -171,4 +357,3 @@ bun test
 ```
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for layout, how to add a CLI command, and how to cut a release. See [SECURITY.md](SECURITY.md) to report a vulnerability without pasting keys.
-

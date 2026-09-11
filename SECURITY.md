@@ -9,6 +9,7 @@ Never put API keys, `.env` contents, or `~/.ravenclaw/.env` in issues, PRs, or l
 - `raven doctor` and `raven config` print `set (N chars)` / `unset` only.
 - `raven setup` writes `.env` mode `0600`.
 - Writes under `~/.ssh/id_*` and `$RAVENCLAW_HOME/state.db` are hard-denied.
+- `safetyCheck` also denies `.git/` writes, credential-like names, and shell rc for `Edit` / `Write` / `ApplyPatch`.
 
 If you already pasted a key, rotate it at the provider and treat it as burned.
 
