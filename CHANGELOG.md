@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.9 — 2026-09-11
+
+Print a saved session transcript from the shell.
+
+### Added
+- `raven show <id>` prints header + user/assistant/tool lines
+- Accepts an id prefix; ambiguous prefixes error
+- Tool output longer than 200 characters is clipped
+- No API key required
+
+### Try it
+
+```bash
+git clone --branch v0.1.9 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+bun run raven sessions
+bun run raven show <id>
+```
+
 ## 0.1.8 — 2026-09-11
 
 List sessions from the shell without a TUI or API key.
