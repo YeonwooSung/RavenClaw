@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.22 — 2026-09-11
+
+CI smokes no-key CLI commands.
+
+### Added
+- Spawn tests for `--help`, `--version`, `sessions`, `config`, `init`, `completions`, `doctor`
+- GitHub Actions repeats the same surface on Ubuntu
+- `raven smoke` is still not run in CI
+
+### Try it
+
+```bash
+git clone --branch v0.1.22 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+bun test packages/cli/src/ci-cli.test.ts
+```
+
 ## 0.1.21 — 2026-09-11
 
 Security policy and Dependabot.
