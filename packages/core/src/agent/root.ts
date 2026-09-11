@@ -11,6 +11,8 @@ export const rootAgent: AgentDefinition = {
     'Write',
     'Bash',
     'Skill',
+    'Fetch',
+    'TodoWrite',
     'Agent',
     'EnterPlanMode',
     'ExitPlanMode',

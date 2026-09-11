@@ -99,6 +99,39 @@ describe('createIncludedGatewayProvider', () => {
     expect(text).toBe('Hello, world')
   })
 
+  test('HTTP 403 retries once with defaultModel', async () => {
+    const body = await Bun.file(join(import.meta.dir, 'fixtures', 'openai-text-only.sse')).text()
+    const models: string[] = []
+    globalThis.fetch = ((_input: string | URL | Request, init?: RequestInit) => {
+      const raw = typeof init?.body === 'string' ? init.body : ''
+      const parsed = JSON.parse(raw) as { model?: string }
+      models.push(parsed.model ?? '')
+      if (parsed.model === 'gone/model') {
+        return Promise.resolve(
+          new Response(JSON.stringify({ error: 'forbidden' }), { status: 403 }),
+        )
+      }
+      return Promise.resolve(
+        new Response(body, { status: 200, headers: { 'Content-Type': 'text/event-stream' } }),
+      )
+    }) as typeof fetch
+
+    const provider = createIncludedGatewayProvider({
+      baseUrl: 'https://gw.example.com/v1',
+      apiKey: 'sess-token',
+      defaultModel: 'openai/gpt-4o',
+    })
+    const chunks = await collect(
+      provider.stream(baseReq({ model: 'gone/model' }), new AbortController().signal),
+    )
+    expect(models).toEqual(['gone/model', 'openai/gpt-4o'])
+    const text = chunks
+      .filter((c): c is Extract<ProviderChunk, { type: 'text_delta' }> => c.type === 'text_delta')
+      .map((c) => c.text)
+      .join('')
+    expect(text).toBe('Hello, world')
+  })
+
   test('JSON unknown model body retries once even when status is not 404', async () => {
     const body = await Bun.file(join(import.meta.dir, 'fixtures', 'openai-text-only.sse')).text()
     const models: string[] = []

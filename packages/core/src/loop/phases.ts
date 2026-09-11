@@ -90,12 +90,29 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
-function formatOutput(tool: Tool, output: unknown): string {
-  if (typeof output === 'string') return output
-  if (tool.renderResult) return tool.renderResult(output)
-  if (output === undefined || output === null) return ''
-  if (typeof output === 'object') return JSON.stringify(output)
-  return String(output)
+function persistPathOf(output: unknown): string | undefined {
+  if (!output || typeof output !== 'object') return undefined
+  if (!('persistPath' in output)) return undefined
+  const path = (output as { persistPath?: unknown }).persistPath
+  return typeof path === 'string' && path.length > 0 ? path : undefined
+}
+
+function formatOutput(
+  tool: Tool,
+  output: unknown,
+): { content: string; persistPath?: string } {
+  const persistPath = persistPathOf(output)
+  let content: string
+  if (typeof output === 'string') content = output
+  else if (tool.renderResult) content = tool.renderResult(output)
+  else if (output === undefined || output === null) content = ''
+  else if (typeof output === 'object') {
+    const body = (output as { content?: unknown }).content
+    content = typeof body === 'string' ? body : JSON.stringify(output)
+  } else {
+    content = String(output)
+  }
+  return persistPath !== undefined ? { content, persistPath } : { content }
 }
 
 export function buildAssistantMessage(
@@ -252,6 +269,7 @@ export async function* maybeCompact(
       sessionId: state.turn.sessionId,
       generation: state.turn.compactGeneration,
       summary,
+      cwd: state.turn.cwd,
     })
     state.turn.messages = result.messages
     state.turn.compactGeneration = result.generation
@@ -296,12 +314,21 @@ export function assembleRequest(state: LoopState): ProviderRequest {
   }
 }
 
+const CONTEXT_OVERFLOW = /prompt too long|context.?length|too many tokens/i
+
+function isContextOverflow(error: unknown): boolean {
+  if (isProviderErrorLike(error) && error.status === 413) return true
+  return CONTEXT_OVERFLOW.test(errorMessage(error))
+}
+
 export async function* streamModel(
   state: LoopState,
   req: ProviderRequest,
 ): AsyncGenerator<StreamEvent, PhaseResult> {
   const maxTries = 8
   const baseMs = 500
+  let compactRetried = false
+  let current = req
 
   for (let attempt = 0; attempt < maxTries; attempt++) {
     if (state.turn.abort.signal.aborted) {
@@ -316,7 +343,7 @@ export async function* streamModel(
 
     try {
       const iterator = state.provider
-        .stream(req, state.turn.abort.signal)
+        .stream(current, state.turn.abort.signal)
         [Symbol.asyncIterator]()
       while (true) {
         const step = await nextOrAbort(iterator, state.turn.abort.signal)
@@ -363,6 +390,23 @@ export async function* streamModel(
         state.streamAborted = true
         return { action: 'continue' }
       }
+      if (isContextOverflow(error)) {
+        if (compactRetried) {
+          return { action: 'return', end: { reason: 'model_error', error } }
+        }
+        compactRetried = true
+        const recovered = yield* reactiveCompact(state)
+        if (recovered.aborted) {
+          state.streamAborted = true
+          return { action: 'continue' }
+        }
+        if (!recovered.ok) {
+          return { action: 'return', end: { reason: 'model_error', error } }
+        }
+        current = assembleRequest(state)
+        attempt = -1
+        continue
+      }
       if (isAuthError(error) || !isRetryable(error) || attempt === maxTries - 1) {
         return { action: 'return', end: { reason: 'model_error', error } }
       }
@@ -375,6 +419,45 @@ export async function* streamModel(
   return {
     action: 'return',
     end: { reason: 'model_error', error: new Error('retries exhausted') },
+  }
+}
+
+async function* reactiveCompact(
+  state: LoopState,
+): AsyncGenerator<StreamEvent, { ok: boolean; aborted: boolean }> {
+  if (state.turn.abort.signal.aborted) return { ok: false, aborted: true }
+  try {
+    const tail = selectProtectedTail(state.turn.messages, state.compact.protectLastMessages)
+    const cut = state.turn.messages.length - tail.length
+    if (cut <= 0) return { ok: false, aborted: false }
+    const middle = state.turn.messages.slice(0, cut)
+    const summary = await compactSummary(
+      middle,
+      state.compact,
+      state.provider,
+      state.model,
+      state.turn.abort.signal,
+    )
+    if (state.turn.abort.signal.aborted) return { ok: false, aborted: true }
+    const result = await runAutocompact({
+      messages: state.turn.messages,
+      compact: state.compact,
+      model: state.model,
+      store: state.store,
+      sessionId: state.turn.sessionId,
+      generation: state.turn.compactGeneration,
+      summary,
+      cwd: state.turn.cwd,
+    })
+    state.turn.messages = result.messages
+    state.turn.compactGeneration = result.generation
+    yield { type: 'compact', summary, generation: result.generation }
+    return { ok: true, aborted: false }
+  } catch (error) {
+    if (isAbortError(error) || state.turn.abort.signal.aborted) {
+      return { ok: false, aborted: true }
+    }
+    return { ok: false, aborted: false }
   }
 }
 
@@ -611,6 +694,7 @@ async function executeOneCall(
       ctx,
       mode: state.turn.permissionMode,
       rules: box.rules,
+      ...(state.hooks !== undefined ? { hooks: state.hooks } : {}),
     })
     if (decision.behavior === 'deny') {
       return {
@@ -677,6 +761,7 @@ async function executeOneCall(
     }
   }
 
+  const blockInterrupt = tool.interruptBehavior?.() === 'block'
   if (!allowed || signal.aborted) {
     return {
       messages: pairMissing([call.id], 'aborted'),
@@ -685,23 +770,32 @@ async function executeOneCall(
     }
   }
 
+  const executeSignal = blockInterrupt ? new AbortController().signal : signal
+  const executeCtx: ToolContext = { ...ctx, signal: executeSignal }
+
   try {
-    const output = await tool.execute(parsed.value, ctx)
+    const output = await tool.execute(parsed.value, executeCtx)
     events.push(...progress)
-    const content = formatOutput(tool, output)
+    const formatted = formatOutput(tool, output)
+    const result: Extract<StreamEvent, { type: 'tool_result' }>['result'] = {
+      toolUseId: call.id,
+      ok: true,
+      content: formatted.content,
+    }
+    if (formatted.persistPath !== undefined) result.persistPath = formatted.persistPath
     events.push({
       type: 'tool_result',
       id: call.id,
-      result: { toolUseId: call.id, ok: true, content },
+      result,
     })
     return {
-      messages: [makeToolMessage(call.id, true, content)],
+      messages: [makeToolMessage(call.id, true, formatted.content, formatted.persistPath)],
       events,
       abortRest: false,
     }
   } catch (error) {
     events.push(...progress)
-    if (isAbortError(error) || signal.aborted) {
+    if (!blockInterrupt && (isAbortError(error) || signal.aborted)) {
       return { messages: pairMissing([call.id], 'aborted'), events, abortRest: true }
     }
     const content = executeFailedText(errorMessage(error))

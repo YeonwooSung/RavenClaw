@@ -38,7 +38,7 @@ export const writeTool: Tool<WriteInput, string> = {
     return 'block'
   },
   async checkPermissions() {
-    return { behavior: 'allow', reason: 'mode' }
+    return { behavior: 'ask', message: 'Write this file?', saveAs: 'session' }
   },
   async execute(input: WriteInput, ctx: ToolContext) {
     if (ctx.signal.aborted) throw abortError()

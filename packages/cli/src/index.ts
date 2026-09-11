@@ -242,7 +242,12 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
 
   if (parsed.cmd === 'smoke') {
     try {
-      const runtime = await bootCli({ flags: parsed.flags, tools: [], maxRounds: 1 })
+      const runtime = await bootCli({
+        flags: parsed.flags,
+        tools: [],
+        maxRounds: 1,
+        surface: 'headless',
+      })
       const result = await runExec({ prompt: SMOKE_PROMPT, engine: runtime.engine })
       const verdict = evaluateSmoke(result.text)
       process.stdout.write(`${verdict.detail}\n`)
@@ -257,7 +262,11 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     try {
       await runAcpStdio({
         boot: async () => {
-          const runtime = await bootCli({ flags: parsed.flags, createSession: false })
+          const runtime = await bootCli({
+            flags: parsed.flags,
+            createSession: false,
+            surface: 'headless',
+          })
           return {
             create: async (sessionId) => (await openNewSession(runtime, { sessionId })).engine,
             load: async (sessionId) => (await resumeRuntime(runtime, sessionId)).engine,
@@ -277,7 +286,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       return 2
     }
     try {
-      const runtime = await bootCli({ flags: parsed.flags })
+      const runtime = await bootCli({ flags: parsed.flags, surface: 'headless' })
       const execOpts: Parameters<typeof runExec>[0] = {
         prompt: parsed.prompt,
         engine: runtime.engine,

@@ -97,7 +97,11 @@ async function defaultBoot(): Promise<{
   create: (sessionId: string) => Promise<AcpEngine>
   load: (sessionId: string) => Promise<AcpEngine>
 }> {
-  const runtime = await bootCli({ flags: { dontAsk: true }, createSession: false })
+  const runtime = await bootCli({
+    flags: { dontAsk: true },
+    createSession: false,
+    surface: 'headless',
+  })
   return {
     create: async (sessionId) => (await openNewSession(runtime, { sessionId })).engine,
     load: async (sessionId) => (await resumeRuntime(runtime, sessionId)).engine,

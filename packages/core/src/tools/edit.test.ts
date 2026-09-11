@@ -3,7 +3,10 @@ import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { ToolContext, Turn } from '../types'
+import { decidePermission } from '../permissions/pipeline'
 import { editTool } from './edit'
+
+const emptyRules = { session: [], user: [], project: [] }
 
 const HOME_ENV = 'RAVENCLAW_HOME'
 const tempDirs: string[] = []
@@ -63,7 +66,7 @@ function resolvedOf(cwd: string, rel: string): string {
 }
 
 describe('Edit', () => {
-  test('is an unsafe mutating tool that allows by mode and blocks interrupt', async () => {
+  test('is an unsafe mutating tool that leftover-asks and blocks interrupt', async () => {
     expect(editTool.name).toBe('Edit')
     expect(editTool.isConcurrencySafe({ path: 'a.txt', old_string: 'a', new_string: 'b' })).toBe(
       false,
@@ -74,7 +77,40 @@ describe('Edit', () => {
       { path: 'a.txt', old_string: 'a', new_string: 'b' },
       makeCtx('/tmp'),
     )
-    expect(decision).toEqual({ behavior: 'allow', reason: 'mode' })
+    expect(decision.behavior).toBe('ask')
+    if (decision.behavior === 'ask') {
+      expect(decision.message.length).toBeGreaterThan(0)
+      expect(decision.saveAs).toBe('session')
+    }
+  })
+
+  test('default mode leftover ask stays ask', async () => {
+    const decision = await decidePermission({
+      name: 'Edit',
+      input: { path: 'a.txt', old_string: 'a', new_string: 'b' },
+      tool: editTool,
+      ctx: makeCtx('/tmp'),
+      mode: 'default',
+      rules: emptyRules,
+    })
+    expect(decision.behavior).toBe('ask')
+    if (decision.behavior === 'ask') {
+      expect(decision.message.length).toBeGreaterThan(0)
+      expect(decision.saveAs).toBe('session')
+    }
+  })
+
+  test('dontAsk denies leftover ask', async () => {
+    const decision = await decidePermission({
+      name: 'Edit',
+      input: { path: 'a.txt', old_string: 'a', new_string: 'b' },
+      tool: editTool,
+      ctx: makeCtx('/tmp'),
+      mode: 'dontAsk',
+      rules: emptyRules,
+    })
+    expect(decision.behavior).toBe('deny')
+    if (decision.behavior === 'deny') expect(decision.reason).toBe('mode')
   })
 
   test('fails without a prior Read and does not write', async () => {

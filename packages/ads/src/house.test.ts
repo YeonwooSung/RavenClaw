@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { houseAds } from './house'
+import { INCLUDED_PRIVACY } from './privacy'
 import { sanitizeAdUrl } from './sanitize'
 
 describe('houseAds', () => {
@@ -22,5 +23,11 @@ describe('houseAds', () => {
     expect(blob).not.toContain('no ads')
     expect(blob).not.toContain('remove ads')
     expect(blob).not.toContain('ad-free')
+  })
+
+  test('local floor body includes the included-privacy sentence', () => {
+    const creative = houseAds({ hasPaidCapacityPlan: true })
+    expect(creative.body).toContain('never sent to the ad feed')
+    expect(creative.body).toContain(INCLUDED_PRIVACY)
   })
 })

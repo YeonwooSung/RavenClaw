@@ -1,8 +1,11 @@
+import { existsSync, readFileSync } from 'node:fs'
 import { buildPostCompactMessages, selectProtectedTail } from '../loop/repair'
-import type { CompactPolicy, Message, ModelProfile, SessionStore } from '../types'
+import { planFilePath } from '../tools/plan-file'
+import type { CompactPolicy, Message, ModelProfile, Provider, SessionStore } from '../types'
+import { compactSummary, mechanicalSummary } from './summarize'
 
 const DEFAULT_TOOL_RESULT_CAP = 100_000
-const MICROCOMPACT_TOOLS = new Set(['Read', 'Grep', 'Glob', 'Bash'])
+const MICROCOMPACT_TOOLS = new Set(['Read', 'Grep', 'Glob', 'Bash', 'Agent'])
 
 function textOf(msg: Message): string {
   return msg.blocks
@@ -88,6 +91,7 @@ function collectRestoredNotes(
   messages: Message[],
   tailIds: Set<string>,
   compact: CompactPolicy,
+  cwd?: string,
 ): string[] {
   const tailPaths = new Set<string>()
   const tailSkills = new Set<string>()
@@ -152,7 +156,33 @@ function collectRestoredNotes(
     compact.maxCharsPerRestoredSkill,
     compact.maxCharsRestoredSkillsTotal,
   )
-  return [...restoredFiles, ...restoredSkills]
+  return [...restoredFiles, ...restoredSkills, ...collectPlanNote(cwd, compact, seenFiles, tailPaths)]
+}
+
+function collectPlanNote(
+  cwd: string | undefined,
+  compact: CompactPolicy,
+  seenFiles: Set<string>,
+  tailPaths: Set<string>,
+): string[] {
+  if (!cwd) return []
+  const relative = '.ravenclaw/plan.md'
+  const path = planFilePath(cwd)
+  if (seenFiles.has(relative) || seenFiles.has(path) || tailPaths.has(relative) || tailPaths.has(path)) {
+    return []
+  }
+  try {
+    if (!existsSync(path)) return []
+    const body = readFileSync(path, 'utf8')
+    if (!body) return []
+    return applyRestoreCaps(
+      [`File ${relative}:\n${body}`],
+      compact.maxCharsPerRestoredFile,
+      compact.maxCharsRestoredFilesTotal,
+    )
+  } catch {
+    return []
+  }
 }
 
 function appendUserNotes(messages: Message[], notes: string[]): Message[] {
@@ -186,16 +216,43 @@ export async function runAutocompact(opts: {
   store: SessionStore
   sessionId: string
   generation: number
-  summary: string
+  summary?: string
+  provider?: Provider
+  signal?: AbortSignal
+  cwd?: string
 }): Promise<{ messages: Message[]; generation: number; inactivatedIds: string[] }> {
   const tail = selectProtectedTail(opts.messages, opts.compact.protectLastMessages)
   const cut = opts.messages.length - tail.length
   const middle = opts.messages.slice(0, cut)
   const inactivatedIds = middle.map((msg) => msg.id)
   const tailIds = new Set(tail.map((msg) => msg.id))
-  const restored = collectRestoredNotes(opts.messages, tailIds, opts.compact)
-  const messages = appendUserNotes(buildPostCompactMessages(opts.summary, tail), restored)
+  const summary = await resolveCompactSummary(opts, middle)
+  const restored = collectRestoredNotes(opts.messages, tailIds, opts.compact, opts.cwd)
+  const messages = appendUserNotes(buildPostCompactMessages(summary, tail), restored)
   const generation = opts.generation + 1
-  await opts.store.recordCompact(opts.sessionId, generation, opts.summary, inactivatedIds)
+  await opts.store.recordCompact(opts.sessionId, generation, summary, inactivatedIds)
   return { messages, generation, inactivatedIds }
+}
+
+async function resolveCompactSummary(
+  opts: {
+    summary?: string
+    compact: CompactPolicy
+    model: ModelProfile
+    provider?: Provider
+    signal?: AbortSignal
+  },
+  middle: Message[],
+): Promise<string> {
+  if (opts.summary !== undefined) return opts.summary
+  if (opts.provider) {
+    return compactSummary(
+      middle,
+      opts.compact,
+      opts.provider,
+      opts.model,
+      opts.signal ?? new AbortController().signal,
+    )
+  }
+  return mechanicalSummary(middle)
 }

@@ -13,7 +13,7 @@ import {
   type StreamEvent,
   type TokenUsage,
 } from '@ravenclaw/core'
-import { formatCostNotice } from './cost-format'
+import { formatCostNotice, formatIncludedCap } from './cost-format'
 
 function usage(over: Partial<TokenUsage> = {}): TokenUsage {
   return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, ...over }
@@ -115,6 +115,16 @@ describe('/cost', () => {
     expect(formatCostNotice({ usage: tokens, profile, funding: 'included' })).toBe(
       '$0.00 included',
     )
+    expect(
+      formatCostNotice({ usage: tokens, profile, funding: 'included', remaining: 3 }),
+    ).toBe('$0.00 included 3 left')
+  })
+
+  test('formatIncludedCap skips unknown remaining', () => {
+    expect(formatIncludedCap(3)).toBe('included 3 left')
+    expect(formatIncludedCap(0)).toBe('included 0 left')
+    expect(formatIncludedCap()).toBeUndefined()
+    expect(formatIncludedCap(Number.NaN)).toBeUndefined()
   })
 })
 

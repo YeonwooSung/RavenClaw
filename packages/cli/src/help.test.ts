@@ -24,6 +24,8 @@ describe('help text', () => {
     expect(HELP_TEXT).toContain('--tui')
     expect(HELP_TEXT).toContain('--help')
     expect(HELP_TEXT).toContain('--version')
+    expect(HELP_TEXT).toContain('never sent to the ad feed')
+    expect(HELP_TEXT).toContain('BYOK sessions never contact the feed')
   })
 
   test('formatVersion is a single line', () => {

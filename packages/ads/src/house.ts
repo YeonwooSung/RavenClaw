@@ -1,9 +1,10 @@
+import { INCLUDED_PRIVACY } from './privacy'
 import type { AdCreative, HouseContext } from './types'
 
 const LOCAL_FLOOR: AdCreative = {
   id: 'house-raven-local',
   title: 'RavenClaw stays local',
-  body: 'Prompts may choose first-party ads. Repository contents are never sent to the feed.',
+  body: INCLUDED_PRIVACY,
   cta: 'About',
   url: 'https://ravenclaw.dev/ads',
   provider: 'house',

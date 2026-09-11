@@ -380,6 +380,42 @@ describe('permission pipeline in queryLoop', () => {
     expect(loaded.session.permissionMode).toBe('acceptEdits')
   })
 
+  test('session engine hooks deny leftover ask', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_file_hook' })
+    await store.createSession(session)
+    const bash = mockTool({
+      name: 'Bash',
+      check: { behavior: 'ask', message: 'allow bash?' },
+    })
+    const provider = createFakeProvider([
+      toolThenStop('h1', 'Bash', { command: 'ls' }),
+      textThenStop('done'),
+    ])
+    const engine = createSessionEngine({
+      ...engineOpts({
+        provider,
+        store,
+        session,
+        tools: [bash],
+        askUser: async () => 'allow',
+      }),
+      hooks: [() => ({ behavior: 'deny', reason: 'hook', message: 'file hook' })],
+    })
+
+    const { events, result } = await collect(engine.submitMessage('run ls'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(bash.executeCount).toBe(0)
+    expect(events.some((e) => e.type === 'permission_ask')).toBe(false)
+    const loaded = await store.loadSession(session.id)
+    const toolMsg = loaded.messages.find(
+      (m): m is Extract<import('../types').Message, { role: 'tool' }> =>
+        m.role === 'tool' && m.toolUseId === 'h1',
+    )
+    expect(toolMsg?.ok).toBe(false)
+    expect(toolMsg?.blocks[0]?.text).toBe(denyText('file hook'))
+  })
+
   test('setPermissionMode upserts permissionMode and prePlanMode before return', async () => {
     const store = createMemoryStore()
     const session = makeSession({ id: 'sess_mode_set', permissionMode: 'default' })

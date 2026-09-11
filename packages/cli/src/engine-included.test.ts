@@ -194,7 +194,7 @@ describe('included gateway access', () => {
     expect(provider.id).toBe('included-gateway')
     expect(session.funding).toBe('included')
     expect(access.admitted).toBe(true)
-    expect(seen).toEqual([{ url: 'https://gw.example.com', token: 'sk-oai' }])
+    expect(seen).toEqual([{ url: 'https://gw.example.com', token: 'included' }])
   })
 
   test.each(['https://gw.example.com/v1', 'https://gw.example.com'] as const)(
@@ -312,7 +312,7 @@ describe('included gateway access', () => {
     ).toBe('included')
   })
 
-  test('token prefers RAVENCLAW_INCLUDED_TOKEN, then OPENAI_API_KEY, then placeholder', async () => {
+  test('token prefers RAVENCLAW_INCLUDED_TOKEN, then placeholder (never OPENAI_API_KEY)', async () => {
     const seen: Array<string | undefined> = []
     const probe = async (_url: string, opts?: { token?: string }) => {
       seen.push(opts?.token)
@@ -331,10 +331,39 @@ describe('included gateway access', () => {
       config({ env: { OPENAI_API_KEY: 'sk-oai' }, included: includedOn() }),
       { probe },
     )
-    expect(seen.at(-1)).toBe('sk-oai')
+    expect(seen.at(-1)).toBe('included')
+
+    await resolveIncludedAccess(
+      config({
+        env: { OPENAI_API_KEY: 'sk-oai', RAVENCLAW_INCLUDED_TOKEN: 'tok-file' },
+        included: includedOn(),
+      }),
+      { probe },
+    )
+    expect(seen.at(-1)).toBe('tok-file')
 
     await resolveIncludedAccess(config({ env: {}, included: includedOn() }), { probe })
     expect(seen.at(-1)).toBe('included')
+  })
+
+  test('placementRequired + headless stays BYOK; interactive default still admits', async () => {
+    const cfg = config({ included: includedOn() })
+    const headless = await resolveIncludedAccess(cfg, {
+      probe: async () => admitted({ placementRequired: true }),
+      surface: 'headless',
+    })
+    expect(headless.admitted).toBe(false)
+
+    const interactive = await resolveIncludedAccess(cfg, {
+      probe: async () => admitted({ placementRequired: true }),
+    })
+    expect(interactive.admitted).toBe(true)
+
+    const noPlacement = await resolveIncludedAccess(cfg, {
+      probe: async () => admitted({ placementRequired: false }),
+      surface: 'headless',
+    })
+    expect(noPlacement.admitted).toBe(true)
   })
 
   test('admitted included works without a BYOK key', async () => {

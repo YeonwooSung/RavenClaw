@@ -1,4 +1,7 @@
 import { describe, expect, test } from 'bun:test'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { ASSISTANT_STUB_TEXT } from '../loop/repair'
 import { createMemoryStore } from '../session/memory-store'
 import type { CompactPolicy, ContentBlock, Message, ModelProfile, SessionRecord } from '../types'
@@ -206,6 +209,21 @@ describe('microcompact', () => {
     expect(textOf(out.find((msg) => msg.id === 't1')!)).toBe('kept body')
     expect(pairingHolds(out)).toBe(true)
   })
+
+  test('stubs old Agent tool text outside the tail', () => {
+    const messages = [
+      user('u1', 'delegate', 1),
+      asstTools('a1', [{ id: 'ag1', name: 'Agent', input: { prompt: 'scan' } }], 2),
+      tool('t1', 'ag1', 'child found 12 files and a bug in parser.ts', 3),
+      user('u2', 'recent', 4),
+      asstText('a2', 'still here', 5),
+    ]
+    const out = microcompact(messages, 2)
+    expect(textOf(out.find((msg) => msg.id === 't1')!)).toBe('[cleared Agent output]')
+    expect(textOf(out.find((msg) => msg.id === 'a2')!)).toBe('still here')
+    expect(pairingHolds(out)).toBe(true)
+    expect(out.some((msg) => msg.role === 'tool' && msg.toolUseId === 'ag1')).toBe(true)
+  })
 })
 
 describe('restore caps', () => {
@@ -331,5 +349,113 @@ describe('runAutocompact', () => {
 
     const loaded = await store.loadSession('s1')
     expect(loaded.messages.map((msg) => msg.id)).toEqual(['a2', 't1'])
+  })
+
+  test('restores capped Read notes from outside the tail', async () => {
+    const store = createMemoryStore()
+    await store.createSession(session())
+    const messages = [
+      user('u0', 'old', 1),
+      asstTools('a0', [{ id: 'r1', name: 'Read', input: { path: 'src/a.ts' } }], 2),
+      tool('t0', 'r1', 'export const n = 1', 3),
+      user('u1', 'recent', 4),
+      asstText('a1', 'recent reply', 5),
+    ]
+    await persistAll(store, 's1', messages)
+
+    const result = await runAutocompact({
+      messages,
+      compact: compact({ protectLastMessages: 2 }),
+      model: model(),
+      store,
+      sessionId: 's1',
+      generation: 0,
+      summary: 'SUMMARY',
+    })
+
+    const notes = result.messages
+      .filter((msg) => msg.role === 'user')
+      .map((msg) => textOf(msg))
+      .join('\n')
+    expect(notes).toContain('File src/a.ts:')
+    expect(notes).toContain('export const n = 1')
+  })
+
+  test('restores a capped copy of cwd/.ravenclaw/plan.md when it exists', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-plan-restore-'))
+    try {
+      mkdirSync(join(cwd, '.ravenclaw'), { recursive: true })
+      writeFileSync(join(cwd, '.ravenclaw', 'plan.md'), `${'P'.repeat(80)}\nnext: ship persistPath\n`)
+
+      const store = createMemoryStore()
+      await store.createSession(session({ cwd }))
+      const messages = [
+        user('u0', 'old question', 1),
+        asstText('a0', 'old answer', 2),
+        user('u1', 'recent', 3),
+        asstText('a1', 'recent reply', 4),
+      ]
+      await persistAll(store, 's1', messages)
+
+      const result = await runAutocompact({
+        messages,
+        compact: compact({
+          protectLastMessages: 2,
+          maxCharsPerRestoredFile: 60,
+          maxCharsRestoredFilesTotal: 60,
+        }),
+        model: model(),
+        store,
+        sessionId: 's1',
+        generation: 0,
+        summary: 'SUMMARY',
+        cwd,
+      })
+
+      const notes = result.messages
+        .filter((msg) => msg.role === 'user')
+        .map((msg) => textOf(msg))
+        .join('\n')
+      expect(notes).toContain('.ravenclaw/plan.md')
+      expect(notes).toContain('P'.repeat(20))
+      expect(notes).not.toContain('next: ship persistPath')
+      expect(notes.includes('P'.repeat(80))).toBe(false)
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
+  test('skips plan.md restore when the file is missing', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-plan-missing-'))
+    try {
+      const store = createMemoryStore()
+      await store.createSession(session({ cwd }))
+      const messages = [
+        user('u0', 'old question', 1),
+        asstText('a0', 'old answer', 2),
+        user('u1', 'recent', 3),
+        asstText('a1', 'recent reply', 4),
+      ]
+      await persistAll(store, 's1', messages)
+
+      const result = await runAutocompact({
+        messages,
+        compact: compact({ protectLastMessages: 2 }),
+        model: model(),
+        store,
+        sessionId: 's1',
+        generation: 0,
+        summary: 'SUMMARY',
+        cwd,
+      })
+
+      const notes = result.messages
+        .filter((msg) => msg.role === 'user')
+        .map((msg) => textOf(msg))
+        .join('\n')
+      expect(notes).not.toContain('plan.md')
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
   })
 })

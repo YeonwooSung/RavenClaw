@@ -2,8 +2,12 @@ import { queryLoop } from '../loop/query-loop'
 import { ABORTED_TEXT, INCOMPLETE_TEXT } from '../loop/pairing'
 import { isAbortError } from '../loop/abort'
 import { getAgentDefinition } from '../agent/catalog'
+import { rootAgent } from '../agent/root'
 import {
+  addTokenUsage,
   boundChildResult,
+  buildChildMessages,
+  childSystemParts,
   filterChildTools,
   lastAssistantText,
   resolveChildModel,
@@ -25,6 +29,7 @@ import type {
   ToolContext,
   Turn,
 } from '../types'
+import type { PermissionHook } from '../permissions/hooks'
 import { parseWithSchema } from './parse'
 import { filterToolsForTurn } from './skill'
 import { prepareChildWorktree, type IsolationMode } from './worktree'
@@ -35,6 +40,7 @@ export interface AgentInput {
   description?: string
   subagent?: string
   isolation?: IsolationMode
+  command?: string
 }
 
 const inputSchema = {
@@ -47,6 +53,7 @@ const inputSchema = {
     description: { type: 'string' },
     subagent: { type: 'string', minLength: 1 },
     isolation: { type: 'string', enum: ['none', 'worktree'] },
+    command: { type: 'string', minLength: 1 },
   },
 }
 
@@ -59,6 +66,7 @@ export function createAgentTool(opts: {
   askUser: SessionEngineOptions['askUser']
   childMaxRounds?: number
   system?: SystemPart[]
+  hooks?: PermissionHook[]
 }): Tool<AgentInput, string> {
   return {
     name: 'Agent',
@@ -78,12 +86,19 @@ export function createAgentTool(opts: {
       return 'cancel'
     },
     async checkPermissions() {
-      return { behavior: 'allow', reason: 'mode' }
+      return { behavior: 'ask', message: 'Spawn a nested agent?', saveAs: 'session' }
     },
     async execute(input: AgentInput, ctx: ToolContext) {
       if (ctx.signal.aborted) return ABORTED_TEXT
 
-      const definition = getAgentDefinition(input.subagent ?? 'general')
+      if (input.subagent !== undefined && !rootAgent.spawnableAgents.includes(input.subagent)) {
+        return `Subagent '${input.subagent}' is not spawnable`
+      }
+
+      const definition = getAgentDefinition(
+        input.subagent ?? 'general',
+        ctx.turn.projectCwd ?? ctx.turn.cwd,
+      )
       if (!definition) return `Unknown subagent: ${input.subagent}`
 
       const maxRounds = opts.childMaxRounds ?? definition.maxRounds
@@ -95,11 +110,12 @@ export function createAgentTool(opts: {
         childSession.id,
         input.isolation ?? 'none',
       )
-      const userMessage = buildChildUserMessage(input, now)
+      const userMessage = buildChildUserMessage(input, definition, now)
+      const childMessages = buildChildMessages(definition, ctx.turn.messages, userMessage)
 
       const childAbort = new AbortController()
       const unlink = linkAbort(ctx.signal, childAbort)
-      const childTurn = buildChildTurn(childSession, userMessage, childAbort, maxRounds, ctx.turn)
+      const childTurn = buildChildTurn(childSession, childMessages, childAbort, maxRounds, ctx.turn)
       // Worktree path is live-only. session.cwd stays the parent so resume
       // still has a real directory after cleanup removes the worktree.
       childTurn.cwd = isolated.cwd
@@ -107,6 +123,10 @@ export function createAgentTool(opts: {
       const childTools = filterToolsForTurn(filterChildTools(opts.tools, definition), childTurn)
 
       try {
+        const oneShot = await maybeRunCommandRunner(input, definition, childTools, childTurn, ctx)
+        if (oneShot?.done) return oneShot.text
+        if (oneShot && !oneShot.done) appendCommandOutput(userMessage, oneShot.text)
+
         await opts.store.createSession(childSession)
         await opts.store.persistUser(childSession.id, userMessage)
 
@@ -119,9 +139,9 @@ export function createAgentTool(opts: {
           model: opts.model,
           askUser: opts.askUser,
         }
-        if (definition.inheritParentSystemPrompt && opts.system !== undefined) {
-          loopOpts.system = opts.system
-        }
+        const system = childSystemParts(definition, opts.system)
+        if (system !== undefined) loopOpts.system = system
+        if (opts.hooks !== undefined) loopOpts.hooks = opts.hooks
         const end = await drainLoop(queryLoop(loopOpts))
         await persistChildSession(opts.store, childSession, childTurn)
         return childResult(end, childTurn.messages, ctx.signal)
@@ -134,6 +154,7 @@ export function createAgentTool(opts: {
         const text = lastAssistantText(childTurn.messages)
         return text ? boundChildResult(text) : INCOMPLETE_TEXT
       } finally {
+        ctx.turn.usage = addTokenUsage(ctx.turn.usage, childTurn.usage)
         unlink()
         isolated.cleanup()
       }
@@ -166,24 +187,29 @@ function buildChildSession(
 
 function buildChildUserMessage(
   input: AgentInput,
+  definition: { id: string },
   now: number,
 ): Extract<Message, { role: 'user' }> {
   return {
     id: crypto.randomUUID(),
     role: 'user',
-    blocks: [{ type: 'text', text: formatChildPrompt(input) }],
+    blocks: [{ type: 'text', text: formatChildPrompt(input, definition) }],
     createdAt: now,
   }
 }
 
-function formatChildPrompt(input: AgentInput): string {
-  if (input.context === undefined || input.context.length === 0) return input.prompt
-  return `${input.prompt}\n\n${input.context}`
+function formatChildPrompt(input: AgentInput, definition: { id: string }): string {
+  const body =
+    input.context === undefined || input.context.length === 0
+      ? input.prompt
+      : `${input.prompt}\n\n${input.context}`
+  if (definition.id !== 'file-finder') return body
+  return `Reply with at most 20 lines of: path — reason\n\n${body}`
 }
 
 function buildChildTurn(
   session: SessionRecord,
-  user: Extract<Message, { role: 'user' }>,
+  messages: Message[],
   abort: AbortController,
   maxRounds: number,
   parent: Turn,
@@ -191,7 +217,7 @@ function buildChildTurn(
   const turn: Turn = {
     id: crypto.randomUUID(),
     sessionId: session.id,
-    messages: [user],
+    messages,
     round: 0,
     maxRounds,
     graceUsed: false,
@@ -258,4 +284,96 @@ function childResult(end: RoundEnd, messages: Message[], parentSignal: AbortSign
     return INCOMPLETE_TEXT
   }
   return boundChildResult(text)
+}
+
+const COMMAND_RUNNER_ONESHOT_LIMIT = 2000
+
+async function maybeRunCommandRunner(
+  input: AgentInput,
+  definition: { id: string },
+  childTools: Tool[],
+  childTurn: Turn,
+  ctx: ToolContext,
+): Promise<{ done: true; text: string } | { done: false; text: string } | undefined> {
+  if (definition.id !== 'command-runner') return undefined
+  const command = resolveCommand(input)
+  if (command === undefined) return undefined
+  const bash = childTools.find((tool) => tool.name === 'Bash')
+  if (!bash) return undefined
+
+  const parsed = bash.parse({ command })
+  const value = commandInput(parsed, command)
+  const output = await bash.execute(value, {
+    turn: childTurn,
+    signal: childTurn.abort.signal,
+    onProgress: ctx.onProgress,
+  })
+  const text = formatToolOutput(bash, output)
+  if (text.length < COMMAND_RUNNER_ONESHOT_LIMIT) {
+    return { done: true, text: boundChildResult(text) }
+  }
+  return { done: false, text }
+}
+
+function resolveCommand(input: AgentInput): string | undefined {
+  if (input.command !== undefined && input.command.length > 0) return input.command
+  const prompt = input.prompt.trim()
+  if (looksLikeCommand(prompt)) return prompt
+  return undefined
+}
+
+function looksLikeCommand(prompt: string): boolean {
+  if (!prompt || /[\n?]/.test(prompt)) return false
+  if (
+    /^(please|could you|can you|find|search|look|list|show|help|write|edit|read|explain)\b/i.test(
+      prompt,
+    )
+  ) {
+    return false
+  }
+  if (/^(run|do)\s+[a-z][a-z\s]+$/i.test(prompt) && !/[|&><;]/.test(prompt)) return false
+  if (
+    /^(ls|git|npm|npx|bun|pnpm|yarn|cat|echo|pwd|cd|mkdir|rm|cp|mv|chmod|grep|find|curl|wget|python3?|node|cargo|make|go|docker|kubectl)\b/.test(
+      prompt,
+    )
+  ) {
+    return true
+  }
+  if (/^[./~]/.test(prompt)) return true
+  return /[|&><;]/.test(prompt)
+}
+
+function appendCommandOutput(user: Extract<Message, { role: 'user' }>, output: string): void {
+  const block = user.blocks[0]
+  if (block && block.type === 'text') {
+    block.text += `\n\nCommand output:\n${output}`
+  }
+}
+
+function commandInput(
+  parsed: { ok: true; value: unknown } | { ok: false; message: string },
+  command: string,
+): unknown {
+  if (
+    parsed.ok &&
+    typeof parsed.value === 'object' &&
+    parsed.value !== null &&
+    'command' in parsed.value &&
+    typeof (parsed.value as { command: unknown }).command === 'string'
+  ) {
+    return parsed.value
+  }
+  return { command }
+}
+
+function formatToolOutput(tool: Tool, output: unknown): string {
+  if (typeof output === 'string') return output
+  if (tool.renderResult) return tool.renderResult(output)
+  if (output === undefined || output === null) return ''
+  if (typeof output === 'object' && output !== null && 'content' in output) {
+    const content = (output as { content?: unknown }).content
+    if (typeof content === 'string') return content
+  }
+  if (typeof output === 'object') return JSON.stringify(output)
+  return String(output)
 }

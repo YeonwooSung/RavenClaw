@@ -68,6 +68,7 @@ export interface ResolvedEnv {
   OLLAMA_API_KEY?: string
   VLLM_BASE_URL?: string
   VLLM_API_KEY?: string
+  RAVENCLAW_INCLUDED_TOKEN?: string
 }
 
 export interface ResolvedConfig extends RavenClawConfig {
@@ -98,6 +99,7 @@ const ENV_KEYS = [
   'OLLAMA_API_KEY',
   'VLLM_BASE_URL',
   'VLLM_API_KEY',
+  'RAVENCLAW_INCLUDED_TOKEN',
 ] as const
 
 export function defaultConfig(): RavenClawConfig {

@@ -11,9 +11,11 @@ import {
   defaultCompactPolicy,
   editTool,
   ensureHomeDir,
+  fetchTool,
   globTool,
   grepTool,
   loadConfig,
+  loadFileHooks,
   loadLocalPlugins,
   mergeToolPool,
   normalizeOpenAiBaseUrl,
@@ -22,12 +24,14 @@ import {
   readTool,
   resumeSession,
   skillTool,
+  todoWriteTool,
   writeTool,
   type CompactPolicy,
   type ConfigFlags,
   type Funding,
   type Message,
   type ModelProfile,
+  type PermissionHook,
   type PermissionMode,
   type Provider,
   type ResolvedConfig,
@@ -52,6 +56,7 @@ export type IncludedAccess =
       sessionCap: number
       hasPaidCapacityPlan: boolean
       meteredByGateway: boolean
+      remainingSessions?: number
     }
   | { admitted: false }
 
@@ -60,12 +65,15 @@ export type EntitlementProbe = (
   opts?: { token?: string; fetch?: typeof fetch },
 ) => Promise<Pick<Entitlement, 'admitted'> & Partial<Entitlement>>
 
+export type IncludedSurface = 'interactive' | 'headless'
+
 export interface IncludedAccessOptions {
   probe?: EntitlementProbe
   fetch?: typeof fetch
   access?: IncludedAccess
   consumeCap?: boolean
   preferByok?: boolean
+  surface?: IncludedSurface
 }
 
 export async function resolveIncludedAccess(
@@ -85,6 +93,8 @@ export async function resolveIncludedAccess(
   const entitlement = await probe(gateway.probeBase, probeOpts)
   // hasPaidCapacityPlan raises caps; it does not silence ads.
   if (!entitlement.admitted) return { admitted: false }
+  const surface = opts?.surface ?? 'interactive'
+  if (entitlement.placementRequired === true && surface === 'headless') return { admitted: false }
   if (includedCapacityExhausted(config, entitlement, opts?.consumeCap)) return { admitted: false }
   const meteredByGateway =
     typeof entitlement.remainingSessions === 'number' && Number.isFinite(entitlement.remainingSessions)
@@ -98,6 +108,12 @@ export async function resolveIncludedAccess(
   }
   if (typeof entitlement.defaultModel === 'string' && entitlement.defaultModel !== '') {
     access.defaultModel = entitlement.defaultModel
+  }
+  if (
+    typeof entitlement.remainingSessions === 'number' &&
+    Number.isFinite(entitlement.remainingSessions)
+  ) {
+    access.remainingSessions = entitlement.remainingSessions
   }
   return access
 }
@@ -138,6 +154,8 @@ export function createRootTools(store: SessionStore, bash: Tool = bashTool): Too
     writeTool,
     bash,
     skillTool,
+    fetchTool,
+    todoWriteTool,
     plan.enter,
     plan.exit,
   ]
@@ -153,6 +171,7 @@ export function createSessionTools(opts: {
   system?: SystemPart[]
   bash?: Tool
   mcpTools?: Tool[]
+  hooks?: PermissionHook[]
 }): Tool[] {
   const base = createRootTools(opts.store, opts.bash ?? bashTool)
   const mcpTools = opts.mcpTools ?? []
@@ -167,6 +186,7 @@ export function createSessionTools(opts: {
     childMaxRounds: opts.childMaxRounds,
   }
   if (opts.system !== undefined) agentOpts.system = opts.system
+  if (opts.hooks !== undefined) agentOpts.hooks = opts.hooks
   const agent = createAgentTool(agentOpts)
   if (mcpTools.length === 0) return [...base, agent]
   return mergeToolPool([...base, agent], mcpTools)
@@ -234,6 +254,8 @@ export interface CliRuntimeBase {
   probe?: EntitlementProbe
   fetch?: typeof fetch
   preferByok?: boolean
+  surface?: IncludedSurface
+  remainingSessions?: number
 }
 
 export type CliRuntime = CliRuntimeBase & { engine: SessionEngine }
@@ -284,6 +306,7 @@ export async function openEngine(opts: {
     const plugins = loadLocalPlugins(session.cwd)
     if (plugins.length > 0) mcpTools = mergeToolPool(mcpTools, plugins)
   }
+  const hooks = loadFileHooks(session.cwd)
   const tools =
     opts.tools ??
     createSessionTools({
@@ -296,6 +319,7 @@ export async function openEngine(opts: {
       system,
       bash,
       mcpTools,
+      hooks,
     })
   const engineOpts: SessionEngineOptions = {
     session,
@@ -309,6 +333,7 @@ export async function openEngine(opts: {
     system,
   }
   if (opts.messages) engineOpts.messages = opts.messages
+  if (hooks.length > 0) engineOpts.hooks = hooks
   return { engine: createSessionEngine(engineOpts), mcpCloser }
 }
 
@@ -403,7 +428,10 @@ function reserveIncludedFunding(
 }
 
 function includedApiKey(config: ResolvedConfig): string {
-  return firstNonEmpty(process.env.RAVENCLAW_INCLUDED_TOKEN, config.env.OPENAI_API_KEY) ?? 'included'
+  return (
+    firstNonEmpty(process.env.RAVENCLAW_INCLUDED_TOKEN, config.env.RAVENCLAW_INCLUDED_TOKEN) ??
+    'included'
+  )
 }
 
 function firstNonEmpty(...values: Array<string | undefined>): string | undefined {
@@ -437,6 +465,7 @@ export async function bootCli(
       fetch: opts.fetch,
       consumeCap: createSession,
       preferByok: opts.flags.provider !== undefined,
+      surface: opts.surface,
     }))
   // Reserve before picking the provider so a failed local cap cannot keep
   // the included gateway while stamping funding: byok.
@@ -445,12 +474,19 @@ export async function bootCli(
   const cwd = opts.cwd ?? process.cwd()
   const ask = opts.ask ?? createAskBridge()
   const paid = access.admitted ? access.hasPaidCapacityPlan : undefined
-  const extras: Pick<CliRuntimeBase, 'hasPaidCapacityPlan' | 'probe' | 'fetch' | 'preferByok'> = {
+  const extras: Pick<
+    CliRuntimeBase,
+    'hasPaidCapacityPlan' | 'probe' | 'fetch' | 'preferByok' | 'surface' | 'remainingSessions'
+  > = {
     hasPaidCapacityPlan: paid,
   }
   if (opts.probe !== undefined) extras.probe = opts.probe
   if (opts.fetch !== undefined) extras.fetch = opts.fetch
   if (opts.flags.provider !== undefined) extras.preferByok = true
+  if (opts.surface !== undefined) extras.surface = opts.surface
+  if (access.admitted && access.remainingSessions !== undefined) {
+    extras.remainingSessions = access.remainingSessions
+  }
   if (!createSession) {
     return { store, provider, config, cwd, ask, ...extras }
   }
@@ -503,6 +539,7 @@ export async function openNewSession(
     probe: runtime.probe,
     fetch: runtime.fetch,
     preferByok: runtime.preferByok,
+    surface: runtime.surface,
   })
   const access = reserveIncludedFunding(runtime.config, probed)
   const provider = await providerFromConfig(runtime.config, { access })
@@ -529,6 +566,7 @@ export async function openNewSession(
     provider,
     mcpCloser,
     hasPaidCapacityPlan: access.admitted ? access.hasPaidCapacityPlan : false,
+    remainingSessions: access.admitted ? access.remainingSessions : undefined,
   }
 }
 
@@ -543,6 +581,7 @@ async function providerForResumedSession(
     consumeCap: false,
     probe: runtime.probe,
     fetch: runtime.fetch,
+    surface: runtime.surface,
   })
   if (access.admitted) {
     return {

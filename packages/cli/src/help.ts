@@ -4,6 +4,8 @@ export const CLI_VERSION = readPackageVersion(import.meta.url)
 
 export const HELP_TEXT = `RavenClaw ${CLI_VERSION} — local coding agent (BYOK)
 
+Included sessions may choose first-party ads. Repository contents are never sent to the ad feed. BYOK sessions never contact the feed.
+
 Usage:
   raven [options]
   raven exec [--json] [options] <prompt>

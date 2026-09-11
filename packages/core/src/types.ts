@@ -289,6 +289,7 @@ export interface SessionEngineOptions {
   model: ModelProfile
   maxRounds: number
   system?: SystemPart[]
+  hooks?: import('./permissions/hooks').PermissionHook[]
   askUser: (
     e: Extract<StreamEvent, { type: 'permission_ask' }>,
     signal: AbortSignal,
@@ -311,5 +312,6 @@ export interface QueryLoopOptions {
   compact: CompactPolicy
   model: ModelProfile
   system?: SystemPart[]
+  hooks?: SessionEngineOptions['hooks']
   askUser: SessionEngineOptions['askUser']
 }

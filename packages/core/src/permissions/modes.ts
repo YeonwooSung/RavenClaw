@@ -13,11 +13,12 @@ const READ_ONLY_NAMES = new Set([
   'Grep',
   'Glob',
   'Skill',
+  'Fetch',
   'EnterPlanMode',
   'ExitPlanMode',
 ])
 
-const MUTATING_NAMES = new Set(['Edit', 'Write', 'Bash', 'Agent'])
+const MUTATING_NAMES = new Set(['Edit', 'Write', 'Bash', 'Agent', 'TodoWrite'])
 
 export function cyclePermissionMode(mode: PermissionMode): PermissionMode {
   if (mode === 'dontAsk') return 'dontAsk'

@@ -51,6 +51,8 @@ export { parseWithSchema } from './tools/parse'
 export { readTool } from './tools/read'
 export { grepTool } from './tools/grep'
 export { globTool } from './tools/glob'
+export { fetchTool } from './tools/fetch'
+export { todoWriteTool } from './tools/todo'
 export { partitionToolCalls } from './tools/partition'
 export {
   compactThreshold,
@@ -96,10 +98,12 @@ export type { DiscoveredSkill, SkillInput } from './tools/skill'
 export { createMcpToolBridge, createStdioMcpTransport } from './mcp/client'
 export { loadMcpTools, mergeToolPool, wrapMcpTools } from './mcp/tools'
 export { getAgentDefinition, agentCatalog } from './agent/catalog'
+export { loadDiskAgents } from './agent/load'
 export { fileFinderAgent } from './agent/file-finder'
 export { commandRunnerAgent } from './agent/command-runner'
 export { runPermissionHooks } from './permissions/hooks'
 export type { PermissionHook } from './permissions/hooks'
+export { loadFileHooks } from './permissions/load-hooks'
 export { applyReviewToMemory, forkMemoryReview } from './review/fork'
 export { buildSystemParts } from './prompt/builder'
 export type { PromptBuildInput } from './prompt/builder'
@@ -111,7 +115,10 @@ export type { PluginManifest, PluginToolSpec } from './plugins/load'
 export { rootAgent } from './agent/root'
 export { generalAgent } from './agent/general'
 export {
+  addTokenUsage,
   boundChildResult,
+  buildChildMessages,
+  childSystemParts,
   childToolNames,
   filterChildTools,
   lastAssistantText,

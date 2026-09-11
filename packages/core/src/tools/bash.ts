@@ -60,9 +60,9 @@ export function createBashTool(backend: TerminalBackend): Tool<BashInput, BashRe
     },
     async checkPermissions(input: BashInput) {
       if (matchesDangerousPattern(input.command)) {
-        return { behavior: 'ask', message: 'Command matches a dangerous pattern' }
+        return { behavior: 'ask', message: 'Command matches a dangerous pattern', saveAs: 'session' }
       }
-      return { behavior: 'allow', reason: 'mode' }
+      return { behavior: 'ask', message: 'Run this command?', saveAs: 'session' }
     },
     async execute(input: BashInput, ctx: ToolContext) {
       if (ctx.signal.aborted) throw abortError()

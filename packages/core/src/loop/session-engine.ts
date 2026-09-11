@@ -89,6 +89,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
           askUser: opts.askUser,
         }
         if (opts.system !== undefined) loopOpts.system = opts.system
+        if (opts.hooks !== undefined) loopOpts.hooks = opts.hooks
         const end = yield* queryLoop(loopOpts)
         messages = turn.messages
         session.usage = turn.usage
@@ -116,7 +117,13 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         store: opts.store,
         sessionId: session.id,
         generation: liveTurn?.compactGeneration ?? session.compactGeneration,
-        summary: mechanicalSummary(source.slice(0, cut)),
+        cwd: liveTurn?.cwd ?? session.cwd,
+        ...(opts.compact.llmSummarize
+          ? {
+              provider: opts.provider,
+              signal: liveTurn?.abort.signal ?? new AbortController().signal,
+            }
+          : { summary: mechanicalSummary(source.slice(0, cut)) }),
       })
       messages = result.messages
       if (liveTurn) {

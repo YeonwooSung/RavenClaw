@@ -8,6 +8,7 @@ import { resumeSession } from '../session/resume'
 import { createSessionEngine } from '../loop/session-engine'
 import { INCOMPLETE_TEXT } from '../loop/pairing'
 import { PersistError } from '../types'
+import { decidePermission } from '../permissions/pipeline'
 import type {
   CompactPolicy,
   Message,
@@ -18,6 +19,8 @@ import type {
   SessionRecord,
   SessionStore,
   StreamEvent,
+  SystemPart,
+  TokenUsage,
   Tool,
   ToolContext,
   Turn,
@@ -220,6 +223,7 @@ function createTestAgent(
     tools?: Tool[]
     model?: ModelProfile
     childMaxRounds?: number
+    system?: SystemPart[]
   } = {},
 ) {
   const store = over.store ?? createMemoryStore()
@@ -233,6 +237,7 @@ function createTestAgent(
     askUser,
   }
   if (over.childMaxRounds !== undefined) opts.childMaxRounds = over.childMaxRounds
+  if (over.system !== undefined) opts.system = over.system
   return { store, provider, tool: createAgentTool(opts) }
 }
 
@@ -257,10 +262,37 @@ describe('createAgentTool', () => {
     expect(tool.isConcurrencySafe({ prompt: 'x' })).toBe(false)
     expect(tool.isReadOnly({ prompt: 'x' })).toBe(false)
     expect(tool.interruptBehavior?.()).toBe('cancel')
-    expect(await tool.checkPermissions({ prompt: 'x' }, ctx)).toEqual({
-      behavior: 'allow',
-      reason: 'mode',
+    const decision = await tool.checkPermissions({ prompt: 'x' }, ctx)
+    expect(decision.behavior).toBe('ask')
+    if (decision.behavior === 'ask') {
+      expect(decision.message.length).toBeGreaterThan(0)
+      expect(decision.saveAs).toBe('session')
+    }
+
+    const leftover = await decidePermission({
+      name: 'Agent',
+      input: { prompt: 'x' },
+      tool,
+      ctx,
+      mode: 'default',
+      rules: { session: [], user: [], project: [] },
     })
+    expect(leftover.behavior).toBe('ask')
+    if (leftover.behavior === 'ask') {
+      expect(leftover.message.length).toBeGreaterThan(0)
+      expect(leftover.saveAs).toBe('session')
+    }
+
+    const denied = await decidePermission({
+      name: 'Agent',
+      input: { prompt: 'x' },
+      tool,
+      ctx,
+      mode: 'dontAsk',
+      rules: { session: [], user: [], project: [] },
+    })
+    expect(denied.behavior).toBe('deny')
+    if (denied.behavior === 'deny') expect(denied.reason).toBe('mode')
 
     const parsed = tool.parse({ prompt: 'do work', context: 'extra', description: 'desc' })
     expect(parsed.ok).toBe(true)
@@ -285,6 +317,10 @@ describe('createAgentTool', () => {
     const withIsolation = tool.parse({ prompt: 'x', isolation: 'worktree' })
     expect(withIsolation.ok).toBe(true)
     if (withIsolation.ok) expect(withIsolation.value.isolation).toBe('worktree')
+
+    const withCommand = tool.parse({ prompt: 'x', command: 'ls -la' })
+    expect(withCommand.ok).toBe(true)
+    if (withCommand.ok) expect(withCommand.value.command).toBe('ls -la')
 
     const badIsolation = tool.parse({ prompt: 'x', isolation: 'remote' })
     expect(badIsolation.ok).toBe(false)
@@ -327,7 +363,7 @@ describe('createAgentTool', () => {
     writeFileSync(filePath, 'hello')
 
     const store = createMemoryStore()
-    const session = makeSession({ cwd })
+    const session = makeSession({ cwd, permissionMode: 'acceptEdits' })
     await store.createSession(session)
     const provider = createFakeProvider([
       toolThenStop('e1', 'Edit', {
@@ -517,7 +553,7 @@ describe('createAgentTool', () => {
       compact: defaultCompact(),
       model: defaultModel(),
       maxRounds: 8,
-      askUser,
+      askUser: async () => 'allow',
     })
 
     const gen = engine.submitMessage('delegate')
@@ -697,7 +733,7 @@ describe('createAgentTool', () => {
       makeCtx(makeTurn(session)),
     )
 
-    expect(result).toMatch(/unknown subagent/i)
+    expect(result).toMatch(/unknown subagent|not spawnable/i)
     expect(provider.streamCount).toBe(0)
     const children = await store.listSessions({ parentSessionId: session.id })
     expect(children).toHaveLength(0)
@@ -936,6 +972,235 @@ describe('createAgentTool', () => {
     expect(names).not.toContain('Agent')
     expect(names).not.toContain('EnterPlanMode')
     expect(names).not.toContain('ExitPlanMode')
+  })
+
+  test('subagent not in root spawnableAgents returns an error and does not spawn', async () => {
+    const store = createMemoryStore()
+    const session = makeSession()
+    await store.createSession(session)
+    const provider = createFakeProvider([textThenStop('should not run')])
+    const { tool } = createTestAgent({ store, provider })
+    const result = await tool.execute(
+      { prompt: 'find files', subagent: 'root' },
+      makeCtx(makeTurn(session)),
+    )
+
+    expect(result).toMatch(/not spawnable/i)
+    expect(provider.streamCount).toBe(0)
+    const children = await store.listSessions({ parentSessionId: session.id })
+    expect(children).toHaveLength(0)
+  })
+
+  test('default general subagent is allowed without an explicit subagent field', async () => {
+    const provider = createFakeProvider([textThenStop('ok')])
+    const store = createMemoryStore()
+    const session = makeSession()
+    await store.createSession(session)
+    const { tool } = createTestAgent({ store, provider })
+    const result = await tool.execute({ prompt: 'list tools' }, makeCtx(makeTurn(session)))
+    expect(result).toBe('ok')
+    expect(provider.streamCount).toBe(1)
+  })
+
+  test('general inherits parent system; specialists use definition.systemPrompt', async () => {
+    const parentSystem: SystemPart[] = [{ tier: 'stable', text: 'PARENT_SYSTEM_UNIQUE' }]
+    const store = createMemoryStore()
+    const session = makeSession()
+    await store.createSession(session)
+
+    const generalProvider = createFakeProvider([textThenStop('g')])
+    const general = createTestAgent({ store, provider: generalProvider, system: parentSystem })
+    await general.tool.execute({ prompt: 'go', subagent: 'general' }, makeCtx(makeTurn(session)))
+    expect(generalProvider.requests[0]?.system).toEqual(parentSystem)
+
+    const finderProvider = createFakeProvider([textThenStop('f')])
+    const finder = createTestAgent({ store, provider: finderProvider, system: parentSystem })
+    await finder.tool.execute(
+      { prompt: 'find', subagent: 'file-finder' },
+      makeCtx(makeTurn(session)),
+    )
+    const finderSystem = finderProvider.requests[0]?.system ?? []
+    expect(finderSystem).toHaveLength(1)
+    expect(finderSystem[0]?.text).toContain('path — reason')
+    expect(finderSystem.some((part) => part.text.includes('PARENT_SYSTEM_UNIQUE'))).toBe(false)
+
+    const runnerProvider = createFakeProvider([textThenStop('r')])
+    const runner = createTestAgent({ store, provider: runnerProvider, system: parentSystem })
+    await runner.tool.execute(
+      { prompt: 'run tests', subagent: 'command-runner' },
+      makeCtx(makeTurn(session)),
+    )
+    const runnerSystem = runnerProvider.requests[0]?.system ?? []
+    expect(runnerSystem).toHaveLength(1)
+    expect(runnerSystem[0]?.text).toMatch(/command/i)
+    expect(runnerSystem.some((part) => part.text.includes('PARENT_SYSTEM_UNIQUE'))).toBe(false)
+  })
+
+  test('file-finder child prompt asks for path — reason lines; empty last text is returned', async () => {
+    const provider = createFakeProvider([textThenStop('')])
+    const store = createMemoryStore()
+    const session = makeSession()
+    await store.createSession(session)
+    const { tool } = createTestAgent({ store, provider })
+    const result = await tool.execute(
+      { prompt: 'find ts files', subagent: 'file-finder' },
+      makeCtx(makeTurn(session)),
+    )
+
+    expect(result).toBe('')
+    const texts = (provider.requests[0]?.messages ?? []).flatMap((msg) =>
+      msg.role === 'user' || msg.role === 'assistant' || msg.role === 'tool'
+        ? msg.blocks.map((block) => ('text' in block ? block.text : ''))
+        : [],
+    )
+    expect(texts.some((text) => text.includes('path — reason'))).toBe(true)
+    expect(texts.some((text) => text.includes('find ts files'))).toBe(true)
+  })
+
+  test('command-runner with command runs Bash once and skips the child loop', async () => {
+    const store = createMemoryStore()
+    const session = makeSession()
+    await store.createSession(session)
+
+    let bashCalls = 0
+    let seenCommand: string | undefined
+    const bash: Tool = {
+      ...stubTool('Bash'),
+      async execute(input) {
+        bashCalls += 1
+        seenCommand = (input as { command?: string }).command
+        return 'stdout from ls\nexit_code=0\n'
+      },
+    }
+    const provider = createFakeProvider([textThenStop('should not run')])
+    const { tool } = createTestAgent({
+      store,
+      provider,
+      tools: parentPool().map((item) => (item.name === 'Bash' ? bash : item)),
+    })
+    const result = await tool.execute(
+      { prompt: 'run this', subagent: 'command-runner', command: 'ls -la' },
+      makeCtx(makeTurn(session)),
+    )
+
+    expect(result).toContain('stdout from ls')
+    expect(seenCommand).toBe('ls -la')
+    expect(bashCalls).toBe(1)
+    expect(provider.streamCount).toBe(0)
+    const children = await store.listSessions({ parentSessionId: session.id })
+    expect(children).toHaveLength(0)
+  })
+
+  test('command-runner long bash output runs one helper round', async () => {
+    const store = createMemoryStore()
+    const session = makeSession()
+    await store.createSession(session)
+
+    const longOut = 'x'.repeat(2000)
+    const bash: Tool = {
+      ...stubTool('Bash'),
+      async execute() {
+        return longOut
+      },
+    }
+    const provider = createFakeProvider([textThenStop('summarized')])
+    const { tool } = createTestAgent({
+      store,
+      provider,
+      tools: parentPool().map((item) => (item.name === 'Bash' ? bash : item)),
+    })
+    const result = await tool.execute(
+      { prompt: 'run this', subagent: 'command-runner', command: 'yes | head' },
+      makeCtx(makeTurn(session)),
+    )
+
+    expect(result).toBe('summarized')
+    expect(provider.streamCount).toBe(1)
+    const texts = (provider.requests[0]?.messages ?? []).flatMap((msg) =>
+      msg.role === 'user' || msg.role === 'assistant' || msg.role === 'tool'
+        ? msg.blocks.map((block) => ('text' in block ? block.text : ''))
+        : [],
+    )
+    expect(texts.some((text) => text.includes(longOut))).toBe(true)
+  })
+
+  test('includeMessageHistory copies parent messages and excludes the current Agent tool_use', async () => {
+    const { fileFinderAgent } = await import('../agent/file-finder')
+    const prev = fileFinderAgent.includeMessageHistory
+    fileFinderAgent.includeMessageHistory = true
+    try {
+      const provider = createFakeProvider([textThenStop('found')])
+      const store = createMemoryStore()
+      const session = makeSession()
+      await store.createSession(session)
+      const { tool } = createTestAgent({ store, provider })
+      const turn = makeTurn(session, {
+        messages: [
+          {
+            id: 'u_parent',
+            role: 'user',
+            blocks: [{ type: 'text', text: 'PARENT_SECRET do not leak unless history' }],
+            createdAt: 1,
+          },
+          {
+            id: 'a_parent',
+            role: 'assistant',
+            blocks: [
+              { type: 'text', text: 'searching' },
+              {
+                type: 'tool_use',
+                id: 'agent_now',
+                name: 'Agent',
+                input: { prompt: 'find ts', subagent: 'file-finder' },
+              },
+            ],
+            createdAt: 2,
+          },
+        ],
+      })
+      const result = await tool.execute(
+        { prompt: 'find ts', subagent: 'file-finder' },
+        makeCtx(turn),
+      )
+      expect(result).toBe('found')
+      const texts = (provider.requests[0]?.messages ?? []).flatMap((msg) =>
+        msg.role === 'user' || msg.role === 'assistant' || msg.role === 'tool'
+          ? msg.blocks.map((block) => ('text' in block ? block.text : ''))
+          : [],
+      )
+      expect(texts.some((text) => text.includes('PARENT_SECRET'))).toBe(true)
+      expect(texts.some((text) => text.includes('find ts'))).toBe(true)
+      expect(
+        (provider.requests[0]?.messages ?? []).some(
+          (msg) =>
+            msg.role === 'assistant' &&
+            msg.blocks.some((block) => block.type === 'tool_use' && block.id === 'agent_now'),
+        ),
+      ).toBe(false)
+    } finally {
+      fileFinderAgent.includeMessageHistory = prev
+    }
+  })
+
+  test('child token usage is added to the parent turn after the child completes', async () => {
+    const usage: TokenUsage = { input: 11, output: 7, cacheRead: 3, cacheWrite: 2 }
+    const provider = createFakeProvider([
+      [
+        { type: 'text_delta', text: 'done' },
+        { type: 'usage', usage },
+        { type: 'stop', reason: 'end' },
+      ],
+    ])
+    const store = createMemoryStore()
+    const session = makeSession()
+    await store.createSession(session)
+    const { tool } = createTestAgent({ store, provider })
+    const turn = makeTurn(session, {
+      usage: { input: 4, output: 1, cacheRead: 0, cacheWrite: 1 },
+    })
+    const result = await tool.execute({ prompt: 'work' }, makeCtx(turn))
+    expect(result).toBe('done')
+    expect(turn.usage).toEqual({ input: 15, output: 8, cacheRead: 3, cacheWrite: 3 })
   })
 
   test('isolation worktree falls back to parent cwd when not a git repo', async () => {

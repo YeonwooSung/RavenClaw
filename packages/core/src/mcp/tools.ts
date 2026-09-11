@@ -35,7 +35,10 @@ export function wrapMcpTool(bridge: McpToolBridge, descriptor: McpToolDescriptor
       return 'block'
     },
     async checkPermissions() {
-      return { behavior: 'allow', reason: 'mode' }
+      if (isReadOnlyMcpDescriptor(descriptor)) {
+        return { behavior: 'allow', reason: 'mode' }
+      }
+      return { behavior: 'ask', message: 'Use this MCP tool?', saveAs: 'session' }
     },
     async execute(input: unknown, ctx: ToolContext) {
       if (ctx.signal.aborted) throw abortError()
@@ -43,6 +46,10 @@ export function wrapMcpTool(bridge: McpToolBridge, descriptor: McpToolDescriptor
       return formatMcpCallResult(result)
     },
   }
+}
+
+function isReadOnlyMcpDescriptor(descriptor: McpToolDescriptor): boolean {
+  return (descriptor as McpToolDescriptor & { readOnly?: unknown }).readOnly === true
 }
 
 export function wrapMcpTools(bridge: McpToolBridge, descriptors: McpToolDescriptor[]): Tool[] {

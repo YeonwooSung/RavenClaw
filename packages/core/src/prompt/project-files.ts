@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { dirname, isAbsolute, join, resolve } from 'node:path'
 
 export const PROJECT_FILE_CHAR_CAP = 40_000
@@ -63,11 +63,27 @@ function collectProjectFiles(cwd: string): string[] {
       pushIfFile(found, join(dir, name))
     }
     pushIfFile(found, join(dir, DOT_RAVEN_FILE))
+    pushIfFile(found, join(dir, 'RAVEN.local.md'))
+    pushIfFile(found, join(dir, 'AGENTS.local.md'))
+    pushRuleDir(found, join(dir, '.ravenclaw', 'rules'))
     const parent = dirname(dir)
     if (parent === dir) break
     dir = parent
   }
   return found
+}
+
+function pushRuleDir(out: string[], dir: string): void {
+  if (!existsSync(dir)) return
+  try {
+    if (!statSync(dir).isDirectory()) return
+    const names = readdirSync(dir)
+      .filter((name) => name.endsWith('.md'))
+      .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0))
+    for (const name of names) pushIfFile(out, join(dir, name))
+  } catch {
+    // unreadable rules dir
+  }
 }
 
 function pushIfFile(out: string[], path: string): void {

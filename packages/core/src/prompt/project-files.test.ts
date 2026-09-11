@@ -35,6 +35,16 @@ describe('loadProjectFiles', () => {
     expect(parentChars).toBeLessThanOrEqual(40_000)
   })
 
+  test('loads .ravenclaw/rules/*.md and RAVEN.local.md', () => {
+    const dir = tempDir()
+    mkdirSync(join(dir, '.ravenclaw', 'rules'), { recursive: true })
+    writeFileSync(join(dir, 'RAVEN.local.md'), 'LOCAL_OVERLAY_MARKER\n')
+    writeFileSync(join(dir, '.ravenclaw', 'rules', 'style.md'), 'RULE_STYLE_MARKER\n')
+    const loaded = loadProjectFiles(dir)
+    expect(loaded).toContain('LOCAL_OVERLAY_MARKER')
+    expect(loaded).toContain('RULE_STYLE_MARKER')
+  })
+
   test('caps each file at 40_000 chars', () => {
     const dir = tempDir()
     writeFileSync(join(dir, 'AGENTS.md'), 'Q'.repeat(45_000))

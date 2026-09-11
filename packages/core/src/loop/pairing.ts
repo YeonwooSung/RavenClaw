@@ -31,9 +31,10 @@ export function makeToolMessage(
   toolUseId: string,
   ok: boolean,
   text: string,
+  persistPath?: string,
 ): Extract<Message, { role: 'tool' }> {
   const image = parseImageResult(text)
-  return {
+  const msg: Extract<Message, { role: 'tool' }> = {
     id: crypto.randomUUID(),
     role: 'tool',
     toolUseId,
@@ -46,6 +47,8 @@ export function makeToolMessage(
       : [{ type: 'text', text }],
     createdAt: Date.now(),
   }
+  if (persistPath !== undefined) msg.persistPath = persistPath
+  return msg
 }
 
 function parseImageResult(text: string): { mediaType: string; data: string } | undefined {

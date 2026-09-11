@@ -3,7 +3,10 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ToolContext, Turn } from '../types'
+import { decidePermission } from '../permissions/pipeline'
 import { bashTool, createBashTool, matchesDangerousPattern } from './bash'
+
+const emptyRules = { session: [], user: [], project: [] }
 import type { TerminalBackend } from './terminal-backend'
 
 const HOME_ENV = 'RAVENCLAW_HOME'
@@ -73,15 +76,48 @@ describe('Bash', () => {
     expect(bashTool.isReadOnly({ command: 'echo hi' })).toBe(false)
     expect(bashTool.interruptBehavior?.()).toBe('cancel')
     const decision = await bashTool.checkPermissions({ command: 'echo hi' }, makeCtx('/tmp'))
-    expect(decision).toEqual({ behavior: 'allow', reason: 'mode' })
+    expect(decision.behavior).toBe('ask')
+    if (decision.behavior === 'ask') {
+      expect(decision.message.length).toBeGreaterThan(0)
+      expect(decision.saveAs).toBe('session')
+    }
   })
 
   test('checkPermissions asks when the command matches a dangerous pattern', async () => {
     const decision = await bashTool.checkPermissions({ command: 'rm -rf /' }, makeCtx('/tmp'))
     expect(decision.behavior).toBe('ask')
     if (decision.behavior === 'ask') {
-      expect(decision.message.length).toBeGreaterThan(0)
+      expect(decision.message).toBe('Command matches a dangerous pattern')
     }
+  })
+
+  test('default mode leftover ask for echo stays ask', async () => {
+    const decision = await decidePermission({
+      name: 'Bash',
+      input: { command: 'echo hi' },
+      tool: bashTool,
+      ctx: makeCtx('/tmp'),
+      mode: 'default',
+      rules: emptyRules,
+    })
+    expect(decision.behavior).toBe('ask')
+    if (decision.behavior === 'ask') {
+      expect(decision.message.length).toBeGreaterThan(0)
+      expect(decision.saveAs).toBe('session')
+    }
+  })
+
+  test('dontAsk denies leftover ask for echo', async () => {
+    const decision = await decidePermission({
+      name: 'Bash',
+      input: { command: 'echo hi' },
+      tool: bashTool,
+      ctx: makeCtx('/tmp'),
+      mode: 'dontAsk',
+      rules: emptyRules,
+    })
+    expect(decision.behavior).toBe('deny')
+    if (decision.behavior === 'deny') expect(decision.reason).toBe('mode')
   })
 
   test('echo hi appears in content with exit code and ending cwd', async () => {

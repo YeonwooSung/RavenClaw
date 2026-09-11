@@ -12,6 +12,9 @@ import type {
 } from '../types'
 import type { PermissionHook } from './hooks'
 import { decidePermission } from './pipeline'
+import { editTool } from '../tools/edit'
+import { writeTool } from '../tools/write'
+import { bashTool } from '../tools/bash'
 
 function makeTurn(over: Partial<Turn> = {}): Turn {
   return {
@@ -373,6 +376,64 @@ describe('decidePermission', () => {
     })
     expect(decision.behavior).toBe('deny')
     if (decision.behavior === 'deny') expect(decision.reason).toBe('safety')
+  })
+
+  test('default leftover ask for real Edit/Write/Bash echo stays ask', async () => {
+    const edit = await decide({
+      tool: editTool,
+      name: 'Edit',
+      input: { path: 'a.txt', old_string: 'a', new_string: 'b' },
+      mode: 'default',
+    })
+    expect(edit.behavior).toBe('ask')
+    if (edit.behavior === 'ask') expect(edit.message.length).toBeGreaterThan(0)
+
+    const write = await decide({
+      tool: writeTool,
+      name: 'Write',
+      input: { path: 'a.txt', content: 'x' },
+      mode: 'default',
+    })
+    expect(write.behavior).toBe('ask')
+    if (write.behavior === 'ask') expect(write.message.length).toBeGreaterThan(0)
+
+    const echo = await decide({
+      tool: bashTool,
+      name: 'Bash',
+      input: { command: 'echo hi' },
+      mode: 'default',
+    })
+    expect(echo.behavior).toBe('ask')
+    if (echo.behavior === 'ask') expect(echo.message.length).toBeGreaterThan(0)
+  })
+
+  test('dontAsk denies leftover ask for real Edit/Write/Bash echo', async () => {
+    const edit = await decide({
+      tool: editTool,
+      name: 'Edit',
+      input: { path: 'a.txt', old_string: 'a', new_string: 'b' },
+      mode: 'dontAsk',
+    })
+    expect(edit.behavior).toBe('deny')
+    if (edit.behavior === 'deny') expect(edit.reason).toBe('mode')
+
+    const write = await decide({
+      tool: writeTool,
+      name: 'Write',
+      input: { path: 'a.txt', content: 'x' },
+      mode: 'dontAsk',
+    })
+    expect(write.behavior).toBe('deny')
+    if (write.behavior === 'deny') expect(write.reason).toBe('mode')
+
+    const echo = await decide({
+      tool: bashTool,
+      name: 'Bash',
+      input: { command: 'echo hi' },
+      mode: 'dontAsk',
+    })
+    expect(echo.behavior).toBe('deny')
+    if (echo.behavior === 'deny') expect(echo.reason).toBe('mode')
   })
 
   test('default leftover ask stays ask', async () => {

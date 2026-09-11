@@ -50,7 +50,7 @@ function shouldCoerceUnknownModel(
 function isUnknownCatalogModel(error: unknown): boolean {
   if (!error || typeof error !== 'object') return false
   const status = 'status' in error ? (error as { status?: unknown }).status : undefined
-  if (status === 404) return true
+  if (status === 404 || status === 403) return true
   const message = error instanceof Error ? error.message : String(error)
   return /unknown model/i.test(message)
 }

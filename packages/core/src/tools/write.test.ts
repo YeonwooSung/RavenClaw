@@ -3,7 +3,10 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ToolContext, Turn } from '../types'
+import { decidePermission } from '../permissions/pipeline'
 import { writeTool } from './write'
+
+const emptyRules = { session: [], user: [], project: [] }
 
 const tempDirs: string[] = []
 
@@ -49,7 +52,7 @@ function makeCtx(cwd: string, signal?: AbortSignal): ToolContext {
 }
 
 describe('Write', () => {
-  test('is an unsafe mutating tool that allows by mode and blocks interrupt', async () => {
+  test('is an unsafe mutating tool that leftover-asks and blocks interrupt', async () => {
     expect(writeTool.name).toBe('Write')
     expect(writeTool.isConcurrencySafe({ path: 'a.txt', content: 'x' })).toBe(false)
     expect(writeTool.isReadOnly({ path: 'a.txt', content: 'x' })).toBe(false)
@@ -58,7 +61,40 @@ describe('Write', () => {
       { path: 'a.txt', content: 'x' },
       makeCtx('/tmp'),
     )
-    expect(decision).toEqual({ behavior: 'allow', reason: 'mode' })
+    expect(decision.behavior).toBe('ask')
+    if (decision.behavior === 'ask') {
+      expect(decision.message.length).toBeGreaterThan(0)
+      expect(decision.saveAs).toBe('session')
+    }
+  })
+
+  test('default mode leftover ask stays ask', async () => {
+    const decision = await decidePermission({
+      name: 'Write',
+      input: { path: 'a.txt', content: 'x' },
+      tool: writeTool,
+      ctx: makeCtx('/tmp'),
+      mode: 'default',
+      rules: emptyRules,
+    })
+    expect(decision.behavior).toBe('ask')
+    if (decision.behavior === 'ask') {
+      expect(decision.message.length).toBeGreaterThan(0)
+      expect(decision.saveAs).toBe('session')
+    }
+  })
+
+  test('dontAsk denies leftover ask', async () => {
+    const decision = await decidePermission({
+      name: 'Write',
+      input: { path: 'a.txt', content: 'x' },
+      tool: writeTool,
+      ctx: makeCtx('/tmp'),
+      mode: 'dontAsk',
+      rules: emptyRules,
+    })
+    expect(decision.behavior).toBe('deny')
+    if (decision.behavior === 'deny') expect(decision.reason).toBe('mode')
   })
 
   test('creates a new file including parent directories', async () => {

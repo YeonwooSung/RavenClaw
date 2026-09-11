@@ -39,7 +39,7 @@ export const editTool: Tool<EditInput, string> = {
     return 'block'
   },
   async checkPermissions() {
-    return { behavior: 'allow', reason: 'mode' }
+    return { behavior: 'ask', message: 'Edit this file?', saveAs: 'session' }
   },
   async execute(input: EditInput, ctx: ToolContext) {
     if (ctx.signal.aborted) throw abortError()

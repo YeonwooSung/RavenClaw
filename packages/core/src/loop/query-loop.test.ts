@@ -868,6 +868,316 @@ describe('queryLoop via SessionEngine', () => {
       rmSync(cwd, { recursive: true, force: true })
     }
   })
+
+  test('Bash-like { content, persistPath } lands on the stored tool message', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_persist_path' })
+    await store.createSession(session)
+    const dump: Tool<{ text: string }, { content: string; persistPath: string }> = {
+      name: 'Dump',
+      description: 'dump',
+      inputSchema: { type: 'object', properties: { text: { type: 'string' } } },
+      parse(input: unknown) {
+        if (
+          !input ||
+          typeof input !== 'object' ||
+          typeof (input as { text?: unknown }).text !== 'string'
+        ) {
+          return { ok: false as const, message: 'expected { text: string }' }
+        }
+        return { ok: true as const, value: { text: (input as { text: string }).text } }
+      },
+      isConcurrencySafe: () => true,
+      isReadOnly: () => true,
+      async checkPermissions() {
+        return { behavior: 'allow' as const, reason: 'mode' as const }
+      },
+      async execute(input) {
+        return { content: input.text, persistPath: '/tmp/dump.txt' }
+      },
+      renderResult(output) {
+        return output.content
+      },
+    }
+    const provider = createFakeProvider([
+      toolThenStop('d1', 'Dump', { text: 'preview' }),
+      textThenStop('done'),
+    ])
+    const engine = createSessionEngine(
+      engineOpts({ provider, store, session, tools: [dump] }),
+    )
+
+    const { events, result } = await collect(engine.submitMessage('dump'))
+    expect(result).toEqual({ reason: 'completed' })
+    const toolEvent = events.find((event) => event.type === 'tool_result')
+    expect(toolEvent && toolEvent.type === 'tool_result' ? toolEvent.result.persistPath : undefined).toBe(
+      '/tmp/dump.txt',
+    )
+
+    const loaded = await store.loadSession(session.id)
+    const toolMsg = loaded.messages.find(
+      (m): m is Extract<Message, { role: 'tool' }> =>
+        m.role === 'tool' && m.toolUseId === 'd1',
+    )
+    expect(toolMsg?.ok).toBe(true)
+    expect(toolMsg?.blocks[0]?.text).toBe('preview')
+    expect(toolMsg?.persistPath).toBe('/tmp/dump.txt')
+  })
+
+  test('413 compact-retries once then completes; second overflow is model_error', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_overflow_once' })
+    await store.createSession(session)
+    const prior: Message[] = [
+      {
+        id: 'u0',
+        role: 'user',
+        blocks: [{ type: 'text', text: 'old question' }],
+        createdAt: 1,
+      },
+      {
+        id: 'a0',
+        role: 'assistant',
+        blocks: [{ type: 'text', text: 'old answer' }],
+        createdAt: 2,
+      },
+      {
+        id: 'u1',
+        role: 'user',
+        blocks: [{ type: 'text', text: 'recent' }],
+        createdAt: 3,
+      },
+      {
+        id: 'a1',
+        role: 'assistant',
+        blocks: [{ type: 'text', text: 'recent reply' }],
+        createdAt: 4,
+      },
+    ]
+    for (const msg of prior) {
+      if (msg.role === 'user') await store.persistUser(session.id, msg)
+      else if (msg.role === 'assistant') await store.persistAssistant(session.id, msg)
+    }
+
+    const overflow = Object.assign(new Error('prompt too long'), {
+      retryable: false,
+      status: 413,
+    })
+    const provider = createFakeProvider([
+      async function* () {
+        throw overflow
+      },
+      textThenStop('after compact'),
+    ])
+    const recorded: string[] = []
+    const orig = store.recordCompact.bind(store)
+    store.recordCompact = async (sessionId, generation, summary, inactivatedIds) => {
+      recorded.push(summary)
+      return orig(sessionId, generation, summary, inactivatedIds)
+    }
+    const engine = createSessionEngine({
+      ...engineOpts({ provider, store, session, messages: prior }),
+      compact: { ...defaultCompact(), protectLastMessages: 2 },
+    })
+
+    const { events, result } = await collect(engine.submitMessage('go'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(provider.streamCount).toBe(2)
+    expect(recorded).toHaveLength(1)
+    expect(events.some((event) => event.type === 'compact')).toBe(true)
+    expect(provider.requests[1]!.messages.length).toBeLessThan(
+      provider.requests[0]!.messages.length,
+    )
+
+    const again = makeSession({ id: 'sess_overflow_twice' })
+    await store.createSession(again)
+    for (const msg of prior) {
+      if (msg.role === 'user') await store.persistUser(again.id, msg)
+      else if (msg.role === 'assistant') await store.persistAssistant(again.id, msg)
+    }
+    const twice = createFakeProvider([
+      async function* () {
+        throw overflow
+      },
+      async function* () {
+        throw Object.assign(new Error('context length exceeded'), {
+          retryable: false,
+          status: 413,
+        })
+      },
+    ])
+    const engine2 = createSessionEngine({
+      ...engineOpts({ provider: twice, store, session: again, messages: prior }),
+      compact: { ...defaultCompact(), protectLastMessages: 2 },
+    })
+    const second = await collect(engine2.submitMessage('go again'))
+    expect(second.result.reason).toBe('model_error')
+    expect(twice.streamCount).toBe(2)
+  })
+
+  test('context-length message compact-retries; retryable 429 still retries without compact', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_overflow_msg' })
+    await store.createSession(session)
+    const prior: Message[] = [
+      {
+        id: 'u0',
+        role: 'user',
+        blocks: [{ type: 'text', text: 'old question' }],
+        createdAt: 1,
+      },
+      {
+        id: 'a0',
+        role: 'assistant',
+        blocks: [{ type: 'text', text: 'old answer' }],
+        createdAt: 2,
+      },
+    ]
+    for (const msg of prior) {
+      if (msg.role === 'user') await store.persistUser(session.id, msg)
+      else if (msg.role === 'assistant') await store.persistAssistant(session.id, msg)
+    }
+    const provider = createFakeProvider([
+      async function* () {
+        throw new Error('This model maximum context length was exceeded')
+      },
+      textThenStop('ok'),
+    ])
+    let compactCalls = 0
+    const orig = store.recordCompact.bind(store)
+    store.recordCompact = async (sessionId, generation, summary, inactivatedIds) => {
+      compactCalls += 1
+      return orig(sessionId, generation, summary, inactivatedIds)
+    }
+    const engine = createSessionEngine({
+      ...engineOpts({ provider, store, session, messages: prior }),
+      compact: { ...defaultCompact(), protectLastMessages: 1 },
+    })
+    const { result } = await collect(engine.submitMessage('go'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(provider.streamCount).toBe(2)
+    expect(compactCalls).toBe(1)
+
+    const retrySession = makeSession({ id: 'sess_retryable' })
+    await store.createSession(retrySession)
+    const retryable = Object.assign(new Error('rate limited'), {
+      retryable: true,
+      status: 429,
+    })
+    const retryProvider = createFakeProvider([
+      async function* () {
+        throw retryable
+      },
+      textThenStop('after backoff'),
+    ])
+    let retryCompacts = 0
+    store.recordCompact = async (sessionId, generation, summary, inactivatedIds) => {
+      retryCompacts += 1
+      return orig(sessionId, generation, summary, inactivatedIds)
+    }
+    const retryEngine = createSessionEngine(
+      engineOpts({ provider: retryProvider, store, session: retrySession }),
+    )
+    const retried = await collect(retryEngine.submitMessage('hi'))
+    expect(retried.result).toEqual({ reason: 'completed' })
+    expect(retryProvider.streamCount).toBe(2)
+    expect(retryCompacts).toBe(0)
+  })
+
+  test('block interruptBehavior finishes execute after abort; leftover siblings abort', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_block_interrupt' })
+    await store.createSession(session)
+
+    let releaseExecute!: () => void
+    const executeGate = new Promise<void>((resolve) => {
+      releaseExecute = resolve
+    })
+    let finish!: () => void
+    const finishGate = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    let sawAbortOnCtx = false
+    let secondStarted = 0
+
+    const block: Tool<Record<string, never>, string> = {
+      name: 'BlockWrite',
+      description: 'block',
+      inputSchema: { type: 'object' },
+      parse() {
+        return { ok: true, value: {} }
+      },
+      isConcurrencySafe: () => false,
+      isReadOnly: () => false,
+      interruptBehavior() {
+        return 'block'
+      },
+      async checkPermissions() {
+        return { behavior: 'allow', reason: 'mode' }
+      },
+      async execute(_input, ctx) {
+        releaseExecute()
+        await finishGate
+        sawAbortOnCtx = ctx.signal.aborted
+        return 'saved'
+      },
+    }
+    const second: Tool<Record<string, never>, string> = {
+      name: 'Second',
+      description: 'second',
+      inputSchema: { type: 'object' },
+      parse() {
+        return { ok: true, value: {} }
+      },
+      isConcurrencySafe: () => false,
+      isReadOnly: () => true,
+      interruptBehavior() {
+        return 'cancel'
+      },
+      async checkPermissions() {
+        return { behavior: 'allow', reason: 'mode' }
+      },
+      async execute() {
+        secondStarted += 1
+        return 'second'
+      },
+    }
+    const provider = createFakeProvider([
+      [
+        { type: 'tool_call', id: 'block_1', name: 'BlockWrite', input: {} },
+        { type: 'tool_call', id: 'second_1', name: 'Second', input: {} },
+        { type: 'stop', reason: 'tool_use' },
+      ],
+    ])
+    const engine = createSessionEngine(
+      engineOpts({ provider, store, session, tools: [block, second] }),
+    )
+
+    const gen = engine.submitMessage('write then more')
+    const drained = collect(gen)
+    await executeGate
+    engine.abort()
+    finish()
+    const { result } = await drained
+
+    expect(result).toEqual({ reason: 'aborted' })
+    expect(sawAbortOnCtx).toBe(false)
+    expect(secondStarted).toBe(0)
+
+    const loaded = await store.loadSession(session.id)
+    const blockResult = loaded.messages.find(
+      (m): m is Extract<Message, { role: 'tool' }> =>
+        m.role === 'tool' && m.toolUseId === 'block_1',
+    )
+    expect(blockResult?.ok).toBe(true)
+    expect(blockResult?.blocks[0]?.text).toBe('saved')
+    const secondResult = loaded.messages.find(
+      (m): m is Extract<Message, { role: 'tool' }> =>
+        m.role === 'tool' && m.toolUseId === 'second_1',
+    )
+    expect(secondResult?.ok).toBe(false)
+    expect(secondResult?.blocks[0]?.text.startsWith('aborted:')).toBe(true)
+  })
 })
 
 function stubNamedTool(name: string): Tool {

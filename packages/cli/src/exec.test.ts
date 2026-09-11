@@ -77,6 +77,8 @@ describe('createRootTools', () => {
       'Write',
       'Bash',
       'Skill',
+      'Fetch',
+      'TodoWrite',
       'EnterPlanMode',
       'ExitPlanMode',
     ])
@@ -104,6 +106,8 @@ describe('createRootTools', () => {
       'Write',
       'Bash',
       'Skill',
+      'Fetch',
+      'TodoWrite',
       'EnterPlanMode',
       'ExitPlanMode',
       'Agent',

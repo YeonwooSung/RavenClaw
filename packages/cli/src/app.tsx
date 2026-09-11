@@ -9,13 +9,26 @@ import {
   type TokenUsage,
 } from '@ravenclaw/core'
 import { AdDock } from './ad-dock'
-import { LEARN_PROMPT, REVIEW_PROMPT, SLASH_HELP, handleSlashCommand } from './commands'
+import {
+  LEARN_PROMPT,
+  RELOAD_NOTICE,
+  REVIEW_PROMPT,
+  SLASH_HELP,
+  TASKS_NOTICE,
+  formatContextNotice,
+  formatPermissionsNotice,
+  handleSlashCommand,
+} from './commands'
+import { formatPublicConfig } from './config-print'
 import { formatCostNotice } from './cost-format'
+import { formatMcpList } from './mcp-list'
 import { runSessionReview } from './review'
 import { searchNotice } from './search'
+import { formatSkillsList } from './skills-list'
 import { Composer } from './composer'
 import { applySessionTitle } from './resume'
 import {
+  openNewSession,
   parsePermissionMode,
   resumeRuntime,
   type CliRuntime,
@@ -184,7 +197,97 @@ export function App(props: AppProps) {
               usage: runtimeRef.current.engine.session.usage,
               profile: runtimeRef.current.config.profile,
               funding: runtimeRef.current.engine.session.funding,
+              remaining: runtimeRef.current.remainingSessions,
+              compactGeneration: runtimeRef.current.engine.session.compactGeneration,
             }),
+          )
+          return
+        case 'clear':
+          void (async () => {
+            await runtimeRef.current.mcpCloser?.()
+            const next = await openNewSession(runtimeRef.current)
+            runtimeRef.current = next
+            setRows([])
+            syncSession()
+            setNotice(`new session ${shortSessionId(next.engine.session.id)}`)
+          })()
+          return
+        case 'model': {
+          const session = runtimeRef.current.engine.session
+          if (parsed.arg === undefined || parsed.arg.trim() === '') {
+            setNotice(`model ${session.model}`)
+            return
+          }
+          session.model = parsed.arg.trim()
+          setModel(session.model)
+          void runtimeRef.current.store.upsertSession(session).then(() => {
+            setNotice(`model ${session.model}`)
+          })
+          return
+        }
+        case 'reload':
+          setNotice(RELOAD_NOTICE)
+          return
+        case 'tasks':
+          setNotice(TASKS_NOTICE)
+          return
+        case 'permissions':
+          void runtimeRef.current.store
+            .listPermissionRules(runtimeRef.current.engine.session.id)
+            .then((rules) => {
+              setNotice(
+                formatPermissionsNotice({
+                  home: runtimeRef.current.config.home ?? '',
+                  cwd: runtimeRef.current.cwd,
+                  sessionRuleCount: rules.length,
+                }),
+              )
+            })
+            .catch(() => {
+              setNotice(
+                formatPermissionsNotice({
+                  home: runtimeRef.current.config.home ?? '',
+                  cwd: runtimeRef.current.cwd,
+                  sessionRuleCount: 0,
+                }),
+              )
+            })
+          return
+        case 'context':
+          void runtimeRef.current.store
+            .loadSession(runtimeRef.current.engine.session.id)
+            .then((loaded) => {
+              setNotice(
+                formatContextNotice(
+                  runtimeRef.current.engine.session.compactGeneration,
+                  loaded.messages.length,
+                ),
+              )
+            })
+            .catch(() => {
+              setNotice(
+                formatContextNotice(runtimeRef.current.engine.session.compactGeneration, 0),
+              )
+            })
+          return
+        case 'mcp':
+          setNotice(formatMcpList(runtimeRef.current.config.mcp?.servers ?? []))
+          return
+        case 'skills':
+          setNotice(
+            formatSkillsList({
+              cwd: runtimeRef.current.cwd,
+              ...(runtimeRef.current.config.home !== undefined
+                ? { home: runtimeRef.current.config.home }
+                : {}),
+            }),
+          )
+          return
+        case 'config':
+          setNotice(
+            runtimeRef.current.config.home !== undefined
+              ? formatPublicConfig({ home: runtimeRef.current.config.home })
+              : 'see raven config',
           )
           return
         case 'search':
@@ -345,6 +448,7 @@ export function App(props: AppProps) {
           usage,
           profile: runtimeRef.current.config.profile,
           funding,
+          remaining: runtimeRef.current.remainingSessions,
         })}
       />
     </Box>

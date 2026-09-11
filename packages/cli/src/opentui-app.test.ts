@@ -1,5 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import type {
+  Message,
+  PermissionRule,
   RoundEnd,
   SessionEngine,
   SessionListFilter,
@@ -49,17 +51,32 @@ function fakeRuntime(
     ask: extras.ask ?? createAskBridge(),
     store: extras.store,
     cwd: extras.cwd ?? '/proj',
-    config: { ads: { feedUrl: '' }, profile: { id: 'dummy' } },
+    config: {
+      ads: { feedUrl: '' },
+      profile: { id: 'dummy' },
+      home: '/tmp/ravenclaw-home',
+      model: 'dummy',
+      mcp: { servers: [] },
+    },
     hasPaidCapacityPlan: extras.hasPaidCapacityPlan,
   } as CliRuntime
 }
 
-function fakeStore(sessions: SessionRecord[] = []): SessionStore & {
+function fakeStore(
+  sessions: SessionRecord[] = [],
+  extras: {
+    messages?: Record<string, Message[]>
+    rules?: Record<string, PermissionRule[]>
+  } = {},
+): SessionStore & {
   filters: SessionListFilter[]
+  upserts: SessionRecord[]
 } {
   const filters: SessionListFilter[] = []
+  const upserts: SessionRecord[] = []
   return {
     filters,
+    upserts,
     async listSessions(filter?: SessionListFilter) {
       if (filter) filters.push(filter)
       let rows = [...sessions]
@@ -69,7 +86,17 @@ function fakeStore(sessions: SessionRecord[] = []): SessionStore & {
       if (filter?.limit !== undefined) rows = rows.slice(0, filter.limit)
       return rows
     },
-  } as SessionStore & { filters: SessionListFilter[] }
+    async upsertSession(session: SessionRecord) {
+      upserts.push({ ...session })
+    },
+    async loadSession(sessionId: string) {
+      const session = sessions.find((row) => row.id === sessionId) ?? makeSession({ id: sessionId })
+      return { session, messages: extras.messages?.[sessionId] ?? [] }
+    },
+    async listPermissionRules(sessionId: string) {
+      return extras.rules?.[sessionId] ?? []
+    },
+  } as SessionStore & { filters: SessionListFilter[]; upserts: SessionRecord[] }
 }
 
 function fakeEngine(
@@ -269,6 +296,88 @@ describe('runOpenTuiApp', () => {
     expect(code).toBe(0)
     expect(written.join('')).toContain('/resume')
     expect(written.join('')).toContain('/quit')
+    expect(written.join('')).toContain('/clear')
+    expect(written.join('')).toContain('/model')
+  })
+
+  test('/clear and /new replace the runtime and later turns use the new engine', async () => {
+    const submitted: string[] = []
+    const original = fakeEngine(makeSession(), async function* (text) {
+      submitted.push(`original:${text}`)
+      return { reason: 'completed' }
+    })
+    const fresh = fakeEngine(makeSession({ id: 'newsession-aaaa' }), async function* (text) {
+      submitted.push(`fresh:${text}`)
+      yield { type: 'text_delta', text: 'from fresh' }
+      return { reason: 'completed' }
+    })
+    const written: string[] = []
+    const code = await runOpenTuiApp(fakeRuntime(original, { store: fakeStore() }), {
+      input: asyncLines('/clear', 'hello', '/new', 'again', '/quit'),
+      write: (chunk) => {
+        written.push(chunk)
+      },
+      openNewSession: async (runtime) => ({ ...runtime, engine: fresh }),
+    })
+    expect(code).toBe(0)
+    expect(written.join('')).toContain('new session newsessi')
+    expect(written.join('')).toContain('from fresh')
+    expect(submitted).toEqual(['fresh:hello', 'fresh:again'])
+  })
+
+  test('/model prints or persists the session model', async () => {
+    const session = makeSession({ model: 'dummy' })
+    const store = fakeStore([session])
+    const written: string[] = []
+    const code = await runOpenTuiApp(fakeRuntime(fakeEngine(session, emptyTurn), { store }), {
+      input: asyncLines('/model', '/model anthropic/claude-sonnet-4', '/quit'),
+      write: (chunk) => {
+        written.push(chunk)
+      },
+    })
+    expect(code).toBe(0)
+    expect(written.join('')).toContain('model dummy')
+    expect(written.join('')).toContain('model anthropic/claude-sonnet-4')
+    expect(session.model).toBe('anthropic/claude-sonnet-4')
+    expect(store.upserts.at(-1)?.model).toBe('anthropic/claude-sonnet-4')
+  })
+
+  test('/reload /tasks /permissions /context /cost /mcp print status', async () => {
+    const session = makeSession({ compactGeneration: 2, model: 'dummy' })
+    const store = fakeStore([session], {
+      messages: {
+        [session.id]: [
+          { id: 'u1', role: 'user', blocks: [{ type: 'text', text: 'hi' }], createdAt: 1 },
+          { id: 'a1', role: 'assistant', blocks: [{ type: 'text', text: 'yo' }], createdAt: 2 },
+        ],
+      },
+    })
+    const written: string[] = []
+    const code = await runOpenTuiApp(fakeRuntime(fakeEngine(session, emptyTurn), { store }), {
+      input: asyncLines(
+        '/reload',
+        '/tasks',
+        '/permissions',
+        '/context',
+        '/cost',
+        '/mcp',
+        '/skills',
+        '/config',
+        '/quit',
+      ),
+      write: (chunk) => {
+        written.push(chunk)
+      },
+    })
+    expect(code).toBe(0)
+    const out = written.join('')
+    expect(out).toContain('skills reload on next turn')
+    expect(out).toContain('no background tasks')
+    expect(out).toContain('no extra rules')
+    expect(out).toContain('compact 2  messages 2')
+    expect(out).toContain('compact 2')
+    expect(out).toContain('no mcp servers')
+    expect(out).not.toContain('unknown command')
   })
 })
 

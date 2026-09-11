@@ -128,6 +128,33 @@ describe('wrapMcpTool', () => {
     expect(tool.inputSchema).toBe(searchSchema)
   })
 
+  test('checkPermissions leftover-asks unless the descriptor is read-only', async () => {
+    const mutating: McpToolDescriptor = {
+      name: 'search_docs',
+      description: 'Search docs',
+      inputSchema: searchSchema,
+    }
+    const mutatingTool = wrapMcpTool(recordingBridge([mutating]), mutating)
+    const leftover = await mutatingTool.checkPermissions({ q: 'mcp' }, makeCtx())
+    expect(leftover.behavior).toBe('ask')
+    if (leftover.behavior === 'ask') {
+      expect(leftover.message.length).toBeGreaterThan(0)
+      expect(leftover.saveAs).toBe('session')
+    }
+
+    const readonly = {
+      name: 'search_docs',
+      description: 'Search docs',
+      inputSchema: searchSchema,
+      readOnly: true,
+    }
+    const readonlyTool = wrapMcpTool(recordingBridge([readonly]), readonly)
+    expect(await readonlyTool.checkPermissions({ q: 'mcp' }, makeCtx())).toEqual({
+      behavior: 'allow',
+      reason: 'mode',
+    })
+  })
+
   test('parse accepts input that matches the MCP schema', () => {
     const descriptor: McpToolDescriptor = {
       name: 'search_docs',

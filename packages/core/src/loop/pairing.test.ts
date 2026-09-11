@@ -105,6 +105,15 @@ describe('pairing invariant helpers', () => {
   test('plain text results stay a single text block', () => {
     const msg = makeToolMessage('t1', true, 'hello file')
     expect(msg.blocks).toEqual([{ type: 'text', text: 'hello file' }])
+    expect(msg.persistPath).toBeUndefined()
+  })
+
+  test('optional persistPath is stored on the tool message', () => {
+    const msg = makeToolMessage('t1', true, 'preview', '/tmp/out.txt')
+    expect(msg.ok).toBe(true)
+    expect(msg.toolUseId).toBe('t1')
+    expect(msg.blocks).toEqual([{ type: 'text', text: 'preview' }])
+    expect(msg.persistPath).toBe('/tmp/out.txt')
   })
 
   test('Read of a tiny png yields an image block and stays paired', async () => {

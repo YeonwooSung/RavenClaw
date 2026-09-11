@@ -2,13 +2,16 @@ import type { AgentDefinition } from '../types'
 import { commandRunnerAgent } from './command-runner'
 import { fileFinderAgent } from './file-finder'
 import { generalAgent } from './general'
+import { loadDiskAgents } from './load'
 
 const CATALOG: AgentDefinition[] = [generalAgent, fileFinderAgent, commandRunnerAgent]
 
-export function agentCatalog(): AgentDefinition[] {
-  return CATALOG
+export function agentCatalog(cwd?: string): AgentDefinition[] {
+  if (cwd === undefined) return CATALOG
+  const extra = loadDiskAgents(cwd).filter((agent) => !CATALOG.some((row) => row.id === agent.id))
+  return [...CATALOG, ...extra]
 }
 
-export function getAgentDefinition(id: string): AgentDefinition | undefined {
-  return CATALOG.find((definition) => definition.id === id)
+export function getAgentDefinition(id: string, cwd?: string): AgentDefinition | undefined {
+  return agentCatalog(cwd).find((definition) => definition.id === id)
 }

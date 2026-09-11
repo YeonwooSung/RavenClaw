@@ -5,11 +5,23 @@ import {
   permissionPromptLines,
 } from '@ravenclaw/tui-opentui'
 import type { StreamEvent } from '@ravenclaw/core'
-import { LEARN_PROMPT, REVIEW_PROMPT, SLASH_HELP, handleSlashCommand } from './commands'
+import {
+  LEARN_PROMPT,
+  RELOAD_NOTICE,
+  REVIEW_PROMPT,
+  SLASH_HELP,
+  TASKS_NOTICE,
+  formatContextNotice,
+  formatPermissionsNotice,
+  handleSlashCommand,
+} from './commands'
+import { formatPublicConfig } from './config-print'
 import { formatCostNotice } from './cost-format'
+import { formatMcpList } from './mcp-list'
 import { runSessionReview } from './review'
 import { searchNotice } from './search'
-import { parsePermissionMode, resumeRuntime, type CliRuntime } from './engine'
+import { formatSkillsList } from './skills-list'
+import { openNewSession, parsePermissionMode, resumeRuntime, type CliRuntime } from './engine'
 import { loadIncludedDockLines } from './included-ads'
 import { applySessionTitle, formatResumeSessionLine } from './resume'
 import { formatStatusLine, shortSessionId } from './status-line'
@@ -18,6 +30,7 @@ export interface OpenTuiAppIo {
   input?: AsyncIterable<string>
   write?: (chunk: string) => void
   resumeRuntime?: (runtime: CliRuntime, sessionId: string) => Promise<CliRuntime>
+  openNewSession?: (runtime: CliRuntime) => Promise<CliRuntime>
 }
 
 export async function runOpenTuiApp(
@@ -28,6 +41,7 @@ export async function runOpenTuiApp(
     process.stdout.write(chunk)
   })
   const resume = io.resumeRuntime ?? resumeRuntime
+  const startNew = io.openNewSession ?? openNewSession
   const { input, close } = openInput(io.input)
   const readLine = lineReader(input)
   const view = createOpenTuiView()
@@ -132,7 +146,79 @@ export async function runOpenTuiApp(
             usage: current.engine.session.usage,
             profile: current.config.profile,
             funding: current.engine.session.funding,
+            remaining: current.remainingSessions,
+            compactGeneration: current.engine.session.compactGeneration,
           })}\n`)
+          continue
+        case 'clear': {
+          try {
+            await current.mcpCloser?.()
+            current = await startNew(current)
+            view.reset()
+            write(`new session ${shortSessionId(current.engine.session.id)}\n`)
+            await writeIncludedAds(current)
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error)
+            write(`${message}\n`)
+          }
+          continue
+        }
+        case 'model': {
+          const session = current.engine.session
+          if (parsed.arg === undefined || parsed.arg.trim() === '') {
+            write(`model ${session.model}\n`)
+            continue
+          }
+          session.model = parsed.arg.trim()
+          await current.store.upsertSession(session)
+          write(`model ${session.model}\n`)
+          continue
+        }
+        case 'reload':
+          write(`${RELOAD_NOTICE}\n`)
+          continue
+        case 'tasks':
+          write(`${TASKS_NOTICE}\n`)
+          continue
+        case 'permissions': {
+          let sessionRuleCount = 0
+          try {
+            sessionRuleCount = (await current.store.listPermissionRules(current.engine.session.id)).length
+          } catch {
+            sessionRuleCount = 0
+          }
+          write(`${formatPermissionsNotice({
+            home: current.config.home ?? '',
+            cwd: current.cwd,
+            sessionRuleCount,
+          })}\n`)
+          continue
+        }
+        case 'context': {
+          let messageCount = 0
+          try {
+            messageCount = (await current.store.loadSession(current.engine.session.id)).messages.length
+          } catch {
+            messageCount = 0
+          }
+          write(`${formatContextNotice(current.engine.session.compactGeneration, messageCount)}\n`)
+          continue
+        }
+        case 'mcp':
+          write(`${formatMcpList(current.config.mcp?.servers ?? [])}\n`)
+          continue
+        case 'skills':
+          write(`${formatSkillsList({
+            cwd: current.cwd,
+            ...(current.config.home !== undefined ? { home: current.config.home } : {}),
+          })}\n`)
+          continue
+        case 'config':
+          write(
+            current.config.home !== undefined
+              ? `${formatPublicConfig({ home: current.config.home })}\n`
+              : 'see raven config\n',
+          )
           continue
         case 'search':
           write(`${searchNotice({

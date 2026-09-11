@@ -148,7 +148,7 @@ SQLite WAL at `$RAVENCLAW_HOME/state.db`. **One live writer per session id.** A 
 
 In the TUI: `/help`, `/resume`, `/compact`, `/cost`, `/search`, `/learn`, `/review`, `/quit`. `/review` appends a read-only summary to `.ravenclaw/MEMORY.md`. Shift+Tab cycles `default → acceptEdits → plan → default`. Escape aborts the current turn.
 
-If `included.gatewayUrl` is a real URL and `GET /v1/entitlement` admits the session, the CLI uses the included-model gateway and `funding: included` (ads may mount). A denied probe falls back to BYOK.
+If `included.gatewayUrl` is a real URL and `GET /v1/entitlement` admits the session, the CLI uses the included-model gateway and `funding: included` (ads may mount). A denied probe falls back to BYOK. Included sessions may choose first-party ads. Repository contents are never sent to the ad feed. BYOK sessions never contact the feed.
 
 ## Packages
 
