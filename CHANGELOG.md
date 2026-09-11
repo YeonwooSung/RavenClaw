@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.8 — 2026-09-11
+
+List sessions from the shell without a TUI or API key.
+
+### Added
+- `raven sessions` prints recent top-level sessions for this directory
+- Child Agent sessions are omitted
+- Empty home prints `no sessions` and exits 0
+
+### Try it
+
+```bash
+git clone --branch v0.1.8 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+bun run raven sessions
+```
+
 ## 0.1.7 — 2026-09-11
 
 One-command live turn check.
