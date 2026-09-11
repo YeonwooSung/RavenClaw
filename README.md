@@ -125,3 +125,5 @@ If `included.gatewayUrl` is a real URL and `GET /v1/entitlement` admits the sess
 bun test
 ```
 
+See [CONTRIBUTING.md](CONTRIBUTING.md) for layout, how to add a CLI command, and how to cut a release.
+
