@@ -76,6 +76,22 @@ describe('parseArgv', () => {
     })
   })
 
+  test('--help and -h select the help command', () => {
+    expect(parseArgv(['--help'])).toEqual({ cmd: 'help', flags: {} })
+    expect(parseArgv(['-h'])).toEqual({ cmd: 'help', flags: {} })
+    expect(parseArgv(['help'])).toEqual({ cmd: 'help', flags: {} })
+  })
+
+  test('--version and -V select the version command', () => {
+    expect(parseArgv(['--version'])).toEqual({ cmd: 'version', flags: {} })
+    expect(parseArgv(['-V'])).toEqual({ cmd: 'version', flags: {} })
+    expect(parseArgv(['version'])).toEqual({ cmd: 'version', flags: {} })
+  })
+
+  test('exec --help shows help rather than exec', () => {
+    expect(parseArgv(['exec', '--help'])).toEqual({ cmd: 'help', flags: {} })
+  })
+
   test('rejects an unknown provider', () => {
     expect(() => parseArgv(['--provider', 'mystery'])).toThrow(/provider/)
   })

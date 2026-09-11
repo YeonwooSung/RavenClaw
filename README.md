@@ -78,7 +78,7 @@ Editor ACP is newline-delimited JSON-RPC on stdin/stdout (`dontAsk`).
 
 In the TUI, `/search <query>` searches this session (FTS5). `/search --all <query>` searches all sessions.
 
-Useful flags: `--dont-ask`, `--provider anthropic`, `--model anthropic/claude-sonnet-4`, `--tui ink|opentui`.
+Useful flags: `--help`, `--version`, `--dont-ask`, `--provider anthropic`, `--model anthropic/claude-sonnet-4`, `--tui ink|opentui`.
 
 This process is the same OS user as you. There is no network sandbox. Writes under `~/.ssh/id_*` and `$RAVENCLAW_HOME/state.db` are hard-denied; `.env` writes ask first.
 

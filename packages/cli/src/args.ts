@@ -5,7 +5,7 @@ const PROVIDERS = new Set<ProviderKind>(['anthropic', 'openai_compat'])
 export type TuiKind = 'ink' | 'opentui'
 
 export interface ParsedArgv {
-  cmd: 'interactive' | 'exec' | 'acp'
+  cmd: 'interactive' | 'exec' | 'acp' | 'help' | 'version'
   prompt?: string
   json?: boolean
   flags: ConfigFlags
@@ -25,6 +25,14 @@ export function parseArgv(argv: string[]): ParsedArgv {
 
     if (arg === '--json') {
       json = true
+      continue
+    }
+    if (arg === '--help' || arg === '-h') {
+      cmd = 'help'
+      continue
+    }
+    if (arg === '--version' || arg === '-V') {
+      cmd = 'version'
       continue
     }
     if (arg === '--dont-ask') {
@@ -63,7 +71,7 @@ export function parseArgv(argv: string[]): ParsedArgv {
       throw new Error(`unknown flag: ${arg}`)
     }
     if (
-      (arg === 'exec' || arg === 'acp') &&
+      (arg === 'exec' || arg === 'acp' || arg === 'help' || arg === 'version') &&
       cmd === 'interactive' &&
       positional.length === 0
     ) {
