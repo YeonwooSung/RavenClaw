@@ -1,5 +1,31 @@
 # Changelog
 
+## 0.1.33 — 2026-09-11
+
+v1.x product surfaces land, then leftover-ask, one-shot Bash, Fetch, and resume gates are tightened.
+
+### Added
+- Leftover-ask for Edit/Write/Agent/Bash/MCP; file hooks; slash registry (`/clear` `/model` `/reload` `/permissions` `/mcp` `/skills` `/config` `/context`)
+- `Fetch` and `TodoWrite`; disk agents; `.ravenclaw/rules` and `RAVEN.local.md`
+- 413 compact-retry, Bash `persistPath`, plan.md restore, LLM `/compact`
+
+### Fixed
+- Command-runner persists then runs Bash through `decidePermission`; disk agents are spawnable
+- `dontAsk` / `raven exec` allow in-tree Edit/Write and read-only Bash
+- Fetch blocks IPv6-mapped loopback and pins DNS; hooks run in the session cwd
+- `placementRequired` is new-session only; second 413 is `context_full`
+- AdDock no longer steals Enter; `/reload` rebuilds system parts
+- Shared privacy sentence in ads, README, and CLI help
+
+### Try it
+
+```bash
+git clone --branch v0.1.33 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+bun test
+bun run raven --version
+```
+
 ## 0.1.32 — 2026-09-11
 
 ACP and resume keep included funding paired with the right provider, and paid-plan ads stop selling the cap.
