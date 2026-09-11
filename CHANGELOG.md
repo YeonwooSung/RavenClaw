@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.26 — 2026-09-11
+
+Scaffold a skill.
+
+### Added
+- `raven skills new <name>` writes `~/.ravenclaw/skills/<name>/SKILL.md`
+- `--project` writes `.ravenclaw/skills/<name>/SKILL.md` in the current repo
+- Names are `a-z0-9_-` only; existing files are not overwritten
+
+### Try it
+
+```bash
+git clone --branch v0.1.26 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+bun run raven skills new demo
+bun run raven skills
+```
+
 ## 0.1.25 — 2026-09-11
 
 List discovered skills.
