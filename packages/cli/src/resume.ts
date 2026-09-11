@@ -59,6 +59,26 @@ export function formatSessionTranscript(
   return body === '' ? header : `${header}\n${body}`
 }
 
+export async function deleteCliSession(
+  prefix: string,
+  opts?: { home?: string },
+): Promise<{ id: string } | { error: string }> {
+  const id = prefix.trim()
+  if (id === '') return { error: 'usage: raven rm <session-id>' }
+  const home = opts?.home ?? ravenclawHome()
+  const store = openStore(home)
+  try {
+    const resolved = await resolveSessionId(store, id)
+    if (typeof resolved !== 'string') return resolved
+    await store.deleteSession(resolved)
+    return { id: resolved }
+  } catch (error) {
+    return { error: error instanceof Error ? error.message : String(error) }
+  } finally {
+    store.close()
+  }
+}
+
 export async function showCliSession(
   prefix: string,
   opts?: { home?: string },

@@ -249,6 +249,7 @@ export interface SessionStore {
   upsertSession(session: SessionRecord): Promise<void>
   listSessions(filter?: SessionListFilter): Promise<SessionRecord[]>
   loadSession(sessionId: string): Promise<{ session: SessionRecord; messages: Message[] }>
+  deleteSession(sessionId: string): Promise<void>
   persistUser(sessionId: string, message: Extract<Message, { role: 'user' }>): Promise<void>
   /**
    * Text-only assistant completions (no tool_use). Do not call for a tool-use round.

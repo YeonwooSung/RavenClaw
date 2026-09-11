@@ -10,7 +10,12 @@ import { bootCli } from './engine'
 import { runExec } from './exec'
 import { SETUP_HINT, providerConfigured, runFirstRun } from './first-run'
 import { readSecretLine } from './secret-input'
-import { formatResumeSessionLine, listCliSessions, showCliSession } from './resume'
+import {
+  deleteCliSession,
+  formatResumeSessionLine,
+  listCliSessions,
+  showCliSession,
+} from './resume'
 import { runOpenTuiApp } from './opentui-app'
 import { SMOKE_PROMPT, evaluateSmoke } from './smoke'
 
@@ -57,6 +62,16 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       return shown.error.startsWith('usage:') ? 2 : 1
     }
     process.stdout.write(`${shown.text}\n`)
+    return 0
+  }
+
+  if (parsed.cmd === 'rm') {
+    const deleted = await deleteCliSession(parsed.prompt ?? '')
+    if ('error' in deleted) {
+      process.stderr.write(`${deleted.error}\n`)
+      return deleted.error.startsWith('usage:') ? 2 : 1
+    }
+    process.stdout.write(`deleted ${deleted.id.slice(0, 8)}\n`)
     return 0
   }
 

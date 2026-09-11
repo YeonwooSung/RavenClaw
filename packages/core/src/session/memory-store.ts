@@ -132,6 +132,24 @@ export function createMemoryStore(): SessionStore {
       return { session: { ...session }, messages: repaired }
     },
 
+    async deleteSession(sessionId) {
+      await withWrite(async () => {
+        if (!sessions.has(sessionId)) {
+          throw new PersistError('unknown', `session not found: ${sessionId}`)
+        }
+        const children = [...sessions.values()].filter((row) => row.parentSessionId === sessionId)
+        for (const child of children) {
+          await store.deleteSession(child.id)
+        }
+        sessions.delete(sessionId)
+        messages.delete(sessionId)
+        rules.delete(sessionId)
+        for (const key of [...assistantKind.keys()]) {
+          if (key.startsWith(`${sessionId}:`)) assistantKind.delete(key)
+        }
+      })
+    },
+
     async persistUser(sessionId, message) {
       await withWrite(async () => {
         pushMessage(sessionId, message)

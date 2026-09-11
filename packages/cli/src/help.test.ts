@@ -10,6 +10,7 @@ describe('help text', () => {
     expect(HELP_TEXT).toContain('raven smoke')
     expect(HELP_TEXT).toContain('raven sessions')
     expect(HELP_TEXT).toContain('raven show')
+    expect(HELP_TEXT).toContain('raven rm')
     expect(HELP_TEXT).toContain('--tui')
     expect(HELP_TEXT).toContain('--help')
     expect(HELP_TEXT).toContain('--version')

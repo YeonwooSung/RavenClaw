@@ -403,4 +403,20 @@ describe('createSqliteStore', () => {
     const loaded = await reader.loadSession('s1')
     expect(loaded.messages.map((m) => m.id)).toEqual(['u1'])
   })
+
+  test('deleteSession removes the session, children, and messages', async () => {
+    const store = openStore()
+    await store.createSession(session())
+    await store.createSession(session({ id: 'child', parentSessionId: 's1' }))
+    await store.persistUser('s1', {
+      id: 'u1',
+      role: 'user',
+      blocks: [{ type: 'text', text: 'hi' }],
+      createdAt: 1,
+    })
+    await store.deleteSession('s1')
+    await expect(store.loadSession('s1')).rejects.toBeInstanceOf(PersistError)
+    await expect(store.loadSession('child')).rejects.toBeInstanceOf(PersistError)
+    expect(await store.listSessions()).toEqual([])
+  })
 })

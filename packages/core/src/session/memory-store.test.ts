@@ -183,4 +183,20 @@ describe('createMemoryStore', () => {
     expect(rules).toHaveLength(1)
     expect(rules[0]?.tool).toBe('Bash')
   })
+
+  test('deleteSession removes the session and its children', async () => {
+    const store = createMemoryStore()
+    await store.createSession(session())
+    await store.createSession(session({ id: 'child', parentSessionId: 's1' }))
+    await store.persistUser('s1', {
+      id: 'u1',
+      role: 'user',
+      blocks: [{ type: 'text', text: 'hi' }],
+      createdAt: 1,
+    })
+    await store.deleteSession('s1')
+    await expect(store.loadSession('s1')).rejects.toBeInstanceOf(PersistError)
+    await expect(store.loadSession('child')).rejects.toBeInstanceOf(PersistError)
+    expect(await store.listSessions()).toEqual([])
+  })
 })

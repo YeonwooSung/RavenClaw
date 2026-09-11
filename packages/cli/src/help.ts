@@ -12,6 +12,7 @@ Usage:
   raven smoke
   raven sessions
   raven show <id>
+  raven rm <id>
   raven --help
   raven --version
 
@@ -23,6 +24,7 @@ Commands:
   smoke         One live turn (requires a key); expects the model to say pong
   sessions      List recent sessions for this directory (no API key)
   show <id>     Print a session transcript (prefix ok; no API key)
+  rm <id>       Delete a session and its child agents (prefix ok; no API key)
 
 Options:
   --provider <anthropic|openai_compat>

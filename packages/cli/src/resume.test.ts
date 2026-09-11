@@ -7,6 +7,7 @@ import {
   formatMessageLine,
   formatResumeSessionLine,
   listCliSessions,
+  deleteCliSession,
   showCliSession,
 } from './resume'
 
@@ -123,5 +124,24 @@ describe('showCliSession', () => {
     expect(line.startsWith('tool(ok): ')).toBe(true)
     expect(line.endsWith('…')).toBe(true)
     expect(line.length).toBeLessThan(220)
+  })
+})
+
+describe('deleteCliSession', () => {
+  test('removes a session so show cannot find it', async () => {
+    const home = join(tmpdir(), `raven-rm-${Date.now()}`)
+    mkdirSync(home, { recursive: true })
+    const store = createSqliteStore(join(home, 'state.db')) as ReturnType<
+      typeof createSqliteStore
+    > & { close(): void }
+    const rec = session({ id: 'rmid00001234', cwd: home, title: 'Gone' })
+    await store.upsertSession(rec)
+    store.close()
+
+    const deleted = await deleteCliSession('rmid0000', { home })
+    expect(deleted).toEqual({ id: 'rmid00001234' })
+    expect(await showCliSession('rmid0000', { home })).toEqual({
+      error: 'session not found: rmid0000',
+    })
   })
 })

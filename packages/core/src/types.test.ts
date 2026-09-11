@@ -152,6 +152,7 @@ describe('port shapes', () => {
           messages: [],
         }
       },
+      async deleteSession() {},
       async persistUser() {},
       async persistAssistant() {},
       async persistToolCalls() {},

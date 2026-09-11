@@ -304,6 +304,11 @@ export function createSqliteStore(dbPath: string): SessionStore {
     `UPDATE sessions SET compact_generation = ?, updated_at = ? WHERE id = ?`,
   )
   const deleteRules = db.query(`DELETE FROM permission_rules WHERE session_id = ?`)
+  const deleteFtsBySession = db.query(`DELETE FROM messages_fts WHERE session_id = ?`)
+  const deleteMessagesBySession = db.query(`DELETE FROM messages WHERE session_id = ?`)
+  const deleteBoundariesBySession = db.query(`DELETE FROM compact_boundaries WHERE session_id = ?`)
+  const deleteSessionRow = db.query(`DELETE FROM sessions WHERE id = ?`)
+  const selectChildIds = db.query(`SELECT id FROM sessions WHERE parent_session_id = ?`)
   const insertRule = db.query(
     `INSERT INTO permission_rules (id, session_id, tool, spec_json, behavior)
      VALUES (?, ?, ?, ?, ?)`,
@@ -458,6 +463,28 @@ export function createSqliteStore(dbPath: string): SessionStore {
         await store.persistToolResults(sessionId, inserted)
       }
       return { session, messages: repaired }
+    },
+
+    async deleteSession(sessionId) {
+      await withWrite(async () => {
+        const row = selectSession.get(sessionId) as SessionRow | null
+        if (!row) {
+          throw new PersistError('unknown', `session not found: ${sessionId}`)
+        }
+        const children = selectChildIds.all(sessionId) as Array<{ id: string }>
+        for (const child of children) {
+          await store.deleteSession(child.id)
+        }
+        try {
+          deleteFtsBySession.run(sessionId)
+        } catch {
+          /* FTS is fail-open */
+        }
+        deleteMessagesBySession.run(sessionId)
+        deleteBoundariesBySession.run(sessionId)
+        deleteRules.run(sessionId)
+        deleteSessionRow.run(sessionId)
+      })
     },
 
     async persistUser(sessionId, message) {
