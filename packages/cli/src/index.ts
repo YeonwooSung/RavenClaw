@@ -27,7 +27,7 @@ import { formatMcpToolsReport } from './mcp-probe'
 import { createSkill, deleteSkill } from './skill-new'
 import { formatSkillsList } from './skills-list'
 import { initProject } from './init'
-import { doctorFailed, formatDoctorReport, runDoctor } from './doctor'
+import { doctorFailed, formatDoctorReport, probeLocalLlm, runDoctor } from './doctor'
 import { searchCliSessions } from './search'
 import { SMOKE_PROMPT, evaluateSmoke } from './smoke'
 
@@ -192,6 +192,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
 
   if (parsed.cmd === 'doctor') {
     const checks = runDoctor()
+    const local = await probeLocalLlm()
+    if (local) checks.push(local)
     process.stdout.write(`${formatDoctorReport(checks)}\n`)
     return doctorFailed(checks) ? 1 : 0
   }
@@ -240,7 +242,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
 
   if (parsed.cmd === 'smoke') {
     try {
-      const runtime = await bootCli({ flags: parsed.flags })
+      const runtime = await bootCli({ flags: parsed.flags, tools: [], maxRounds: 1 })
       const result = await runExec({ prompt: SMOKE_PROMPT, engine: runtime.engine })
       const verdict = evaluateSmoke(result.text)
       process.stdout.write(`${verdict.detail}\n`)

@@ -1,5 +1,16 @@
 # Changelog
 
+## Unreleased
+
+Local LLM smoke is text-only, and `raven doctor` probes Ollama / vLLM.
+
+### Changed
+- `raven smoke` sends no tools (`maxRounds: 1`) so a small local model can reply `pong`
+
+### Added
+- `raven doctor` reaches Ollama `/api/tags` or vLLM `/models` when that provider is configured
+- Env-gated live tests: `OLLAMA_HOST` / `VLLM_BASE_URL` (optional `OLLAMA_MODEL` / `VLLM_MODEL`)
+
 ## 0.1.27 — 2026-09-11
 
 Local LLMs via Ollama and vLLM, plus `raven skills rm`.

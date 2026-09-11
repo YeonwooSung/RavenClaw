@@ -31,7 +31,7 @@ Commands:
   exec          One-shot prompt; forces --dont-ask
   acp           Agent Client Protocol on stdin/stdout; forces --dont-ask
   setup         Write ~/.ravenclaw/.env (provider + API key)
-  smoke         One live turn (requires a key); expects the model to say pong
+  smoke         One live text-only turn; expects the model to say pong
   sessions      List recent sessions for this directory (no API key)
   show <id>     Print a session transcript (prefix ok; no API key)
   rm <id>       Delete a session and its child agents (prefix ok; no API key)
@@ -39,7 +39,7 @@ Commands:
   search <q>    Search session text (this directory; --all for every session)
   export <id>   Print a session as Markdown (full tool bodies; no API key)
   title <id>    Set a session title (no API key)
-  doctor        Check home, .env, config.yaml, and Bun (no secrets printed)
+  doctor        Check home, .env, config.yaml, Bun, and local LLM reachability
   config        Print resolved settings with secrets redacted
   init          Write AGENTS.md in this directory if missing
   completions   Print bash or zsh completion script to stdout

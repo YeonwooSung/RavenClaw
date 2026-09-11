@@ -8,12 +8,15 @@ const cli = fileURLToPath(new URL('./index.ts', import.meta.url))
 
 async function raven(
   args: string[],
-  opts?: { cwd?: string },
+  opts?: { cwd?: string; home?: string },
 ): Promise<{ code: number; stdout: string; stderr: string }> {
+  const home = opts?.home ?? join(tmpdir(), `raven-ci-home-${Date.now()}-${Math.random()}`)
+  mkdirSync(home, { recursive: true })
   const proc = Bun.spawn([process.execPath, cli, ...args], {
     cwd: opts?.cwd ?? process.cwd(),
     stdout: 'pipe',
     stderr: 'pipe',
+    env: { ...process.env, RAVENCLAW_HOME: home },
   })
   const [stdout, stderr, code] = await Promise.all([
     new Response(proc.stdout).text(),

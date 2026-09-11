@@ -186,6 +186,8 @@ export async function openEngine(opts: {
   messages?: Message[]
   spawnMcp?: McpSpawnFn
   funding?: Funding
+  tools?: Tool[]
+  maxRounds?: number
 }): Promise<{ engine: SessionEngine; mcpCloser?: () => Promise<void> }> {
   const session = opts.session ?? newSessionRecord({
     cwd: opts.cwd,
@@ -206,7 +208,7 @@ export async function openEngine(opts: {
       ...(terminal?.image !== undefined ? { image: terminal.image } : {}),
     }),
   )
-  const servers = opts.config.mcp?.servers ?? []
+  const servers = opts.tools !== undefined ? [] : (opts.config.mcp?.servers ?? [])
   let mcpTools: Tool[] = []
   let mcpCloser: (() => Promise<void>) | undefined
   if (servers.length > 0) {
@@ -216,11 +218,9 @@ export async function openEngine(opts: {
     mcpTools = loaded.tools
     mcpCloser = loaded.close
   }
-  const engineOpts: SessionEngineOptions = {
-    session,
-    provider: opts.provider,
-    store: opts.store,
-    tools: createSessionTools({
+  const tools =
+    opts.tools ??
+    createSessionTools({
       store: opts.store,
       provider: opts.provider,
       compact,
@@ -230,10 +230,15 @@ export async function openEngine(opts: {
       system,
       bash,
       mcpTools,
-    }),
+    })
+  const engineOpts: SessionEngineOptions = {
+    session,
+    provider: opts.provider,
+    store: opts.store,
+    tools,
     compact,
     model: opts.config.profile,
-    maxRounds: opts.config.maxRounds,
+    maxRounds: opts.maxRounds ?? opts.config.maxRounds,
     askUser: opts.askUser,
     system,
   }
@@ -323,6 +328,8 @@ export async function bootCli(opts: {
   flags: ConfigFlags
   cwd?: string
   ask?: AskBridge
+  tools?: Tool[]
+  maxRounds?: number
 }): Promise<CliRuntime> {
   const home = await ensureHomeDir()
   const config = loadConfig({ home, flags: opts.flags })
@@ -331,14 +338,17 @@ export async function bootCli(opts: {
   const provider = await providerFromConfig(config, { access })
   const cwd = opts.cwd ?? process.cwd()
   const ask = opts.ask ?? createAskBridge()
-  const { engine, mcpCloser } = await openEngine({
+  const engineOpts: Parameters<typeof openEngine>[0] = {
     provider,
     store,
     config,
     cwd,
     askUser: ask.ask,
     funding: access.admitted ? 'included' : 'byok',
-  })
+  }
+  if (opts.tools !== undefined) engineOpts.tools = opts.tools
+  if (opts.maxRounds !== undefined) engineOpts.maxRounds = opts.maxRounds
+  const { engine, mcpCloser } = await openEngine(engineOpts)
   return { engine, store, provider, config, cwd, ask, mcpCloser }
 }
 

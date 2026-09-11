@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { doctorFailed, formatDoctorReport, runDoctor } from './doctor'
+import { doctorFailed, formatDoctorReport, probeLocalLlm, runDoctor } from './doctor'
 
 function tempHome(suffix: string): string {
   const dir = join(tmpdir(), `raven-doctor-${suffix}-${Date.now()}`)
@@ -41,5 +41,44 @@ describe('runDoctor', () => {
     expect(checks.find((c) => c.name === 'config')?.ok).toBe(true)
     expect(checks.find((c) => c.name === 'config')?.detail).toContain('config.yaml')
     expect(doctorFailed(checks)).toBe(false)
+  })
+
+  test('skips local probe when no ollama/vllm is configured', async () => {
+    const home = tempHome('no-local')
+    writeFileSync(join(home, '.env'), 'ANTHROPIC_API_KEY=sk-test\n')
+    expect(await probeLocalLlm({ home, fetch: async () => { throw new Error('no fetch') } })).toBeUndefined()
+  })
+
+  test('probes ollama /api/tags and lists model names', async () => {
+    const home = tempHome('ollama')
+    writeFileSync(join(home, 'config.yaml'), 'provider: ollama\n')
+    const seen: string[] = []
+    const check = await probeLocalLlm({
+      home,
+      fetch: async (url) => {
+        seen.push(url)
+        return {
+          ok: true,
+          async json() {
+            return { models: [{ name: 'llama3.2:1b' }] }
+          },
+        }
+      },
+    })
+    expect(seen[0]).toContain('/api/tags')
+    expect(check).toEqual({ name: 'local', ok: true, detail: 'ollama llama3.2:1b' })
+  })
+
+  test('fails when the local endpoint is unreachable', async () => {
+    const home = tempHome('down')
+    writeFileSync(join(home, '.env'), 'OLLAMA_HOST=http://127.0.0.1:11434\n')
+    const check = await probeLocalLlm({
+      home,
+      fetch: async () => {
+        throw new Error('ECONNREFUSED')
+      },
+    })
+    expect(check?.ok).toBe(false)
+    expect(check?.detail).toContain('cannot reach ollama')
   })
 })

@@ -7,11 +7,17 @@ import {
   type ProviderChunk,
   type SessionRecord,
 } from '@ravenclaw/core'
+import { normalizeOpenAiBaseUrl } from '@ravenclaw/core'
 import { AnthropicMessagesProvider } from './anthropic'
 import { OpenAICompatProvider } from './openai-compat'
+import { createProvider } from './registry'
 
 const openaiKey = process.env.OPENAI_API_KEY
 const anthropicKey = process.env.ANTHROPIC_API_KEY
+const ollamaHost = process.env.OLLAMA_HOST
+const ollamaModel = process.env.OLLAMA_MODEL ?? 'llama3.2'
+const vllmBaseUrl = process.env.VLLM_BASE_URL
+const vllmModel = process.env.VLLM_MODEL ?? 'local-model'
 
 const compact: CompactPolicy = {
   enabled: false,
@@ -118,5 +124,81 @@ describe('env-gated live providers', () => {
       expect(text.length).toBeGreaterThan(0)
     },
     30_000,
+  )
+
+  test.skipIf(!ollamaHost)(
+    'Ollama stream() text-only when OLLAMA_HOST is set',
+    async () => {
+      const provider = createProvider({
+        provider: 'ollama',
+        apiKey: process.env.OLLAMA_API_KEY ?? 'ollama',
+        baseUrl: normalizeOpenAiBaseUrl(ollamaHost as string),
+        defaultModel: ollamaModel,
+      })
+      const chunks = await collectStream(
+        provider.stream(
+          {
+            model: ollamaModel,
+            system: [{ tier: 'stable', text: 'Reply with the single word pong.' }],
+            messages: [
+              {
+                id: 'u1',
+                role: 'user',
+                blocks: [{ type: 'text', text: 'ping' }],
+                createdAt: Date.now(),
+              },
+            ],
+            tools: [],
+            maxTokens: 32,
+          },
+          new AbortController().signal,
+        ),
+      )
+      const text = chunks
+        .filter((c): c is Extract<ProviderChunk, { type: 'text_delta' }> => c.type === 'text_delta')
+        .map((c) => c.text)
+        .join('')
+      expect(text.length).toBeGreaterThan(0)
+      expect(chunks.some((c) => c.type === 'stop')).toBe(true)
+    },
+    60_000,
+  )
+
+  test.skipIf(!vllmBaseUrl)(
+    'vLLM stream() text-only when VLLM_BASE_URL is set',
+    async () => {
+      const provider = createProvider({
+        provider: 'vllm',
+        apiKey: process.env.VLLM_API_KEY ?? 'vllm',
+        baseUrl: normalizeOpenAiBaseUrl(vllmBaseUrl as string),
+        defaultModel: vllmModel,
+      })
+      const chunks = await collectStream(
+        provider.stream(
+          {
+            model: vllmModel,
+            system: [{ tier: 'stable', text: 'Reply with the single word pong.' }],
+            messages: [
+              {
+                id: 'u1',
+                role: 'user',
+                blocks: [{ type: 'text', text: 'ping' }],
+                createdAt: Date.now(),
+              },
+            ],
+            tools: [],
+            maxTokens: 32,
+          },
+          new AbortController().signal,
+        ),
+      )
+      const text = chunks
+        .filter((c): c is Extract<ProviderChunk, { type: 'text_delta' }> => c.type === 'text_delta')
+        .map((c) => c.text)
+        .join('')
+      expect(text.length).toBeGreaterThan(0)
+      expect(chunks.some((c) => c.type === 'stop')).toBe(true)
+    },
+    60_000,
   )
 })

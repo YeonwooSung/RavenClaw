@@ -295,4 +295,40 @@ describe('openEngine', () => {
     expect(spawned).toBe(0)
     expect(engine.session.cwd).toBe('/tmp')
   })
+
+  test('explicit tools: [] is a text-only turn and does not spawn MCP', async () => {
+    let spawned = 0
+    const store = createMemoryStore()
+    const provider = createFakeProvider([
+      [
+        { type: 'text_delta', text: 'pong' },
+        { type: 'stop', reason: 'end' },
+      ],
+    ])
+    const { engine } = await openEngine({
+      provider,
+      store,
+      config: {
+        ...testResolvedConfig(),
+        mcp: { servers: [{ name: 'echo', command: 'false' }] },
+      },
+      cwd: '/tmp',
+      tools: [],
+      maxRounds: 1,
+      async askUser() {
+        return 'deny'
+      },
+      spawnMcp() {
+        spawned += 1
+        throw new Error('should not spawn')
+      },
+    })
+    const gen = engine.submitMessage('ping')
+    while (true) {
+      const next = await gen.next()
+      if (next.done) break
+    }
+    expect(spawned).toBe(0)
+    expect(provider.requests[0]?.tools).toEqual([])
+  })
 })
