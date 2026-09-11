@@ -6,10 +6,11 @@ import {
   type AcpEngine,
   type JsonRpcId,
 } from '@ravenclaw/acp'
-import { bootCli, resumeRuntime, type CliRuntime } from './engine'
+import { bootCli, openNewSession, resumeRuntime } from './engine'
 
 export type AcpStdioBoot = () => Promise<{
-  engine: AcpEngine
+  engine?: AcpEngine
+  create?: (sessionId: string) => Promise<AcpEngine>
   load?: (sessionId: string) => Promise<AcpEngine>
 }>
 
@@ -23,16 +24,28 @@ export async function runAcpStdio(opts: RunAcpStdioOpts = {}): Promise<void> {
   const input = opts.input ?? process.stdin
   const output = opts.output ?? process.stdout
   const boot = opts.boot ?? defaultBoot
+  let booted: Awaited<ReturnType<AcpStdioBoot>> | undefined
+  const once = async () => {
+    booted ??= await boot()
+    return booted
+  }
 
   const writeLine = (value: unknown) => {
     output.write(`${JSON.stringify(value)}\n`)
   }
 
   const server = createAcpServer({
-    engineFactory: () => wrapBoot(boot().then((runtime) => runtime.engine)),
+    engineFactory: (sessionId) =>
+      wrapBoot(
+        once().then(async (runtime) => {
+          if (runtime.create) return runtime.create(sessionId)
+          if (runtime.engine) return runtime.engine
+          throw new Error('ACP boot did not provide create or engine')
+        }),
+      ),
     loadEngine: (sessionId) =>
       wrapBoot(
-        boot().then(async (runtime) => {
+        once().then(async (runtime) => {
           if (runtime.load) return runtime.load(sessionId)
           throw new Error(`session not found: ${sessionId}`)
         }),
@@ -81,13 +94,13 @@ async function* readLines(
 }
 
 async function defaultBoot(): Promise<{
-  engine: AcpEngine
+  create: (sessionId: string) => Promise<AcpEngine>
   load: (sessionId: string) => Promise<AcpEngine>
 }> {
-  const runtime = await bootCli({ flags: { dontAsk: true } })
+  const runtime = await bootCli({ flags: { dontAsk: true }, createSession: false })
   return {
-    engine: runtime.engine,
-    load: async (sessionId) => (await resumeRuntime(runtime as CliRuntime, sessionId)).engine,
+    create: async (sessionId) => (await openNewSession(runtime, { sessionId })).engine,
+    load: async (sessionId) => (await resumeRuntime(runtime, sessionId)).engine,
   }
 }
 

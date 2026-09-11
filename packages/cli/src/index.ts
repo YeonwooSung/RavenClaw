@@ -6,7 +6,7 @@ import { parseArgv } from './args'
 import { HELP_TEXT, formatVersion } from './help'
 import { runAcpStdio } from './acp-stdio'
 import { App } from './app'
-import { bootCli, resumeRuntime } from './engine'
+import { bootCli, openNewSession, resumeRuntime } from './engine'
 import { runExec } from './exec'
 import { SETUP_HINT, providerConfigured, runFirstRun } from './first-run'
 import { readSecretLine } from './secret-input'
@@ -256,7 +256,13 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (parsed.cmd === 'acp') {
     try {
       await runAcpStdio({
-        boot: () => bootCli({ flags: parsed.flags }),
+        boot: async () => {
+          const runtime = await bootCli({ flags: parsed.flags, createSession: false })
+          return {
+            create: async (sessionId) => (await openNewSession(runtime, { sessionId })).engine,
+            load: async (sessionId) => (await resumeRuntime(runtime, sessionId)).engine,
+          }
+        },
       })
       return 0
     } catch (error) {

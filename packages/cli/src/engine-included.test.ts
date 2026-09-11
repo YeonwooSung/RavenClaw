@@ -17,6 +17,7 @@ import {
   openEngine,
   providerFromConfig,
   resolveIncludedAccess,
+  resumeRuntime,
 } from './engine'
 import { utcDay, type IncludedUsage } from './included-usage'
 
@@ -365,6 +366,71 @@ describe('included gateway access', () => {
     expect(access.admitted).toBe(false)
   })
 
+  test('remainingSessions 0 + consumeCap false still admits for resume', async () => {
+    const access = await resolveIncludedAccess(config({ included: includedOn() }), {
+      probe: async () => admitted({ remainingSessions: 0 }),
+      consumeCap: false,
+    })
+    expect(access.admitted).toBe(true)
+    if (access.admitted) expect(access.meteredByGateway).toBe(true)
+  })
+
+  test('remainingSessions does not increment the local ledger', async () => {
+    const home = tempHome()
+    const cfg = config({ home, included: includedOn() })
+    const access = await resolveIncludedAccess(cfg, {
+      probe: async () => admitted({ remainingSessions: 2 }),
+    })
+    expect(access.admitted).toBe(true)
+    const previousHome = process.env.RAVENCLAW_HOME
+    process.env.RAVENCLAW_HOME = home
+    writeFileSync(join(home, '.env'), 'ANTHROPIC_API_KEY=sk-ant\n')
+    writeFileSync(
+      join(home, 'config.yaml'),
+      ['included:', '  enabled: true', '  gatewayUrl: https://gw.example.com/v1', ''].join('\n'),
+    )
+    let store: { close?: () => void } | undefined
+    try {
+      const runtime = await bootCli({
+        flags: {},
+        cwd: '/tmp/metered',
+        probe: async () => admitted({ remainingSessions: 2 }),
+      })
+      store = runtime.store
+      expect(runtime.engine.session.funding).toBe('included')
+      expect(existsSync(join(home, 'included-usage.json'))).toBe(false)
+    } finally {
+      store?.close?.()
+      if (previousHome === undefined) delete process.env.RAVENCLAW_HOME
+      else process.env.RAVENCLAW_HOME = previousHome
+    }
+  })
+
+  test('explicit --provider skips the included gateway', async () => {
+    const access = await resolveIncludedAccess(config({ included: includedOn() }), {
+      probe: async () => admitted(),
+      preferByok: true,
+    })
+    expect(access.admitted).toBe(false)
+    const provider = await providerFromConfig(config({ included: includedOn() }), {
+      probe: async () => admitted(),
+      preferByok: true,
+    })
+    expect(provider.id).toBe('anthropic')
+  })
+
+  test('hasPaidCapacityPlan is forwarded on admitted access', async () => {
+    const paid = await resolveIncludedAccess(config({ included: includedOn() }), {
+      probe: async () => admitted({ hasPaidCapacityPlan: true }),
+    })
+    expect(paid.admitted).toBe(true)
+    if (paid.admitted) expect(paid.hasPaidCapacityPlan).toBe(true)
+    const unpaid = await resolveIncludedAccess(config({ included: includedOn() }), {
+      probe: async () => admitted(),
+    })
+    if (unpaid.admitted) expect(unpaid.hasPaidCapacityPlan).toBe(false)
+  })
+
   test('paid plan uses a higher cap than sessionCapPerDay', async () => {
     const home = tempHome()
     writeFileSync(join(home, 'included-usage.json'), JSON.stringify({ day: utcDay(), count: 4 }))
@@ -453,6 +519,68 @@ describe('included gateway access', () => {
     })
     expect(existsSync(join(home, 'included-usage.json'))).toBe(false)
     expect((await store.listSessions()).length).toBe(1)
+  })
+
+  test('resume of a byok session keeps the BYOK provider when the probe admits', async () => {
+    const home = tempHome()
+    const previousHome = process.env.RAVENCLAW_HOME
+    process.env.RAVENCLAW_HOME = home
+    writeFileSync(join(home, '.env'), 'ANTHROPIC_API_KEY=sk-ant\n')
+    writeFileSync(
+      join(home, 'config.yaml'),
+      ['included:', '  enabled: true', '  gatewayUrl: https://gw.example.com/v1', ''].join('\n'),
+    )
+    let store: { close?: () => void } | undefined
+    try {
+      const created = await bootCli({
+        flags: { provider: 'anthropic' },
+        cwd: '/tmp/resume-byok',
+        probe: async () => admitted(),
+      })
+      store = created.store
+      expect(created.engine.session.funding).toBe('byok')
+      expect(created.provider.id).toBe('anthropic')
+      const resumed = await resumeRuntime(created, created.engine.session.id)
+      expect(resumed.provider.id).toBe('anthropic')
+      expect(resumed.engine.session.funding).toBe('byok')
+    } finally {
+      store?.close?.()
+      if (previousHome === undefined) delete process.env.RAVENCLAW_HOME
+      else process.env.RAVENCLAW_HOME = previousHome
+    }
+  })
+
+  test('resume of an included session still uses the gateway when remainingSessions is 0', async () => {
+    const home = tempHome()
+    const previousHome = process.env.RAVENCLAW_HOME
+    process.env.RAVENCLAW_HOME = home
+    writeFileSync(join(home, '.env'), 'ANTHROPIC_API_KEY=sk-ant\n')
+    writeFileSync(
+      join(home, 'config.yaml'),
+      ['included:', '  enabled: true', '  gatewayUrl: https://gw.example.com/v1', ''].join('\n'),
+    )
+    let store: { close?: () => void } | undefined
+    try {
+      let probes = 0
+      const created = await bootCli({
+        flags: {},
+        cwd: '/tmp/resume-included',
+        probe: async () => {
+          probes += 1
+          return admitted({ remainingSessions: probes === 1 ? 1 : 0 })
+        },
+      })
+      store = created.store
+      expect(created.engine.session.funding).toBe('included')
+      expect(created.provider.id).toBe('included-gateway')
+      const resumed = await resumeRuntime(created, created.engine.session.id)
+      expect(resumed.provider.id).toBe('included-gateway')
+      expect(resumed.engine.session.funding).toBe('included')
+    } finally {
+      store?.close?.()
+      if (previousHome === undefined) delete process.env.RAVENCLAW_HOME
+      else process.env.RAVENCLAW_HOME = previousHome
+    }
   })
 
   test('resume-style boot (createSession: false) does not create a store row and does not increment', async () => {

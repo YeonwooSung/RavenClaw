@@ -87,6 +87,37 @@ describe('runAcpStdio', () => {
     })
   })
 
+  test('session/new uses boot.create with the advertised session id', async () => {
+    const input = new PassThrough()
+    const output = new PassThrough()
+    const { waitFor } = jsonLines(output)
+    const created: string[] = []
+
+    const running = runAcpStdio({
+      input,
+      output,
+      boot: async () => ({
+        create: async (sessionId) => {
+          created.push(sessionId)
+          return fakeEngine({})
+        },
+      }),
+    })
+
+    writeJson(input, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'session/new',
+      params: { cwd: '/tmp' },
+    })
+    const afterNew = await waitFor(1)
+    input.end()
+    await running
+
+    const sessionId = (afterNew[0] as { result?: { sessionId?: string } }).result?.sessionId
+    expect(created).toEqual([sessionId])
+  })
+
   test('session/prompt with fake engine yields text update', async () => {
     const input = new PassThrough()
     const output = new PassThrough()

@@ -35,13 +35,22 @@ function asyncLines(...lines: string[]): AsyncIterable<string> {
 
 function fakeRuntime(
   engine: SessionEngine,
-  extras: { ask?: AskBridge; store?: SessionStore; cwd?: string } = {},
+  extras: {
+    ask?: AskBridge
+    store?: SessionStore
+    cwd?: string
+    funding?: 'byok' | 'included'
+    hasPaidCapacityPlan?: boolean
+  } = {},
 ): CliRuntime {
+  if (extras.funding !== undefined) engine.session.funding = extras.funding
   return {
     engine,
     ask: extras.ask ?? createAskBridge(),
     store: extras.store,
     cwd: extras.cwd ?? '/proj',
+    config: { ads: { feedUrl: '' }, profile: { id: 'dummy' } },
+    hasPaidCapacityPlan: extras.hasPaidCapacityPlan,
   } as CliRuntime
 }
 
@@ -79,6 +88,25 @@ function fakeEngine(
 }
 
 describe('runOpenTuiApp', () => {
+  test('included funding writes house dock lines', async () => {
+    const written: string[] = []
+    const code = await runOpenTuiApp(
+      fakeRuntime(fakeEngine(makeSession({ funding: 'included' }), emptyTurn), {
+        funding: 'included',
+        hasPaidCapacityPlan: true,
+      }),
+      {
+        input: asyncLines('/quit'),
+        write: (chunk) => {
+          written.push(chunk)
+        },
+      },
+    )
+    expect(code).toBe(0)
+    expect(written.join('')).toContain('RavenClaw stays local')
+    expect(written.join('')).not.toContain('Need a higher session cap?')
+  })
+
   test('user prompt streams text_delta into written lines and /quit exits 0', async () => {
     const submitted: string[] = []
     const engine = fakeEngine(makeSession(), async function* (text) {

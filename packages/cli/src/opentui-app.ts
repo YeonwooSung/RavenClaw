@@ -10,6 +10,7 @@ import { formatCostNotice } from './cost-format'
 import { runSessionReview } from './review'
 import { searchNotice } from './search'
 import { parsePermissionMode, resumeRuntime, type CliRuntime } from './engine'
+import { loadIncludedDockLines } from './included-ads'
 import { applySessionTitle, formatResumeSessionLine } from './resume'
 import { formatStatusLine, shortSessionId } from './status-line'
 
@@ -70,7 +71,21 @@ export async function runOpenTuiApp(
     write(`${statusLine(current)}\n`)
   }
 
+  const writeIncludedAds = async (runtime: CliRuntime) => {
+    if (runtime.engine.session.funding !== 'included') return
+    const lines = await loadIncludedDockLines({
+      enabled: true,
+      feedUrl: runtime.config.ads.feedUrl,
+      sessionId: runtime.engine.session.id,
+      hasPaidCapacityPlan: runtime.hasPaidCapacityPlan === true,
+      width: process.stdout.columns || 80,
+      height: process.stdout.rows || 24,
+    })
+    if (lines.length > 0) write(`${lines.join('\n')}\n`)
+  }
+
   try {
+    await writeIncludedAds(current)
     while (true) {
       write(`${composerLine()}\n`)
       const line = await readLine()
@@ -145,6 +160,7 @@ export async function runOpenTuiApp(
             try {
               current = await resume(current, parsed.arg)
               write(`resumed ${shortSessionId(parsed.arg)}\n`)
+              await writeIncludedAds(current)
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error)
               write(`${message}\n`)

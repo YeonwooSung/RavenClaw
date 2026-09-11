@@ -331,6 +331,7 @@ export function App(props: AppProps) {
           enabled
           feedUrl={runtimeRef.current.config.ads.feedUrl}
           sessionId={sessionId}
+          hasPaidCapacityPlan={runtimeRef.current.hasPaidCapacityPlan === true}
         />
       ) : null}
       <Composer value={draft} busy={busy} {...(notice !== undefined ? { notice } : {})} />

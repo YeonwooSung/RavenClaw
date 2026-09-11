@@ -18,6 +18,7 @@ export function AdDock(props: {
   feedUrl: string
   sessionId: string
   composerReservedRows?: number
+  hasPaidCapacityPlan?: boolean
 }) {
   const { stdout } = useStdout()
   const width = stdout?.columns || 80
@@ -33,7 +34,7 @@ export function AdDock(props: {
         enabled: props.enabled,
         feedUrl: props.feedUrl,
         sessionId: props.sessionId,
-        hasPaidCapacityPlan: false,
+        hasPaidCapacityPlan: props.hasPaidCapacityPlan === true,
       }
       const placement = await fetchAds(req)
       if (cancelled) return
@@ -48,7 +49,7 @@ export function AdDock(props: {
       cancelled = true
       clearInterval(timer)
     }
-  }, [props.enabled, props.feedUrl, props.sessionId])
+  }, [props.enabled, props.feedUrl, props.sessionId, props.hasPaidCapacityPlan])
 
   useInput(() => {
     markActivity(rotation.current, Date.now())

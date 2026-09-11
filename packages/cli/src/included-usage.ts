@@ -62,7 +62,7 @@ export function tryRecordIncludedSession(home: string, cap: number, now = Date.n
         try {
           writeIncludedUsage(home, { day: current.day, count: current.count + 1 })
         } catch {
-          // best-effort; missing ledger must not fail the session
+          return false
         }
         return true
       } finally {

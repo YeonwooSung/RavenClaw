@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -37,6 +37,12 @@ describe('included usage ledger', () => {
     const raw = JSON.parse(readFileSync(join(home, 'included-usage.json'), 'utf8')) as IncludedUsage
     expect(raw.count).toBe(2)
     expect(raw.day).toBe(utcDay())
+  })
+
+  test('tryRecordIncludedSession returns false when the ledger cannot be written', () => {
+    const home = tempHome()
+    mkdirSync(join(home, 'included-usage.json'))
+    expect(tryRecordIncludedSession(home, 4)).toBe(false)
   })
 
   test('tryRecordIncludedSession admits the last slot then denies', () => {
