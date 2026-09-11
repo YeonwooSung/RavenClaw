@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.17 — 2026-09-11
+
+Scaffold project instructions.
+
+### Added
+- `raven init` writes `AGENTS.md` in the current directory when missing
+- Does not overwrite an existing file
+
+### Try it
+
+```bash
+git clone --branch v0.1.17 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+cd /path/to/your-project
+bun run /path/to/RavenClaw/packages/cli/src/index.ts init
+```
+
 ## 0.1.16 — 2026-09-11
 
 Print resolved settings without leaking secrets.
