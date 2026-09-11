@@ -29,6 +29,7 @@ export async function* queryLoop(
     lastStopReason: null,
     fallbackUsed: false,
     outputNudges: 0,
+    schemaNudges: 0,
   }
 
   while (true) {
@@ -46,6 +47,7 @@ export async function* queryLoop(
 
     const norm = yield* normalizeResponse(state)
     if (norm.action === 'return') return norm.end
+    if (state.pendingToolCalls.length === 0) continue
 
     const tools = yield* runToolRound(state)
     if (tools.action === 'return') return tools.end

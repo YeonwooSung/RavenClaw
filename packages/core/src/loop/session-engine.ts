@@ -39,8 +39,12 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
   const tasks = createTaskRegistry()
   const fileHistory = createFileHistory(session.id)
   const steering: string[] = []
-  const lifecycle = loadLifecycleHooks(session.cwd)
-  void lifecycle.run('SessionStart', { sessionId: session.id, cwd: session.cwd })
+  const lifecycle = opts.bare
+    ? { run: async () => undefined }
+    : loadLifecycleHooks(session.cwd)
+  if (!opts.bare) {
+    void lifecycle.run('SessionStart', { sessionId: session.id, cwd: session.cwd })
+  }
 
   return {
     get session() {
@@ -112,6 +116,10 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         model: session.model,
         readFiles: new Set(),
       }
+      const extras = opts.additionalDirectories
+      if (extras !== undefined && extras.length > 0) {
+        turn.additionalDirectories = [...extras]
+      }
       const worktree = getSessionWorktree(session.id)
       if (worktree) turn.projectCwd = worktree.originalCwd
       if (session.prePlanMode !== undefined) turn.prePlanMode = session.prePlanMode
@@ -152,6 +160,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         loopOpts.drainSteering = () => steering.splice(0)
         loopOpts.lifecycle = lifecycle
         if (opts.fallbackModel !== undefined) loopOpts.fallbackModel = opts.fallbackModel
+        if (opts.jsonSchema !== undefined) loopOpts.jsonSchema = opts.jsonSchema
         const end = yield* queryLoop(loopOpts)
         messages = turn.messages
         session.usage = turn.usage

@@ -15,12 +15,14 @@ export interface PromptBuildInput {
   git?: { branch: string; head: string; dirty: boolean } | null
   /** Optional preloaded project text (tests). If omitted, load from cwd walk. */
   projectFilesText?: string
+  bare?: boolean
+  effort?: string
 }
 
 export function buildSystemParts(input: PromptBuildInput): SystemPart[] {
   const projectText =
     input.projectFilesText !== undefined ? input.projectFilesText : loadProjectFiles(input.cwd)
-  const memoryText = loadMemorySnapshot(input.cwd)
+  const memoryText = input.bare === true ? '' : loadMemorySnapshot(input.cwd)
   const fileTree = loadProjectFileTree(input.cwd)
   const git = resolveGit(input)
   return [
@@ -83,6 +85,9 @@ function buildVolatilePrompt(input: PromptBuildInput): string {
   const lines = [`cwd: ${input.cwd}`]
   if (input.locale !== undefined) {
     lines.push(`locale: ${input.locale}`)
+  }
+  if (input.effort !== undefined && input.effort !== '') {
+    lines.push(`thinking effort: ${input.effort}`)
   }
   lines.push('')
   const skills = input.skills !== undefined ? input.skills : discoverSkills(input.cwd)

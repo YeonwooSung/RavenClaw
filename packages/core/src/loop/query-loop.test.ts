@@ -714,6 +714,53 @@ describe('queryLoop via SessionEngine', () => {
     expect(provider.streamCount).toBe(0)
   })
 
+  test('truncated no-tool stop persists assistant+user and streams again without persistToolCalls', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_truncate' })
+    await store.createSession(session)
+    const { order } = spyPersist(store)
+    const provider = createFakeProvider([
+      [
+        { type: 'text_delta', text: 'cut' },
+        { type: 'stop', reason: 'max_tokens' },
+      ],
+      textThenStop('rest'),
+    ])
+    const engine = createSessionEngine(engineOpts({ provider, store, session }))
+    const { result } = await collect(engine.submitMessage('hi'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(provider.streamCount).toBe(2)
+    expect(order.filter((step) => step === 'persistAssistant').length).toBe(2)
+    expect(order).toContain('persistUser')
+    expect(order).not.toContain('persistToolCalls')
+  })
+
+  test('fallback-model is the model id on the next provider request', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_fallback', model: 'primary' })
+    await store.createSession(session)
+    const boom = Object.assign(new Error('overloaded'), { retryable: true, status: 529 })
+    let calls = 0
+    const provider = createFakeProvider([
+      async function* () {
+        calls += 1
+        throw boom
+      },
+      textThenStop('ok'),
+    ])
+    const opts = engineOpts({ provider, store, session })
+    opts.fallbackModel = 'backup'
+    const engine = createSessionEngine(opts)
+    const { result, events } = await collect(engine.submitMessage('hi'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(provider.requests[0]?.model).toBe('primary')
+    expect(provider.requests[1]?.model).toBe('backup')
+    expect(events.some((event) => event.type === 'status' && event.message.includes('backup'))).toBe(
+      true,
+    )
+    expect(calls).toBe(1)
+  })
+
   test('Skill allowed-tools shrinks the live pool on the next assemble', async () => {
     const home = mkdtempSync(join(tmpdir(), 'ravenclaw-ql-skill-home-'))
     const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-ql-skill-cwd-'))

@@ -309,6 +309,9 @@ export interface SessionEngineOptions {
   system?: SystemPart[]
   hooks?: import('./permissions/hooks').PermissionHook[]
   fallbackModel?: string
+  jsonSchema?: unknown
+  bare?: boolean
+  additionalDirectories?: string[]
   askUser: (
     e: Extract<StreamEvent, { type: 'permission_ask' }>,
     signal: AbortSignal,

@@ -88,6 +88,11 @@ describe('buildSystemParts', () => {
     expect(volatile).toContain('long-skill')
   })
 
+  test('effort is written into the volatile prompt', () => {
+    const parts = buildSystemParts(input({ effort: 'high' }))
+    expect(parts[2]?.text).toContain('thinking effort: high')
+  })
+
   test('empty skills still emit a stable skills section', () => {
     const a = buildSystemParts(input({ skills: [] }))
     const b = buildSystemParts(input({ skills: [] }))

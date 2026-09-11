@@ -51,6 +51,9 @@ import {
   createLspTool,
   createStructuredOutputTool,
   enterSessionWorktree,
+  addDirectory,
+  getAgentDefinition,
+  filterChildTools,
   type CompactPolicy,
   type ConfigFlags,
   type Funding,
@@ -353,6 +356,8 @@ export async function openEngine(opts: {
   const system = buildSystemParts({
     cwd: session.cwd,
     permissionMode: session.permissionMode,
+    ...(opts.config.bare === true ? { bare: true } : {}),
+    ...(opts.config.effort !== undefined ? { effort: opts.config.effort } : {}),
   })
   const terminal = opts.config.terminal
   const bash = createBashTool(
@@ -374,7 +379,7 @@ export async function openEngine(opts: {
     const plugins = loadLocalPlugins(session.cwd, opts.config.home, { project: true })
     if (plugins.length > 0) mcpTools = mergeToolPool(mcpTools, plugins)
   }
-  const hooks = loadFileHooks(session.cwd)
+  const hooks = opts.config.bare === true ? [] : loadFileHooks(session.cwd)
   const built =
     opts.tools ??
     createSessionTools({
@@ -391,13 +396,28 @@ export async function openEngine(opts: {
       askTool: createAskUserTool((input, signal) => askQuestions.ask(input, signal)),
     })
   let pooled = built
+  let jsonSchema: unknown
   if (opts.config.jsonSchema !== undefined && opts.config.jsonSchema !== '') {
     try {
-      const schema = JSON.parse(opts.config.jsonSchema) as unknown
-      pooled = [...pooled, createStructuredOutputTool(schema)]
+      jsonSchema = JSON.parse(opts.config.jsonSchema) as unknown
     } catch {
-      // invalid schema is ignored; exec still runs
+      throw new Error('--json-schema is not valid JSON')
     }
+    if (!jsonSchema || typeof jsonSchema !== 'object' || Array.isArray(jsonSchema)) {
+      throw new Error('--json-schema must be a JSON object')
+    }
+    pooled = [...pooled, createStructuredOutputTool(jsonSchema)]
+  }
+  if (opts.config.agent !== undefined && opts.config.agent !== '') {
+    const definition = getAgentDefinition(opts.config.agent, session.cwd)
+    if (!definition) throw new Error(`unknown agent: ${opts.config.agent}`)
+    pooled = filterChildTools(pooled, definition)
+  }
+  let extraDirs: string[] = []
+  for (const path of opts.config.addDir ?? []) {
+    const added = addDirectory(extraDirs, session.cwd, path)
+    if (!added.ok) throw new Error(`--add-dir ${path}: ${added.error}`)
+    extraDirs = added.list
   }
   const tools = filterToolsByAllowList(pooled, opts.config.allowedTools)
   const engineOpts: SessionEngineOptions = {
@@ -414,6 +434,9 @@ export async function openEngine(opts: {
   if (opts.messages) engineOpts.messages = opts.messages
   if (hooks.length > 0) engineOpts.hooks = hooks
   if (opts.config.fallbackModel !== undefined) engineOpts.fallbackModel = opts.config.fallbackModel
+  if (jsonSchema !== undefined) engineOpts.jsonSchema = jsonSchema
+  if (opts.config.bare === true) engineOpts.bare = true
+  if (extraDirs.length > 0) engineOpts.additionalDirectories = extraDirs
   return { engine: createSessionEngine(engineOpts), mcpCloser, askQuestions }
 }
 

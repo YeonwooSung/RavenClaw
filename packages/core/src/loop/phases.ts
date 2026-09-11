@@ -12,6 +12,8 @@ import type {
 } from '../types'
 import { getLastRequestAt, markLastRequestAt } from '../compact/last-request'
 import { shouldAutocompact } from '../compact/policy'
+import { getModelProfile } from '../cost/models'
+import { takeChildOutput } from '../tools/set-output'
 import { applyToolResultBudget, microcompact, runAutocompact } from '../compact/prune'
 import { compactSummary } from '../compact/summarize'
 import { decidePermission } from '../permissions/pipeline'
@@ -45,6 +47,7 @@ export interface LoopState extends QueryLoopOptions {
   lastStopReason: string | null
   fallbackUsed: boolean
   outputNudges: number
+  schemaNudges: number
 }
 
 export type PhaseResult =
@@ -321,7 +324,7 @@ export function assembleRequest(state: LoopState): ProviderRequest {
         inputSchema: tool.inputSchema,
       }))
   return {
-    model: state.model.id,
+    model: state.turn.model,
     system: state.system ?? [],
     messages,
     tools,
@@ -425,22 +428,25 @@ export async function* streamModel(
         attempt = -1
         continue
       }
-      if (isAuthError(error) || !isRetryable(error) || attempt === maxTries - 1) {
-        const fallback = state.fallbackModel
-        if (
-          fallback !== undefined &&
-          fallback !== '' &&
-          fallback !== state.turn.model &&
-          !state.fallbackUsed &&
-          isRetryable(error)
-        ) {
-          state.fallbackUsed = true
-          state.turn.model = fallback
-          yield { type: 'status', message: `fallback model ${fallback}` }
-          current = assembleRequest(state)
-          attempt = -1
-          continue
-        }
+      if (isAuthError(error) || !isRetryable(error)) {
+        return { action: 'return', end: { reason: 'model_error', error } }
+      }
+      const fallback = state.fallbackModel
+      if (
+        fallback !== undefined &&
+        fallback !== '' &&
+        fallback !== state.turn.model &&
+        !state.fallbackUsed
+      ) {
+        state.fallbackUsed = true
+        state.turn.model = fallback
+        state.model = getModelProfile(fallback)
+        yield { type: 'status', message: `fallback model ${fallback}` }
+        current = assembleRequest(state)
+        attempt = -1
+        continue
+      }
+      if (attempt === maxTries - 1) {
         return { action: 'return', end: { reason: 'model_error', error } }
       }
       const backoff = baseMs * 2 ** attempt
@@ -560,6 +566,28 @@ export async function* normalizeResponse(
     }
     if (state.turn.graceUsed) {
       return { action: 'return', end: { reason: 'max_rounds', round: state.turn.round } }
+    }
+    if (state.jsonSchema !== undefined && takeChildOutput(state.turn.sessionId) === undefined && state.schemaNudges < 2) {
+      state.schemaNudges += 1
+      const nudge: Extract<Message, { role: 'user' }> = {
+        id: crypto.randomUUID(),
+        role: 'user',
+        blocks: [
+          {
+            type: 'text',
+            text: 'Call StructuredOutput now with the final object that matches the required JSON schema. Do not answer in prose.',
+          },
+        ],
+        createdAt: Date.now(),
+      }
+      state.turn.messages.push(nudge)
+      try {
+        await state.store.persistUser(state.turn.sessionId, nudge)
+      } catch (error) {
+        return { action: 'return', end: { reason: 'persist_failed', error } }
+      }
+      yield { type: 'status', message: 'structured output required' }
+      return { action: 'continue' }
     }
     return { action: 'return', end: { reason: 'completed' } }
   }
