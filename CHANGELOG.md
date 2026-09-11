@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.3 — 2026-09-11
+
+CI covers a real stdio MCP filesystem server, not just echo.
+
+### Added
+- In-repo `fs_list` / `fs_read` MCP fixture confined to `MCP_ROOT`
+- Live spawn test: list, read, and reject `../` escape
+- Shared Content-Length framing with the echo fixture
+
+### Try it
+
+```bash
+git clone --branch v0.1.3 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+bun test packages/cli/src/mcp-fs-live.test.ts
+```
+
 ## 0.1.2 — 2026-09-11
 
 Editor ACP can resume a saved session.
