@@ -1,6 +1,6 @@
 # RavenClaw
 
-v0.1.14. RavenClaw is a Bun/TypeScript coding agent. It reads and edits a workspace, runs a shell, and resumes after crash. Bring your own API keys (BYOK). No RavenClaw backend is required.
+v0.1.15. RavenClaw is a Bun/TypeScript coding agent. It reads and edits a workspace, runs a shell, and resumes after crash. Bring your own API keys (BYOK). No RavenClaw backend is required.
 
 Licensed under Apache-2.0.
 

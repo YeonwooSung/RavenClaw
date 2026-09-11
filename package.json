@@ -1,6 +1,6 @@
 {
   "name": "ravenclaw",
-  "version": "0.1.14",
+  "version": "0.1.15",
   "private": true,
   "packageManager": "bun@1.x",
   "workspaces": [

@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.15 — 2026-09-11
+
+Check the local install without printing secrets.
+
+### Added
+- `raven doctor` reports home, `.env`, `config.yaml`, `state.db`, and Bun
+- Prints key name and length only, never the value
+- Exit 1 if any check fails; missing `state.db` is ok
+
+### Try it
+
+```bash
+git clone --branch v0.1.15 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+bun run raven setup
+bun run raven doctor
+```
+
 ## 0.1.14 — 2026-09-11
 
 Set a session title from the shell or the TUI.
