@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.1.19 — 2026-09-11
+
+Contributor guide.
+
+### Added
+- [CONTRIBUTING.md](CONTRIBUTING.md): setup, package layout, tests, CLI command checklist, release process
+- README Develop section links to it
+
+### Try it
+
+```bash
+git clone --branch v0.1.19 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## 0.1.18 — 2026-09-11
 
 Shell completion for the CLI.
