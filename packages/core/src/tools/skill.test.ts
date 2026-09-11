@@ -170,23 +170,26 @@ describe('discoverSkills', () => {
       ].join('\n'),
     )
 
-    const found = discoverSkills(cwd, home)
+    const found = discoverSkills(cwd, home, { includeBuiltin: false })
     const byName = new Map(found.map((skill) => [skill.name, skill]))
 
     expect(byName.get('user-only')).toMatchObject({
       name: 'user-only',
       description: 'From the user dir',
       dir: join(home, 'skills', 'user-only'),
+      source: 'user',
     })
     expect(byName.get('project-only')).toMatchObject({
       name: 'project-only',
       description: 'From the project dir',
       dir: join(cwd, '.ravenclaw', 'skills', 'project-only'),
+      source: 'project',
     })
     expect(byName.get('shared')).toMatchObject({
       name: 'shared',
       description: 'Project copy of shared',
       dir: projectShared,
+      source: 'project',
     })
     expect(found).toHaveLength(3)
   })

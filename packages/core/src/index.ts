@@ -3,6 +3,15 @@ export { readPackageVersion } from './package-version'
 export { createSessionEngine } from './loop/session-engine'
 export { queryLoop } from './loop/query-loop'
 export {
+  parseLoopArg,
+  startLoop,
+  takeLoopTurn,
+  formatLoopStatus,
+  LOOP_MAX_TIMES,
+} from './loop/slash'
+export type { LoopState, LoopAction } from './loop/slash'
+export { loadDisabledSkills, setSkillDisabled, isSkillDisabled } from './skills/disable'
+export {
   buildPostCompactMessages,
   repairRoleAlternation,
   selectProtectedTail,
@@ -125,8 +134,10 @@ export {
   filterToolsForTurn,
   parseSkillFrontmatter,
   skillTool,
+  createSkillTool,
+  builtinSkillsRoot,
 } from './tools/skill'
-export type { DiscoveredSkill, SkillInput } from './tools/skill'
+export type { DiscoveredSkill, SkillInput, SkillSource } from './tools/skill'
 export { createMcpToolBridge, createStdioMcpTransport } from './mcp/client'
 export { createHttpMcpTransport } from './mcp/http'
 export { createMcpResourceTools } from './mcp/resources'

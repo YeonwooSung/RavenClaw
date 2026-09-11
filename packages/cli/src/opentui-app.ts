@@ -8,6 +8,12 @@ import {
   buildSystemParts,
   createJsonCronStore,
   fireDueJobs,
+  parseLoopArg,
+  startLoop,
+  takeLoopTurn,
+  formatLoopStatus,
+  discoverSkills,
+  setSkillDisabled,
   formatTasksNotice,
   formatUndoNotice,
   parseTasksArg,
@@ -31,7 +37,7 @@ import { runSessionReview } from './review'
 import { searchNotice } from './search'
 import { applyCronMutate } from './cron-cmd'
 import { fireCronJob } from './cron-fire'
-import { formatSkillsList } from './skills-list'
+import { formatSkillShow, formatSkillsList, parseSkillsSlashArg } from './skills-list'
 import { openNewSession, parsePermissionMode, resumeRuntime, type CliRuntime } from './engine'
 import { collectUserImages, readClipboardImage } from './image-paste'
 import { parseBangLine, runBangCommand } from './bash-line'
@@ -101,6 +107,7 @@ export async function runOpenTuiApp(
 
   const queue = createMessageQueue()
   let turnBusy = false
+  let loopState: import('@ravenclaw/core').LoopState | null = null
 
   const runTurn = async (text: string) => {
     if (turnBusy) {
@@ -138,6 +145,11 @@ export async function runOpenTuiApp(
       else {
         const queued = dequeue(queue)
         if (queued !== undefined) await runTurn(queued)
+        else {
+          const looped = takeLoopTurn(loopState)
+          loopState = looped.next
+          if (looped.prompt !== undefined) await runTurn(looped.prompt)
+        }
       }
     }
     write(`${statusLine(current)}\n`)
@@ -317,12 +329,52 @@ export async function runOpenTuiApp(
         case 'mcp':
           write(`${formatMcpList(current.config.mcp?.servers ?? [])}\n`)
           continue
-        case 'skills':
-          write(`${formatSkillsList({
-            cwd: current.cwd,
-            ...(current.config.home !== undefined ? { home: current.config.home } : {}),
-          })}\n`)
+        case 'skills': {
+          const home = current.config.home
+          const parsedSkills = parseSkillsSlashArg(parsed.arg)
+          if (parsedSkills.action === 'error') {
+            write(`${parsedSkills.message}\n`)
+            continue
+          }
+          if (parsedSkills.action === 'list') {
+            write(`${formatSkillsList({ cwd: current.cwd, ...(home !== undefined ? { home } : {}) })}\n`)
+            continue
+          }
+          const skills = discoverSkills(current.cwd, home)
+          const skill = skills.find((row) => row.name === parsedSkills.name)
+          if (parsedSkills.action === 'show') {
+            write(`${skill ? formatSkillShow(skill.dir) : `unknown skill: ${parsedSkills.name}`}\n`)
+            continue
+          }
+          if (home === undefined) {
+            write('no home directory\n')
+            continue
+          }
+          setSkillDisabled(parsedSkills.name, parsedSkills.action === 'disable', home)
+          write(`${parsedSkills.action}d ${parsedSkills.name}\n`)
           continue
+        }
+        case 'loop': {
+          const action = parseLoopArg(parsed.arg)
+          if (action.action === 'error') {
+            write(`${action.message}\n`)
+            continue
+          }
+          if (action.action === 'stop') {
+            loopState = null
+            write('loop stopped\n')
+            continue
+          }
+          if (action.action === 'status') {
+            write(`${formatLoopStatus(loopState)}\n`)
+            continue
+          }
+          loopState = startLoop(action.times, action.prompt)
+          const first = takeLoopTurn(loopState)
+          loopState = first.next
+          if (first.prompt !== undefined) await runTurn(first.prompt)
+          continue
+        }
         case 'rewind':
           write(`${(await current.engine.rewindLast()).notice}\n`)
           continue

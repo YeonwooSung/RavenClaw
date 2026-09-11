@@ -9,7 +9,7 @@ describe('formatSkillsList', () => {
     const home = join(tmpdir(), `raven-skills-empty-${Date.now()}`)
     const cwd = join(home, 'proj')
     mkdirSync(cwd, { recursive: true })
-    expect(formatSkillsList({ cwd, home })).toBe('no skills')
+    expect(formatSkillsList({ cwd, home, includeBuiltin: false })).toBe('no skills')
   })
 
   test('project skill overrides user skill of the same name', () => {
@@ -31,18 +31,19 @@ describe('formatSkillsList', () => {
       join(home, 'skills', 'only-user', 'SKILL.md'),
       '---\nname: only-user\ndescription: from home\n---\n',
     )
-    const text = formatSkillsList({ cwd, home })
+    const text = formatSkillsList({ cwd, home, includeBuiltin: false })
     expect(text).toContain('demo  project  project copy')
     expect(text).not.toContain('user copy')
     expect(text).toContain('only-user  user  from home')
   })
 
   test('formatSkillLine clips description to 60 chars', () => {
-    const line = formatSkillLine(
-      { name: 'long', description: 'x'.repeat(80), dir: '/tmp/.ravenclaw/skills/long' },
-      '/tmp/proj',
-      '/tmp/.ravenclaw',
-    )
+    const line = formatSkillLine({
+      name: 'long',
+      description: 'x'.repeat(80),
+      dir: '/tmp/.ravenclaw/skills/long',
+      source: 'user',
+    })
     expect(line).toBe(`long  user  ${'x'.repeat(60)}`)
   })
 })

@@ -7,6 +7,13 @@ import {
   formatTasksNotice,
   formatUndoNotice,
   parseTasksArg,
+  parseLoopArg,
+  startLoop,
+  takeLoopTurn,
+  formatLoopStatus,
+  type LoopState,
+  discoverSkills,
+  setSkillDisabled,
   agentCatalog,
   LIFECYCLE_EVENTS,
   type Funding,
@@ -34,7 +41,7 @@ import { formatMcpList } from './mcp-list'
 import { runSessionReview } from './review'
 import { searchNotice } from './search'
 import { collectUserImages, readClipboardImage } from './image-paste'
-import { formatSkillsList } from './skills-list'
+import { formatSkillShow, formatSkillsList, parseSkillsSlashArg } from './skills-list'
 import { Composer } from './composer'
 import { applySessionTitle } from './resume'
 import { applyCronMutate } from './cron-cmd'
@@ -87,6 +94,7 @@ export function App(props: AppProps) {
   const askRef = useRef<PendingAsk | null>(null)
   const historyRef = useRef<string[]>(loadPrompts(props.runtime.config.home))
   const historyIndexRef = useRef<number | null>(null)
+  const loopRef = useRef<LoopState | null>(null)
   const askUserRef = useRef<{
     input: AskUserInput
     resolve: (value: string) => void
@@ -230,6 +238,11 @@ export function App(props: AppProps) {
         else {
           const queued = dequeue(queueRef.current)
           if (queued !== undefined) void runTurn(queued)
+          else {
+            const looped = takeLoopTurn(loopRef.current)
+            loopRef.current = looped.next
+            if (looped.prompt !== undefined) void runTurn(looped.prompt)
+          }
         }
       }
     },
@@ -397,16 +410,56 @@ export function App(props: AppProps) {
         case 'mcp':
           setNotice(formatMcpList(runtimeRef.current.config.mcp?.servers ?? []))
           return
-        case 'skills':
-          setNotice(
-            formatSkillsList({
-              cwd: runtimeRef.current.cwd,
-              ...(runtimeRef.current.config.home !== undefined
-                ? { home: runtimeRef.current.config.home }
-                : {}),
-            }),
-          )
+        case 'skills': {
+          const home = runtimeRef.current.config.home
+          const parsedSkills = parseSkillsSlashArg(parsed.arg)
+          if (parsedSkills.action === 'error') {
+            setNotice(parsedSkills.message)
+            return
+          }
+          if (parsedSkills.action === 'list') {
+            setNotice(formatSkillsList({ cwd: runtimeRef.current.cwd, ...(home !== undefined ? { home } : {}) }))
+            return
+          }
+          const skills = discoverSkills(runtimeRef.current.cwd, home)
+          const skill = skills.find((row) => row.name === parsedSkills.name)
+          if (parsedSkills.action === 'show') {
+            if (!skill) {
+              setNotice(`unknown skill: ${parsedSkills.name}`)
+              return
+            }
+            setNotice(formatSkillShow(skill.dir))
+            return
+          }
+          if (home === undefined) {
+            setNotice('no home directory')
+            return
+          }
+          setSkillDisabled(parsedSkills.name, parsedSkills.action === 'disable', home)
+          setNotice(`${parsedSkills.action}d ${parsedSkills.name}`)
           return
+        }
+        case 'loop': {
+          const action = parseLoopArg(parsed.arg)
+          if (action.action === 'error') {
+            setNotice(action.message)
+            return
+          }
+          if (action.action === 'stop') {
+            loopRef.current = null
+            setNotice('loop stopped')
+            return
+          }
+          if (action.action === 'status') {
+            setNotice(formatLoopStatus(loopRef.current))
+            return
+          }
+          loopRef.current = startLoop(action.times, action.prompt)
+          const first = takeLoopTurn(loopRef.current)
+          loopRef.current = first.next
+          if (first.prompt !== undefined) void runTurn(first.prompt)
+          return
+        }
         case 'rewind':
           void runtimeRef.current.engine.rewindLast().then((result) => {
             setNotice(result.notice)

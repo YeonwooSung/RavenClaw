@@ -1,6 +1,8 @@
 import { readdirSync, readFileSync, realpathSync, statSync } from 'node:fs'
-import { join, sep } from 'node:path'
+import { dirname, join, sep } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { ravenclawHome } from '../home'
+import { isSkillDisabled } from '../skills/disable'
 import type { Tool, ToolContext, Turn } from '../types'
 import { parseWithSchema } from './parse'
 
@@ -9,10 +11,14 @@ export interface SkillInput {
   path?: string
 }
 
+export type SkillSource = 'builtin' | 'user' | 'project'
+
 export interface DiscoveredSkill {
   name: string
   description: string
   dir: string
+  source: SkillSource
+  disabled?: boolean
 }
 
 const BINARY_SCAN = 8192
@@ -32,7 +38,7 @@ const inputSchema = {
 export const skillTool: Tool<SkillInput, string> = {
   name: 'Skill',
   description:
-    'Load a named skill. Omit path to return the SKILL.md body. Pass path for a file under that skill directory (realpath-confined). Skills live in ~/.ravenclaw/skills and <project>/.ravenclaw/skills; a project skill overrides a user skill of the same name. Frontmatter allowed-tools sets a turn-scoped allow list.',
+    'Load a named skill. Omit path to return the SKILL.md body. Pass path for a file under that skill directory (realpath-confined). Skills load from bundled builtins, ~/.ravenclaw/skills, and <project>/.ravenclaw/skills (project wins). Frontmatter allowed-tools sets a turn-scoped allow list.',
   inputSchema,
   parse(input: unknown) {
     return parseWithSchema<SkillInput>(inputSchema, input)
@@ -49,7 +55,7 @@ export const skillTool: Tool<SkillInput, string> = {
   async execute(input: SkillInput, ctx: ToolContext) {
     if (ctx.signal.aborted) throw abortError()
     const found = discoverSkills(ctx.turn.projectCwd ?? ctx.turn.cwd).find(
-      (skill) => skill.name === input.name,
+      (skill) => skill.name === input.name && !skill.disabled,
     )
     if (!found) return `Skill failed: unknown skill: ${input.name}`
     applySkillAllowedTools(found.dir, ctx.turn)
@@ -66,12 +72,39 @@ export function filterToolsForTurn(tools: Tool[], turn: Turn): Tool[] {
   return tools.filter((tool) => allow.has(tool.name) || TURN_ALWAYS_TOOLS.has(tool.name))
 }
 
-export function discoverSkills(cwd: string, home?: string): DiscoveredSkill[] {
+export function builtinSkillsRoot(): string {
+  return join(dirname(fileURLToPath(import.meta.url)), '..', 'skills', 'builtin')
+}
+
+export function discoverSkills(
+  cwd: string,
+  home?: string,
+  opts?: { includeBuiltin?: boolean },
+): DiscoveredSkill[] {
   const userHome = home ?? ravenclawHome()
   const byName = new Map<string, DiscoveredSkill>()
-  loadSkillRoot(join(userHome, 'skills'), byName)
-  loadSkillRoot(join(cwd, '.ravenclaw', 'skills'), byName)
-  return [...byName.values()].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+  if (opts?.includeBuiltin !== false) {
+    loadSkillRoot(builtinSkillsRoot(), byName, 'builtin')
+  }
+  loadSkillRoot(join(userHome, 'skills'), byName, 'user')
+  loadSkillRoot(join(cwd, '.ravenclaw', 'skills'), byName, 'project')
+  const disabled = new Set(
+    [...byName.keys()].filter((name) => isSkillDisabled(name, userHome)),
+  )
+  return [...byName.values()]
+    .map((skill) => (disabled.has(skill.name) ? { ...skill, disabled: true } : skill))
+    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
+}
+
+export function createSkillTool(cwd: string, home?: string): Tool<SkillInput, string> {
+  const names = discoverSkills(cwd, home)
+    .filter((skill) => !skill.disabled)
+    .map((skill) => skill.name)
+  const listed = names.length > 0 ? names.join(', ') : 'none'
+  return {
+    ...skillTool,
+    description: `${skillTool.description} Available: ${listed}.`,
+  }
 }
 
 export function parseSkillFrontmatter(markdown: string): {
@@ -114,7 +147,11 @@ function applySkillAllowedTools(skillDir: string, turn: Turn): void {
   turn.skillAllowedTools = turn.skillAllowedTools.filter((name) => next.has(name))
 }
 
-function loadSkillRoot(root: string, into: Map<string, DiscoveredSkill>): void {
+function loadSkillRoot(
+  root: string,
+  into: Map<string, DiscoveredSkill>,
+  source: SkillSource,
+): void {
   let entries
   try {
     entries = readdirSync(root, { withFileTypes: true })
@@ -129,7 +166,7 @@ function loadSkillRoot(root: string, into: Map<string, DiscoveredSkill>): void {
     const fm = parseSkillFrontmatter(markdown)
     const name = fm.name ?? ent.name
     const description = fm.description ?? ''
-    into.set(name, { name, description, dir })
+    into.set(name, { name, description, dir, source })
   }
 }
 

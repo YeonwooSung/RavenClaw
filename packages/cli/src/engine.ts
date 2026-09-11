@@ -26,6 +26,7 @@ import {
   readTool,
   resumeSession,
   skillTool,
+  createSkillTool,
   createCronTools,
   createJsonCronStore,
   taskOutputTool,
@@ -394,7 +395,9 @@ export async function openEngine(opts: {
       mcpTools,
       hooks,
       askTool: createAskUserTool((input, signal) => askQuestions.ask(input, signal)),
-    })
+    }).map((tool) =>
+      tool.name === 'Skill' ? createSkillTool(session.cwd, opts.config.home) : tool,
+    )
   let pooled = built
   let jsonSchema: unknown
   if (opts.config.jsonSchema !== undefined && opts.config.jsonSchema !== '') {
