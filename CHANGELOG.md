@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.7 — 2026-09-11
+
+One-command live turn check.
+
+### Added
+- `raven smoke` / `bun run smoke` asks the model for `pong`
+- Without a key, prints the setup hint and exits 1
+- CI does not run this
+
+### Try it
+
+```bash
+git clone --branch v0.1.7 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+bun run raven setup
+bun run smoke
+```
+
 ## 0.1.6 — 2026-09-11
 
 CLI, MCP, and ACP versions come from each package.json.
