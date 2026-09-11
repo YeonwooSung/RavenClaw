@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.1.25 — 2026-09-11
+
+List discovered skills.
+
+### Added
+- `raven skills` lists user (`~/.ravenclaw/skills`) and project (`.ravenclaw/skills`) skills
+- A project skill of the same name wins
+- Descriptions are clipped to 60 characters
+- Empty dirs print `no skills`
+
+### Try it
+
+```bash
+git clone --branch v0.1.25 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+bun run raven skills
+```
+
 ## 0.1.24 — 2026-09-11
 
 Probe MCP servers and list their tools.
