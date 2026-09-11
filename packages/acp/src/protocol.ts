@@ -20,7 +20,7 @@ export const JSON_RPC_INTERNAL_ERROR = -32603
 export const AGENT_INFO = {
   name: 'ravenclaw',
   title: 'RavenClaw',
-  version: '0.1.1',
+  version: '0.1.2',
 } as const
 
 export type JsonRpcId = string | number

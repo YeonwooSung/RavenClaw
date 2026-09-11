@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.2 — 2026-09-11
+
+Editor ACP can resume a saved session.
+
+### Added
+- `session/load` on `raven acp` (`loadSession: true` when a loader is wired)
+- Failed loads return JSON-RPC invalid params; missing loader stays method-not-found
+
+### Try it
+
+```bash
+git clone --branch v0.1.2 https://github.com/YeonwooSung/RavenClaw.git
+cd RavenClaw && bun install
+bun run raven acp
+```
+
 ## 0.1.1 — 2026-09-11
 
 CLI usability patch on top of 0.1.0. Same agent loop; easier to start without reading the README.
