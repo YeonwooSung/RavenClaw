@@ -54,6 +54,7 @@ export interface LoopState extends QueryLoopOptions {
   outputNudges: number
   schemaNudges: number
   emptyNudges: number
+  thinkingNudges: number
   verifyNudges: number
   mutatedThisTurn: boolean
   sawVerifyCommand: boolean
@@ -62,6 +63,8 @@ export interface LoopState extends QueryLoopOptions {
 
 const EMPTY_COMPLETION_NUDGE =
   'Your previous reply was empty. Continue the task. Use tools if you need information. Do not apologize.'
+
+const THINKING_ONLY_NUDGE = 'Continue with visible text; do not recap.'
 
 const TRUNCATION_NUDGE =
   'Your previous reply was cut off. Continue from where you left off. Do not recap.'
@@ -673,6 +676,13 @@ export async function* normalizeResponse(
       return { action: 'continue' }
     }
     if (isEmptyCompletion(state)) {
+      if (state.pendingThinking.trim() !== '' && state.thinkingNudges < 2) {
+        state.thinkingNudges += 1
+        const fail = await applyMidTurnHint(state, asst, THINKING_ONLY_NUDGE)
+        if (fail) return { action: 'return', end: fail }
+        yield { type: 'status', message: 'thinking-only; continuing' }
+        return { action: 'continue' }
+      }
       const fp = emptyFingerprint(state)
       const identical =
         state.lastEmptyFingerprint !== undefined && state.lastEmptyFingerprint === fp
@@ -1244,7 +1254,7 @@ async function executeOneCall(
 }
 
 function isEmptyCompletion(state: LoopState): boolean {
-  return state.pendingText.trim() === '' && state.pendingThinking === ''
+  return state.pendingText.trim() === ''
 }
 
 function shouldVerifyOnStop(state: LoopState): boolean {

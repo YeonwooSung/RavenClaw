@@ -42,6 +42,8 @@ Discord rewrite, `execute_code`, Electron, `bypass` / yolo, streaming tool execu
 
 ### L4. Thinking-only is not a successful stop
 
+**Status.** Done.
+
 **Why.** Hermes `agent/turn_empty_response.py`: thinking-only gets a prefill continuation (×2) before the empty ladder. RavenClaw `isEmptyCompletion` requires `pendingThinking === ''`, so a think-only reply ends the turn.
 
 **Contract.** Treat `pendingText.trim() === ''` as empty even when thinking is present. First two recoveries: mid-turn hint “continue with visible text; do not recap.” Then the existing empty cap (3 / 1 if input > $0.25 / identical-fingerprint stop). Still no Hermes $ ladders beyond that.

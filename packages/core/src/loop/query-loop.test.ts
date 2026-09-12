@@ -1476,6 +1476,81 @@ describe('queryLoop via SessionEngine', () => {
     ).toBe(false)
   })
 
+  test('thinking-only is empty: two visible-text recoveries then a reply', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_thinking_only_then_reply' })
+    await store.createSession(session)
+    const provider = createFakeProvider([
+      [{ type: 'thinking_delta', text: 'plan a' }, { type: 'stop', reason: 'end' }],
+      [{ type: 'thinking_delta', text: 'plan b' }, { type: 'stop', reason: 'end' }],
+      textThenStop('hello'),
+    ])
+    const engine = createSessionEngine(engineOpts({ provider, store, session }))
+    const { result, events } = await collect(engine.submitMessage('hi'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(provider.streamCount).toBe(3)
+    expect(
+      events.filter((event) => event.type === 'status' && event.message === 'thinking-only; continuing'),
+    ).toHaveLength(2)
+    expect(
+      events.filter((event) => event.type === 'status' && event.message === 'empty completion; retrying'),
+    ).toHaveLength(0)
+    const loaded = await store.loadSession(session.id)
+    const hintText = (msg: Message): string =>
+      msg.blocks.some((block) => block.type === 'text' && block.text.includes('visible text'))
+    expect(loaded.messages.some((msg) => hintText(msg))).toBe(true)
+    expect(
+      loaded.messages.some(
+        (msg) =>
+          msg.role === 'assistant' &&
+          msg.blocks.some((block) => block.type === 'text' && block.text === 'hello'),
+      ),
+    ).toBe(true)
+  })
+
+  test('thinking-only then empty ladder after two visible-text recoveries', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_thinking_then_empty' })
+    await store.createSession(session)
+    const provider = createFakeProvider([
+      [{ type: 'thinking_delta', text: 'plan a' }, { type: 'stop', reason: 'end' }],
+      [{ type: 'thinking_delta', text: 'plan b' }, { type: 'stop', reason: 'end' }],
+      [{ type: 'thinking_delta', text: 'plan c' }, { type: 'stop', reason: 'end' }],
+      textThenStop('hello'),
+    ])
+    const engine = createSessionEngine(engineOpts({ provider, store, session }))
+    const { result, events } = await collect(engine.submitMessage('hi'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(provider.streamCount).toBe(4)
+    expect(
+      events.filter((event) => event.type === 'status' && event.message === 'thinking-only; continuing'),
+    ).toHaveLength(2)
+    expect(
+      events.filter((event) => event.type === 'status' && event.message === 'empty completion; retrying'),
+    ).toHaveLength(1)
+  })
+
+  test('thinking-only with whitespace text still recovers before completing', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_thinking_whitespace' })
+    await store.createSession(session)
+    const provider = createFakeProvider([
+      [
+        { type: 'thinking_delta', text: 'silent plan' },
+        { type: 'text_delta', text: '  \n' },
+        { type: 'stop', reason: 'end' },
+      ],
+      textThenStop('visible'),
+    ])
+    const engine = createSessionEngine(engineOpts({ provider, store, session }))
+    const { result, events } = await collect(engine.submitMessage('hi'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(provider.streamCount).toBe(2)
+    expect(
+      events.filter((event) => event.type === 'status' && event.message === 'thinking-only; continuing'),
+    ).toHaveLength(1)
+  })
+
   test('edit then complete without tests suffixes verify-on-stop onto the last tool', async () => {
     const store = createMemoryStore()
     const session = makeSession({ id: 'sess_verify_edit' })
