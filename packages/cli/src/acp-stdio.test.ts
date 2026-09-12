@@ -1,16 +1,18 @@
 import { describe, expect, test } from 'bun:test'
 import { PassThrough } from 'node:stream'
-import { PROTOCOL_VERSION, type AcpEngine } from '@ravenclaw/acp'
-import { runAcpStdio } from './acp-stdio'
+import type { UserSubmitInput } from '@ravenclaw/core'
+import { PROTOCOL_VERSION, type AcpEngine, type AcpEngineFactoryOpts } from '@ravenclaw/acp'
+import { applyAcpSessionNew, overlayMcpServers, parseAcpMcpServers, runAcpStdio } from './acp-stdio'
+import type { CliRuntimeBase } from './engine'
 
 function fakeEngine(opts: {
   events?: unknown[]
   end?: unknown
-  onSubmit?: (text: string) => void
+  onSubmit?: (input: UserSubmitInput) => void
 }): AcpEngine {
   return {
-    async *submitMessage(text: string) {
-      opts.onSubmit?.(text)
+    async *submitMessage(input: UserSubmitInput) {
+      opts.onSubmit?.(input)
       for (const event of opts.events ?? []) yield event
       return opts.end ?? { reason: 'completed' }
     },
@@ -116,6 +118,48 @@ describe('runAcpStdio', () => {
 
     const sessionId = (afterNew[0] as { result?: { sessionId?: string } }).result?.sessionId
     expect(created).toEqual([sessionId])
+  })
+
+  test('session/new forwards cwd, model, and mcpServers to boot.create', async () => {
+    const input = new PassThrough()
+    const output = new PassThrough()
+    const { waitFor } = jsonLines(output)
+    const received: AcpEngineFactoryOpts[] = []
+    const mcpServers = [
+      {
+        type: 'stdio',
+        name: 'workspace-tools',
+        command: '/bin/mcp',
+        args: ['--stdio'],
+        env: [{ name: 'TOKEN', value: 'x' }],
+      },
+    ]
+
+    const running = runAcpStdio({
+      input,
+      output,
+      boot: async () => ({
+        create: async (_sessionId, opts) => {
+          if (opts) received.push(opts)
+          return fakeEngine({})
+        },
+      }),
+    })
+
+    writeJson(input, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'session/new',
+      params: { cwd: '/tmp/project', model: 'ollama/qwen', mcpServers },
+    })
+    await waitFor(1)
+    input.end()
+    await running
+
+    expect(received).toHaveLength(1)
+    expect(received[0]?.cwd).toBe('/tmp/project')
+    expect(received[0]?.model).toBe('ollama/qwen')
+    expect(received[0]?.mcpServers).toEqual(mcpServers)
   })
 
   test('session/prompt with fake engine yields text update', async () => {
@@ -237,5 +281,108 @@ describe('runAcpStdio', () => {
 
     expect(loaded).toEqual(['sess_saved'])
     expect(JSON.stringify(messages)).toContain('from load')
+  })
+
+  test('permission_ask writes session/request_permission and waits for the editor', async () => {
+    const input = new PassThrough()
+    const output = new PassThrough()
+    const { messages, waitFor } = jsonLines(output)
+    let decided: string | undefined
+
+    const running = runAcpStdio({
+      input,
+      output,
+      boot: async () => ({
+        create: async (_sessionId, opts) => ({
+          async *submitMessage() {
+            decided = await opts?.requestPermission?.({
+              id: 'c1',
+              tool: 'Bash',
+              input: { command: 'ls' },
+              message: 'run ls',
+            })
+            return { reason: 'completed' }
+          },
+          abort() {},
+        }),
+      }),
+    })
+
+    writeJson(input, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'session/new',
+      params: { cwd: '/tmp' },
+    })
+    const afterNew = await waitFor(1)
+    const sessionId = (afterNew[0] as { result?: { sessionId?: string } }).result?.sessionId
+
+    writeJson(input, {
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'session/prompt',
+      params: { sessionId, prompt: 'ls' },
+    })
+    const afterAsk = await waitFor(2)
+    const perm = afterAsk.find(
+      (msg) =>
+        typeof msg === 'object' &&
+        msg !== null &&
+        (msg as { method?: string }).method === 'session/request_permission',
+    ) as { id?: string | number } | undefined
+    expect(perm?.id).toBeDefined()
+
+    writeJson(input, {
+      jsonrpc: '2.0',
+      id: perm?.id,
+      result: { outcome: { outcome: 'selected', optionId: 'allow' } },
+    })
+    await waitFor(4)
+    input.end()
+    await running
+
+    expect(decided).toBe('allow')
+    expect(JSON.stringify(messages)).toContain('end_turn')
+  })
+
+  test('applyAcpSessionNew overlays cwd, model, and ACP MCP servers', () => {
+    const runtime = {
+      cwd: '/old',
+      config: {
+        model: 'old-model',
+        mcp: {
+          servers: [{ name: 'keep', command: '/bin/keep' }],
+        },
+      },
+    } as unknown as CliRuntimeBase
+    const next = applyAcpSessionNew(runtime, {
+      cwd: '/tmp/project',
+      model: 'new-model',
+      mcpServers: [
+        {
+          type: 'stdio',
+          name: 'workspace-tools',
+          command: '/bin/mcp',
+          args: ['--stdio'],
+          env: [{ name: 'K', value: 'v' }],
+        },
+        { type: 'http', name: 'keep', url: 'https://mcp.example' },
+      ],
+    })
+    expect(next.cwd).toBe('/tmp/project')
+    expect(next.config.model).toBe('new-model')
+    expect(next.config.mcp.servers).toEqual([
+      { name: 'keep', type: 'http', url: 'https://mcp.example' },
+      {
+        name: 'workspace-tools',
+        command: '/bin/mcp',
+        args: ['--stdio'],
+        env: { K: 'v' },
+      },
+    ])
+    expect(parseAcpMcpServers(undefined)).toEqual([])
+    expect(overlayMcpServers([{ name: 'a', command: 'a' }], [])).toEqual([
+      { name: 'a', command: 'a' },
+    ])
   })
 })

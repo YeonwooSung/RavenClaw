@@ -156,17 +156,24 @@ describe('parseArgv', () => {
     })
   })
 
-  test('acp is unattended like exec', () => {
+  test('acp without --dont-ask does not set flags.dontAsk', () => {
     expect(parseArgv(['acp'])).toEqual({
       cmd: 'acp',
-      flags: { dontAsk: true },
+      flags: {},
     })
   })
 
-  test('acp keeps provider and model flags and still forces dontAsk', () => {
+  test('acp keeps provider and model flags without forcing dontAsk', () => {
     expect(parseArgv(['acp', '--provider', 'anthropic', '--model', 'claude'])).toEqual({
       cmd: 'acp',
-      flags: { dontAsk: true, provider: 'anthropic', model: 'claude' },
+      flags: { provider: 'anthropic', model: 'claude' },
+    })
+  })
+
+  test('acp --dont-ask still sets flags.dontAsk', () => {
+    expect(parseArgv(['acp', '--dont-ask'])).toEqual({
+      cmd: 'acp',
+      flags: { dontAsk: true },
     })
   })
 

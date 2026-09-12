@@ -4,11 +4,15 @@ import {
   AGENT_INFO,
   JSON_RPC_METHOD_NOT_FOUND,
   PROTOCOL_VERSION,
+  extractPromptImages,
   extractPromptText,
+  isJsonRpcResponse,
   isRoundEnd,
   jsonRpcError,
   jsonRpcResult,
   parseIncoming,
+  permissionOutcome,
+  promptToSubmit,
   roundEndToStopReason,
   toSessionUpdate,
   type InitializeParams,
@@ -38,7 +42,7 @@ describe('ACP request/response types', () => {
       protocolVersion: PROTOCOL_VERSION,
       agentCapabilities: {
         loadSession: false,
-        promptCapabilities: { image: false, audio: false, embeddedContext: false },
+        promptCapabilities: { image: true, audio: false, embeddedContext: false },
       },
       agentInfo: AGENT_INFO,
       authMethods: [],
@@ -50,7 +54,11 @@ describe('ACP request/response types', () => {
 
   test('session/new, session/prompt, and session/cancel envelopes', () => {
     const created: SessionNewResult = { sessionId: 'sess_1' }
-    const newParams: SessionNewParams = { cwd: '/tmp/project', mcpServers: [] }
+    const newParams: SessionNewParams = {
+      cwd: '/tmp/project',
+      mcpServers: [],
+      model: 'anthropic/claude-sonnet-4',
+    }
     const prompt: SessionPromptParams = {
       sessionId: created.sessionId,
       prompt: [{ type: 'text', text: 'list files' }],
@@ -58,6 +66,7 @@ describe('ACP request/response types', () => {
     const promptResult: SessionPromptResult = { stopReason: 'end_turn' }
     const cancel: SessionCancelParams = { sessionId: created.sessionId }
     expect(newParams.cwd).toBe('/tmp/project')
+    expect(newParams.model).toBe('anthropic/claude-sonnet-4')
     expect(prompt.prompt).toEqual([{ type: 'text', text: 'list files' }])
     expect(promptResult.stopReason).toBe('end_turn')
     expect(cancel.sessionId).toBe('sess_1')
@@ -98,6 +107,34 @@ describe('extractPromptText', () => {
     expect(extractPromptText('plain')).toBe('plain')
     expect(extractPromptText([{ type: 'image', mimeType: 'image/png' }])).toBe('')
     expect(extractPromptText(undefined)).toBe('')
+    expect(extractPromptImages([{ type: 'image', mimeType: 'image/png', data: 'abc' }])).toEqual([
+      { mediaType: 'image/png', data: 'abc' },
+    ])
+    expect(extractPromptImages([{ type: 'image', mimeType: 'image/png', uri: 'file:///x.png' }])).toEqual(
+      [],
+    )
+    expect(
+      promptToSubmit([
+        { type: 'text', text: 'see' },
+        { type: 'image', mimeType: 'image/jpeg', data: 'qq' },
+      ]),
+    ).toEqual({ text: 'see', images: [{ mediaType: 'image/jpeg', data: 'qq' }] })
+  })
+})
+
+describe('permissionOutcome', () => {
+  test('maps ACP option ids and unknown outcomes to deny', () => {
+    expect(permissionOutcome({ outcome: { outcome: 'selected', optionId: 'allow' } })).toBe('allow')
+    expect(permissionOutcome({ outcome: { outcome: 'selected', optionId: 'allow-once' } })).toBe(
+      'allow',
+    )
+    expect(permissionOutcome({ outcome: { outcome: 'selected', optionId: 'allow_always' } })).toBe(
+      'allow_always',
+    )
+    expect(permissionOutcome({ outcome: { outcome: 'selected', optionId: 'deny' } })).toBe('deny')
+    expect(permissionOutcome({ outcome: { outcome: 'cancelled' } })).toBe('deny')
+    expect(permissionOutcome({ outcome: { outcome: 'selected', optionId: 'mystery' } })).toBe('deny')
+    expect(ACP_METHODS.sessionRequestPermission).toBe('session/request_permission')
   })
 })
 
@@ -179,5 +216,7 @@ describe('JSON-RPC helpers', () => {
     })
     expect(parseIncoming('not-json')).toBeUndefined()
     expect(parseIncoming({})).toBeUndefined()
+    expect(isJsonRpcResponse({ jsonrpc: '2.0', id: 4, result: { ok: true } })).toBe(true)
+    expect(isJsonRpcResponse({ jsonrpc: '2.0', id: 4, method: 'initialize' })).toBe(false)
   })
 })

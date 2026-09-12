@@ -1,6 +1,20 @@
 import { describe, expect, test } from 'bun:test'
-import { ACP_METHODS, AGENT_INFO, JSON_RPC_METHOD_NOT_FOUND, PROTOCOL_VERSION, type JsonRpcNotification } from './protocol'
-import { createAcpServer, type AcpEngine } from './server'
+import type { UserSubmitInput } from '@ravenclaw/core'
+import {
+  ACP_METHODS,
+  AGENT_INFO,
+  JSON_RPC_METHOD_NOT_FOUND,
+  PERMISSION_OPTIONS,
+  PROTOCOL_VERSION,
+  type JsonRpcNotification,
+  type JsonRpcRequest,
+} from './protocol'
+import {
+  createAcpServer,
+  type AcpEngine,
+  type AcpEngineFactoryOpts,
+  type AcpPermissionAsk,
+} from './server'
 
 function resultOf(response: { result?: unknown; error?: unknown }): Record<string, unknown> {
   expect(response.error).toBeUndefined()
@@ -11,12 +25,12 @@ function resultOf(response: { result?: unknown; error?: unknown }): Record<strin
 function fakeEngine(opts: {
   events?: unknown[]
   end?: unknown
-  onSubmit?: (text: string) => void
+  onSubmit?: (input: UserSubmitInput) => void
   onAbort?: () => void
 }): AcpEngine {
   return {
-    async *submitMessage(text: string) {
-      opts.onSubmit?.(text)
+    async *submitMessage(input: UserSubmitInput) {
+      opts.onSubmit?.(input)
       for (const event of opts.events ?? []) yield event
       return opts.end ?? { reason: 'completed' }
     },
@@ -46,7 +60,7 @@ describe('createAcpServer', () => {
     })
     expect(result.agentCapabilities).toEqual({
       loadSession: false,
-      promptCapabilities: { image: false, audio: false, embeddedContext: false },
+      promptCapabilities: { image: true, audio: false, embeddedContext: false },
     })
     expect(result.authMethods).toEqual([])
   })
@@ -283,5 +297,251 @@ describe('createAcpServer', () => {
       id: 9,
       error: { code: JSON_RPC_METHOD_NOT_FOUND, message: 'Method not found' },
     })
+  })
+
+  test('session/new forwards cwd, model, and mcpServers to the factory', async () => {
+    const received: Array<{ sessionId: string; opts?: AcpEngineFactoryOpts }> = []
+    const mcpServers = [
+      { type: 'stdio', name: 'workspace-tools', command: '/bin/mcp', args: ['--stdio'] },
+    ]
+    const server = createAcpServer({
+      engineFactory: (sessionId, opts) => {
+        received.push({ sessionId, opts })
+        return fakeEngine({})
+      },
+    })
+    const created = resultOf(
+      await server.handle({
+        jsonrpc: '2.0',
+        id: 1,
+        method: ACP_METHODS.sessionNew,
+        params: { cwd: '/tmp/project', model: 'anthropic/claude-sonnet-4', mcpServers },
+      }),
+    )
+    expect(received).toHaveLength(1)
+    expect(received[0]?.sessionId).toBe(created.sessionId)
+    expect(received[0]?.opts?.cwd).toBe('/tmp/project')
+    expect(received[0]?.opts?.model).toBe('anthropic/claude-sonnet-4')
+    expect(received[0]?.opts?.mcpServers).toEqual(mcpServers)
+    expect(typeof received[0]?.opts?.requestPermission).toBe('function')
+  })
+
+  test('session/prompt attaches inline ACP image blocks to submitMessage', async () => {
+    let submitted: UserSubmitInput | undefined
+    const server = createAcpServer({
+      engineFactory: () =>
+        fakeEngine({
+          onSubmit: (input) => {
+            submitted = input
+          },
+        }),
+    })
+    const sessionId = resultOf(
+      await server.handle({
+        jsonrpc: '2.0',
+        id: 1,
+        method: ACP_METHODS.sessionNew,
+        params: { cwd: '/tmp' },
+      }),
+    ).sessionId
+    await server.handle({
+      jsonrpc: '2.0',
+      id: 2,
+      method: ACP_METHODS.sessionPrompt,
+      params: {
+        sessionId,
+        prompt: [
+          { type: 'text', text: 'look' },
+          { type: 'image', mimeType: 'image/png', data: 'aaa' },
+        ],
+      },
+    })
+    expect(submitted).toEqual({
+      text: 'look',
+      images: [{ mediaType: 'image/png', data: 'aaa' }],
+    })
+  })
+
+  test('permission_ask requests allow / deny / allow_always from the editor', async () => {
+    const answers = ['allow', 'deny', 'allow_always'] as const
+    for (const optionId of answers) {
+      const requests: JsonRpcRequest[] = []
+      let decided: string | undefined
+      const server = createAcpServer({
+        engineFactory: (_sessionId, opts) => ({
+          async *submitMessage() {
+            const answer = await opts?.requestPermission?.({
+              id: `call_${optionId}`,
+              tool: 'Bash',
+              input: { command: 'ls' },
+              message: 'run ls',
+            })
+            decided = answer
+            yield {
+              type: 'tool_result',
+              id: `call_${optionId}`,
+              result: {
+                toolUseId: `call_${optionId}`,
+                ok: answer !== 'deny',
+                content: answer === 'deny' ? 'denied' : 'ran',
+              },
+            }
+            return { reason: 'completed' }
+          },
+          abort() {},
+        }),
+        request: async (req) => {
+          requests.push(req)
+          return { outcome: { outcome: 'selected', optionId } }
+        },
+      })
+      const sessionId = resultOf(
+        await server.handle({
+          jsonrpc: '2.0',
+          id: 1,
+          method: ACP_METHODS.sessionNew,
+          params: { cwd: '/tmp' },
+        }),
+      ).sessionId
+      await server.handle({
+        jsonrpc: '2.0',
+        id: 2,
+        method: ACP_METHODS.sessionPrompt,
+        params: { sessionId, prompt: 'ls' },
+      })
+      expect(requests).toHaveLength(1)
+      expect(requests[0]?.method).toBe(ACP_METHODS.sessionRequestPermission)
+      expect(requests[0]?.params).toMatchObject({
+        sessionId,
+        title: 'Allow Bash?',
+        description: 'run ls',
+        toolCall: { toolCallId: `call_${optionId}`, title: 'Bash', rawInput: { command: 'ls' } },
+        options: PERMISSION_OPTIONS,
+      })
+      expect(decided).toBe(optionId)
+    }
+  })
+
+  test('permission_ask stream event also emits session/request_permission', async () => {
+    const requests: JsonRpcRequest[] = []
+    const server = createAcpServer({
+      engineFactory: () =>
+        fakeEngine({
+          events: [
+            {
+              type: 'permission_ask',
+              id: 'c1',
+              tool: 'Bash',
+              input: { command: 'pwd' },
+              message: 'ask',
+            },
+          ],
+        }),
+      request: async (req) => {
+        requests.push(req)
+        return { outcome: { outcome: 'selected', optionId: 'allow-once' } }
+      },
+    })
+    const sessionId = resultOf(
+      await server.handle({
+        jsonrpc: '2.0',
+        id: 1,
+        method: ACP_METHODS.sessionNew,
+        params: {},
+      }),
+    ).sessionId
+    await server.handle({
+      jsonrpc: '2.0',
+      id: 2,
+      method: ACP_METHODS.sessionPrompt,
+      params: { sessionId, prompt: 'pwd' },
+    })
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.method).toBe('session/request_permission')
+  })
+
+  test('timeout with no editor answer denies and the tool does not execute', async () => {
+    let executed = false
+    let decided: string | undefined
+    const server = createAcpServer({
+      engineFactory: (_sessionId, opts) => ({
+        async *submitMessage() {
+          const answer = await opts?.requestPermission?.({
+            id: 'c-timeout',
+            tool: 'Bash',
+            input: { command: 'rm -rf /' },
+            message: 'dangerous',
+          } satisfies AcpPermissionAsk)
+          decided = answer
+          if (answer !== 'deny') {
+            executed = true
+            yield {
+              type: 'tool_result',
+              id: 'c-timeout',
+              result: { toolUseId: 'c-timeout', ok: true, content: 'ran' },
+            }
+          } else {
+            yield {
+              type: 'tool_result',
+              id: 'c-timeout',
+              result: { toolUseId: 'c-timeout', ok: false, content: 'denied' },
+            }
+          }
+          return { reason: 'completed' }
+        },
+        abort() {},
+      }),
+      request: () => new Promise(() => {}),
+      permissionTimeoutMs: 120_000,
+      wait: async () => {},
+    })
+    const sessionId = resultOf(
+      await server.handle({
+        jsonrpc: '2.0',
+        id: 1,
+        method: ACP_METHODS.sessionNew,
+        params: { cwd: '/tmp' },
+      }),
+    ).sessionId
+    const prompt = await server.handle({
+      jsonrpc: '2.0',
+      id: 2,
+      method: ACP_METHODS.sessionPrompt,
+      params: { sessionId, prompt: 'rm' },
+    })
+    expect(resultOf(prompt)).toEqual({ stopReason: 'end_turn' })
+    expect(decided).toBe('deny')
+    expect(executed).toBe(false)
+  })
+
+  test('session/load still attaches an existing engine after factory opts change', async () => {
+    const loaded: string[] = []
+    const server = createAcpServer({
+      engineFactory: () => fakeEngine({}),
+      loadEngine: (sessionId) => {
+        loaded.push(sessionId)
+        return fakeEngine({
+          events: [{ type: 'text_delta', text: 'still loaded' }],
+          end: { reason: 'completed' },
+        })
+      },
+    })
+    const load = resultOf(
+      await server.handle({
+        jsonrpc: '2.0',
+        id: 1,
+        method: ACP_METHODS.sessionLoad,
+        params: { sessionId: 'sess_keep' },
+      }),
+    )
+    expect(load).toEqual({ sessionId: 'sess_keep' })
+    expect(loaded).toEqual(['sess_keep'])
+    const prompt = await server.handle({
+      jsonrpc: '2.0',
+      id: 2,
+      method: ACP_METHODS.sessionPrompt,
+      params: { sessionId: 'sess_keep', prompt: 'go' },
+    })
+    expect(resultOf(prompt)).toEqual({ stopReason: 'end_turn' })
   })
 })

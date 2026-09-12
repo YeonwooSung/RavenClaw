@@ -9,7 +9,10 @@ export const ACP_METHODS = {
   sessionPrompt: 'session/prompt',
   sessionCancel: 'session/cancel',
   sessionUpdate: 'session/update',
+  sessionRequestPermission: 'session/request_permission',
 } as const
+
+export const PERMISSION_TIMEOUT_MS = 120_000
 
 export const JSON_RPC_PARSE_ERROR = -32700
 export const JSON_RPC_INVALID_REQUEST = -32600
@@ -93,7 +96,42 @@ export interface InitializeResult {
 export interface SessionNewParams {
   cwd?: string
   mcpServers?: unknown[]
+  model?: string
 }
+
+export type AcpPermissionAnswer = 'allow' | 'deny' | 'allow_always'
+
+export type PermissionOptionKind = 'allow_once' | 'allow_always' | 'reject_once' | 'reject_always'
+
+export interface PermissionOption {
+  optionId: string
+  name: string
+  kind: PermissionOptionKind
+}
+
+export const PERMISSION_OPTIONS: PermissionOption[] = [
+  { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
+  { optionId: 'allow_always', name: 'Allow always', kind: 'allow_always' },
+  { optionId: 'deny', name: 'Deny', kind: 'reject_once' },
+]
+
+export interface SessionRequestPermissionParams {
+  sessionId: string
+  title: string
+  description?: string
+  toolCall: {
+    toolCallId: string
+    title: string
+    kind?: string
+    status?: ToolCallStatus
+    rawInput?: unknown
+  }
+  options: PermissionOption[]
+}
+
+export type SessionRequestPermissionResult =
+  | { outcome: { outcome: 'selected'; optionId: string } }
+  | { outcome: { outcome: 'cancelled' } }
 
 export interface SessionNewResult {
   sessionId: string
@@ -109,7 +147,9 @@ export interface SessionLoadResult {
 
 export type TextContentBlock = { type: 'text'; text: string }
 
-export type PromptContentBlock = TextContentBlock | { type: string; text?: string }
+export type ImageContentBlock = { type: 'image'; mimeType: string; data: string }
+
+export type PromptContentBlock = TextContentBlock | ImageContentBlock | { type: string; text?: string }
 
 export interface SessionPromptParams {
   sessionId: string
@@ -194,6 +234,74 @@ export function extractPromptText(prompt: unknown): string {
     }
   }
   return parts.join('')
+}
+
+/** Inline ACP image parts only. uri-only images are ignored — we do not fetch. */
+export function extractPromptImages(prompt: unknown): Array<{ mediaType: string; data: string }> {
+  if (!Array.isArray(prompt)) return []
+  const images: Array<{ mediaType: string; data: string }> = []
+  for (const block of prompt) {
+    if (!block || typeof block !== 'object') continue
+    const rec = block as { type?: unknown; mimeType?: unknown; data?: unknown }
+    if (rec.type !== 'image') continue
+    if (typeof rec.mimeType !== 'string' || rec.mimeType === '') continue
+    if (typeof rec.data !== 'string' || rec.data === '') continue
+    images.push({ mediaType: rec.mimeType, data: rec.data })
+  }
+  return images
+}
+
+export function promptToSubmit(
+  prompt: unknown,
+): string | { text: string; images: Array<{ mediaType: string; data: string }> } {
+  const text = extractPromptText(prompt)
+  const images = extractPromptImages(prompt)
+  if (images.length === 0) return text
+  return { text, images }
+}
+
+export function isJsonRpcResponse(message: unknown): message is JsonRpcResponse {
+  if (!message || typeof message !== 'object') return false
+  const obj = message as Record<string, unknown>
+  if ('method' in obj && obj.method !== undefined) return false
+  if (obj.id === undefined) return false
+  if (obj.id !== null && typeof obj.id !== 'string' && typeof obj.id !== 'number') return false
+  return 'result' in obj || 'error' in obj
+}
+
+export function permissionOutcome(result: unknown): AcpPermissionAnswer {
+  if (result === 'allow' || result === 'deny' || result === 'allow_always') return result
+  if (typeof result === 'string') return mapPermissionOptionId(result)
+  if (!result || typeof result !== 'object') return 'deny'
+  const obj = result as Record<string, unknown>
+  if (obj.outcome === 'cancelled') return 'deny'
+  if (typeof obj.optionId === 'string') return mapPermissionOptionId(obj.optionId)
+  const outcome = obj.outcome
+  if (typeof outcome === 'string') return mapPermissionOptionId(outcome)
+  if (outcome && typeof outcome === 'object') {
+    const inner = outcome as Record<string, unknown>
+    if (inner.outcome === 'cancelled') return 'deny'
+    if (typeof inner.optionId === 'string') return mapPermissionOptionId(inner.optionId)
+    if (typeof inner.outcome === 'string') return mapPermissionOptionId(inner.outcome)
+  }
+  return 'deny'
+}
+
+function mapPermissionOptionId(id: string): AcpPermissionAnswer {
+  switch (id) {
+    case 'allow':
+    case 'allow_once':
+    case 'allow-once':
+    case 'allowOnce':
+      return 'allow'
+    case 'allow_always':
+    case 'allow-always':
+    case 'allowAlways':
+      return 'allow_always'
+    default:
+      // Unknown outcomes are not approval (ACP: do not treat as selected allow).
+      return 'deny'
+  }
 }
 
 export function isRoundEnd(value: unknown): value is RoundEnd {

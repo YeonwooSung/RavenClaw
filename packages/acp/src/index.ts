@@ -6,18 +6,26 @@ export {
   JSON_RPC_INVALID_REQUEST,
   JSON_RPC_METHOD_NOT_FOUND,
   JSON_RPC_PARSE_ERROR,
+  PERMISSION_OPTIONS,
+  PERMISSION_TIMEOUT_MS,
   PROTOCOL_VERSION,
+  extractPromptImages,
   extractPromptText,
   isJsonRpcRequest,
+  isJsonRpcResponse,
   isRoundEnd,
   jsonRpcError,
   jsonRpcResult,
   parseIncoming,
+  permissionOutcome,
+  promptToSubmit,
   roundEndToStopReason,
   toSessionUpdate,
 } from './protocol'
 export type {
+  AcpPermissionAnswer,
   AgentCapabilities,
+  ImageContentBlock,
   ImplementationInfo,
   InitializeParams,
   InitializeResult,
@@ -29,6 +37,7 @@ export type {
   JsonRpcRequest,
   JsonRpcResponse,
   JsonRpcSuccess,
+  PermissionOption,
   PromptCapabilities,
   PromptContentBlock,
   SessionCancelParams,
@@ -38,6 +47,8 @@ export type {
   SessionNewResult,
   SessionPromptParams,
   SessionPromptResult,
+  SessionRequestPermissionParams,
+  SessionRequestPermissionResult,
   SessionUpdate,
   SessionUpdateParams,
   StopReason,
@@ -45,4 +56,12 @@ export type {
   ToolCallStatus,
 } from './protocol'
 export { createAcpServer } from './server'
-export type { AcpEngine, AcpServer, AcpServerOptions } from './server'
+export type {
+  AcpEngine,
+  AcpEngineFactory,
+  AcpEngineFactoryOpts,
+  AcpPermissionAsk,
+  AcpServer,
+  AcpServerOptions,
+  AcpSessionNewOptions,
+} from './server'

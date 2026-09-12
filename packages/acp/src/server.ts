@@ -1,37 +1,68 @@
-import type { RoundEnd } from '@ravenclaw/core'
+import type { RoundEnd, UserSubmitInput } from '@ravenclaw/core'
 import {
   ACP_METHODS,
   AGENT_INFO,
   JSON_RPC_INVALID_PARAMS,
   JSON_RPC_INVALID_REQUEST,
   JSON_RPC_METHOD_NOT_FOUND,
+  PERMISSION_OPTIONS,
+  PERMISSION_TIMEOUT_MS,
   PROTOCOL_VERSION,
-  extractPromptText,
   isJsonRpcRequest,
   isRoundEnd,
   jsonRpcError,
   jsonRpcResult,
   parseIncoming,
+  permissionOutcome,
+  promptToSubmit,
   roundEndToStopReason,
   toSessionUpdate,
+  type AcpPermissionAnswer,
   type AgentCapabilities,
   type InitializeResult,
   type JsonRpcId,
   type JsonRpcIncoming,
   type JsonRpcNotification,
+  type JsonRpcRequest,
   type JsonRpcResponse,
+  type SessionNewParams,
+  type SessionRequestPermissionParams,
   type SessionUpdate,
 } from './protocol'
 
 export type AcpEngine = {
-  submitMessage(text: string): AsyncGenerator<unknown, unknown>
+  submitMessage(input: UserSubmitInput): AsyncGenerator<unknown, unknown>
   abort(): void
 }
 
+export type AcpSessionNewOptions = SessionNewParams
+
+export type AcpPermissionAsk = {
+  id: string
+  tool: string
+  input: unknown
+  message: string
+}
+
+export type AcpEngineFactoryOpts = AcpSessionNewOptions & {
+  requestPermission?: (
+    event: AcpPermissionAsk,
+    signal?: AbortSignal,
+  ) => Promise<AcpPermissionAnswer>
+}
+
+export type AcpEngineFactory = (sessionId: string, opts?: AcpEngineFactoryOpts) => AcpEngine
+
 export type AcpServerOptions = {
-  engineFactory: (sessionId: string) => AcpEngine
-  loadEngine?: (sessionId: string) => AcpEngine | Promise<AcpEngine>
+  engineFactory: AcpEngineFactory
+  loadEngine?: (
+    sessionId: string,
+    opts?: AcpEngineFactoryOpts,
+  ) => AcpEngine | Promise<AcpEngine>
   notify?: (notification: JsonRpcNotification) => void
+  request?: (req: JsonRpcRequest) => Promise<unknown>
+  permissionTimeoutMs?: number
+  wait?: (ms: number) => Promise<void>
 }
 
 export type AcpServer = {
@@ -41,9 +72,12 @@ export type AcpServer = {
 export function createAcpServer(opts: AcpServerOptions): AcpServer {
   const sessions = new Map<string, AcpEngine>()
   const notify = opts.notify
+  const answered = new Map<string, AcpPermissionAnswer>()
+  let nextRequestId = 1
+  // Inline ACP image blocks map onto UserSubmitInput.images (mediaType + data).
   const capabilities: AgentCapabilities = {
     loadSession: opts.loadEngine !== undefined,
-    promptCapabilities: { image: false, audio: false, embeddedContext: false },
+    promptCapabilities: { image: true, audio: false, embeddedContext: false },
   }
 
   function emit(sessionId: string, update: SessionUpdate): void {
@@ -53,6 +87,54 @@ export function createAcpServer(opts: AcpServerOptions): AcpServer {
       method: ACP_METHODS.sessionUpdate,
       params: { sessionId, update },
     })
+  }
+
+  function factoryOpts(sessionId: string, extra?: AcpSessionNewOptions): AcpEngineFactoryOpts {
+    return {
+      ...extra,
+      requestPermission: (event, signal) => askPermission(sessionId, event, signal),
+    }
+  }
+
+  async function askPermission(
+    sessionId: string,
+    event: AcpPermissionAsk,
+    signal?: AbortSignal,
+  ): Promise<AcpPermissionAnswer> {
+    const cached = answered.get(event.id)
+    if (cached) return cached
+
+    if (!opts.request || signal?.aborted) {
+      answered.set(event.id, 'deny')
+      return 'deny'
+    }
+
+    const params: SessionRequestPermissionParams = {
+      sessionId,
+      title: `Allow ${event.tool}?`,
+      toolCall: {
+        toolCallId: event.id,
+        title: event.tool,
+        kind: 'other',
+        status: 'pending',
+        rawInput: event.input,
+      },
+      options: PERMISSION_OPTIONS,
+    }
+    if (event.message !== '') params.description = event.message
+
+    const req: JsonRpcRequest = {
+      jsonrpc: '2.0',
+      id: `rc-perm-${nextRequestId++}`,
+      method: ACP_METHODS.sessionRequestPermission,
+      params,
+    }
+
+    const timeoutMs = opts.permissionTimeoutMs ?? PERMISSION_TIMEOUT_MS
+    const wait = opts.wait ?? defaultWait
+    const answer = await racePermission(opts.request(req), wait(timeoutMs), signal)
+    answered.set(event.id, answer)
+    return answer
   }
 
   async function handleInitialize(id: JsonRpcId | null): Promise<JsonRpcResponse> {
@@ -65,9 +147,9 @@ export function createAcpServer(opts: AcpServerOptions): AcpServer {
     return jsonRpcResult(id, result)
   }
 
-  function handleSessionNew(id: JsonRpcId | null): JsonRpcResponse {
+  function handleSessionNew(id: JsonRpcId | null, params: unknown): JsonRpcResponse {
     const sessionId = crypto.randomUUID()
-    sessions.set(sessionId, opts.engineFactory(sessionId))
+    sessions.set(sessionId, opts.engineFactory(sessionId, factoryOpts(sessionId, parseSessionNewParams(params))))
     return jsonRpcResult(id, { sessionId })
   }
 
@@ -83,10 +165,10 @@ export function createAcpServer(opts: AcpServerOptions): AcpServer {
     if (!engine) {
       return jsonRpcError(id, JSON_RPC_INVALID_PARAMS, 'Unknown session')
     }
-    const text = extractPromptText(
+    const input = promptToSubmit(
       params && typeof params === 'object' ? (params as { prompt?: unknown }).prompt : undefined,
     )
-    const gen = engine.submitMessage(text)
+    const gen = engine.submitMessage(input)
     let end: unknown
     while (true) {
       const next = await gen.next()
@@ -97,6 +179,10 @@ export function createAcpServer(opts: AcpServerOptions): AcpServer {
       const event = next.value
       if (isYieldedRoundEnd(event)) {
         end = event.end
+        continue
+      }
+      if (isPermissionAsk(event)) {
+        await askPermission(parsed.sessionId, event)
         continue
       }
       const update = toSessionUpdate(event)
@@ -122,7 +208,10 @@ export function createAcpServer(opts: AcpServerOptions): AcpServer {
       return jsonRpcError(id, JSON_RPC_METHOD_NOT_FOUND, 'Method not found')
     }
     try {
-      sessions.set(parsed.sessionId, await opts.loadEngine(parsed.sessionId))
+      sessions.set(
+        parsed.sessionId,
+        await opts.loadEngine(parsed.sessionId, factoryOpts(parsed.sessionId)),
+      )
       return jsonRpcResult(id, { sessionId: parsed.sessionId })
     } catch (error) {
       return jsonRpcError(
@@ -150,7 +239,7 @@ export function createAcpServer(opts: AcpServerOptions): AcpServer {
         case ACP_METHODS.initialize:
           return handleInitialize(id)
         case ACP_METHODS.sessionNew:
-          return handleSessionNew(id)
+          return handleSessionNew(id, incoming.params)
         case ACP_METHODS.sessionLoad:
           return handleSessionLoad(id, incoming.params)
         case ACP_METHODS.sessionPrompt:
@@ -175,8 +264,54 @@ function parseSessionParams(params: unknown): { sessionId: string } | undefined 
   return { sessionId }
 }
 
+function parseSessionNewParams(params: unknown): AcpSessionNewOptions {
+  if (!params || typeof params !== 'object') return {}
+  const rec = params as Record<string, unknown>
+  const out: AcpSessionNewOptions = {}
+  if (typeof rec.cwd === 'string' && rec.cwd !== '') out.cwd = rec.cwd
+  if (typeof rec.model === 'string' && rec.model !== '') out.model = rec.model
+  if (Array.isArray(rec.mcpServers)) out.mcpServers = rec.mcpServers
+  return out
+}
+
 function isYieldedRoundEnd(event: unknown): event is { type: 'round_end'; end: RoundEnd } {
   if (!event || typeof event !== 'object') return false
   const e = event as { type?: unknown; end?: unknown }
   return e.type === 'round_end' && isRoundEnd(e.end)
+}
+
+function isPermissionAsk(event: unknown): event is AcpPermissionAsk & { type: 'permission_ask' } {
+  if (!event || typeof event !== 'object') return false
+  const e = event as { type?: unknown; id?: unknown; tool?: unknown; input?: unknown; message?: unknown }
+  if (e.type !== 'permission_ask' || typeof e.id !== 'string' || typeof e.tool !== 'string') {
+    return false
+  }
+  return true
+}
+
+function defaultWait(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms)
+  })
+}
+
+async function racePermission(
+  request: Promise<unknown>,
+  timeout: Promise<void>,
+  signal?: AbortSignal,
+): Promise<AcpPermissionAnswer> {
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (answer: AcpPermissionAnswer) => {
+      if (settled) return
+      settled = true
+      resolve(answer)
+    }
+    void request.then((result) => finish(permissionOutcome(result))).catch(() => finish('deny'))
+    void timeout.then(() => finish('deny')).catch(() => finish('deny'))
+    if (!signal) return
+    const onAbort = () => finish('deny')
+    if (signal.aborted) onAbort()
+    else signal.addEventListener('abort', onAbort, { once: true })
+  })
 }

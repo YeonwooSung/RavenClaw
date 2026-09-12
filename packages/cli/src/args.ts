@@ -190,7 +190,7 @@ export function parseArgv(argv: string[]): ParsedArgv {
     positional.push(arg)
   }
 
-  if (cmd === 'exec' || cmd === 'acp' || cmd === 'smoke' || cmd === 'serve') flags.dontAsk = true
+  if (cmd === 'exec' || cmd === 'smoke' || cmd === 'serve') flags.dontAsk = true
   if (flags.allowedTools === undefined && toolsPreset !== undefined) {
     flags.allowedTools = headlessAllowedTools(toolsPreset)
   }
