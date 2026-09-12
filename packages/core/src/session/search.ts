@@ -4,7 +4,7 @@ import type { Message } from '../types'
 export const SESSION_BODY_CAP = 4_000
 
 export function visibleSessionMessages(messages: Message[]): Message[] {
-  return messages.filter((msg) => msg.role !== 'tool')
+  return messages.filter((msg) => msg.role !== 'tool' && messageSearchBody(msg) !== '')
 }
 
 export function messageSearchBody(msg: Message): string {
@@ -38,9 +38,11 @@ export function windowAroundMessages(
   messageId: string,
   window: number,
 ): Message[] {
-  const idx = messages.findIndex(
-    (msg) => msg.id === messageId || msg.id.startsWith(messageId),
+  const exact = messages.findIndex((msg) => msg.id === messageId)
+  const prefixed = messages.flatMap((msg, index) =>
+    msg.id === messageId || msg.id.startsWith(messageId) ? [index] : [],
   )
+  const idx = exact >= 0 ? exact : prefixed.length === 1 ? prefixed[0]! : -1
   if (idx < 0) return []
   const span = Math.max(0, window)
   const start = Math.max(0, idx - span)

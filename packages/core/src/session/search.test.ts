@@ -225,10 +225,17 @@ describe('session read helpers', () => {
       blocks: [{ type: 'text' as const, text: 'hidden' }],
       createdAt: 2,
     }
-    const msgs = [user('u1', 'a', 1), tool, user('u2', 'b', 3), user('u3', 'c', 4)]
+    const toolUseOnly = {
+      id: 'a1',
+      role: 'assistant' as const,
+      blocks: [{ type: 'tool_use' as const, id: 'c1', name: 'Echo', input: {} }],
+      createdAt: 2,
+    }
+    const msgs = [user('u1', 'a', 1), tool, toolUseOnly, user('u2', 'b', 3), user('u3', 'c', 4)]
     const visible = visibleSessionMessages(msgs)
     expect(visible.map((msg) => msg.id)).toEqual(['u1', 'u2', 'u3'])
     expect(windowAroundMessages(visible, 'u2', 1).map((msg) => msg.id)).toEqual(['u1', 'u2', 'u3'])
+    expect(windowAroundMessages(visible, 'u', 1)).toEqual([])
     expect(headTailMessages(visible, 1).map((msg) => msg.id)).toEqual(['u1', 'u3'])
     expect(clipSearchBody('abcd', 3)).toBe('abc…')
   })

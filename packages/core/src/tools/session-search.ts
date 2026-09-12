@@ -121,11 +121,15 @@ async function browseSessions(
   limit: number,
   ctx: ToolContext,
 ): Promise<string> {
-  const local = await listWorkspaceSessions(store, ctx)
-  const parents = local.filter((session) => session.parentSessionId === undefined)
+  const cwd = workspaceCwd(ctx)
+  let parents: SessionRecord[] = []
+  try {
+    parents = await store.listSessions({ cwd, parentSessionId: null, limit })
+  } catch {
+    return 'No sessions in this workspace.'
+  }
   if (parents.length === 0) return 'No sessions in this workspace.'
   return parents
-    .slice(0, limit)
     .map((session) => {
       const label = session.title?.trim() || session.model
       return `${session.id.slice(0, 8)} ${label}`
@@ -138,17 +142,26 @@ async function resolveScopedSession(
   sessionId: string,
   ctx: ToolContext,
 ): Promise<{ session: SessionRecord; messages: Message[] } | string> {
+  const cwd = workspaceCwd(ctx)
+  const exact = await loadIfWorkspace(store, sessionId, cwd)
+  if (exact !== undefined) return exact
   const local = await listWorkspaceSessions(store, ctx)
-  const match =
-    local.find((session) => session.id === sessionId) ??
-    uniquePrefix(local, sessionId)
+  const match = uniquePrefix(local, sessionId)
   if (!match) return 'Session not found in this workspace.'
+  return (await loadIfWorkspace(store, match.id, cwd)) ?? 'Session not found in this workspace.'
+}
+
+async function loadIfWorkspace(
+  store: SessionStore,
+  sessionId: string,
+  cwd: string,
+): Promise<{ session: SessionRecord; messages: Message[] } | string | undefined> {
   try {
-    return await store.loadSession(match.id)
+    const loaded = await store.loadSession(sessionId)
+    if (loaded.session.cwd !== cwd) return 'Session not found in this workspace.'
+    return loaded
   } catch (error) {
-    if (error instanceof PersistError && error.code === 'unknown') {
-      return 'Session not found in this workspace.'
-    }
+    if (error instanceof PersistError && error.code === 'unknown') return undefined
     throw error
   }
 }
@@ -160,13 +173,18 @@ function uniquePrefix(sessions: SessionRecord[], prefix: string): SessionRecord 
   return hits.length === 1 ? hits[0] : undefined
 }
 
+function workspaceCwd(ctx: ToolContext): string {
+  return ctx.turn.projectCwd ?? ctx.turn.cwd
+}
+
 async function listWorkspaceSessions(
   store: SessionStore,
   ctx: ToolContext,
+  limit?: number,
 ): Promise<SessionRecord[]> {
-  const cwd = ctx.turn.projectCwd ?? ctx.turn.cwd
+  const cwd = workspaceCwd(ctx)
   try {
-    return await store.listSessions({ cwd, limit: 200 })
+    return await store.listSessions(limit === undefined ? { cwd } : { cwd, limit })
   } catch {
     return []
   }
@@ -188,7 +206,7 @@ async function scopeHits(
 ): Promise<MessageSearchHit[]> {
   const liveMessages = new Set(ctx.turn.messages.map((msg) => msg.id))
   let out = hits.filter((hit) => !liveMessages.has(hit.messageId))
-  const local = await listWorkspaceSessions(store, ctx)
+  const local = await listWorkspaceSessions(store, ctx, 200)
   if (local.length > 0) {
     const ids = new Set(local.map((session) => session.id))
     out = out.filter((hit) => ids.has(hit.sessionId))

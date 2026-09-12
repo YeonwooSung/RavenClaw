@@ -229,4 +229,42 @@ describe('SessionSearch', () => {
     const out = await tool.execute({ sessionId: 'sess_abcd1234' }, makeCtx({ cwd: '/tmp' }))
     expect(out).toBe('Session not found in this workspace.')
   })
+
+  test('browse still lists a parent when many newer children exist', async () => {
+    const store = createMemoryStore()
+    await store.createSession(session({ id: 'sess_parent1', cwd: '/tmp', title: 'Main', updatedAt: 1 }))
+    for (let i = 0; i < 210; i++) {
+      await store.createSession(
+        session({
+          id: `sess_child_${i}`,
+          cwd: '/tmp',
+          parentSessionId: 'sess_parent1',
+          title: `Child ${i}`,
+          updatedAt: 10 + i,
+        }),
+      )
+    }
+    const tool = createSessionSearchTool(store)
+    const out = await tool.execute({}, makeCtx({ cwd: '/tmp' }))
+    expect(out).toContain('sess_par Main')
+    expect(out).not.toContain('Child')
+  })
+
+  test('reads an older session even when 200 newer sessions exist', async () => {
+    const store = createMemoryStore()
+    await store.createSession(session({ id: 'sess_oldone', cwd: '/tmp', updatedAt: 1 }))
+    await store.persistUser('sess_oldone', {
+      id: 'msg_old1',
+      role: 'user',
+      blocks: [{ type: 'text', text: 'ancient' }],
+      createdAt: 1,
+    })
+    for (let i = 0; i < 210; i++) {
+      await store.createSession(session({ id: `sess_new_${i}`, cwd: '/tmp', updatedAt: 10 + i }))
+    }
+    const tool = createSessionSearchTool(store)
+    const out = await tool.execute({ sessionId: 'sess_oldone' }, makeCtx({ cwd: '/tmp' }))
+    expect(out).toContain('ancient')
+    expect(out).not.toBe('Session not found in this workspace.')
+  })
 })
