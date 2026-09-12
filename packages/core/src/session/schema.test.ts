@@ -3,13 +3,13 @@ import { Database } from 'bun:sqlite'
 import { applyMigrations } from './schema'
 
 describe('applyMigrations', () => {
-  test('fresh db reaches schema_version 3 with mail and lock tables', () => {
+  test('fresh db reaches schema_version 4 with mail and lock tables', () => {
     const db = new Database(':memory:')
     applyMigrations(db)
     const version = db.query("SELECT value FROM meta WHERE key = 'schema_version'").get() as {
       value: string
     }
-    expect(version.value).toBe('3')
+    expect(version.value).toBe('4')
     const tables = db
       .query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
       .all() as Array<{ name: string }>
@@ -20,14 +20,14 @@ describe('applyMigrations', () => {
     db.close()
   })
 
-  test('is idempotent when already at version 3', () => {
+  test('is idempotent when already at version 4', () => {
     const db = new Database(':memory:')
     applyMigrations(db)
     applyMigrations(db)
     const version = db.query("SELECT value FROM meta WHERE key = 'schema_version'").get() as {
       value: string
     }
-    expect(version.value).toBe('3')
+    expect(version.value).toBe('4')
     db.close()
   })
 })
