@@ -143,6 +143,28 @@ describe('lsp client', () => {
     expect(change?.contentChanges?.[0]?.text).toBe('const a = 2\n')
   })
 
+  test('concurrent first queries share one language server', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'a.ts'), 'x\n')
+    writeConfig(root, { servers: [{ command: 'fake-ls', extensions: ['.ts'] }] })
+    const fake = fakeLspChild({ hover: { contents: 'shared' } })
+    let starts = 0
+    const client = createLspClient({
+      start() {
+        starts += 1
+        return fake.child
+      },
+    })
+    const [a, b] = await Promise.all([
+      client.query({ operation: 'hover', path: 'a.ts', line: 0 }, root),
+      client.query({ operation: 'hover', path: 'a.ts', line: 0 }, root),
+    ])
+    expect(starts).toBe(1)
+    expect(a).toContain('shared')
+    expect(b).toContain('shared')
+    expect(fake.methods.filter((method) => method === 'initialize')).toHaveLength(1)
+  })
+
   test('restarts after the language server exits', async () => {
     const root = fixtureRoot()
     writeFileSync(join(root, 'a.ts'), 'x\n')
@@ -159,6 +181,7 @@ describe('lsp client', () => {
     })
     expect(await client.query({ operation: 'hover', path: 'a.ts', line: 0 }, root)).toContain('one')
     first.exit()
+    expect(first.killed).toBe(true)
     expect(await client.query({ operation: 'hover', path: 'a.ts', line: 0 }, root)).toContain('two')
     expect(second.methods).toContain('initialize')
   })
@@ -195,11 +218,13 @@ function fakeLspChild(results: Partial<Record<string, unknown>>): {
   methods: string[]
   params: unknown[]
   starts: Array<{ command: string; args: string[]; cwd: string }>
+  killed: boolean
   exit: () => void
 } {
   const stdout = new EventEmitter()
   const methods: string[] = []
   const params: unknown[] = []
+  const state = { killed: false }
   let buffer = Buffer.alloc(0)
   const child: LspChild = {
     stdin: {
@@ -230,6 +255,7 @@ function fakeLspChild(results: Partial<Record<string, unknown>>): {
     },
     stdout,
     kill() {
+      state.killed = true
       return true
     },
     on(event, listener) {
@@ -246,6 +272,9 @@ function fakeLspChild(results: Partial<Record<string, unknown>>): {
     methods,
     params,
     starts: [],
+    get killed() {
+      return state.killed
+    },
     exit() {
       stdout.emit('exit', 1)
     },

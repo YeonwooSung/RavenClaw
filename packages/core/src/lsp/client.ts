@@ -135,6 +135,7 @@ export function findServerForPath(config: LspConfig, filePath: string): LspServe
 
 export function createLspClient(opts?: LspClientOpts): LspClient {
   const sessions = new Map<string, LspSession>()
+  const starting = new Map<string, Promise<LspSession>>()
   const start = opts?.start ?? defaultStart
   return {
     async query(req, cwd) {
@@ -143,7 +144,7 @@ export function createLspClient(opts?: LspClientOpts): LspClient {
       if (!server) return NO_SERVER_MESSAGE
       if (opts?.query) return opts.query(req)
       try {
-        return await queryWithHandshake(sessions, start, server, req, cwd)
+        return await queryWithHandshake(sessions, starting, start, server, req, cwd)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         if (message === 'not available') return 'LSP failed: language server not available'
@@ -155,6 +156,7 @@ export function createLspClient(opts?: LspClientOpts): LspClient {
 
 async function queryWithHandshake(
   sessions: Map<string, LspSession>,
+  starting: Map<string, Promise<LspSession>>,
   start: LspStartFn,
   server: LspServerConfig,
   req: LspQueryRequest,
@@ -171,7 +173,7 @@ async function queryWithHandshake(
     return 'LSP failed: cannot read file'
   }
 
-  const session = await ensureSession(sessions, start, server, cwd)
+  const session = await ensureSession(sessions, starting, start, server, cwd)
   const uri = pathToFileURL(abs).href
   await syncDocument(session, uri, abs, text)
   const params = requestParams(req.operation, uri, req.line, req.character ?? 0)
@@ -181,20 +183,42 @@ async function queryWithHandshake(
 
 async function ensureSession(
   sessions: Map<string, LspSession>,
+  starting: Map<string, Promise<LspSession>>,
   start: LspStartFn,
   server: LspServerConfig,
   cwd: string,
 ): Promise<LspSession> {
   const key = sessionKey(server, cwd)
+  const inflight = starting.get(key)
+  if (inflight) return inflight
+  const work = openSession(sessions, start, server, cwd, key)
+  starting.set(key, work)
+  try {
+    return await work
+  } finally {
+    if (starting.get(key) === work) starting.delete(key)
+  }
+}
+
+async function openSession(
+  sessions: Map<string, LspSession>,
+  start: LspStartFn,
+  server: LspServerConfig,
+  cwd: string,
+  key: string,
+): Promise<LspSession> {
   const existing = sessions.get(key)
   if (existing && !existing.dead) {
     try {
       await existing.ready
       if (!existing.dead) return existing
     } catch {
-      existing.dead = true
+      dropSession(existing)
       sessions.delete(key)
     }
+  } else if (existing?.dead) {
+    dropSession(existing)
+    sessions.delete(key)
   }
   const session = startSession(key, start, server, cwd)
   sessions.set(key, session)
@@ -203,7 +227,7 @@ async function ensureSession(
     if (session.dead) throw new Error('not available')
     return session
   } catch {
-    session.dead = true
+    dropSession(session)
     sessions.delete(key)
     throw new Error('not available')
   }
@@ -265,13 +289,7 @@ function startSession(
   child.stdout.on('data', onData)
 
   const die = (): void => {
-    if (session.dead) return
-    session.dead = true
-    child.stdout?.off?.('data', onData)
-    for (const waiter of session.pending.values()) {
-      waiter.reject(new Error('not available'))
-    }
-    session.pending.clear()
+    dropSession(session, { kill: true, onData })
   }
   child.on?.('error', die)
   child.on?.('exit', die)
@@ -358,7 +376,7 @@ function rpcRequest(session: LspSession, method: string, params: unknown): Promi
     } catch (error) {
       session.pending.delete(id)
       clearTimeout(timer)
-      session.dead = true
+      dropSession(session)
       reject(error instanceof Error ? error : new Error('not available'))
     }
   })
@@ -371,7 +389,7 @@ function rpcNotify(session: LspSession, method: string, params: unknown): Promis
     session.child.stdin.write(encodeJsonRpcFrame(payload))
     return Promise.resolve()
   } catch (error) {
-    session.dead = true
+    dropSession(session)
     return Promise.reject(error instanceof Error ? error : new Error('not available'))
   }
 }
@@ -433,6 +451,25 @@ export function resolveInWorkspace(cwd: string, userPath: string): string | unde
 
 function languageIdFor(path: string): string {
   return LANGUAGE_IDS[extname(path).toLowerCase()] ?? 'plaintext'
+}
+
+function dropSession(
+  session: LspSession,
+  opts?: { kill?: boolean; onData?: (chunk: Buffer | string) => void },
+): void {
+  if (!session.dead) {
+    session.dead = true
+    if (opts?.onData) session.child.stdout?.off?.('data', opts.onData)
+    for (const waiter of session.pending.values()) {
+      waiter.reject(new Error('not available'))
+    }
+    session.pending.clear()
+  }
+  try {
+    session.child.kill?.()
+  } catch {
+    // already gone
+  }
 }
 
 function sessionKey(server: LspServerConfig, cwd: string): string {
