@@ -368,6 +368,7 @@ If `included.gatewayUrl` is a real URL and `GET /v1/entitlement` admits the sess
 ## Docs
 
 - [Headless / `raven exec` permissions](docs/headless.md)
+- [GitHub Action (`raven-exec`)](.github/actions/raven-exec/README.md)
 - [System design](docs/superpowers/specs/2026-09-08-ravenclaw-coding-agent-design.md)
 - [Cron / scheduler](docs/superpowers/specs/2026-09-12-ravenclaw-cron-scheduler-design.md)
 - Prior art notes: [Hermes](docs/research/hermes-agent-analysis.md), [Freebuff](docs/research/freebuff-analysis.md), [Claude Code loop](docs/research/claude-code-analysis.md)

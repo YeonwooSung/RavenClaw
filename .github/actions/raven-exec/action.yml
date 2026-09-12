@@ -1,0 +1,112 @@
+name: raven-exec
+description: >
+  Run raven exec --json --dont-ask --tools-preset ci. Requires a project
+  .ravenclaw/permissions.json. Does not pass bypass and does not allow all Bash.
+
+inputs:
+  prompt:
+    description: Prompt passed to raven exec
+    required: true
+  working-directory:
+    description: Working directory for raven exec (project root that owns .ravenclaw/permissions.json)
+    required: false
+    default: '.'
+  raven-version:
+    description: >
+      Optional @ravenclaw/cli version or tag (leading v is stripped). When set,
+      install that version with bun. When empty, use raven on PATH or install latest.
+    required: false
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve raven
+      id: resolve
+      shell: bash
+      env:
+        RAVEN_VERSION: ${{ inputs.raven-version }}
+      run: |
+        set -euo pipefail
+        install=false
+        setup_bun=false
+        if [ -n "${RAVEN_VERSION}" ] || ! command -v raven >/dev/null 2>&1; then
+          install=true
+          if ! command -v bun >/dev/null 2>&1; then
+            setup_bun=true
+          fi
+        fi
+        echo "install=${install}" >> "${GITHUB_OUTPUT}"
+        echo "setup_bun=${setup_bun}" >> "${GITHUB_OUTPUT}"
+
+    - name: Setup Bun
+      if: steps.resolve.outputs.setup_bun == 'true'
+      uses: oven-sh/setup-bun@v2
+      with:
+        bun-version: 1.x
+
+    - name: Install raven
+      if: steps.resolve.outputs.install == 'true'
+      shell: bash
+      env:
+        RAVEN_VERSION: ${{ inputs.raven-version }}
+      run: |
+        set -euo pipefail
+        spec='@ravenclaw/cli'
+        if [ -n "${RAVEN_VERSION}" ]; then
+          ver="${RAVEN_VERSION#v}"
+          spec="@ravenclaw/cli@${ver}"
+        fi
+        bun install -g "${spec}"
+        command -v raven
+
+    - name: Require permissions.json and run raven exec
+      shell: bash
+      env:
+        RAVEN_PROMPT: ${{ inputs.prompt }}
+        RAVEN_WORKDIR: ${{ inputs.working-directory }}
+        RAVENCLAW_HOME: ${{ github.workspace }}/.ravenclaw-home
+      run: |
+        set -euo pipefail
+        if [ -z "${RAVEN_PROMPT}" ]; then
+          echo '::error::input prompt is required'
+          exit 1
+        fi
+
+        workdir="${RAVEN_WORKDIR:-.}"
+        case "${workdir}" in
+          /*) ;;
+          *) workdir="${GITHUB_WORKSPACE}/${workdir}" ;;
+        esac
+        if [ ! -d "${workdir}" ]; then
+          echo "::error::working-directory does not exist: ${workdir}"
+          exit 1
+        fi
+        workdir="$(cd "${workdir}" && pwd)"
+
+        perm="${workdir}/.ravenclaw/permissions.json"
+        if [ ! -s "${perm}" ]; then
+          echo "::error::missing ${perm}"
+          echo 'raven-exec requires a project .ravenclaw/permissions.json.'
+          echo 'dontAsk is not bypass: leftover Bash is denied unless a rule matches.'
+          echo 'Example allow rule (prefix match):'
+          echo '[{ "tool": "Bash", "spec": { "command": "bun test" }, "behavior": "allow" }]'
+          exit 1
+        fi
+
+        mkdir -p "${RAVENCLAW_HOME}"
+        out="${RUNNER_TEMP:-/tmp}/raven-exec.jsonl"
+
+        set +e
+        raven exec --json --dont-ask --tools-preset ci --cwd "${workdir}" "${RAVEN_PROMPT}" | tee "${out}"
+        status="${PIPESTATUS[0]}"
+        set -e
+
+        if grep -Eq '"reason"[[:space:]]*:[[:space:]]*"model_error"' "${out}"; then
+          echo '::error::raven exec ended with model_error'
+          exit 1
+        fi
+        if [ "${status}" -ne 0 ]; then
+          echo "::error::raven exec exited with status ${status}"
+          exit "${status}"
+        fi
