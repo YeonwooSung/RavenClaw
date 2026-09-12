@@ -149,12 +149,25 @@ export function formatTasksNotice(tasks: TaskSnapshot[]): string {
     .join('\n')
 }
 
-export function parseTasksArg(arg?: string): { action: 'list' } | { action: 'kill'; id: string } {
+export function parseTasksArg(
+  arg?: string,
+):
+  | { action: 'list' }
+  | { action: 'kill'; id: string }
+  | { action: 'steer'; id: string; text: string }
+  | { action: 'error'; message: string } {
   if (arg === undefined) return { action: 'list' }
   const trimmed = arg.trim()
   if (trimmed === '') return { action: 'list' }
-  const match = /^kill\s+(\S+)$/i.exec(trimmed)
-  if (match?.[1]) return { action: 'kill', id: match[1] }
+  const kill = /^kill\s+(\S+)$/i.exec(trimmed)
+  if (kill?.[1]) return { action: 'kill', id: kill[1] }
+  const steer = /^steer\s+(\S+)\s+(.+)$/is.exec(trimmed)
+  if (steer?.[1] && steer[2] !== undefined) {
+    return { action: 'steer', id: steer[1], text: steer[2] }
+  }
+  if (/^steer\b/i.test(trimmed) || /^kill\b/i.test(trimmed)) {
+    return { action: 'error', message: 'usage: /tasks [kill <id>|steer <id> <text>]' }
+  }
   return { action: 'list' }
 }
 

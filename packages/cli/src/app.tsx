@@ -445,6 +445,15 @@ export function App(props: AppProps) {
         }
         case 'tasks': {
           const parsedTasks = parseTasksArg(parsed.arg)
+          if (parsedTasks.action === 'error') {
+            setNotice(parsedTasks.message)
+            return
+          }
+          if (parsedTasks.action === 'steer') {
+            const out = runtimeRef.current.engine.tasks.steer(parsedTasks.id, parsedTasks.text)
+            setNotice(out.ok ? `steered ${parsedTasks.id}` : `TaskSteer failed: ${out.error}`)
+            return
+          }
           if (parsedTasks.action === 'kill') {
             const stopped = runtimeRef.current.engine.tasks.kill(parsedTasks.id)
             setNotice(stopped ? `stopped ${stopped.id}` : `unknown task ${parsedTasks.id}`)

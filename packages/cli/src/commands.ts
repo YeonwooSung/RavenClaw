@@ -25,7 +25,7 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
   { name: 'clear', aliases: ['new'], usage: '/clear', summary: 'start a new session (alias /new)' },
   { name: 'model', usage: '/model [id]', summary: "show or set this session's model" },
   { name: 'permissions', usage: '/permissions', summary: 'list extra permission rule files' },
-  { name: 'tasks', usage: '/tasks [kill <id>]', summary: 'list or stop background tasks' },
+  { name: 'tasks', usage: '/tasks [kill <id>|steer <id> <text>]', summary: 'list, stop, or steer background tasks' },
   { name: 'undo', usage: '/undo', summary: 'restore files from the last edit checkpoint' },
   { name: 'rewind', usage: '/rewind', summary: 'undo last turn files and drop that conversation turn' },
   { name: 'diff', usage: '/diff [n|close]', summary: 'open working-tree git diff panel' },

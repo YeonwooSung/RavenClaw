@@ -53,6 +53,7 @@ describe('handleSlashCommand', () => {
     ['/permissions', { type: 'command', name: 'permissions' }],
     ['/tasks', { type: 'command', name: 'tasks' }],
     ['/tasks kill b_abc', { type: 'command', name: 'tasks', arg: 'kill b_abc' }],
+    ['/tasks steer t_1 hello', { type: 'command', name: 'tasks', arg: 'steer t_1 hello' }],
     ['/undo', { type: 'command', name: 'undo' }],
     ['/rewind', { type: 'command', name: 'rewind' }],
     ['/diff', { type: 'command', name: 'diff' }],
@@ -105,6 +106,7 @@ describe('handleSlashCommand', () => {
     expect(SLASH_HELP).toContain('/model')
     expect(SLASH_HELP).toContain('/permissions')
     expect(SLASH_HELP).toContain('/tasks')
+    expect(SLASH_HELP).toContain('steer')
     expect(SLASH_HELP).toContain('/undo')
     expect(SLASH_HELP).toContain('/rewind')
     expect(SLASH_HELP).toContain('/diff')

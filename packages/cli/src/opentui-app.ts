@@ -329,6 +329,15 @@ export async function runOpenTuiApp(
           continue
         case 'tasks': {
           const parsedTasks = parseTasksArg(parsed.arg)
+          if (parsedTasks.action === 'error') {
+            write(`${parsedTasks.message}\n`)
+            continue
+          }
+          if (parsedTasks.action === 'steer') {
+            const out = current.engine.tasks.steer(parsedTasks.id, parsedTasks.text)
+            write(`${out.ok ? `steered ${parsedTasks.id}` : `TaskSteer failed: ${out.error}`}\n`)
+            continue
+          }
           if (parsedTasks.action === 'kill') {
             const stopped = current.engine.tasks.kill(parsedTasks.id)
             write(`${stopped ? `stopped ${stopped.id}` : `unknown task ${parsedTasks.id}`}\n`)

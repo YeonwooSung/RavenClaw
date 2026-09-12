@@ -50,6 +50,15 @@ describe('parseTasksArg', () => {
     expect(parseTasksArg('')).toEqual({ action: 'list' })
     expect(parseTasksArg('kill b_abc')).toEqual({ action: 'kill', id: 'b_abc' })
     expect(parseTasksArg('KILL  b_xyz')).toEqual({ action: 'kill', id: 'b_xyz' })
+    expect(parseTasksArg('steer b_abc turn left')).toEqual({
+      action: 'steer',
+      id: 'b_abc',
+      text: 'turn left',
+    })
+    expect(parseTasksArg('steer b_abc')).toEqual({
+      action: 'error',
+      message: 'usage: /tasks [kill <id>|steer <id> <text>]',
+    })
   })
 })
 
