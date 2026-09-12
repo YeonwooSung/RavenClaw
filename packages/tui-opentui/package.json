@@ -1,10 +1,14 @@
 {
   "name": "@ravenclaw/tui-opentui",
   "version": "0.1.33",
-  "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
+  },
+  "files": ["src"],
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "@ravenclaw/core": "workspace:*"

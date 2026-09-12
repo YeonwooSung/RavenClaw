@@ -12,6 +12,13 @@ Licensed under Apache-2.0.
 ## Install
 
 ```bash
+npm i -g @ravenclaw/cli
+raven --help
+```
+
+Requires [Bun](https://bun.sh) 1.x on `PATH`. From source:
+
+```bash
 git clone https://github.com/YeonwooSung/RavenClaw.git
 cd RavenClaw
 bun install

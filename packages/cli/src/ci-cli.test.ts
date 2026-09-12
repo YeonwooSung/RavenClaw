@@ -72,3 +72,25 @@ describe('no-key CLI (CI smoke)', () => {
     expect(result.stdout + result.stderr).not.toMatch(/sk-ant-|sk-live/)
   })
 })
+
+describe('publishable CLI package', () => {
+  test('@ravenclaw/cli and its workspace deps are not private', async () => {
+    const pkg = (await Bun.file(new URL('../package.json', import.meta.url)).json()) as {
+      name: string
+      private?: boolean
+      bin?: { raven?: string }
+      dependencies?: Record<string, string>
+    }
+    expect(pkg.name).toBe('@ravenclaw/cli')
+    expect(pkg.private).toBeUndefined()
+    expect(pkg.bin?.raven).toBe('src/index.ts')
+    for (const [name, spec] of Object.entries(pkg.dependencies ?? {})) {
+      if (!name.startsWith('@ravenclaw/') || !spec.startsWith('workspace:')) continue
+      const dir = name.slice('@ravenclaw/'.length)
+      const dep = (await Bun.file(new URL(`../../${dir}/package.json`, import.meta.url)).json()) as {
+        private?: boolean
+      }
+      expect(dep.private).toBeUndefined()
+    }
+  })
+})

@@ -1,3 +1,4 @@
+#!/usr/bin/env bun
 import { createInterface } from 'node:readline'
 import { createElement } from 'react'
 import { render } from 'ink'

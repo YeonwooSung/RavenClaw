@@ -1,10 +1,14 @@
 {
   "name": "@ravenclaw/core",
   "version": "0.1.33",
-  "private": true,
+  "license": "Apache-2.0",
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
+  },
+  "files": ["src"],
+  "publishConfig": {
+    "access": "public"
   },
   "dependencies": {
     "ajv": "^8.20.0"

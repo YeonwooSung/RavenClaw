@@ -1,13 +1,21 @@
 {
   "name": "@ravenclaw/cli",
   "version": "0.1.33",
-  "private": true,
+  "description": "RavenClaw coding agent CLI (bin: raven)",
+  "license": "Apache-2.0",
   "type": "module",
   "bin": {
     "raven": "src/index.ts"
   },
   "exports": {
     ".": "./src/index.ts"
+  },
+  "files": ["src"],
+  "publishConfig": {
+    "access": "public"
+  },
+  "engines": {
+    "bun": ">=1.0.0"
   },
   "dependencies": {
     "@ravenclaw/acp": "workspace:*",

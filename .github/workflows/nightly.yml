@@ -1,0 +1,42 @@
+name: Nightly
+
+on:
+  schedule:
+    - cron: '0 7 * * *'
+  workflow_dispatch:
+    inputs:
+      live_smoke:
+        description: Run live model smoke (needs ANTHROPIC_API_KEY repo secret)
+        type: boolean
+        default: false
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.x
+      - run: bun install
+      - name: Targeted unit tests
+        run: bash scripts/ci-unit.sh
+
+  live-smoke:
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.live_smoke }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.x
+      - run: bun install
+      - name: Live smoke
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "${ANTHROPIC_API_KEY}" ]; then
+            echo "ANTHROPIC_API_KEY repo secret is not set"
+            exit 1
+          fi
+          bun packages/cli/src/index.ts smoke

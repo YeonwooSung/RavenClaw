@@ -13,7 +13,8 @@ jobs:
         with:
           bun-version: 1.x
       - run: bun install
-      - run: bun test
+      - name: Targeted unit tests
+        run: bash scripts/ci-unit.sh
       - name: No-key CLI
         run: |
           bun packages/cli/src/index.ts --version
