@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { createMcpToolBridge } from './client'
 import {
+  appendDeferredMcpTools,
   deferUntilUnlocked,
   filterMcpDescriptors,
   loadMcpTools,
@@ -88,6 +89,16 @@ const searchSchema = {
     q: { type: 'string', minLength: 1 },
   },
 }
+
+describe('appendDeferredMcpTools', () => {
+  test('appends new names in place and skips collisions', () => {
+    const existing = [mockTool('Read'), mockTool('ToolCall')]
+    const late = mockTool('mcp_late')
+    const out = appendDeferredMcpTools(existing, [mockTool('Read'), late])
+    expect(out).toBe(existing)
+    expect(out.map((tool) => tool.name)).toEqual(['Read', 'ToolCall', 'mcp_late'])
+  })
+})
 
 describe('mergeToolPool', () => {
   test('sorts builtins as a contiguous prefix, then sorted MCP tools', () => {

@@ -1,4 +1,4 @@
-import type { McpTransport } from './types'
+import type { McpTransport, McpTransportHealth } from './types'
 
 export interface HttpMcpTransportOpts {
   url: string
@@ -26,6 +26,7 @@ export function createHttpMcpTransport(opts: HttpMcpTransportOpts): McpTransport
   let nextId = 1
   let sessionId: string | undefined
   let closed = false
+  let health: McpTransportHealth = 'connecting'
   const pending = new Map<unknown, PendingWaiter>()
   const buffered = new Map<unknown, { result?: unknown; error?: Error }>()
   let sseAbort: AbortController | undefined
@@ -166,6 +167,7 @@ export function createHttpMcpTransport(opts: HttpMcpTransportOpts): McpTransport
     }
     const json = (await res.json()) as JsonRpcMessage
     if (json.error) throw new Error(json.error.message || 'MCP JSON-RPC error')
+    if (health === 'connecting') health = 'ready'
     return json.result
   }
 
@@ -174,16 +176,23 @@ export function createHttpMcpTransport(opts: HttpMcpTransportOpts): McpTransport
       const id = nextId++
       const payload: Record<string, unknown> = { jsonrpc: '2.0', id, method }
       if (params !== undefined) payload.params = params
-      return send(payload, true, reqOpts?.signal)
+      return send(payload, true, reqOpts?.signal).then((value) => {
+        if (health === 'connecting') health = 'ready'
+        return value
+      })
     },
     async notify(method, params) {
       const payload: Record<string, unknown> = { jsonrpc: '2.0', method }
       if (params !== undefined) payload.params = params
       await send(payload, false)
     },
+    health() {
+      return closed ? 'dead' : health
+    },
     async close() {
       if (closed) return
       closed = true
+      health = 'dead'
       sseAbort?.abort()
       rejectAllPending(new Error('MCP transport is closed'))
     },

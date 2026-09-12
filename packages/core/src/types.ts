@@ -373,6 +373,8 @@ export interface SessionEngineOptions {
   }
   /** When true, nudge if the turn mutated files without a test/lint command. Default off. */
   verifyOnStop?: boolean
+  /** After a tool batch, return newly ready deferred tools (MCP). Prefix stays unchanged. */
+  refreshTools?: () => Promise<Tool[] | undefined> | Tool[] | undefined
   /** Reuse a parent FileHistory. Unset creates one for this engine. */
   fileHistory?: import('./session/file-history').FileHistory
   /**
@@ -418,6 +420,8 @@ export interface QueryLoopOptions {
   fallbackModel?: string
   jsonSchema?: unknown
   verifyOnStop?: boolean
+  /** After a tool batch, return newly ready deferred tools (MCP). Prefix stays unchanged. */
+  refreshTools?: () => Promise<Tool[] | undefined> | Tool[] | undefined
   lifecycle?: {
     run(
       event: string,

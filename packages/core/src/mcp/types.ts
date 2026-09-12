@@ -4,10 +4,13 @@ export interface McpRequestOpts {
   signal?: AbortSignal
 }
 
+export type McpTransportHealth = 'connecting' | 'ready' | 'dead'
+
 export interface McpTransport {
   request(method: string, params?: unknown, opts?: McpRequestOpts): Promise<unknown>
   notify?(method: string, params?: unknown): Promise<void>
   close(): Promise<void>
+  health?(): McpTransportHealth
 }
 
 export interface McpToolDescriptor {

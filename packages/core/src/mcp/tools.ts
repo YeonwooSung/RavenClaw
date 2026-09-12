@@ -8,6 +8,17 @@ export interface McpToolFilter {
 }
 
 /** Built-ins stay a contiguous sorted prefix (prompt-cache breakpoint). MCP tools append, also sorted. Built-in names win. */
+/** Append newly ready MCP tools after the existing prefix. Does not re-sort or replace names. */
+export function appendDeferredMcpTools(existing: Tool[], incoming: Tool[]): Tool[] {
+  const names = new Set(existing.map((tool) => tool.name))
+  for (const tool of incoming) {
+    if (names.has(tool.name)) continue
+    names.add(tool.name)
+    existing.push(tool)
+  }
+  return existing
+}
+
 export function mergeToolPool(builtins: Tool[], mcpTools: Tool[]): Tool[] {
   const sortedBuiltins = sortByName(builtins)
   const builtinNames = new Set(sortedBuiltins.map((tool) => tool.name))

@@ -261,12 +261,14 @@ export function createSessionTools(opts: {
   hooks?: PermissionHook[]
   askTool?: Tool
   network?: boolean
+  deferredCatalog?: Tool[]
 }): Tool[] {
   const networkOn = opts.network === true
   const root = createRootTools(opts.store, opts.bash ?? bashTool, opts.askTool, networkOn)
   const deferredNetwork = networkOn ? [] : [fetchTool, webSearchTool].map(hideDeferredFromWire)
   const deferredMcp = (opts.mcpTools ?? []).map(hideDeferredFromWire)
-  const deferred = [...deferredNetwork, ...deferredMcp]
+  const deferred = opts.deferredCatalog ?? []
+  if (deferred.length === 0) deferred.push(...deferredNetwork, ...deferredMcp)
   const always = [...root, ...deferredNetwork]
   if (deferred.length > 0) {
     always.push(
@@ -470,7 +472,9 @@ async function finishOpenEngine(
   const servers = opts.tools !== undefined ? [] : (opts.config.mcp?.servers ?? [])
   let mcpTools: Tool[] = []
   let mcpCloser: (() => Promise<void>) | undefined
+  let refreshMcp: (() => Promise<Tool[]>) | undefined
   const mcpErrors: Array<{ name: string; message: string }> = []
+  const deferredCatalog: Tool[] = []
   try {
   if (servers.length > 0) {
     const loaded = await loadConfiguredMcpTools(servers, {
@@ -478,6 +482,7 @@ async function finishOpenEngine(
     })
     mcpTools = loaded.tools
     mcpCloser = loaded.close
+    refreshMcp = () => loaded.refresh()
     mcpErrors.push(...loaded.errors)
   }
   if (opts.tools === undefined) {
@@ -497,6 +502,7 @@ async function finishOpenEngine(
       system,
       bash,
       mcpTools,
+      deferredCatalog,
       hooks,
       askTool:
         opts.askUserHost === true
@@ -550,6 +556,20 @@ async function finishOpenEngine(
   if (extraDirs.length > 0) engineOpts.additionalDirectories = extraDirs
   engineOpts.sessionLock = { holderId: lockHolderId }
   if (opts.verifyOnStop === true) engineOpts.verifyOnStop = true
+  if (refreshMcp !== undefined) {
+    engineOpts.refreshTools = async () => {
+      try {
+        const added = await refreshMcp()
+        const hidden = added.map(hideDeferredFromWire)
+        for (const tool of hidden) {
+          if (!deferredCatalog.some((row) => row.name === tool.name)) deferredCatalog.push(tool)
+        }
+        return hidden
+      } catch {
+        return []
+      }
+    }
+  }
   const log = openRavenclawLog(opts.config.home)
   for (const err of mcpErrors) {
     log.write({

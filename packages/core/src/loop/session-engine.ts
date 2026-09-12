@@ -195,6 +195,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         if (opts.fallbackModel !== undefined) loopOpts.fallbackModel = opts.fallbackModel
         if (opts.jsonSchema !== undefined) loopOpts.jsonSchema = opts.jsonSchema
         if (opts.verifyOnStop === true) loopOpts.verifyOnStop = true
+        if (opts.refreshTools !== undefined) loopOpts.refreshTools = opts.refreshTools
         const end = yield* queryLoop(loopOpts)
         messages = turn.messages
         session.usage = turn.usage

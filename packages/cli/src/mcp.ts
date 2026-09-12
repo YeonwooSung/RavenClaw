@@ -35,11 +35,30 @@ export interface McpLoadError {
   message: string
 }
 
+export type McpSlotState = 'connecting' | 'ready' | 'dead'
+
+export interface McpServerSlot {
+  name: string
+  state: McpSlotState
+}
+
 export interface LoadedMcpTools {
   tools: Tool[]
   close: () => Promise<void>
   bridge?: McpToolBridge
   errors: McpLoadError[]
+  refresh: () => Promise<Tool[]>
+  slots: () => McpServerSlot[]
+}
+
+interface InternalMcpSlot {
+  server: McpServerConfig
+  state: McpSlotState
+  tools: Tool[]
+  bridge?: McpToolBridge
+  close?: () => Promise<void>
+  error?: string
+  inflight?: Promise<void>
 }
 
 export function spawnMcpServer(
@@ -58,51 +77,122 @@ export async function loadConfiguredMcpTools(
   opts?: { spawn?: McpSpawnFn },
 ): Promise<LoadedMcpTools> {
   const spawnFn = opts?.spawn ?? (spawn as unknown as McpSpawnFn)
-  const tools: Tool[] = []
-  const closers: Array<() => Promise<void>> = []
-  const errors: McpLoadError[] = []
-
-  const hosts: Array<{ name: string; bridge: McpToolBridge }> = []
-  for (const server of servers) {
-    try {
-      const loaded = await loadOneMcpServer(server, spawnFn)
-      tools.push(...loaded.tools)
-      closers.push(loaded.close)
-      if (loaded.bridge) hosts.push({ name: server.name, bridge: loaded.bridge })
-    } catch (error) {
-      errors.push({ name: server.name, message: errorMessage(error) })
-    }
-  }
-  if (hosts.length > 0) {
-    tools.push(...createMcpResourceTools(hosts))
-  }
-
-  return {
-    tools,
-    errors,
+  const slots: InternalMcpSlot[] = servers.map((server) => ({
+    server,
+    state: 'connecting',
+    tools: [],
+  }))
+  await Promise.all(slots.map((slot) => connectSlot(slot, spawnFn)))
+  const snapshot = collectMcpSnapshot(slots)
+  const pool: LoadedMcpTools = {
+    tools: snapshot.tools,
+    errors: snapshot.errors,
+    bridge: snapshot.bridge,
+    slots() {
+      return slots.map((slot) => ({ name: slot.server.name, state: slot.state }))
+    },
+    async refresh() {
+      const before = new Set(pool.tools.map((tool) => tool.name))
+      const retry = slots.filter((slot) => slot.state === 'dead' || slot.state === 'connecting')
+      if (retry.length === 0) return []
+      try {
+        await Promise.all(retry.map((slot) => connectSlot(slot, spawnFn)))
+      } catch {
+        // one dead server must not abort the session
+      }
+      const next = collectMcpSnapshot(slots)
+      pool.tools = next.tools
+      pool.errors = next.errors
+      pool.bridge = next.bridge
+      return next.tools.filter((tool) => !before.has(tool.name))
+    },
     async close() {
-      for (const closer of closers) {
+      for (const slot of slots) {
+        if (!slot.close) continue
         try {
-          await closer()
+          await slot.close()
         } catch {
           // fail-open
         }
       }
     },
   }
+  return pool
+}
+
+async function connectSlot(slot: InternalMcpSlot, spawnFn: McpSpawnFn): Promise<void> {
+  if (slot.inflight) return slot.inflight
+  slot.state = 'connecting'
+  slot.inflight = (async () => {
+    const previousClose = slot.close
+    try {
+      const loaded = await loadOneMcpServer(slot.server, spawnFn)
+      if (previousClose) {
+        try {
+          await previousClose()
+        } catch {
+          // replaced
+        }
+      }
+      slot.tools = loaded.tools
+      slot.bridge = loaded.bridge
+      slot.close = loaded.close
+      slot.error = undefined
+      slot.state = 'ready'
+    } catch (error) {
+      slot.state = 'dead'
+      slot.error = errorMessage(error)
+      slot.tools = []
+      slot.bridge = undefined
+      slot.close = previousClose
+    } finally {
+      slot.inflight = undefined
+    }
+  })()
+  return slot.inflight
+}
+
+function collectMcpSnapshot(slots: InternalMcpSlot[]): {
+  tools: Tool[]
+  errors: McpLoadError[]
+  bridge?: McpToolBridge
+} {
+  const tools: Tool[] = []
+  const errors: McpLoadError[] = []
+  const hosts: Array<{ name: string; bridge: McpToolBridge }> = []
+  for (const slot of slots) {
+    if (slot.state === 'ready') {
+      tools.push(...slot.tools)
+      if (slot.bridge) hosts.push({ name: slot.server.name, bridge: slot.bridge })
+    } else if (slot.state === 'dead' && slot.error !== undefined) {
+      errors.push({ name: slot.server.name, message: slot.error })
+    }
+  }
+  if (hosts.length > 0) tools.push(...createMcpResourceTools(hosts))
+  return {
+    tools,
+    errors,
+    ...(hosts[0] !== undefined ? { bridge: hosts[0].bridge } : {}),
+  }
+}
+
+interface ConnectedMcpServer {
+  tools: Tool[]
+  close: () => Promise<void>
+  bridge?: McpToolBridge
 }
 
 async function loadOneMcpServer(
   server: McpServerConfig,
   spawnFn: McpSpawnFn,
-): Promise<LoadedMcpTools> {
+): Promise<ConnectedMcpServer> {
   if (server.type === 'http' || server.type === 'sse' || (server.url && !server.command)) {
     return loadHttpMcpServer(server)
   }
   return loadStdioMcpServer(server, spawnFn)
 }
 
-async function loadHttpMcpServer(server: McpServerConfig): Promise<LoadedMcpTools> {
+async function loadHttpMcpServer(server: McpServerConfig): Promise<ConnectedMcpServer> {
   if (!server.url) throw new Error('mcp http missing url')
   const transport = createHttpMcpTransport({
     url: server.url,
@@ -129,7 +219,7 @@ async function loadHttpMcpServer(server: McpServerConfig): Promise<LoadedMcpTool
 async function loadStdioMcpServer(
   server: McpServerConfig,
   spawnFn: McpSpawnFn,
-): Promise<LoadedMcpTools> {
+): Promise<ConnectedMcpServer> {
   const child = spawnMcpServer(server, spawnFn)
   if (!child.stdin || !child.stdout) {
     try {

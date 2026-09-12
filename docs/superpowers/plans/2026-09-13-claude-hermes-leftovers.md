@@ -56,6 +56,8 @@ Discord rewrite, `execute_code`, Electron, `bypass` / yolo, streaming tool execu
 
 ### L5. Mid-turn MCP refresh
 
+**Status.** Done.
+
 **Why.** Claude `query.ts` calls `refreshTools()` after a tool batch so a late stdio/HTTP connect appears on the next assemble. RavenClaw builds the MCP pool once in `packages/cli/src/engine.ts` / `packages/cli/src/mcp.ts`. A server that comes up after session start stays invisible.
 
 **Contract.** After `runToolRound`, if any MCP transport is still connecting or a server was marked dead-then-alive, rebuild deferred MCP descriptors into the existing `ToolSearch`/`ToolCall` catalog. Do not put new MCP schemas on the default prefix. One dead server still must not abort the session.

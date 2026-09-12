@@ -293,6 +293,45 @@ describe('loadConfiguredMcpTools', () => {
     ])
     await loaded.close()
   })
+
+  test('refresh retries a dead server and returns newly ready tools', async () => {
+    const child = fakeMcpChild([{ name: 'late_ping' }])
+    let attempts = 0
+    const loaded = await loadConfiguredMcpTools([{ name: 'late', command: 'fake-mcp' }], {
+      spawn() {
+        attempts += 1
+        if (attempts === 1) throw new Error('down')
+        return child
+      },
+    })
+    expect(loaded.errors).toEqual([{ name: 'late', message: 'down' }])
+    expect(loaded.tools.map((tool) => tool.name)).toEqual([])
+    expect(loaded.slots()).toEqual([{ name: 'late', state: 'dead' }])
+
+    const added = await loaded.refresh()
+    expect(added.map((tool) => tool.name)).toEqual([
+      'late_ping',
+      'ListMcpResources',
+      'ReadMcpResource',
+    ])
+    expect(loaded.errors).toEqual([])
+    expect(loaded.slots()).toEqual([{ name: 'late', state: 'ready' }])
+    expect(await loaded.refresh()).toEqual([])
+    await loaded.close()
+    expect(child.killed).toBe(true)
+  })
+
+  test('refresh of a still-dead server does not throw', async () => {
+    const loaded = await loadConfiguredMcpTools([{ name: 'broken', command: 'nope' }], {
+      spawn() {
+        throw new Error('ENOENT')
+      },
+    })
+    expect(loaded.errors).toEqual([{ name: 'broken', message: 'ENOENT' }])
+    await expect(loaded.refresh()).resolves.toEqual([])
+    expect(loaded.slots()).toEqual([{ name: 'broken', state: 'dead' }])
+    await loaded.close()
+  })
 })
 
 function defaultModel(id = 'dummy'): ModelProfile {

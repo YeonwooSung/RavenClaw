@@ -188,6 +188,7 @@ export { createMcpToolBridge, createStdioMcpTransport } from './mcp/client'
 export { createHttpMcpTransport } from './mcp/http'
 export { createMcpResourceTools } from './mcp/resources'
 export {
+  appendDeferredMcpTools,
   deferUntilUnlocked,
   filterMcpDescriptors,
   loadMcpTools,

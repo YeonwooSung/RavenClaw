@@ -25,6 +25,7 @@ import { isAbortError, nextOrAbort } from './abort'
 import { partitionToolCalls } from '../tools/partition'
 import { toolCallTool } from '../tools/tool-call'
 import { filterToolsForTurn } from '../tools/skill'
+import { appendDeferredMcpTools } from '../mcp/tools'
 import { estimateTokens, shouldEnterGrace, suffixGraceNotice } from './budget'
 import {
   denyText,
@@ -860,7 +861,19 @@ export async function* runToolRound(
     return { action: 'return', end: { reason: 'aborted' } }
   }
 
+  await applyRefreshTools(state)
   return { action: 'continue' }
+}
+
+async function applyRefreshTools(state: LoopState): Promise<void> {
+  if (!state.refreshTools) return
+  try {
+    const added = await state.refreshTools()
+    if (!added || added.length === 0) return
+    state.tools = appendDeferredMcpTools(state.tools, added)
+  } catch {
+    // one dead MCP server must not abort the session
+  }
 }
 
 export async function* finalizeRound(

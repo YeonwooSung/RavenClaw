@@ -5,6 +5,7 @@ import {
   type McpToolBridge,
   type McpToolDescriptor,
   type McpTransport,
+  type McpTransportHealth,
 } from './types'
 
 export function createMcpToolBridge(transport: McpTransport): McpToolBridge {
@@ -80,6 +81,7 @@ export function createStdioMcpTransport(streams: McpStdioStreams): McpTransport 
   let nextId = 1
   let buffer = Buffer.alloc(0)
   let closed = false
+  let health: McpTransportHealth = 'connecting'
   const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>()
 
   const onData = (chunk: Buffer | string): void => {
@@ -115,6 +117,7 @@ export function createStdioMcpTransport(streams: McpStdioStreams): McpTransport 
         pending.set(id, {
           resolve(value) {
             signal?.removeEventListener('abort', onAbort)
+            if (health === 'connecting') health = 'ready'
             resolve(value)
           },
           reject(error) {
@@ -125,9 +128,13 @@ export function createStdioMcpTransport(streams: McpStdioStreams): McpTransport 
         streams.stdin.write(encodeJsonRpcFrame(payload))
       })
     },
+    health() {
+      return closed ? 'dead' : health
+    },
     async close() {
       if (closed) return
       closed = true
+      health = 'dead'
       streams.stdout.off?.('data', onData)
       streams.stdin.end?.()
       for (const waiter of pending.values()) {

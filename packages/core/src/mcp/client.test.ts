@@ -257,7 +257,9 @@ describe('createStdioMcpTransport', () => {
     await expect(pending).resolves.toEqual({
       tools: [{ name: 'ping', inputSchema: { type: 'object' } }],
     })
+    expect(transport.health?.()).toBe('ready')
     await transport.close()
+    expect(transport.health?.()).toBe('dead')
   })
 
   test('reassembles a response split across data chunks', async () => {

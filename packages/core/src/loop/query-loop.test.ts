@@ -244,6 +244,7 @@ function engineOpts(over: {
   maxRounds?: number
   verifyOnStop?: boolean
   model?: ModelProfile
+  refreshTools?: Parameters<typeof createSessionEngine>[0]['refreshTools']
 }) {
   const session = over.session ?? makeSession()
   const opts: Parameters<typeof createSessionEngine>[0] = {
@@ -260,6 +261,7 @@ function engineOpts(over: {
   }
   if (over.messages) opts.messages = over.messages
   if (over.verifyOnStop === true) opts.verifyOnStop = true
+  if (over.refreshTools !== undefined) opts.refreshTools = over.refreshTools
   return opts
 }
 
@@ -1753,6 +1755,82 @@ describe('queryLoop via SessionEngine', () => {
     } finally {
       rmSync(cwd, { recursive: true, force: true })
     }
+  })
+
+  test('refreshTools after a tool round adds deferred MCP tools off the prefix', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_refresh_mcp' })
+    await store.createSession(session)
+    const echo = createEcho()
+    const late: Tool<Record<string, unknown>, string> = {
+      name: 'mcp_late',
+      description: 'late mcp',
+      inputSchema: { type: 'object' },
+      isEnabled() {
+        return false
+      },
+      parse(input: unknown) {
+        return { ok: true as const, value: (input ?? {}) as Record<string, unknown> }
+      },
+      isConcurrencySafe: () => false,
+      isReadOnly: () => false,
+      async checkPermissions() {
+        return { behavior: 'allow', reason: 'mode' }
+      },
+      async execute() {
+        return 'late'
+      },
+    }
+    let refreshed = 0
+    const provider = createFakeProvider([
+      toolThenStop('e1', 'Echo', { text: 'hi' }),
+      textThenStop('done'),
+    ])
+    const tools = [echo, toolCallTool]
+    const engine = createSessionEngine(
+      engineOpts({
+        provider,
+        store,
+        session,
+        tools,
+        refreshTools: async () => {
+          refreshed += 1
+          return [late]
+        },
+      }),
+    )
+    const { result } = await collect(engine.submitMessage('go'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(refreshed).toBe(1)
+    expect(tools.map((tool) => tool.name)).toEqual(['Echo', 'ToolCall', 'mcp_late'])
+    expect(provider.requests[0]?.tools.map((tool) => tool.name)).toEqual(['Echo', 'ToolCall'])
+    expect(provider.requests[1]?.tools.map((tool) => tool.name)).toEqual(['Echo', 'ToolCall'])
+    expect(provider.requests[1]?.tools.map((tool) => tool.name)).not.toContain('mcp_late')
+  })
+
+  test('refreshTools throwing does not abort the turn', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_refresh_throw' })
+    await store.createSession(session)
+    const echo = createEcho()
+    const provider = createFakeProvider([
+      toolThenStop('e1', 'Echo', { text: 'hi' }),
+      textThenStop('done'),
+    ])
+    const engine = createSessionEngine(
+      engineOpts({
+        provider,
+        store,
+        session,
+        tools: [echo],
+        refreshTools: async () => {
+          throw new Error('mcp down')
+        },
+      }),
+    )
+    const { result } = await collect(engine.submitMessage('go'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(echo.executeCount).toBe(1)
   })
 
   test('ToolCall unwraps a deferred MCP tool and asks under the real name', async () => {
