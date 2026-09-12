@@ -16,6 +16,7 @@ import type {
 } from '../types'
 import { createSessionEngine } from './session-engine'
 import { drainAgentMail, enqueueAgentMail } from '../tasks/mailbox'
+import { applyPermissionMode, buildSystemParts } from '../prompt/builder'
 
 function defaultModel(id = 'dummy'): ModelProfile {
   return {
@@ -667,5 +668,108 @@ describe('lifecycle Stop / SessionEnd / PreToolUse', () => {
         if (dir) rmSync(dir, { recursive: true, force: true })
       }
     }
+  })
+
+  test('SessionStart awaits once on first submitMessage before UserPromptSubmit', async () => {
+    const home = tempDir('ravenclaw-start-home-')
+    const cwd = tempDir('ravenclaw-start-cwd-')
+    const saved = process.env.RAVENCLAW_HOME
+    process.env.RAVENCLAW_HOME = home
+    const marker = join(home, 'session-start.txt')
+    try {
+      writeHooks(home, {
+        SessionStart: [{ command: `printf '%s\\n' 'start' >> "${marker}"` }],
+        UserPromptSubmit: [{ command: `printf '%s\\n' 'prompt' >> "${marker}"` }],
+      })
+      const store = createMemoryStore()
+      const sess = makeSession({ id: 'sess_start', cwd })
+      await store.createSession(sess)
+      const engine = createSessionEngine({
+        session: sess,
+        provider: createFakeProvider([
+          [{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: 'end' }],
+          [{ type: 'text_delta', text: 'ok2' }, { type: 'stop', reason: 'end' }],
+        ]),
+        store,
+        tools: [],
+        compact: defaultCompact({ enabled: false }),
+        model: defaultModel(),
+        maxRounds: 4,
+        async askUser() {
+          return 'deny'
+        },
+      })
+      expect(() => readFileSync(marker, 'utf8')).toThrow()
+      await drain(engine.submitMessage('hi'))
+      expect(readFileSync(marker, 'utf8')).toBe('start\nprompt\n')
+      await drain(engine.submitMessage('again'))
+      expect(readFileSync(marker, 'utf8')).toBe('start\nprompt\nprompt\n')
+    } finally {
+      if (saved === undefined) delete process.env.RAVENCLAW_HOME
+      else process.env.RAVENCLAW_HOME = saved
+      while (tempDirs.length > 0) {
+        const dir = tempDirs.pop()
+        if (dir) rmSync(dir, { recursive: true, force: true })
+      }
+    }
+  })
+})
+
+describe('setPermissionMode volatile rewrite', () => {
+  test('next submitMessage sees dontAsk in volatile and unchanged stable', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_mode_volatile' })
+    await store.createSession(sess)
+    const captured: ProviderRequest[] = []
+    const provider: Provider = {
+      id: 'fake',
+      apiMode: 'openai_compat',
+      profile(model: string) {
+        return defaultModel(model)
+      },
+      async *stream(req: ProviderRequest) {
+        captured.push(req)
+        yield { type: 'text_delta' as const, text: 'ok' }
+        yield { type: 'stop' as const, reason: 'end' }
+      },
+    }
+    const system = buildSystemParts({
+      cwd: '/workspace/demo',
+      permissionMode: 'default',
+      projectFilesText: '',
+      git: null,
+      skills: [],
+    })
+    const stableBefore = system[0]?.text
+    const engine = createSessionEngine({
+      session: sess,
+      provider,
+      store,
+      tools: [],
+      compact: defaultCompact({ enabled: false }),
+      model: defaultModel(),
+      maxRounds: 4,
+      system,
+      async askUser() {
+        return 'deny'
+      },
+    })
+    await engine.setPermissionMode('dontAsk')
+    const events: StreamEvent[] = []
+    const gen = engine.submitMessage('hi')
+    while (true) {
+      const next = await gen.next()
+      if (next.done) break
+      events.push(next.value)
+    }
+    expect(captured).toHaveLength(1)
+    const req = captured[0]
+    const stable = req?.system.find((part) => part.tier === 'stable')
+    const volatile = req?.system.find((part) => part.tier === 'volatile')
+    expect(stable?.text).toBe(stableBefore)
+    expect(stable?.text).not.toContain('Current permission mode:')
+    expect(volatile?.text).toContain('Current permission mode: dontAsk')
+    expect(volatile?.text).not.toContain('Current permission mode: default')
+    expect(applyPermissionMode(system, 'plan')[2]?.text).toContain('Current permission mode: plan')
   })
 })

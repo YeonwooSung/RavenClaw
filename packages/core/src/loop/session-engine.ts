@@ -22,6 +22,7 @@ import { queryLoop } from './query-loop'
 import { selectProtectedTail } from './repair'
 import { rewindLastTurn } from '../session/rewind'
 import { getSessionWorktree } from '../tools/session-worktree'
+import { applyPermissionMode } from '../prompt/builder'
 
 const TITLE_MAX = 50
 
@@ -44,12 +45,10 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
   const steering: string[] = []
   const injectedAgentsDirs = new Set<string>()
   let closed = false
+  let sessionStartDone = false
   const lifecycle = opts.bare
     ? { run: async () => undefined }
     : loadLifecycleHooks(session.cwd)
-  if (!opts.bare) {
-    void lifecycle.run('SessionStart', { sessionId: session.id, cwd: session.cwd })
-  }
 
   return {
     get session() {
@@ -97,6 +96,10 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       const stopLockRenew = lock ? startLockRenew(opts.store, session.id, lock) : undefined
       try {
       const { text, blocks } = userSubmitToBlocks(input)
+      if (!sessionStartDone) {
+        sessionStartDone = true
+        await lifecycle.run('SessionStart', { sessionId: session.id, cwd: session.cwd })
+      }
       const blocked = await lifecycle.run('UserPromptSubmit', { text })
       if (blocked?.preventContinuation === true) {
         yield { type: 'status', message: blocked.message ?? 'stopped by hook' }
@@ -265,6 +268,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       if (liveTurn) liveTurn.permissionMode = mode
       session.updatedAt = Date.now()
       await opts.store.upsertSession(session)
+      if (system !== undefined) system = applyPermissionMode(system, mode)
     },
 
     abort() {

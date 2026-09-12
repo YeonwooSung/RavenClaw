@@ -45,6 +45,19 @@ describe('hashSystemParts', () => {
     expect(a).toBe(b)
     expect(a).toMatch(/^[0-9a-f]{64}$/)
   })
+
+  test('stable part hash is identical across default and plan', () => {
+    const input = {
+      cwd: '/workspace/demo',
+      permissionMode: 'default' as const,
+      projectFilesText: 'frozen',
+      git: { branch: 'main', head: 'deadbeef', dirty: false },
+    }
+    const def = buildSystemParts(input)
+    const plan = buildSystemParts({ ...input, permissionMode: 'plan' })
+    expect(hashSystemParts(def[0] ? [def[0]] : [])).toBe(hashSystemParts(plan[0] ? [plan[0]] : []))
+    expect(hashSystemParts(def)).not.toBe(hashSystemParts(plan))
+  })
 })
 
 describe('injectMidTurn', () => {

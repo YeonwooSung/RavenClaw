@@ -37,6 +37,23 @@ function writeHooks(dir: string, body: unknown): void {
   writeFileSync(join(dir, 'hooks.json'), `${JSON.stringify(body)}\n`, 'utf8')
 }
 
+describe('LIFECYCLE_EVENTS', () => {
+  test('catalog is the fired events only', () => {
+    expect([...LIFECYCLE_EVENTS]).toEqual([
+      'PreToolUse',
+      'PostToolUse',
+      'UserPromptSubmit',
+      'SessionStart',
+      'SessionEnd',
+      'Stop',
+    ])
+    expect(LIFECYCLE_EVENTS).not.toContain('SubagentStart')
+    expect(LIFECYCLE_EVENTS).not.toContain('SubagentStop')
+    expect(LIFECYCLE_EVENTS).not.toContain('PreCompact')
+    expect(LIFECYCLE_EVENTS).not.toContain('PostCompact')
+  })
+})
+
 describe('loadLifecycleHooks', () => {
   test('missing files and invalid JSON yield no-op run', async () => {
     const home = tempDir('ravenclaw-life-home-')

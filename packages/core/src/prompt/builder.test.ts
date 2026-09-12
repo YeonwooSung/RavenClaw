@@ -2,9 +2,13 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { PermissionMode } from '../types'
 import { hashSystemParts } from './cache'
-import { buildStablePrompt, buildSystemParts, type PromptBuildInput } from './builder'
+import {
+  applyPermissionMode,
+  buildStablePrompt,
+  buildSystemParts,
+  type PromptBuildInput,
+} from './builder'
 
 const ENV_KEY = 'RAVENCLAW_HOME'
 
@@ -54,14 +58,39 @@ describe('buildSystemParts', () => {
   })
 
   test('changing cwd or permissionMode changes the hash', () => {
-    const base = hashSystemParts(buildSystemParts(input()))
+    const baseParts = buildSystemParts(input())
+    const modeParts = buildSystemParts(input({ permissionMode: 'plan' }))
+    const base = hashSystemParts(baseParts)
     const cwdHash = hashSystemParts(buildSystemParts(input({ cwd: '/workspace/other' })))
-    const modeHash = hashSystemParts(
-      buildSystemParts(input({ permissionMode: 'plan' })),
-    )
+    const modeHash = hashSystemParts(modeParts)
     expect(cwdHash).not.toBe(base)
     expect(modeHash).not.toBe(base)
     expect(cwdHash).not.toBe(modeHash)
+    expect(baseParts[0]?.text).toBe(modeParts[0]?.text)
+    expect(hashSystemParts(baseParts[0] ? [baseParts[0]] : [])).toBe(
+      hashSystemParts(modeParts[0] ? [modeParts[0]] : []),
+    )
+  })
+
+  test('stable hash is identical across default and plan; full hash moves with mode', () => {
+    const def = buildSystemParts(input({ permissionMode: 'default' }))
+    const plan = buildSystemParts(input({ permissionMode: 'plan' }))
+    expect(def[0]?.text).toBe(plan[0]?.text)
+    expect(def[0]?.text).not.toContain('Current permission mode:')
+    expect(def[2]?.text).toContain('Current permission mode: default')
+    expect(plan[2]?.text).toContain('Current permission mode: plan')
+    expect(hashSystemParts(def[0] ? [def[0]] : [])).toBe(hashSystemParts(plan[0] ? [plan[0]] : []))
+    expect(hashSystemParts(def)).not.toBe(hashSystemParts(plan))
+  })
+
+  test('applyPermissionMode rewrites volatile only', () => {
+    const parts = buildSystemParts(input({ permissionMode: 'default' }))
+    const next = applyPermissionMode(parts, 'dontAsk')
+    expect(next[0]?.text).toBe(parts[0]?.text)
+    expect(next[1]?.text).toBe(parts[1]?.text)
+    expect(next[2]?.text).toContain('Current permission mode: dontAsk')
+    expect(next[2]?.text).not.toContain('Current permission mode: default')
+    expect(parts[2]?.text).toContain('Current permission mode: default')
   })
 
   test('three parts in stable/context/volatile order with cache breakpoints', () => {
@@ -292,6 +321,26 @@ describe('buildSystemParts', () => {
     )
   })
 
+  test('coding posture is appended to the context tier', () => {
+    const cwd = tempDir('ravenclaw-builder-posture-')
+    writeFileSync(join(cwd, 'bun.lock'), '')
+    writeFileSync(
+      join(cwd, 'package.json'),
+      `${JSON.stringify({ scripts: { test: 'echo', lint: 'echo' } })}\n`,
+    )
+    const parts = buildSystemParts(
+      input({ cwd, projectFilesText: 'project-instructions-body', git: GIT }),
+    )
+    const context = parts[1]?.text ?? ''
+    expect(context).toContain('Coding posture:')
+    expect(context).toContain('package manager: bun')
+    expect(context).toContain('verify: bun test')
+    expect(context).toContain('verify: bun run lint')
+    expect(context.indexOf('Git snapshot:')).toBeLessThan(context.indexOf('Coding posture:'))
+    expect(parts[0]?.text).not.toContain('Coding posture:')
+    expect(parts[2]?.text).not.toContain('Coding posture:')
+  })
+
   test('builder loads user-global memory from RAVENCLAW_HOME', () => {
     const home = tempDir('ravenclaw-builder-home-')
     const cwd = tempDir('ravenclaw-builder-cwd-')
@@ -311,26 +360,24 @@ describe('buildSystemParts', () => {
 
 describe('buildStablePrompt', () => {
   test('identity names RavenClaw and omits vendor brand strings', () => {
-    const modes: PermissionMode[] = ['default', 'acceptEdits', 'plan', 'dontAsk']
-    for (const mode of modes) {
-      const text = buildStablePrompt(mode)
-      expect(text).toContain('RavenClaw')
-      expect(text.toLowerCase()).toContain('coding agent')
-      expect(text).toMatch(/tool/i)
-      expect(text).toContain('default')
-      expect(text).toContain('acceptEdits')
-      expect(text).toContain('plan')
-      expect(text).toContain('dontAsk')
-      expect(text).toContain(mode)
-      expect(text).not.toContain('Claude Code')
-      expect(text).not.toContain('Anthropic')
-      expect(text).not.toContain('Hermes')
-      expect(text).not.toContain('Freebuff')
-    }
+    const text = buildStablePrompt()
+    expect(text).toContain('RavenClaw')
+    expect(text.toLowerCase()).toContain('coding agent')
+    expect(text).toMatch(/tool/i)
+    expect(text).toContain('default')
+    expect(text).toContain('acceptEdits')
+    expect(text).toContain('plan')
+    expect(text).toContain('dontAsk')
+    expect(text).not.toContain('Current permission mode:')
+    expect(text).not.toContain('Claude Code')
+    expect(text).not.toContain('Anthropic')
+    expect(text).not.toContain('Hermes')
+    expect(text).not.toContain('Freebuff')
   })
 
   test('stable tier text matches buildStablePrompt', () => {
     const parts = buildSystemParts(input({ permissionMode: 'acceptEdits' }))
-    expect(parts[0]?.text).toBe(buildStablePrompt('acceptEdits'))
+    expect(parts[0]?.text).toBe(buildStablePrompt())
+    expect(parts[2]?.text).toContain('Current permission mode: acceptEdits')
   })
 })

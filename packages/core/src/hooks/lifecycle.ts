@@ -12,10 +12,6 @@ export const LIFECYCLE_EVENTS = [
   'SessionStart',
   'SessionEnd',
   'Stop',
-  'SubagentStart',
-  'SubagentStop',
-  'PreCompact',
-  'PostCompact',
 ] as const
 
 export type LifecycleEvent = (typeof LIFECYCLE_EVENTS)[number]

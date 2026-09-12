@@ -1,9 +1,12 @@
 import { execFileSync } from 'node:child_process'
 import type { PermissionMode, SystemPart } from '../types'
 import { discoverSkills } from '../tools/skill'
+import { loadCodingPosture } from './coding-posture'
 import { loadProjectFileTree } from './file-tree'
 import { loadMemorySnapshot } from './memory'
 import { loadProjectFiles } from './project-files'
+
+const PERMISSION_MODE_LINE = /^Current permission mode: \S+$/m
 
 const SKILL_DESC_MAX = 60
 
@@ -25,18 +28,19 @@ export function buildSystemParts(input: PromptBuildInput): SystemPart[] {
   const memoryText = input.bare === true ? '' : loadMemorySnapshot(input.cwd)
   const fileTree = loadProjectFileTree(input.cwd)
   const git = resolveGit(input)
+  const posture = loadCodingPosture(input.cwd)
   return [
-    { tier: 'stable', text: buildStablePrompt(input.permissionMode), cacheBreakpoint: true },
+    { tier: 'stable', text: buildStablePrompt(), cacheBreakpoint: true },
     {
       tier: 'context',
-      text: buildContextPrompt(projectText, git, memoryText, fileTree),
+      text: buildContextPrompt(projectText, git, memoryText, fileTree, posture),
       cacheBreakpoint: true,
     },
     { tier: 'volatile', text: buildVolatilePrompt(input) },
   ]
 }
 
-export function buildStablePrompt(permissionMode: PermissionMode): string {
+export function buildStablePrompt(): string {
   return [
     'RavenClaw is a coding agent. It uses tools to read, edit, and run commands in the workspace.',
     '',
@@ -47,9 +51,20 @@ export function buildStablePrompt(permissionMode: PermissionMode): string {
     '- acceptEdits: in-workspace file edits may proceed without asking; other leftover asks still prompt.',
     '- plan: mutating tools are denied. Write a plan in text until plan mode ends.',
     '- dontAsk: leftover asks become denials except in-workspace Edit/Write and read-only tools. For unattended runs.',
-    '',
-    `Current permission mode: ${permissionMode}`,
   ].join('\n')
+}
+
+export function applyPermissionMode(parts: SystemPart[], mode: PermissionMode): SystemPart[] {
+  const line = `Current permission mode: ${mode}`
+  return parts.map((part) => {
+    if (part.tier !== 'volatile') return part
+    const text = PERMISSION_MODE_LINE.test(part.text)
+      ? part.text.replace(PERMISSION_MODE_LINE, line)
+      : part.text.length === 0
+        ? line
+        : `${line}\n${part.text}`
+    return text === part.text ? part : { ...part, text }
+  })
 }
 
 function buildContextPrompt(
@@ -57,6 +72,7 @@ function buildContextPrompt(
   git: { branch: string; head: string; dirty: boolean } | null,
   memoryText: string,
   fileTree: string,
+  posture: string,
 ): string {
   const lines = ['Project instructions:']
   if (projectText.length > 0) {
@@ -78,11 +94,16 @@ function buildContextPrompt(
     lines.push(`HEAD: ${git.head}`)
     lines.push(`dirty: ${git.dirty ? 'true' : 'false'}`)
   }
+  if (posture.length > 0) {
+    if (lines.length > 1) lines.push('')
+    lines.push('Coding posture:')
+    lines.push(posture)
+  }
   return lines.join('\n')
 }
 
 function buildVolatilePrompt(input: PromptBuildInput): string {
-  const lines = [`cwd: ${input.cwd}`]
+  const lines = [`cwd: ${input.cwd}`, `Current permission mode: ${input.permissionMode}`]
   if (input.locale !== undefined) {
     lines.push(`locale: ${input.locale}`)
   }
