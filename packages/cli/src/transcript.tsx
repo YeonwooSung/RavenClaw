@@ -10,7 +10,58 @@ export type TranscriptRow =
   | { kind: 'compact'; summary: string }
   | { kind: 'error'; message: string }
 
+export type TranscriptProps = {
+  rows: TranscriptRow[]
+  selectedIndex?: number
+  expandedIds?: ReadonlySet<string>
+  onToggleExpand?: (id: string) => void
+}
+
 const COMPACT_TOOLS = new Set(['Read', 'Grep', 'Glob'])
+
+export const RESULT_CLIP = 2000
+export const TRANSCRIPT_EXPAND_KEY = 'ctrl+o'
+
+export function isCompactTool(name: string): boolean {
+  return COMPACT_TOOLS.has(name)
+}
+
+export function clipToolResult(text: string): string {
+  return clip(text, RESULT_CLIP)
+}
+
+export function toggleExpanded(ids: Set<string>, id: string): Set<string> {
+  const next = new Set(ids)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  return next
+}
+
+export function selectedToolId(
+  rows: readonly TranscriptRow[],
+  selectedIndex: number | undefined,
+): string | undefined {
+  if (selectedIndex === undefined || selectedIndex < 0) return undefined
+  const row = rows[selectedIndex]
+  return row?.kind === 'tool' ? row.id : undefined
+}
+
+export function shouldToggleExpand(
+  input: string,
+  key: { ctrl?: boolean },
+): boolean {
+  return key.ctrl === true && (input === 'o' || input === 'O')
+}
+
+export function visibleToolResult(
+  row: Extract<TranscriptRow, { kind: 'tool' }>,
+  expandedIds?: ReadonlySet<string>,
+): string | undefined {
+  const content = row.result?.content
+  if (!content) return undefined
+  if (isCompactTool(row.name) && expandedIds?.has(row.id) !== true) return undefined
+  return clipToolResult(content)
+}
 
 export function formatToolRow(name: string, input: unknown): string {
   const label = toolArg(name, input)
@@ -124,11 +175,16 @@ export function rowsFromMessages(messages: Message[]): TranscriptRow[] {
   return rows
 }
 
-export function Transcript(props: { rows: TranscriptRow[] }) {
+export function Transcript(props: TranscriptProps) {
   return (
     <Box flexDirection="column">
       {props.rows.map((row, i) => (
-        <TranscriptItem key={rowKey(row, i)} row={row} />
+        <TranscriptItem
+          key={rowKey(row, i)}
+          row={row}
+          selected={props.selectedIndex === i}
+          expandedIds={props.expandedIds}
+        />
       ))}
     </Box>
   )
@@ -139,29 +195,41 @@ function rowKey(row: TranscriptRow, index: number): string {
   return `${row.kind}:${index}`
 }
 
-function TranscriptItem(props: { row: TranscriptRow }) {
-  const { row } = props
+function TranscriptItem(props: {
+  row: TranscriptRow
+  selected: boolean
+  expandedIds?: ReadonlySet<string>
+}) {
+  const { row, selected } = props
   switch (row.kind) {
     case 'user':
-      return <Text>{`you  ${row.text}`}</Text>
+      return <Text inverse={selected}>{`you  ${row.text}`}</Text>
     case 'assistant':
-      return <Text>{row.text}</Text>
+      return <Text inverse={selected}>{row.text}</Text>
     case 'thinking':
-      return <Text dimColor>{row.text}</Text>
+      return <Text dimColor inverse={selected}>{row.text}</Text>
     case 'tool': {
-      const compact = COMPACT_TOOLS.has(row.name)
+      const compact = isCompactTool(row.name)
       const mark = row.result ? (row.result.ok ? '✓' : '✗') : '•'
-      return (
-        <Text dimColor={compact}>
+      const result = visibleToolResult(row, props.expandedIds)
+      const header = (
+        <Text dimColor={compact} inverse={selected}>
           {`${mark} ${formatToolRow(row.name, row.input)}`}
         </Text>
       )
+      if (result === undefined) return header
+      return (
+        <Box flexDirection="column">
+          {header}
+          <Text dimColor>{result}</Text>
+        </Box>
+      )
     }
     case 'status':
-      return <Text dimColor>{row.message}</Text>
+      return <Text dimColor inverse={selected}>{row.message}</Text>
     case 'compact':
-      return <Text dimColor>{`compact  ${clip(row.summary, 80)}`}</Text>
+      return <Text dimColor inverse={selected}>{`compact  ${clip(row.summary, 80)}`}</Text>
     case 'error':
-      return <Text color="red">{row.message}</Text>
+      return <Text color="red" inverse={selected}>{row.message}</Text>
   }
 }
