@@ -51,7 +51,7 @@ export type PermissionReason = 'rule' | 'mode' | 'safety' | 'user' | 'hook'
 export type PermissionScope = 'session' | 'project' | 'user'
 export type Funding = 'byok' | 'included'
 export type PersistErrorCode = 'busy' | 'locked' | 'corrupt' | 'readonly' | 'unknown'
-export type SessionLockHolderName = 'tui' | 'serve' | 'exec' | 'cron' | 'acp' | 'sdk' | 'slack'
+export type SessionLockHolderName = 'tui' | 'serve' | 'exec' | 'cron' | 'acp' | 'sdk' | 'slack' | 'discord'
 
 export const SESSION_LOCK_TTL_MS = 120_000
 export const SESSION_LOCK_RENEW_MS = 30_000
