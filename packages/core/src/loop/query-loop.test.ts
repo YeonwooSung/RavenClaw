@@ -204,6 +204,16 @@ function spyPersist(store: SessionStore): { order: string[] } {
   return { order }
 }
 
+function isEmptyAssistantRow(msg: Message): boolean {
+  if (msg.role !== 'assistant') return false
+  return !msg.blocks.some(
+    (block) =>
+      block.type === 'tool_use' ||
+      (block.type === 'thinking' && block.text !== '') ||
+      (block.type === 'text' && block.text.trim() !== ''),
+  )
+}
+
 function pairingHolds(messages: Message[]): boolean {
   const uses = new Set<string>()
   const tools = new Map<string, number>()
@@ -1306,6 +1316,30 @@ describe('queryLoop via SessionEngine', () => {
     expect(
       events.filter((event) => event.type === 'status' && event.message === 'empty completion; retrying'),
     ).toHaveLength(1)
+  })
+
+  test('identical-empty stop does not persist an empty assistant row', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_empty_stop_no_persist' })
+    await store.createSession(session)
+    const persisted: Array<Extract<Message, { role: 'assistant' }>> = []
+    const inner = store.persistAssistant.bind(store)
+    store.persistAssistant = async (sessionId, message) => {
+      persisted.push(message)
+      return inner(sessionId, message)
+    }
+    const provider = createFakeProvider([
+      [{ type: 'stop', reason: 'end' }],
+      [{ type: 'stop', reason: 'end' }],
+      textThenStop('should not run'),
+    ])
+    const engine = createSessionEngine(engineOpts({ provider, store, session }))
+    const { result } = await collect(engine.submitMessage('hi'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(provider.streamCount).toBe(2)
+    expect(persisted.every((msg) => !isEmptyAssistantRow(msg))).toBe(true)
+    const loaded = await store.loadSession(session.id)
+    expect(loaded.messages.some(isEmptyAssistantRow)).toBe(false)
   })
 
   test('expensive input (> $0.25) caps empty nudges at 1', async () => {

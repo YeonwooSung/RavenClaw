@@ -868,6 +868,24 @@ function emptyFingerprint(state: LoopState): string {
   return `${state.pendingText}|${state.pendingThinking}|${state.lastStopReason}`
 }
 
+function assistantHasPersistableContent(
+  asst: Extract<Message, { role: 'assistant' }>,
+): boolean {
+  return asst.blocks.some(
+    (block) =>
+      block.type === 'tool_use' ||
+      (block.type === 'thinking' && block.text !== '') ||
+      (block.type === 'text' && block.text.trim() !== ''),
+  )
+}
+
+function dropAssistantRow(
+  messages: Message[],
+  asst: Extract<Message, { role: 'assistant' }>,
+): Message[] {
+  return messages.filter((msg) => msg.id !== asst.id)
+}
+
 function pushAssistantIfNeeded(
   state: LoopState,
   asst: Extract<Message, { role: 'assistant' }>,
@@ -877,10 +895,14 @@ function pushAssistantIfNeeded(
   }
 }
 
-async function persistAssistantOnce(
+export async function persistAssistantOnce(
   state: LoopState,
   asst: Extract<Message, { role: 'assistant' }>,
 ): Promise<RoundEnd | undefined> {
+  if (!assistantHasPersistableContent(asst)) {
+    state.turn.messages = dropAssistantRow(state.turn.messages, asst)
+    return undefined
+  }
   pushAssistantIfNeeded(state, asst)
   try {
     await state.store.persistAssistant(state.turn.sessionId, asst)
@@ -899,15 +921,25 @@ async function applyMidTurnHint(
   const before = state.turn.messages
   const after = injectMidTurnHint(before, hint)
   const mutation = hintMutation(before, after)
+  const hintedAsst =
+    mutation.kind === 'assistant' && mutation.row?.role === 'assistant' && mutation.row.id === asst.id
+      ? mutation.row
+      : asst
+  const persistable = assistantHasPersistableContent(hintedAsst)
+  const next = persistable ? after : dropAssistantRow(after, asst)
   try {
     if (mutation.kind === 'assistant' && mutation.row?.role === 'assistant') {
-      await state.store.persistAssistant(state.turn.sessionId, mutation.row)
-      state.turn.messages = after
+      if (assistantHasPersistableContent(mutation.row)) {
+        await state.store.persistAssistant(state.turn.sessionId, mutation.row)
+      }
+      state.turn.messages = next
       return undefined
     }
-    await state.store.persistAssistant(state.turn.sessionId, asst)
+    if (persistable) {
+      await state.store.persistAssistant(state.turn.sessionId, asst)
+    }
     await persistHintMutation(state, mutation)
-    state.turn.messages = after
+    state.turn.messages = next
     return undefined
   } catch (error) {
     return { reason: 'persist_failed', error }

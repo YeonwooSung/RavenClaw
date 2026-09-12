@@ -5,6 +5,7 @@ import {
   assembleRequest,
   beginRound,
   buildAssistantMessage,
+  persistAssistantOnce,
   persistResultsWithRetry,
   type LoopState,
 } from './phases'
@@ -236,6 +237,58 @@ describe('beginRound', () => {
     expect(done.done).toBe(true)
     expect(done.value).toEqual({ action: 'continue' })
     expect(current.turn.round).toBe(1)
+  })
+})
+
+describe('persistAssistantOnce', () => {
+  test('does not persist or leave an empty-blocks assistant', async () => {
+    const current = state()
+    await current.store.createSession({
+      id: 's1',
+      createdAt: 1,
+      updatedAt: 1,
+      cwd: '/tmp',
+      model: 'dummy',
+      permissionMode: 'default',
+      compactGeneration: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      funding: 'byok',
+    })
+    let persistCalls = 0
+    const inner = current.store.persistAssistant.bind(current.store)
+    current.store.persistAssistant = async (sessionId, message) => {
+      persistCalls += 1
+      return inner(sessionId, message)
+    }
+    const empty = buildAssistantMessage(current)
+    current.turn.messages.push(empty)
+    const end = await persistAssistantOnce(current, empty)
+    expect(end).toBeUndefined()
+    expect(persistCalls).toBe(0)
+    expect(current.turn.messages.some((msg) => msg.id === empty.id)).toBe(false)
+    const loaded = await current.store.loadSession('s1')
+    expect(loaded.messages.some((msg) => msg.role === 'assistant')).toBe(false)
+  })
+
+  test('persists an assistant that has non-empty text', async () => {
+    const current = state({ pendingText: 'hello' })
+    await current.store.createSession({
+      id: 's1',
+      createdAt: 1,
+      updatedAt: 1,
+      cwd: '/tmp',
+      model: 'dummy',
+      permissionMode: 'default',
+      compactGeneration: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      funding: 'byok',
+    })
+    const asst = buildAssistantMessage(current)
+    const end = await persistAssistantOnce(current, asst)
+    expect(end).toBeUndefined()
+    expect(current.turn.messages.some((msg) => msg.id === asst.id)).toBe(true)
+    const loaded = await current.store.loadSession('s1')
+    expect(loaded.messages.some((msg) => msg.id === asst.id)).toBe(true)
   })
 })
 

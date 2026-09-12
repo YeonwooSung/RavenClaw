@@ -320,6 +320,10 @@ function buildAnthropicMessages(messages: Message[], includeThinking: boolean): 
       i += 1
       continue
     }
+    if (isEmptyAssistantMessage(msg)) {
+      i += 1
+      continue
+    }
     const content: unknown[] = []
     for (const block of msg.blocks) {
       if (block.type === 'text') content.push({ type: 'text', text: block.text })
@@ -338,6 +342,15 @@ function buildAnthropicMessages(messages: Message[], includeThinking: boolean): 
     i += 1
   }
   return out
+}
+
+function isEmptyAssistantMessage(msg: Extract<Message, { role: 'assistant' }>): boolean {
+  return !msg.blocks.some(
+    (block) =>
+      block.type === 'tool_use' ||
+      (block.type === 'thinking' && block.text !== '') ||
+      (block.type === 'text' && block.text.trim() !== ''),
+  )
 }
 
 function toAnthropicTool(tool: { name: string; description: string; inputSchema: unknown }): unknown {

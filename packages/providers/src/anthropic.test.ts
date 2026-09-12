@@ -109,6 +109,37 @@ describe('AnthropicMessagesProvider', () => {
     expect(volatile).not.toHaveProperty('cache_control')
   })
 
+  test('skips empty assistant rows instead of emitting empty content', async () => {
+    const sse = await fixture('anthropic-text-only.sse')
+    const { calls } = mockFetch(() => sseResponse(sse))
+    const provider = new AnthropicMessagesProvider({ apiKey: 'sk-ant-test' })
+    const messages: Message[] = [
+      userMsg('first', 'u1'),
+      { id: 'a-empty', role: 'assistant', blocks: [], createdAt: 2 },
+      userMsg('second', 'u2'),
+      {
+        id: 'a-blank',
+        role: 'assistant',
+        blocks: [{ type: 'text', text: '' }],
+        createdAt: 4,
+      },
+      userMsg('third', 'u3'),
+    ]
+    await collect(provider.stream(baseReq({ messages }), new AbortController().signal))
+    const req = await lastPayload(calls)
+    expect(
+      req.body.messages.some(
+        (msg) => msg.role === 'assistant' && Array.isArray(msg.content) && msg.content.length === 0,
+      ),
+    ).toBe(false)
+    expect(req.body.messages.filter((msg) => msg.role === 'assistant')).toHaveLength(0)
+    expect(req.body.messages).toEqual([
+      { role: 'user', content: [{ type: 'text', text: 'first' }] },
+      { role: 'user', content: [{ type: 'text', text: 'second' }] },
+      { role: 'user', content: [{ type: 'text', text: 'third' }] },
+    ])
+  })
+
   test('consecutive tool messages collapse to one user tool_result message', async () => {
     const sse = await fixture('anthropic-text-only.sse')
     const { calls } = mockFetch(() => sseResponse(sse))
