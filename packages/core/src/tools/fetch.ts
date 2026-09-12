@@ -27,6 +27,9 @@ export const fetchTool: Tool<FetchInput, string> = {
   parse(input: unknown) {
     return parseWithSchema<FetchInput>(inputSchema, input)
   },
+  isEnabled() {
+    return false
+  },
   isConcurrencySafe() {
     return true
   },

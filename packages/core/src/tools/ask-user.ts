@@ -81,6 +81,9 @@ export function createAskUserTool(ask?: AskUserFn): Tool<AskUserInput, string> {
     parse(input: unknown) {
       return parseWithSchema<AskUserInput>(inputSchema, input)
     },
+    isEnabled() {
+      return ask !== undefined
+    },
     isConcurrencySafe() {
       return false
     },

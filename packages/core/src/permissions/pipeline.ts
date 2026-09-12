@@ -1,3 +1,4 @@
+import { join } from 'node:path'
 import type { PermissionDecision, PermissionRule } from '../types'
 import { isPlanFilePath } from '../tools/plan-file'
 import { runPermissionHooks } from './hooks'
@@ -51,7 +52,13 @@ export async function decidePermission(opts: DecidePermissionOpts): Promise<Perm
 
   if (
     opts.mode === 'acceptEdits' &&
-    isAcceptEditsPromote(opts.name, opts.input, opts.ctx.turn.cwd, opts.ctx.turn.additionalDirectories)
+    isAcceptEditsPromote(
+      opts.name,
+      opts.input,
+      opts.ctx.turn.cwd,
+      opts.ctx.turn.additionalDirectories,
+      opts.ctx.turn.projectCwd,
+    )
   ) {
     return { behavior: 'allow', reason: 'mode' }
   }
@@ -60,7 +67,15 @@ export async function decidePermission(opts: DecidePermissionOpts): Promise<Perm
       return { behavior: 'deny', reason: 'mode', message: leftover.message }
     }
     if (opts.tool.isReadOnly()) return { behavior: 'allow', reason: 'mode' }
-    if (isAcceptEditsPromote(opts.name, opts.input, opts.ctx.turn.cwd, opts.ctx.turn.additionalDirectories)) {
+    if (
+      isAcceptEditsPromote(
+        opts.name,
+        opts.input,
+        opts.ctx.turn.cwd,
+        opts.ctx.turn.additionalDirectories,
+        opts.ctx.turn.projectCwd,
+      )
+    ) {
       return { behavior: 'allow', reason: 'mode' }
     }
     return { behavior: 'deny', reason: 'mode', message: leftover.message }
@@ -73,11 +88,20 @@ function isAcceptEditsPromote(
   input: unknown,
   cwd: string,
   extraRoots?: string[],
+  projectCwd?: string,
 ): boolean {
   if (name === 'ApplyPatch') {
     const paths = applyPatchPaths(input)
     if (paths === undefined) return false
     return paths.every((path) => isInTreePath(cwd, path, extraRoots))
+  }
+  if (name === 'Memory') {
+    if (!input || typeof input !== 'object') return false
+    const target = (input as { target?: unknown }).target
+    if (target !== 'agent' && target !== 'user') return false
+    const root = projectCwd ?? cwd
+    const file = target === 'agent' ? 'MEMORY.md' : 'USER.md'
+    return isInTreePath(cwd, join(root, '.ravenclaw', file), extraRoots)
   }
   if (name !== 'Edit' && name !== 'Write') return false
   if (!input || typeof input !== 'object') return false

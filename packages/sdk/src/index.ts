@@ -34,6 +34,10 @@ import {
   webSearchTool,
   askUserTool,
   setOutputTool,
+  createSessionSearchTool,
+  memoryTool,
+  createToolSearchTool,
+  toolCallTool,
   type CompactPolicy,
   type ConfigFlags,
   type Funding,
@@ -97,9 +101,31 @@ function sdkCronTools(): Tool[] {
   return [cron.create, cron.list, cron.remove, cron.setEnabled]
 }
 
-export function createRootTools(store: SessionStore, bash: Tool = bashTool): Tool[] {
+function hideDeferredFromWire(tool: Tool): Tool {
+  return {
+    ...tool,
+    isEnabled() {
+      return false
+    },
+  }
+}
+
+function enableOnWire(tool: Tool): Tool {
+  return {
+    ...tool,
+    isEnabled() {
+      return true
+    },
+  }
+}
+
+export function createRootTools(
+  store: SessionStore,
+  bash: Tool = bashTool,
+  network = false,
+): Tool[] {
   const plan = createPlanModeTools(store)
-  return [
+  const list: Tool[] = [
     readTool,
     grepTool,
     globTool,
@@ -110,9 +136,9 @@ export function createRootTools(store: SessionStore, bash: Tool = bashTool): Too
     applyPatchTool,
     bash,
     skillTool,
-    fetchTool,
-    webSearchTool,
     todoWriteTool,
+    createSessionSearchTool(store),
+    memoryTool,
     taskOutputTool,
     taskStopTool,
     askUserTool,
@@ -121,6 +147,8 @@ export function createRootTools(store: SessionStore, bash: Tool = bashTool): Too
     plan.enter,
     plan.exit,
   ]
+  if (network) list.push(enableOnWire(fetchTool), enableOnWire(webSearchTool))
+  return list
 }
 
 export function createSessionTools(opts: {
@@ -132,19 +160,32 @@ export function createSessionTools(opts: {
   childMaxRounds: number
   system?: SystemPart[]
   bash?: Tool
+  network?: boolean
 }): Tool[] {
-  const base = createRootTools(opts.store, opts.bash ?? bashTool)
+  const networkOn = opts.network === true
+  const base = createRootTools(opts.store, opts.bash ?? bashTool, networkOn)
+  const deferred = networkOn ? [] : [fetchTool, webSearchTool].map(hideDeferredFromWire)
+  const always = [...base, ...deferred]
+  if (deferred.length > 0) {
+    always.push(
+      createToolSearchTool({
+        deferred,
+        unlock() {},
+      }),
+      toolCallTool,
+    )
+  }
   const agentOpts: Parameters<typeof createAgentTool>[0] = {
     store: opts.store,
     provider: opts.provider,
-    tools: base,
+    tools: always,
     compact: opts.compact,
     model: opts.model,
     askUser: opts.askUser,
     childMaxRounds: opts.childMaxRounds,
   }
   if (opts.system !== undefined) agentOpts.system = opts.system
-  return [...base, createAgentTool(agentOpts)]
+  return [...always, createAgentTool(agentOpts)]
 }
 
 export async function createRavenSession(
@@ -237,6 +278,7 @@ function defaultSessionTools(opts: {
     childMaxRounds: opts.config.childMaxRounds,
     system: opts.system,
     bash,
+    network: (opts.config as { tools?: { network?: boolean } }).tools?.network === true,
   })
 }
 

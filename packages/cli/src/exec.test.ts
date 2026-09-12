@@ -86,14 +86,14 @@ describe('createRootTools', () => {
       'NotebookEdit',
       'Bash',
       'Skill',
-      'Fetch',
-      'WebSearch',
       'TodoWrite',
       'TaskOutput',
       'TaskStop',
       'AskUser',
       'SetOutput',
       'AddDir',
+      'SessionSearch',
+      'Memory',
       'LSP',
       'EnterWorktree',
       'ExitWorktree',
@@ -104,6 +104,8 @@ describe('createRootTools', () => {
       'EnterPlanMode',
       'ExitPlanMode',
     ])
+    expect(names).not.toContain('Fetch')
+    expect(names).not.toContain('WebSearch')
     expect(names).not.toContain('Agent')
     expect(names).not.toContain('ToolSearch')
     expect(names).not.toContain('ToolCall')
@@ -138,6 +140,11 @@ describe('createRootTools', () => {
       expect(filtered).not.toContain('CronDelete')
       expect(filtered).not.toContain('CronSetEnabled')
       expect(filtered).toContain('Read')
+      expect(filtered).toContain('Memory')
+      expect(filtered).not.toContain('AskUser')
+      expect(filtered).not.toContain('Fetch')
+      expect(filtered).not.toContain('WebSearch')
+      expect(filtered).not.toContain('SessionSearch')
       expect(filtered).not.toContain('ToolSearch')
       expect(filtered).not.toContain('ToolCall')
     } finally {
@@ -171,14 +178,14 @@ describe('createRootTools', () => {
       'NotebookEdit',
       'Bash',
       'Skill',
-      'Fetch',
-      'WebSearch',
       'TodoWrite',
       'TaskOutput',
       'TaskStop',
       'AskUser',
       'SetOutput',
       'AddDir',
+      'SessionSearch',
+      'Memory',
       'LSP',
       'EnterWorktree',
       'ExitWorktree',
@@ -188,10 +195,54 @@ describe('createRootTools', () => {
       'CronSetEnabled',
       'EnterPlanMode',
       'ExitPlanMode',
+      'Fetch',
+      'WebSearch',
+      'ToolSearch',
+      'ToolCall',
       'Agent',
     ])
-    expect(names).not.toContain('ToolSearch')
-    expect(names).not.toContain('ToolCall')
+    expect(names).toContain('ToolSearch')
+    expect(names).toContain('ToolCall')
+    const filtered = filterToolsForTurn(createSessionTools({
+      store,
+      provider,
+      compact: defaultCompactPolicy(),
+      model: defaultModel(),
+      childMaxRounds: 30,
+      async askUser() {
+        return 'deny'
+      },
+    }), makeFilterTurn('/tmp')).map((tool) => tool.name)
+    expect(filtered).toContain('ToolSearch')
+    expect(filtered).toContain('ToolCall')
+    expect(filtered).toContain('Memory')
+    expect(filtered).toContain('Agent')
+    expect(filtered).not.toContain('Fetch')
+    expect(filtered).not.toContain('WebSearch')
+    expect(filtered).not.toContain('AskUser')
+    expect(filtered).not.toContain('SessionSearch')
+  })
+
+  test('createSessionTools with network:true puts Fetch/WebSearch on the wire', () => {
+    const store = createMemoryStore()
+    const tools = createSessionTools({
+      store,
+      provider: createFakeProvider([]),
+      compact: defaultCompactPolicy(),
+      model: defaultModel(),
+      childMaxRounds: 30,
+      network: true,
+      async askUser() {
+        return 'deny'
+      },
+    })
+    expect(tools.map((tool) => tool.name)).not.toContain('ToolSearch')
+    expect(tools.map((tool) => tool.name)).not.toContain('ToolCall')
+    const filtered = filterToolsForTurn(tools, makeFilterTurn('/tmp')).map((tool) => tool.name)
+    expect(filtered).toContain('Fetch')
+    expect(filtered).toContain('WebSearch')
+    expect(filtered).not.toContain('ToolSearch')
+    expect(filtered).not.toContain('ToolCall')
   })
 
   test('createSessionTools merges MCP tools after builtins and drops colliding Read', async () => {

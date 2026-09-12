@@ -675,6 +675,14 @@ export function createSqliteStore(dbPath: string): SessionStore {
 
     withWrite,
 
+    search(query, opts) {
+      try {
+        return searchMessages(db, query, opts)
+      } catch {
+        return []
+      }
+    },
+
     close() {
       db.close()
     },

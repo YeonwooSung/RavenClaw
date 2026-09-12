@@ -336,6 +336,10 @@ export interface SessionStore {
   renewSessionLock(sessionId: string, holderId: string, ttlMs?: number): Promise<void>
   releaseSessionLock(sessionId: string, holderId: string): Promise<void>
   withWrite<T>(fn: () => Promise<T>): Promise<T>
+  search?(
+    query: string,
+    opts?: { sessionId?: string; limit?: number },
+  ): Array<{ sessionId: string; messageId: string; snippet: string; rank: number }>
 }
 
 export interface SessionEngineOptions {

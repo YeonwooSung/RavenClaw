@@ -48,6 +48,9 @@ export function createWebSearchTool(opts: WebSearchOptions = {}): Tool<WebSearch
     parse(input: unknown) {
       return parseWithSchema<WebSearchInput>(inputSchema, input)
     },
+    isEnabled() {
+      return false
+    },
     isConcurrencySafe() {
       return true
     },

@@ -32,6 +32,7 @@ const READ_ONLY_NAMES = new Set([
   'TaskList',
   'LSP',
   'StructuredOutput',
+  'SessionSearch',
 ])
 
 const MUTATING_NAMES = new Set([
@@ -52,6 +53,7 @@ const MUTATING_NAMES = new Set([
   'AddDir',
   'TaskCreate',
   'TaskUpdate',
+  'Memory',
 ])
 
 export function cyclePermissionMode(mode: PermissionMode): PermissionMode {

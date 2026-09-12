@@ -21,6 +21,8 @@ export const rootAgent: AgentDefinition = {
     'TaskOutput',
     'TaskStop',
     'AskUser',
+    'SessionSearch',
+    'Memory',
     'SetOutput',
     'AddDir',
     'ToolSearch',

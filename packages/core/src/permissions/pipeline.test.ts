@@ -16,6 +16,7 @@ import { editTool } from '../tools/edit'
 import { writeTool } from '../tools/write'
 import { bashTool } from '../tools/bash'
 import { applyPatchTool } from '../tools/apply-patch'
+import { memoryTool } from '../tools/memory'
 
 function makeTurn(over: Partial<Turn> = {}): Turn {
   return {
@@ -498,6 +499,30 @@ describe('decidePermission', () => {
       },
     })
     expect(seeded).toEqual({ behavior: 'allow', reason: 'rule' })
+  })
+
+  test('dontAsk + Memory in-tree allows; out-of-tree denies', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ravenclaw-perm-memory-'))
+    const outside = mkdtempSync(join(tmpdir(), 'ravenclaw-perm-memory-out-'))
+    const inTree = await decide({
+      tool: memoryTool,
+      name: 'Memory',
+      input: { action: 'add', target: 'agent', text: 'note' },
+      mode: 'dontAsk',
+      cwd: root,
+    })
+    expect(inTree).toEqual({ behavior: 'allow', reason: 'mode' })
+
+    const outOfTree = await decidePermission({
+      tool: memoryTool,
+      name: 'Memory',
+      input: { action: 'add', target: 'agent', text: 'note' },
+      ctx: makeCtx({ cwd: root, projectCwd: outside }),
+      mode: 'dontAsk',
+      rules: emptyRules,
+    })
+    expect(outOfTree.behavior).toBe('deny')
+    if (outOfTree.behavior === 'deny') expect(outOfTree.reason).toBe('mode')
   })
 
   test('dontAsk allows in-tree Edit/Write and read-only Bash; denies leftover mutating Bash', async () => {

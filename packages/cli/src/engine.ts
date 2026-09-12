@@ -47,6 +47,8 @@ import {
   toolCallTool,
   addDirTool,
   createLspTool,
+  createSessionSearchTool,
+  memoryTool,
   createStructuredOutputTool,
   enterSessionWorktree,
   addDirectory,
@@ -187,6 +189,15 @@ function hideDeferredFromWire(tool: Tool): Tool {
   }
 }
 
+function enableOnWire(tool: Tool): Tool {
+  return {
+    ...tool,
+    isEnabled() {
+      return true
+    },
+  }
+}
+
 function cronToolList(): Tool[] {
   const cron = createCronTools(createJsonCronStore())
   return [cron.create, cron.list, cron.remove, cron.setEnabled]
@@ -196,6 +207,7 @@ export function createRootTools(
   store: SessionStore,
   bash: Tool = bashTool,
   ask: Tool = askUserTool,
+  network = false,
 ): Tool[] {
   const plan = createPlanModeTools(store)
   const list = [
@@ -210,14 +222,14 @@ export function createRootTools(
     notebookEditTool,
     bash,
     skillTool,
-    fetchTool,
-    webSearchTool,
     todoWriteTool,
     taskOutputTool,
     taskStopTool,
     ask,
     setOutputTool,
     addDirTool,
+    createSessionSearchTool(store),
+    memoryTool,
     createLspTool(),
     enterWorktreeTool,
     exitWorktreeTool,
@@ -225,6 +237,7 @@ export function createRootTools(
     plan.enter,
     plan.exit,
   ]
+  if (network) list.push(enableOnWire(fetchTool), enableOnWire(webSearchTool))
   return list
 }
 
@@ -240,10 +253,14 @@ export function createSessionTools(opts: {
   mcpTools?: Tool[]
   hooks?: PermissionHook[]
   askTool?: Tool
+  network?: boolean
 }): Tool[] {
-  const root = createRootTools(opts.store, opts.bash ?? bashTool, opts.askTool)
-  const deferred = (opts.mcpTools ?? []).map(hideDeferredFromWire)
-  const always = [...root]
+  const networkOn = opts.network === true
+  const root = createRootTools(opts.store, opts.bash ?? bashTool, opts.askTool, networkOn)
+  const deferredNetwork = networkOn ? [] : [fetchTool, webSearchTool].map(hideDeferredFromWire)
+  const deferredMcp = (opts.mcpTools ?? []).map(hideDeferredFromWire)
+  const deferred = [...deferredNetwork, ...deferredMcp]
+  const always = [...root, ...deferredNetwork]
   if (deferred.length > 0) {
     always.push(
       createToolSearchTool({
@@ -253,7 +270,7 @@ export function createSessionTools(opts: {
       toolCallTool,
     )
   }
-  const childPool = deferred.length > 0 ? mergeToolPool(always, deferred) : always
+  const childPool = deferredMcp.length > 0 ? mergeToolPool(always, deferredMcp) : always
   const agentOpts: Parameters<typeof createAgentTool>[0] = {
     store: opts.store,
     provider: opts.provider,
@@ -266,8 +283,8 @@ export function createSessionTools(opts: {
   if (opts.system !== undefined) agentOpts.system = opts.system
   if (opts.hooks !== undefined) agentOpts.hooks = opts.hooks
   const agent = createAgentTool(agentOpts)
-  if (deferred.length === 0) return [...always, agent]
-  return mergeToolPool([...always, agent], deferred)
+  if (deferredMcp.length === 0) return [...always, agent]
+  return mergeToolPool([...always, agent], deferredMcp)
 }
 
 export function compactPolicyFromConfig(compact: {
@@ -462,7 +479,11 @@ async function finishOpenEngine(
       bash,
       mcpTools,
       hooks,
-      askTool: createAskUserTool((input, signal) => askQuestions.ask(input, signal)),
+      askTool:
+        opts.verifyOnStop === true
+          ? createAskUserTool((input, signal) => askQuestions.ask(input, signal))
+          : askUserTool,
+      network: (opts.config as { tools?: { network?: boolean } }).tools?.network === true,
     }).map((tool) =>
       tool.name === 'Skill' ? createSkillTool(session.cwd, opts.config.home) : tool,
     )
