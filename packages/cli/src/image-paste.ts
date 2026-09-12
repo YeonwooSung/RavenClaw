@@ -1,5 +1,5 @@
-import { existsSync, readFileSync } from 'node:fs'
-import { extname, resolve } from 'node:path'
+import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
+import { extname, resolve, sep } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import type { UserImage, UserSubmitInput } from '@ravenclaw/core'
 
@@ -21,9 +21,25 @@ export function readImageFile(path: string): UserImage | undefined {
   const mediaType = mediaTypeForPath(path)
   if (!mediaType || !existsSync(path)) return undefined
   try {
+    if (!statSync(path).isFile()) return undefined
     const data = readFileSync(path).toString('base64')
     if (data.length === 0) return undefined
     return { mediaType, data }
+  } catch {
+    return undefined
+  }
+}
+
+function resolveImageInCwd(cwd: string, raw: string): string | undefined {
+  const abs = resolve(cwd, raw)
+  const root = resolve(cwd)
+  if (abs !== root && !abs.startsWith(root + sep)) return undefined
+  if (!existsSync(abs)) return undefined
+  try {
+    const real = realpathSync(abs)
+    const realRoot = realpathSync(root)
+    if (real !== realRoot && !real.startsWith(realRoot + sep)) return undefined
+    return real
   } catch {
     return undefined
   }
@@ -49,12 +65,14 @@ export function collectUserImages(
 
   const trimmed = text.trim()
   if (IMAGE_EXT.has(extname(trimmed).toLowerCase())) {
-    add(readImageFile(resolve(cwd, trimmed)))
+    const path = resolveImageInCwd(cwd, trimmed)
+    if (path) add(readImageFile(path))
   }
   for (const match of text.matchAll(PATH_REF)) {
     const raw = match[1]
     if (!raw) continue
-    add(readImageFile(resolve(cwd, raw)))
+    const path = resolveImageInCwd(cwd, raw)
+    if (path) add(readImageFile(path))
   }
   // Clipboard is opt-in for empty submits only. Attaching it on every
   // non-empty turn would send leftover screenshots with ordinary prompts.

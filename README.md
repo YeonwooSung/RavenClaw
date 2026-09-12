@@ -184,7 +184,7 @@ Ink is the default. OpenTUI is `--tui opentui`.
 | Command | Summary |
 |---|---|
 | `/help` | This list |
-| `/resume [id]` | List or restore a session |
+| `/resume [id]` | Restore a session; next message is a new turn (tools are not re-run) |
 | `/clear` `/new` | New session |
 | `/compact` | Compact the conversation |
 | `/cost` | Token and USD estimate |
@@ -216,7 +216,7 @@ Ink is the default. OpenTUI is `--tui opentui`.
 | `/context` | Compact generation and message count |
 | `/copy` | Copy the conversation as markdown |
 | `/bash <cmd>` | Local shell (also `!cmd`) |
-| `/cancel` | Abort (OpenTUI) |
+| `/stop` `/cancel` | Abort the current turn |
 | `/quit` | Exit |
 
 ## Tools

@@ -17,6 +17,8 @@ import {
   type ToolContext,
 } from '../types'
 import { createSessionEngine } from './session-engine'
+import { resumeSession } from '../session/resume'
+import { unpairedToolUseIds } from './pairing'
 import { createMemoryStore } from '../session/memory-store'
 import { skillTool } from '../tools/skill'
 import { toolCallTool } from '../tools/tool-call'
@@ -445,6 +447,76 @@ describe('queryLoop via SessionEngine', () => {
     )
     expect(slowResult?.ok).toBe(false)
     expect(slowResult?.blocks[0]?.text.startsWith('aborted:')).toBe(true)
+  })
+
+  test('abort then resume: pairing holds and the next turn does not re-execute', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_stop_resume' })
+    await store.createSession(session)
+
+    let releaseExecute!: () => void
+    const executeGate = new Promise<void>((resolve) => {
+      releaseExecute = resolve
+    })
+    let executeCount = 0
+    const slow: Tool<Record<string, never>, string> = {
+      name: 'Slow',
+      description: 'slow',
+      inputSchema: { type: 'object' },
+      parse() {
+        return { ok: true, value: {} }
+      },
+      isConcurrencySafe: () => false,
+      isReadOnly: () => true,
+      async checkPermissions() {
+        return { behavior: 'allow', reason: 'mode' }
+      },
+      async execute(_input, ctx) {
+        executeCount += 1
+        releaseExecute()
+        await new Promise<void>((resolve, reject) => {
+          if (ctx.signal.aborted) {
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+            return
+          }
+          ctx.signal.addEventListener(
+            'abort',
+            () => {
+              reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+            },
+            { once: true },
+          )
+        })
+        return 'never'
+      },
+    }
+    const provider = createFakeProvider([
+      [{ type: 'tool_call', id: 'slow_r', name: 'Slow', input: {} }, { type: 'stop', reason: 'tool_use' }],
+      textThenStop('continued'),
+    ])
+    const engine = createSessionEngine(engineOpts({ provider, store, session, tools: [slow] }))
+    const first = collect(engine.submitMessage('run'))
+    await executeGate
+    engine.abort()
+    expect((await first).result).toEqual({ reason: 'aborted' })
+    expect(executeCount).toBe(1)
+
+    const resumed = await resumeSession(store, session.id)
+    expect(unpairedToolUseIds(resumed.messages)).toEqual([])
+    const tool = resumed.messages.find(
+      (msg): msg is Extract<Message, { role: 'tool' }> =>
+        msg.role === 'tool' && msg.toolUseId === 'slow_r',
+    )
+    expect(tool?.ok).toBe(false)
+    expect(tool?.blocks[0]?.text.startsWith('aborted:')).toBe(true)
+
+    const again = createSessionEngine(
+      engineOpts({ provider, store, session: resumed.session, messages: resumed.messages, tools: [slow] }),
+    )
+    const second = await collect(again.submitMessage('keep going'))
+    expect(second.result).toEqual({ reason: 'completed' })
+    expect(executeCount).toBe(1)
+    expect(provider.streamCount).toBe(2)
   })
 
   test('5. persistToolCalls fail does not execute and returns persist_failed', async () => {

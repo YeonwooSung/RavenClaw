@@ -9,7 +9,11 @@ export interface SlashCommandSpec {
 }
 
 export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
-  { name: 'resume', usage: '/resume [id]', summary: 'list or restore a session' },
+  {
+    name: 'resume',
+    usage: '/resume [id]',
+    summary: 'restore a session; next message is a new turn (tools are not re-run)',
+  },
   { name: 'compact', usage: '/compact', summary: 'compact the conversation' },
   { name: 'cost', usage: '/cost', summary: 'token and USD estimate' },
   { name: 'search', usage: '/search <q>', summary: 'search this session (or /search --all q)' },
@@ -17,14 +21,14 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
   { name: 'learn', usage: '/learn', summary: 'write a skill from this session' },
   { name: 'review', usage: '/review', summary: 'append a read-only review to .ravenclaw/MEMORY.md' },
   { name: 'title', usage: '/title <name>', summary: "set this session's title" },
-  { name: 'cancel', usage: '/cancel', summary: 'abort the current turn (OpenTUI)' },
+  { name: 'stop', aliases: ['cancel'], usage: '/stop', summary: 'abort the current turn (alias /cancel)' },
   { name: 'clear', aliases: ['new'], usage: '/clear', summary: 'start a new session (alias /new)' },
   { name: 'model', usage: '/model [id]', summary: "show or set this session's model" },
   { name: 'permissions', usage: '/permissions', summary: 'list extra permission rule files' },
   { name: 'tasks', usage: '/tasks [kill <id>]', summary: 'list or stop background tasks' },
   { name: 'undo', usage: '/undo', summary: 'restore files from the last edit checkpoint' },
   { name: 'rewind', usage: '/rewind', summary: 'undo last turn files and drop that conversation turn' },
-  { name: 'diff', usage: '/diff', summary: 'show uncommitted git diff' },
+  { name: 'diff', usage: '/diff [n|close]', summary: 'open working-tree git diff panel' },
   { name: 'steer', usage: '/steer <text>', summary: 'inject text into the live turn (next tool round)' },
   { name: 'add-dir', usage: '/add-dir <path>', summary: 'allow file tools in an extra directory' },
   { name: 'effort', usage: '/effort [low|medium|high|max]', summary: 'set thinking effort for this session' },

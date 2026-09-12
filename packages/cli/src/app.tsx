@@ -74,7 +74,8 @@ import {
 } from './message-queue'
 import { copyConversationToClipboard, formatConversationMarkdown } from './copy-conversation'
 import { formatAskUserDialog, parseAskUserAnswer } from './ask-host'
-import { formatGitDiff } from './diff-cmd'
+import { loadGitDiff, parseDiffArg, type GitDiffView } from './diff-cmd'
+import { DiffPanel } from './diff-panel'
 import type { AskUserInput } from '@ravenclaw/core'
 import { keyToPermission, PermissionDialog, type PermissionAsk } from './permission-dialog'
 import { StatusLine, shortSessionId } from './status-line'
@@ -118,6 +119,10 @@ export function App(props: AppProps) {
   const [busy, setBusy] = useState(false)
   const [notice, setNotice] = useState<string | undefined>(props.runtime.status)
   const [mode, setMode] = useState<PermissionMode>(props.runtime.engine.session.permissionMode)
+  const [diffOpen, setDiffOpen] = useState(false)
+  const [diffView, setDiffView] = useState<GitDiffView | undefined>()
+  const [diffSelected, setDiffSelected] = useState(0)
+  const diffOpenRef = useRef(false)
   const [usage, setUsage] = useState<TokenUsage>(props.runtime.engine.session.usage)
   const [sessionId, setSessionId] = useState(props.runtime.engine.session.id)
   const [model, setModel] = useState(props.runtime.engine.session.model)
@@ -138,6 +143,33 @@ export function App(props: AppProps) {
     setSessionId(session.id)
     setModel(session.model)
     setFunding(session.funding)
+  }, [])
+
+  const applyDiffView = useCallback((select?: number) => {
+    const view = loadGitDiff(runtimeRef.current.cwd)
+    setDiffView(view)
+    diffOpenRef.current = true
+    setDiffOpen(true)
+    if (view.kind === 'files') {
+      const max = view.files.length - 1
+      setDiffSelected(select === undefined ? 0 : Math.min(max, Math.max(0, select)))
+    } else {
+      setDiffSelected(0)
+    }
+  }, [])
+
+  const closeDiff = useCallback(() => {
+    diffOpenRef.current = false
+    setDiffOpen(false)
+  }, [])
+
+  const refreshDiff = useCallback(() => {
+    if (!diffOpenRef.current) return
+    const view = loadGitDiff(runtimeRef.current.cwd)
+    setDiffView(view)
+    if (view.kind === 'files') {
+      setDiffSelected((index) => Math.min(index, view.files.length - 1))
+    }
   }, [])
 
   const bindAskQuestions = useCallback(() => {
@@ -270,6 +302,7 @@ export function App(props: AppProps) {
         loopRef.current = null
       } finally {
         syncSession()
+        refreshDiff()
         busyRef.current = false
         setBusy(false)
         const leftover = runtimeRef.current.engine.drainSteering()
@@ -292,7 +325,7 @@ export function App(props: AppProps) {
         }
       }
     },
-    [syncSession],
+    [syncSession, refreshDiff],
   )
 
   const applyResume = useCallback(
@@ -528,9 +561,19 @@ export function App(props: AppProps) {
             setNotice(result.notice)
           })
           return
-        case 'diff':
-          setNotice(formatGitDiff(runtimeRef.current.cwd))
+        case 'diff': {
+          const action = parseDiffArg(parsed.arg)
+          if (action.action === 'error') {
+            setNotice(action.message)
+            return
+          }
+          if (action.action === 'close' || (action.action === 'toggle' && diffOpenRef.current)) {
+            closeDiff()
+            return
+          }
+          applyDiffView(action.action === 'select' ? action.index : undefined)
           return
+        }
         case 'add-dir':
           setNotice(
             parsed.arg === undefined || parsed.arg.trim() === ''
@@ -690,6 +733,10 @@ export function App(props: AppProps) {
           })
           return
         }
+        case 'stop':
+          runtimeRef.current.engine.abort()
+          setNotice(busyRef.current ? 'stopped' : 'nothing to stop')
+          return
         case 'resume': {
           if (parsed.arg) {
             void applyResume(parsed.arg)
@@ -711,7 +758,7 @@ export function App(props: AppProps) {
           setNotice(`unknown command: /${parsed.name}`)
       }
     },
-    [applyResume, exit, runTurn],
+    [applyResume, applyDiffView, closeDiff, exit, runTurn],
   )
 
   useEffect(() => {
@@ -794,12 +841,27 @@ export function App(props: AppProps) {
     }
 
     if (key.escape) {
+      if (diffOpenRef.current && !askRef.current) {
+        closeDiff()
+        return
+      }
       const pending = askRef.current
       if (pending) pending.reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
       runtimeRef.current.engine.abort()
       if (picker) setPicker(undefined)
       else if (!busy && !pending) setDraft('')
       return
+    }
+
+    if (diffOpen && diffView?.kind === 'files') {
+      if (key.leftArrow) {
+        setDiffSelected((index) => Math.max(0, index - 1))
+        return
+      }
+      if (key.rightArrow) {
+        setDiffSelected((index) => Math.min(diffView.files.length - 1, index + 1))
+        return
+      }
     }
 
     if (key.tab && key.shift) {
@@ -885,6 +947,7 @@ export function App(props: AppProps) {
         selectedIndex={selectedIndex}
         expandedIds={expandedIds}
       />
+      {diffOpen && diffView ? <DiffPanel view={diffView} selected={diffSelected} /> : null}
       <TodoPanel items={todos} />
       <ChildAgentList tasks={tasks} />
       {picker ? <ResumePicker sessions={picker} index={pickerIndex} /> : null}

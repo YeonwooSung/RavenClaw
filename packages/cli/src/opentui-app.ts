@@ -53,7 +53,12 @@ import {
   removeAt,
 } from './message-queue'
 import { copyConversationToClipboard, formatConversationMarkdown } from './copy-conversation'
-import { formatGitDiff } from './diff-cmd'
+import {
+  formatDiffPanel,
+  loadGitDiff,
+  parseDiffArg,
+  type GitDiffView,
+} from './diff-cmd'
 import { formatAskUserDialog, parseAskUserAnswer } from './ask-host'
 import { loadIncludedDockLines } from './included-ads'
 import { applySessionTitle, formatResumeSessionLine } from './resume'
@@ -64,6 +69,7 @@ export interface OpenTuiAppIo {
   write?: (chunk: string) => void
   resumeRuntime?: (runtime: CliRuntime, sessionId: string) => Promise<CliRuntime>
   openNewSession?: (runtime: CliRuntime) => Promise<CliRuntime>
+  loadGitDiff?: (cwd: string) => GitDiffView
 }
 
 export async function runOpenTuiApp(
@@ -75,10 +81,21 @@ export async function runOpenTuiApp(
   })
   const resume = io.resumeRuntime ?? resumeRuntime
   const startNew = io.openNewSession ?? openNewSession
+  const readDiff = io.loadGitDiff ?? loadGitDiff
+  let diffOpen = false
+  let diffSelected = 0
   const { input, close } = openInput(io.input)
   const readLine = lineReader(input)
   const view = createOpenTuiView()
   let current = runtime
+
+  const writeDiffPanel = () => {
+    const next = readDiff(current.cwd)
+    if (next.kind === 'files') {
+      diffSelected = Math.min(diffSelected, Math.max(0, next.files.length - 1))
+    }
+    write(`${formatDiffPanel(next, diffSelected).join('\n')}\n`)
+  }
 
   const flush = () => {
     const lines = view.lines()
@@ -215,6 +232,7 @@ export async function runOpenTuiApp(
   try {
     await writeIncludedAds(current)
     while (true) {
+      if (diffOpen) writeDiffPanel()
       write(`${composerLine()}\n`)
       const line = await readLine()
       if (line === undefined) return 0
@@ -243,9 +261,9 @@ export async function runOpenTuiApp(
           continue
         case 'quit':
           return 0
-        case 'cancel':
+        case 'stop':
           current.engine.abort()
-          write('cancelled\n')
+          write(turnBusy ? 'stopped\n' : 'nothing to stop\n')
           continue
         case 'learn':
           await runTurn(LEARN_PROMPT)
@@ -400,9 +418,22 @@ export async function runOpenTuiApp(
         case 'rewind':
           write(`${(await current.engine.rewindLast()).notice}\n`)
           continue
-        case 'diff':
-          write(`${formatGitDiff(current.cwd)}\n`)
+        case 'diff': {
+          const action = parseDiffArg(parsed.arg)
+          if (action.action === 'error') {
+            write(`${action.message}\n`)
+            continue
+          }
+          if (action.action === 'close' || (action.action === 'toggle' && diffOpen)) {
+            diffOpen = false
+            write('diff closed\n')
+            continue
+          }
+          if (action.action === 'select') diffSelected = action.index
+          diffOpen = true
+          writeDiffPanel()
           continue
+        }
         case 'steer': {
           if (parsed.arg === undefined || parsed.arg.trim() === '') {
             write('usage: /steer <text>\n')

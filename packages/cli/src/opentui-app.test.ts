@@ -325,6 +325,103 @@ describe('runOpenTuiApp', () => {
     expect(written.join('')).toContain('/model')
   })
 
+  test('/stop and /cancel abort the engine', async () => {
+    let aborted = 0
+    const engine = fakeEngine(makeSession(), emptyTurn)
+    engine.abort = () => {
+      aborted += 1
+    }
+    const written: string[] = []
+    const code = await runOpenTuiApp(fakeRuntime(engine, { store: fakeStore() }), {
+      input: asyncLines('/stop', '/cancel', '/quit'),
+      write: (chunk) => {
+        written.push(chunk)
+      },
+    })
+    expect(code).toBe(0)
+    expect(aborted).toBe(2)
+    expect(written.join('')).toContain('nothing to stop')
+    expect(written.join('')).not.toContain('unknown command')
+  })
+
+  test('/diff opens a pinned file panel and /diff again closes it', async () => {
+    const written: string[] = []
+    const views: string[] = []
+    const code = await runOpenTuiApp(
+      fakeRuntime(fakeEngine(makeSession(), emptyTurn), { store: fakeStore() }),
+      {
+        input: asyncLines('/diff', 'hello stays a prompt', '/diff', '/quit'),
+        write: (chunk) => {
+          written.push(chunk)
+        },
+        loadGitDiff: () => {
+          views.push('load')
+          return {
+            kind: 'files',
+            files: [
+              {
+                path: 'a.ts',
+                staged: false,
+                unstaged: true,
+                patch: 'diff --git a/a.ts b/a.ts\n+new\n',
+              },
+              {
+                path: 'b.ts',
+                staged: true,
+                unstaged: false,
+                patch: 'diff --git a/b.ts b/b.ts\n+other\n',
+              },
+            ],
+          }
+        },
+      },
+    )
+    expect(code).toBe(0)
+    const out = written.join('')
+    expect(out).toContain('diff  2 files')
+    expect(out).toContain('> a.ts  unstaged')
+    expect(out).toContain('  b.ts  staged')
+    expect(out).toContain('+new')
+    expect(out).toContain('diff closed')
+    expect(views.length).toBeGreaterThan(0)
+    expect(out).not.toContain('unknown command')
+  })
+
+  test('/diff 2 selects the second file', async () => {
+    const written: string[] = []
+    const code = await runOpenTuiApp(
+      fakeRuntime(fakeEngine(makeSession(), emptyTurn), { store: fakeStore() }),
+      {
+        input: asyncLines('/diff 2', '/quit'),
+        write: (chunk) => {
+          written.push(chunk)
+        },
+        loadGitDiff: () => ({
+          kind: 'files',
+          files: [
+            {
+              path: 'a.ts',
+              staged: false,
+              unstaged: true,
+              patch: 'diff --git a/a.ts b/a.ts\n+new\n',
+            },
+            {
+              path: 'b.ts',
+              staged: true,
+              unstaged: false,
+              patch: 'diff --git a/b.ts b/b.ts\n+other\n',
+            },
+          ],
+        }),
+      },
+    )
+    expect(code).toBe(0)
+    const out = written.join('')
+    expect(out).toContain('> b.ts  staged')
+    expect(out).toContain('+other')
+    expect(out).not.toContain('+new')
+  })
+
   test('/clear and /new replace the runtime and later turns use the new engine', async () => {
     const submitted: string[] = []
     const original = fakeEngine(makeSession(), async function* (text) {

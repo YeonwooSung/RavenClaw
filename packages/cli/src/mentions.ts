@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { relative, resolve, sep } from 'node:path'
+import { mediaTypeForPath } from './image-paste'
 
 const DEFAULT_AGENTS = [
   'general',
@@ -33,6 +34,7 @@ export function expandMentions(
       }
       continue
     }
+    if (mediaTypeForPath(token)) continue
     if (!isPathish(token) || attached.length >= MAX_FILES) continue
     const file = readMentionFile(cwd, token)
     if (!file || seenFiles.has(file.rel)) continue

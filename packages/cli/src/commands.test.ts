@@ -32,6 +32,8 @@ describe('handleSlashCommand', () => {
   test.each([
     ['/resume', { type: 'command', name: 'resume' }],
     ['/resume abc123', { type: 'command', name: 'resume', arg: 'abc123' }],
+    ['/stop', { type: 'command', name: 'stop' }],
+    ['/cancel', { type: 'command', name: 'stop' }],
     ['/compact', { type: 'command', name: 'compact' }],
     ['/mode plan', { type: 'command', name: 'mode', arg: 'plan' }],
     ['/cost', { type: 'command', name: 'cost' }],
@@ -54,6 +56,8 @@ describe('handleSlashCommand', () => {
     ['/undo', { type: 'command', name: 'undo' }],
     ['/rewind', { type: 'command', name: 'rewind' }],
     ['/diff', { type: 'command', name: 'diff' }],
+    ['/diff 2', { type: 'command', name: 'diff', arg: '2' }],
+    ['/diff close', { type: 'command', name: 'diff', arg: 'close' }],
     ['/steer keep going', { type: 'command', name: 'steer', arg: 'keep going' }],
     ['/add-dir ../pkg', { type: 'command', name: 'add-dir', arg: '../pkg' }],
     ['/effort high', { type: 'command', name: 'effort', arg: 'high' }],
@@ -91,6 +95,7 @@ describe('handleSlashCommand', () => {
 
   test('SLASH_HELP lists the in-session commands', () => {
     expect(SLASH_HELP).toContain('/resume')
+    expect(SLASH_HELP).toContain('/stop')
     expect(SLASH_HELP).toContain('/search')
     expect(SLASH_HELP).toContain('/help')
     expect(SLASH_HELP).toContain('/review')
@@ -129,7 +134,7 @@ describe('handleSlashCommand', () => {
       'learn',
       'review',
       'title',
-      'cancel',
+      'stop',
       'clear',
       'model',
       'permissions',

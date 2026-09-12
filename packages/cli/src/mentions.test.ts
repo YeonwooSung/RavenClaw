@@ -83,6 +83,17 @@ describe('expandMentions', () => {
     expect(body).toHaveLength(20_000)
   })
 
+  test('does not inline image files; those go through collectUserImages', () => {
+    const cwd = tempCwd()
+    writeFileSync(join(cwd, 'shot.png'), Buffer.from('89504e470d0a1a0a', 'hex'))
+    writeFileSync(join(cwd, 'notes.md'), 'hello\n')
+    const result = expandMentions('see @shot.png and @notes.md', cwd)
+    expect(result.files).toEqual(['notes.md'])
+    expect(result.text).toContain('see @shot.png and @notes.md')
+    expect(result.text).toContain('<file path="notes.md">')
+    expect(result.text).not.toContain('path="shot.png"')
+  })
+
   test('does not follow a symlink out of cwd', () => {
     const cwd = tempCwd()
     const outsideDir = mkdtempSync(join(tmpdir(), 'raven-mentions-out-'))
