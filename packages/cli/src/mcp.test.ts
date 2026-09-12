@@ -332,6 +332,32 @@ describe('loadConfiguredMcpTools', () => {
     expect(loaded.slots()).toEqual([{ name: 'broken', state: 'dead' }])
     await loaded.close()
   })
+
+  test('refresh of a hanging reconnect does not stall and later snapshot can pick it up', async () => {
+    const stdout = new EventEmitter()
+    const hanging: McpChild & { killed: boolean } = {
+      killed: false,
+      stdin: { write() {} },
+      stdout,
+      kill() {
+        hanging.killed = true
+        return true
+      },
+    }
+    let attempts = 0
+    const loaded = await loadConfiguredMcpTools([{ name: 'late', command: 'fake-mcp' }], {
+      spawn() {
+        attempts += 1
+        if (attempts === 1) throw new Error('down')
+        return hanging
+      },
+    })
+    const started = Date.now()
+    await expect(loaded.refresh()).resolves.toEqual([])
+    expect(Date.now() - started).toBeLessThan(4_000)
+    expect(loaded.slots()).toEqual([{ name: 'late', state: 'connecting' }])
+    await loaded.close()
+  })
 })
 
 function defaultModel(id = 'dummy'): ModelProfile {

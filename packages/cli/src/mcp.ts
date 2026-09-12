@@ -72,6 +72,25 @@ export function spawnMcpServer(
   })
 }
 
+const MCP_REFRESH_WAIT_MS = 2_500
+const MCP_CLOSE_WAIT_MS = 500
+
+function boundConnect(work: Promise<void>, ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(resolve, ms)
+    work.then(
+      () => {
+        clearTimeout(timer)
+        resolve()
+      },
+      () => {
+        clearTimeout(timer)
+        resolve()
+      },
+    )
+  })
+}
+
 export async function loadConfiguredMcpTools(
   servers: McpServerConfig[],
   opts?: { spawn?: McpSpawnFn },
@@ -94,11 +113,14 @@ export async function loadConfiguredMcpTools(
     async refresh() {
       const before = new Set(pool.tools.map((tool) => tool.name))
       const retry = slots.filter((slot) => slot.state === 'dead' || slot.state === 'connecting')
-      if (retry.length === 0) return []
-      try {
-        await Promise.all(retry.map((slot) => connectSlot(slot, spawnFn)))
-      } catch {
-        // one dead server must not abort the session
+      if (retry.length > 0) {
+        try {
+          await Promise.all(
+            retry.map((slot) => boundConnect(connectSlot(slot, spawnFn), MCP_REFRESH_WAIT_MS)),
+          )
+        } catch {
+          // one dead server must not abort the session
+        }
       }
       const next = collectMcpSnapshot(slots)
       pool.tools = next.tools
@@ -107,14 +129,23 @@ export async function loadConfiguredMcpTools(
       return next.tools.filter((tool) => !before.has(tool.name))
     },
     async close() {
-      for (const slot of slots) {
-        if (!slot.close) continue
-        try {
-          await slot.close()
-        } catch {
-          // fail-open
-        }
-      }
+      await Promise.all(
+        slots.map(async (slot) => {
+          if (slot.inflight) {
+            try {
+              await boundConnect(slot.inflight, MCP_CLOSE_WAIT_MS)
+            } catch {
+              // still connecting
+            }
+          }
+          if (!slot.close) return
+          try {
+            await slot.close()
+          } catch {
+            // fail-open
+          }
+        }),
+      )
     },
   }
   return pool
