@@ -13,6 +13,7 @@
 
 - Leftover mutating Bash (`bun test`, `curl | sh`, anything that still asks)
 - Out-of-tree writes (symlink escapes, `../outside`)
+- Leftover-ask `Fetch` and `AskUser` (network / host prompt — not auto-allowed just because they are read-only)
 - Other leftover-ask mutators (`NotebookEdit`, `Agent`, plugins, …)
 
 `--tools-preset ci` only **puts Bash in the tool pool**. It does not auto-allow commands. Seed a project rule:

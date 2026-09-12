@@ -50,7 +50,7 @@ export function buildStablePrompt(): string {
     '- default: ask before workspace changes and before commands that are not clearly read-only (ls/echo/pwd and git status/log/diff may proceed).',
     '- acceptEdits: in-workspace file edits may proceed without asking; other leftover asks still prompt.',
     '- plan: mutating tools are denied. Write a plan in text until plan mode ends.',
-    '- dontAsk: leftover asks become denials except in-workspace Edit/Write and read-only tools. For unattended runs.',
+    '- dontAsk: leftover asks become denials except in-workspace Edit/Write and read-only tools (not Fetch or AskUser). For unattended runs.',
   ].join('\n')
 }
 

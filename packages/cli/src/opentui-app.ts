@@ -105,6 +105,9 @@ export async function runOpenTuiApp(
     })
   }
   bindHosts()
+  if (runtime.status !== undefined && runtime.status !== '') {
+    write(`${runtime.status}\n`)
+  }
 
   const queue = createMessageQueue()
   let turnBusy = false

@@ -137,7 +137,7 @@ Prefix session ids are ok.
 | `--provider` | `anthropic` \| `openai_compat` \| `ollama` \| `vllm` |
 | `--model <id>` | Model id |
 | `--tui ink\|opentui` | TUI host (default Ink) |
-| `--dont-ask` | Leftover asks become denials (except in-tree Edit/Write/ApplyPatch and read-only tools) |
+| `--dont-ask` | Leftover asks become denials (except in-tree Edit/Write/ApplyPatch and read-only tools; Fetch and AskUser stay denied) |
 | `--json` | `exec` only: StreamEvents as JSONL |
 | `--fallback-model <id>` | On a retryable stream failure, switch to this model |
 | `--allowed-tools a,b` | Restrict the tool pool (plan tools stay) |
@@ -328,9 +328,9 @@ The Ink/OpenTUI ticker also fires due jobs every 15s. Claim-before-execute; over
 | `default` | Ask before leftover-ask tools |
 | `acceptEdits` | In-tree Edit/Write/ApplyPatch (and extra `--add-dir` roots) proceed |
 | `plan` | Mutating tools denied; write `.ravenclaw/plan.md` |
-| `dontAsk` | Leftover asks become denials, except in-tree Edit/Write/ApplyPatch and read-only tools |
+| `dontAsk` | Leftover asks become denials, except in-tree Edit/Write/ApplyPatch and read-only tools. Fetch and AskUser stay denied. |
 
-There is no `bypass` mode. Headless `raven exec` uses `dontAsk` plus optional `--tools-preset` / project `.ravenclaw/permissions.json` — see [docs/headless.md](docs/headless.md). File hooks: `~/.ravenclaw/hooks.json` and `<cwd>/.ravenclaw/hooks.json`. `pre_tool` / `PreToolUse` can allow or deny. Lifecycle events: `UserPromptSubmit`, `PostToolUse`, `SessionStart`, `Stop`, `Subagent*`, `PreCompact` / `PostCompact`. `--bare` skips them.
+There is no `bypass` mode. Headless `raven exec` uses `dontAsk` plus optional `--tools-preset` / project `.ravenclaw/permissions.json` — see [docs/headless.md](docs/headless.md). File hooks: `~/.ravenclaw/hooks.json` and `<cwd>/.ravenclaw/hooks.json`. `pre_tool` / `PreToolUse` can allow or deny. Lifecycle events: `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart`, `SessionEnd`, `Stop`. `--bare` skips them.
 
 ## MCP
 

@@ -105,7 +105,7 @@ export function App(props: AppProps) {
   const [rows, setRows] = useState<TranscriptRow[]>([])
   const [draft, setDraft] = useState('')
   const [busy, setBusy] = useState(false)
-  const [notice, setNotice] = useState<string | undefined>(undefined)
+  const [notice, setNotice] = useState<string | undefined>(props.runtime.status)
   const [mode, setMode] = useState<PermissionMode>(props.runtime.engine.session.permissionMode)
   const [usage, setUsage] = useState<TokenUsage>(props.runtime.engine.session.usage)
   const [sessionId, setSessionId] = useState(props.runtime.engine.session.id)

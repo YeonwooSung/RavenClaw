@@ -10,6 +10,7 @@ import type {
   TokenUsage,
   Tool,
   ToolContext,
+  Turn,
 } from '../types'
 import { getLastRequestAt, markLastRequestAt } from '../compact/last-request'
 import { shouldAutocompact } from '../compact/policy'
@@ -437,7 +438,16 @@ function resolveCallTool(
   if (frozen.includes(realName)) return { ok: false, message: toolCallTargetText(realName) }
   const real = state.tools.find((entry) => entry.name === realName)
   if (!real) return { ok: false, message: unknownToolText(realName) }
+  if (!skillAllowsName(state.turn, realName)) {
+    return { ok: false, message: unknownToolText(realName) }
+  }
   return { ok: true, tool: real, name: realName, input: parsed.value.arguments }
+}
+
+function skillAllowsName(turn: Turn, name: string): boolean {
+  if (turn.skillAllowedTools === undefined) return true
+  if (turn.skillAllowedTools.includes(name)) return true
+  return name === 'Skill' || name === 'EnterPlanMode' || name === 'ExitPlanMode' || name === 'Agent'
 }
 
 const CONTEXT_OVERFLOW = /prompt too long|context.?length|too many tokens/i
