@@ -49,6 +49,11 @@ export function shouldStartBackgroundReview(opts: {
   )
 }
 
+/** Persist-detached child: new id, dontAsk so in-tree Memory writes are not prompted. */
+export function backgroundReviewSession(parent: SessionRecord): SessionRecord {
+  return { ...parent, id: crypto.randomUUID(), permissionMode: 'dontAsk' }
+}
+
 export interface ForkMemoryReviewOpts {
   provider: Provider
   store: SessionStore

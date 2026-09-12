@@ -27,6 +27,7 @@ import { injectMidTurnHint } from '../prompt/cache'
 import { createMemoryStore } from '../session/memory-store'
 import {
   BACKGROUND_REVIEW_PROMPT,
+  backgroundReviewSession,
   filterBackgroundReviewTools,
   LEARN_NUDGE,
   MEMORY_NUDGE,
@@ -249,7 +250,6 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
             tools: opts.tools,
             compact: opts.compact,
             model: opts.model,
-            askUser: opts.askUser,
           })
         }
         return end
@@ -350,12 +350,11 @@ function startDetachedReview(opts: {
   tools: SessionEngineOptions['tools']
   compact: SessionEngineOptions['compact']
   model: SessionEngineOptions['model']
-  askUser: SessionEngineOptions['askUser']
 }): () => void {
   const reviewTools = filterBackgroundReviewTools(opts.tools)
   if (reviewTools.length === 0) return () => {}
   const store = createMemoryStore()
-  const session = { ...opts.parentSession, id: crypto.randomUUID() }
+  const session = backgroundReviewSession(opts.parentSession)
   let cancelled = false
   let child: SessionEngine | undefined
   void (async () => {

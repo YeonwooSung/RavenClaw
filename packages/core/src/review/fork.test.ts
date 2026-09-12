@@ -13,6 +13,7 @@ import type {
 } from '../types'
 import {
   applyReviewToMemory,
+  backgroundReviewSession,
   filterBackgroundReviewTools,
   forkMemoryReview,
   shouldNudgeLearn,
@@ -129,6 +130,15 @@ describe('background review helpers', () => {
     ).toBe(false)
     expect(shouldStartBackgroundReview({ enabled: false, reason: 'completed' })).toBe(false)
     expect(shouldStartBackgroundReview({ enabled: true, reason: 'aborted' })).toBe(false)
+  })
+
+  test('child session is dontAsk with a new id so Memory writes are not prompted', () => {
+    const parent = makeSession({ permissionMode: 'default' })
+    const child = backgroundReviewSession(parent)
+    expect(child.permissionMode).toBe('dontAsk')
+    expect(child.id).not.toBe(parent.id)
+    expect(parent.permissionMode).toBe('default')
+    expect(child.cwd).toBe(parent.cwd)
   })
 })
 

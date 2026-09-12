@@ -15,6 +15,7 @@ import type {
   SystemPart,
   Tool,
 } from '../types'
+import { memoryTool } from '../tools/memory'
 import { createSessionEngine } from './session-engine'
 import { drainAgentMail, enqueueAgentMail } from '../tasks/mailbox'
 import { applyPermissionMode, buildSystemParts } from '../prompt/builder'
@@ -1032,5 +1033,65 @@ describe('background review and nudges', () => {
     await drain(engine, 'hi')
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(streams).toBe(1)
+  })
+
+  test('detached review writes Memory when parent permission mode is default', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-bg-memory-'))
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_bg_memory', cwd, permissionMode: 'default' })
+    await store.createSession(sess)
+    let childDone!: () => void
+    const childFinished = new Promise<void>((resolve) => {
+      childDone = resolve
+    })
+    let streams = 0
+    const provider: Provider = {
+      id: 'fake',
+      apiMode: 'openai_compat',
+      profile: () => defaultModel(),
+      async *stream(req) {
+        streams += 1
+        if (streams === 1) {
+          yield { type: 'text_delta', text: 'ok' }
+          yield { type: 'stop', reason: 'end' }
+          return
+        }
+        const awaitingTool = req.messages.some((msg) => msg.role === 'tool')
+        if (!awaitingTool) {
+          yield {
+            type: 'tool_call',
+            id: 'mem1',
+            name: 'Memory',
+            input: { action: 'add', target: 'agent', text: 'use bun test' },
+          }
+          yield { type: 'stop', reason: 'tool' }
+          return
+        }
+        yield { type: 'text_delta', text: 'saved' }
+        yield { type: 'stop', reason: 'end' }
+        childDone()
+      },
+    }
+    const engine = createSessionEngine({
+      session: sess,
+      provider,
+      store,
+      tools: [memoryTool],
+      compact: defaultCompact({ enabled: false }),
+      model: defaultModel(),
+      maxRounds: 4,
+      backgroundReview: true,
+      async askUser() {
+        return 'deny'
+      },
+    })
+    try {
+      await drain(engine, 'done')
+      await childFinished
+      expect(readFileSync(join(cwd, '.ravenclaw', 'MEMORY.md'), 'utf8')).toContain('use bun test')
+      expect(sess.permissionMode).toBe('default')
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
   })
 })

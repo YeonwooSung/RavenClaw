@@ -112,8 +112,11 @@ export async function authorizeMcpOAuth(opts: {
     url.searchParams.set('code_challenge', pkce.challenge)
     url.searchParams.set('code_challenge_method', 'S256')
     if (opts.oauth.scope) url.searchParams.set('scope', opts.oauth.scope)
-    await (opts.openBrowser ?? defaultOpenBrowser)(url.toString())
-    const callback = await loopback.wait()
+    const callbackP = loopback.wait()
+    void Promise.resolve((opts.openBrowser ?? defaultOpenBrowser)(url.toString())).catch(() => {
+      // loopback timeout still fails closed if the browser never returns a code
+    })
+    const callback = await callbackP
     if (callback.state !== undefined && callback.state !== state) throw authRequired()
     const tokens = await exchangeToken(fetchImpl, endpoints.tokenUrl, {
       grant_type: 'authorization_code',
@@ -223,11 +226,22 @@ function startLoopback(
       const server = createServer((req, res) => {
         try {
           const url = new URL(req.url ?? '/', 'http://127.0.0.1')
+          if (url.pathname !== '/callback') {
+            res.writeHead(404)
+            res.end()
+            return
+          }
           const code = url.searchParams.get('code')
           const state = url.searchParams.get('state') ?? undefined
-          if (!code || (state !== undefined && state !== expectedState)) {
+          const oauthError = url.searchParams.get('error')
+          if (oauthError || !code || state !== expectedState) {
             res.writeHead(400, { 'content-type': 'text/plain' })
             res.end(MCP_AUTH_REQUIRED)
+            server.close()
+            if (!settled) {
+              settled = true
+              reject(authRequired())
+            }
             return
           }
           res.writeHead(200, { 'content-type': 'text/plain' })
@@ -235,7 +249,7 @@ function startLoopback(
           server.close()
           if (!settled) {
             settled = true
-            resolve({ code, ...(state !== undefined ? { state } : {}) })
+            resolve({ code, state })
           }
         } catch {
           res.writeHead(400)
