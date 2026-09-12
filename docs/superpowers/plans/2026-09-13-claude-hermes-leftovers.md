@@ -62,6 +62,8 @@ Discord rewrite, `execute_code`, Electron, `bypass` / yolo, streaming tool execu
 
 ### L6. SessionSearch scroll / read
 
+**Status.** Done.
+
 **Why.** Hermes `tools/session_search_tool.py` is one tool with inferred modes: DISCOVERY (`query`), SCROLL (`session_id` + `around_message_id`), READ (`session_id`), BROWSE (no args). RavenClaw `packages/core/src/tools/session-search.ts` only returns `sessionId[:8] messageId[:8] snippet`. The agent cannot open a hit.
 
 **Contract.** Extend `SessionSearch` input: `{ query?: string, sessionId?: string, aroundMessageId?: string, limit?: number }`. `query` → current FTS (unchanged). `sessionId` alone → head/tail lines of that session (cwd-scoped, no hidden `subagent`/`tool` sources). `sessionId` + `aroundMessageId` → ±window. No LLM inside the tool. Cap bodies (e.g. 4k). Still `isReadOnly`.

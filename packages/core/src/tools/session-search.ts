@@ -1,10 +1,19 @@
-import type { SessionStore, Tool, ToolContext } from '../types'
+import type { Message, SessionRecord, SessionStore, Tool, ToolContext } from '../types'
+import { PersistError } from '../types'
 import { searchSessionStore } from '../session/sqlite-store'
-import type { MessageSearchHit } from '../session/search'
+import {
+  formatSessionLine,
+  headTailMessages,
+  visibleSessionMessages,
+  windowAroundMessages,
+  type MessageSearchHit,
+} from '../session/search'
 import { parseWithSchema } from './parse'
 
 export interface SessionSearchInput {
-  query: string
+  query?: string
+  sessionId?: string
+  aroundMessageId?: string
   limit?: number
 }
 
@@ -14,9 +23,10 @@ const MAX_LIMIT = 20
 const inputSchema = {
   type: 'object',
   additionalProperties: false,
-  required: ['query'],
   properties: {
     query: { type: 'string', minLength: 1 },
+    sessionId: { type: 'string', minLength: 1 },
+    aroundMessageId: { type: 'string', minLength: 1 },
     limit: { type: 'integer', minimum: 1 },
   },
 }
@@ -25,13 +35,13 @@ export function createSessionSearchTool(store: SessionStore): Tool<SessionSearch
   return {
     name: 'SessionSearch',
     description:
-      'Search persisted session messages (FTS). query is required; optional limit defaults to 5 (max 20). Returns ranked sessionId messageId snippet lines, not full bodies.',
+      'Search or open persisted sessions. query runs FTS. sessionId reads head/tail lines. sessionId + aroundMessageId scrolls a window. No args lists recent workspace sessions. Optional limit defaults to 5 (max 20). Bodies capped. Read-only.',
     inputSchema,
     parse(input: unknown) {
       return parseWithSchema<SessionSearchInput>(inputSchema, input)
     },
     isEnabled() {
-      return storeCanSearch(store)
+      return true
     },
     isConcurrencySafe() {
       return true
@@ -47,18 +57,119 @@ export function createSessionSearchTool(store: SessionStore): Tool<SessionSearch
     },
     async execute(input: SessionSearchInput, ctx: ToolContext) {
       if (ctx.signal.aborted) throw abortError()
-      if (!storeCanSearch(store)) return 'SessionSearch failed: store does not support search'
       const limit = clampLimit(input.limit)
-      const hits = runSearch(store, input.query, { limit: limit * 4 })
-      const scoped = await scopeHits(store, hits, ctx)
-      if (scoped.length === 0) return 'No matching session messages.'
-      return scoped.slice(0, limit).map(formatHit).join('\n')
+      if (input.aroundMessageId !== undefined && input.sessionId === undefined) {
+        return 'SessionSearch failed: sessionId is required when aroundMessageId is set'
+      }
+      if (input.sessionId !== undefined && input.query === undefined) {
+        return readOrScroll(store, input.sessionId, input.aroundMessageId, limit, ctx)
+      }
+      if (input.query !== undefined) {
+        return searchQuery(store, input.query, input.sessionId, limit, ctx)
+      }
+      return browseSessions(store, limit, ctx)
     },
   }
 }
 
 export function storeCanSearch(store: SessionStore): boolean {
   return typeof store.search === 'function'
+}
+
+async function searchQuery(
+  store: SessionStore,
+  query: string,
+  sessionId: string | undefined,
+  limit: number,
+  ctx: ToolContext,
+): Promise<string> {
+  if (!storeCanSearch(store)) return 'SessionSearch failed: store does not support search'
+  const resolved = sessionId !== undefined ? await resolveScopedSession(store, sessionId, ctx) : undefined
+  if (sessionId !== undefined && typeof resolved === 'string') return resolved
+  const hits = runSearch(store, query, {
+    limit: limit * 4,
+    sessionId: resolved && typeof resolved !== 'string' ? resolved.session.id : undefined,
+  })
+  const scoped = await scopeHits(store, hits, ctx)
+  if (scoped.length === 0) return 'No matching session messages.'
+  return scoped.slice(0, limit).map(formatHit).join('\n')
+}
+
+async function readOrScroll(
+  store: SessionStore,
+  sessionId: string,
+  aroundMessageId: string | undefined,
+  limit: number,
+  ctx: ToolContext,
+): Promise<string> {
+  const resolved = await resolveScopedSession(store, sessionId, ctx)
+  if (typeof resolved === 'string') return resolved
+  const visible = visibleSessionMessages(resolved.messages)
+  const picked =
+    aroundMessageId !== undefined
+      ? windowAroundMessages(visible, aroundMessageId, limit)
+      : headTailMessages(visible, limit)
+  if (aroundMessageId !== undefined && picked.length === 0) {
+    return 'No matching message in that session.'
+  }
+  if (picked.length === 0) return 'No visible messages in that session.'
+  return picked.map((msg) => formatSessionLine(resolved.session.id, msg)).join('\n')
+}
+
+async function browseSessions(
+  store: SessionStore,
+  limit: number,
+  ctx: ToolContext,
+): Promise<string> {
+  const local = await listWorkspaceSessions(store, ctx)
+  const parents = local.filter((session) => session.parentSessionId === undefined)
+  if (parents.length === 0) return 'No sessions in this workspace.'
+  return parents
+    .slice(0, limit)
+    .map((session) => {
+      const label = session.title?.trim() || session.model
+      return `${session.id.slice(0, 8)} ${label}`
+    })
+    .join('\n')
+}
+
+async function resolveScopedSession(
+  store: SessionStore,
+  sessionId: string,
+  ctx: ToolContext,
+): Promise<{ session: SessionRecord; messages: Message[] } | string> {
+  const local = await listWorkspaceSessions(store, ctx)
+  const match =
+    local.find((session) => session.id === sessionId) ??
+    uniquePrefix(local, sessionId)
+  if (!match) return 'Session not found in this workspace.'
+  try {
+    return await store.loadSession(match.id)
+  } catch (error) {
+    if (error instanceof PersistError && error.code === 'unknown') {
+      return 'Session not found in this workspace.'
+    }
+    throw error
+  }
+}
+
+function uniquePrefix(sessions: SessionRecord[], prefix: string): SessionRecord | undefined {
+  const hits = sessions.filter(
+    (session) => session.id.startsWith(prefix) || session.id.slice(0, 8) === prefix,
+  )
+  return hits.length === 1 ? hits[0] : undefined
+}
+
+async function listWorkspaceSessions(
+  store: SessionStore,
+  ctx: ToolContext,
+): Promise<SessionRecord[]> {
+  const cwd = ctx.turn.projectCwd ?? ctx.turn.cwd
+  try {
+    return await store.listSessions({ cwd, limit: 200 })
+  } catch {
+    return []
+  }
 }
 
 function runSearch(
@@ -77,15 +188,10 @@ async function scopeHits(
 ): Promise<MessageSearchHit[]> {
   const liveMessages = new Set(ctx.turn.messages.map((msg) => msg.id))
   let out = hits.filter((hit) => !liveMessages.has(hit.messageId))
-  const cwd = ctx.turn.projectCwd ?? ctx.turn.cwd
-  try {
-    const local = await store.listSessions({ cwd, limit: 200 })
-    if (local.length > 0) {
-      const ids = new Set(local.map((session) => session.id))
-      out = out.filter((hit) => ids.has(hit.sessionId))
-    }
-  } catch {
-    // whole store
+  const local = await listWorkspaceSessions(store, ctx)
+  if (local.length > 0) {
+    const ids = new Set(local.map((session) => session.id))
+    out = out.filter((hit) => ids.has(hit.sessionId))
   }
   return out
 }

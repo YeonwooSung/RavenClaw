@@ -1,6 +1,58 @@
 import type { Database } from 'bun:sqlite'
 import type { Message } from '../types'
 
+export const SESSION_BODY_CAP = 4_000
+
+export function visibleSessionMessages(messages: Message[]): Message[] {
+  return messages.filter((msg) => msg.role !== 'tool')
+}
+
+export function messageSearchBody(msg: Message): string {
+  const parts: string[] = []
+  for (const block of msg.blocks) {
+    if (block.type === 'text' && block.text.trim() !== '') parts.push(block.text)
+  }
+  return parts.join('\n').replace(/\s+/g, ' ').trim()
+}
+
+export function clipSearchBody(text: string, cap = SESSION_BODY_CAP): string {
+  if (text.length <= cap) return text
+  return `${text.slice(0, cap)}…`
+}
+
+export function headTailMessages(messages: Message[], limit: number): Message[] {
+  if (limit <= 0) return []
+  if (messages.length <= limit * 2) return messages
+  const seen = new Set<string>()
+  const out: Message[] = []
+  for (const msg of [...messages.slice(0, limit), ...messages.slice(-limit)]) {
+    if (seen.has(msg.id)) continue
+    seen.add(msg.id)
+    out.push(msg)
+  }
+  return out
+}
+
+export function windowAroundMessages(
+  messages: Message[],
+  messageId: string,
+  window: number,
+): Message[] {
+  const idx = messages.findIndex(
+    (msg) => msg.id === messageId || msg.id.startsWith(messageId),
+  )
+  if (idx < 0) return []
+  const span = Math.max(0, window)
+  const start = Math.max(0, idx - span)
+  const end = Math.min(messages.length, idx + span + 1)
+  return messages.slice(start, end)
+}
+
+export function formatSessionLine(sessionId: string, msg: Message): string {
+  const body = clipSearchBody(messageSearchBody(msg))
+  return `${sessionId.slice(0, 8)} ${msg.id.slice(0, 8)} ${msg.role} ${body}`.trimEnd()
+}
+
 export type MessageSearchHit = {
   sessionId: string
   messageId: string

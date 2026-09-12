@@ -1,7 +1,14 @@
 import { describe, expect, test } from 'bun:test'
 import { Database } from 'bun:sqlite'
 import { applyMigrations, FTS5_SQL, INIT_SQL } from './schema'
-import { rebuildMessagesFts, searchMessages } from './search'
+import {
+  clipSearchBody,
+  headTailMessages,
+  rebuildMessagesFts,
+  searchMessages,
+  visibleSessionMessages,
+  windowAroundMessages,
+} from './search'
 
 function seedSession(db: Database, id = 's1'): void {
   db.query(
@@ -199,5 +206,30 @@ describe('messages FTS5', () => {
     })
     expect(() => rebuildMessagesFts(db)).not.toThrow()
     db.close()
+  })
+})
+
+describe('session read helpers', () => {
+  test('skips tool rows and windows around a message', () => {
+    const user = (id: string, text: string, createdAt: number) => ({
+      id,
+      role: 'user' as const,
+      blocks: [{ type: 'text' as const, text }],
+      createdAt,
+    })
+    const tool = {
+      id: 't1',
+      role: 'tool' as const,
+      toolUseId: 'c1',
+      ok: true,
+      blocks: [{ type: 'text' as const, text: 'hidden' }],
+      createdAt: 2,
+    }
+    const msgs = [user('u1', 'a', 1), tool, user('u2', 'b', 3), user('u3', 'c', 4)]
+    const visible = visibleSessionMessages(msgs)
+    expect(visible.map((msg) => msg.id)).toEqual(['u1', 'u2', 'u3'])
+    expect(windowAroundMessages(visible, 'u2', 1).map((msg) => msg.id)).toEqual(['u1', 'u2', 'u3'])
+    expect(headTailMessages(visible, 1).map((msg) => msg.id)).toEqual(['u1', 'u3'])
+    expect(clipSearchBody('abcd', 3)).toBe('abc…')
   })
 })
