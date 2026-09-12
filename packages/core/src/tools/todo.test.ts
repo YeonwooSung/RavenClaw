@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ToolContext, Turn } from '../types'
-import { todoWriteTool } from './todo'
+import { loadTodos, todoJsonPath, todosFromToolResult, todoWriteTool } from './todo'
 
 const tempDirs: string[] = []
 
@@ -106,5 +106,71 @@ describe('TodoWrite', () => {
     await todoWriteTool.execute({ items: [{ text: 'iso', status: 'pending' }] }, ctx)
     expect(existsSync(join(project, '.ravenclaw', 'todo.json'))).toBe(true)
     expect(existsSync(join(worktree, '.ravenclaw', 'todo.json'))).toBe(false)
+  })
+})
+
+describe('loadTodos', () => {
+  test('missing file → []', () => {
+    const root = fixtureRoot()
+    expect(loadTodos(root)).toEqual([])
+    expect(existsSync(todoJsonPath(root))).toBe(false)
+  })
+
+  test('valid file → items', () => {
+    const root = fixtureRoot()
+    mkdirSync(join(root, '.ravenclaw'), { recursive: true })
+    writeFileSync(
+      todoJsonPath(root),
+      `${JSON.stringify(
+        [
+          { id: 't1', text: 'one', status: 'done' },
+          { text: 'two', status: 'in_progress' },
+        ],
+        null,
+        2,
+      )}\n`,
+      'utf8',
+    )
+    expect(loadTodos(root)).toEqual([
+      { id: 't1', text: 'one', status: 'done' },
+      { text: 'two', status: 'in_progress' },
+    ])
+  })
+
+  test('invalid JSON → []', () => {
+    const root = fixtureRoot()
+    mkdirSync(join(root, '.ravenclaw'), { recursive: true })
+    writeFileSync(todoJsonPath(root), '{not json', 'utf8')
+    expect(loadTodos(root)).toEqual([])
+  })
+
+  test('non-array JSON → []', () => {
+    const root = fixtureRoot()
+    mkdirSync(join(root, '.ravenclaw'), { recursive: true })
+    writeFileSync(todoJsonPath(root), '{"items":[]}\n', 'utf8')
+    expect(loadTodos(root)).toEqual([])
+  })
+})
+
+describe('todosFromToolResult', () => {
+  test('reloads when name is TodoWrite', () => {
+    const root = fixtureRoot()
+    mkdirSync(join(root, '.ravenclaw'), { recursive: true })
+    writeFileSync(
+      todoJsonPath(root),
+      `${JSON.stringify([{ id: 't1', text: 'ship', status: 'pending' }])}\n`,
+      'utf8',
+    )
+    const previous = [{ id: 'old', text: 'stale', status: 'done' as const }]
+    expect(todosFromToolResult('TodoWrite', root, previous)).toEqual([
+      { id: 't1', text: 'ship', status: 'pending' },
+    ])
+  })
+
+  test('returns previous for any other tool name', () => {
+    const root = fixtureRoot()
+    const previous = [{ id: 'keep', text: 'stale', status: 'pending' as const }]
+    expect(todosFromToolResult('Read', root, previous)).toBe(previous)
+    expect(todosFromToolResult('Bash', root, previous)).toEqual(previous)
   })
 })

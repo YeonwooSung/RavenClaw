@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import type { Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
@@ -13,6 +13,56 @@ export interface TodoItem {
 
 export interface TodoWriteInput {
   items: TodoItem[]
+}
+
+const TODO_STATUSES = new Set<TodoStatus>(['pending', 'in_progress', 'done'])
+
+export function todoJsonPath(root: string): string {
+  return join(root, '.ravenclaw', 'todo.json')
+}
+
+/** Fail-open read of `.ravenclaw/todo.json`. Missing or invalid → `[]`. */
+export function loadTodos(root: string): TodoItem[] {
+  let raw: string
+  try {
+    raw = readFileSync(todoJsonPath(root), 'utf8')
+  } catch {
+    return []
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return []
+  }
+  if (!Array.isArray(parsed)) return []
+  const items: TodoItem[] = []
+  for (const entry of parsed) {
+    const item = parseTodoItem(entry)
+    if (item !== undefined) items.push(item)
+  }
+  return items
+}
+
+/** Reload after a TodoWrite tool_result; otherwise keep the previous snapshot. */
+export function todosFromToolResult(
+  name: string,
+  cwd: string,
+  previous: TodoItem[],
+): TodoItem[] {
+  return name === 'TodoWrite' ? loadTodos(cwd) : previous
+}
+
+function parseTodoItem(entry: unknown): TodoItem | undefined {
+  if (entry === null || typeof entry !== 'object') return undefined
+  const rec = entry as Record<string, unknown>
+  if (typeof rec.text !== 'string' || rec.text.length === 0) return undefined
+  if (typeof rec.status !== 'string' || !TODO_STATUSES.has(rec.status as TodoStatus)) {
+    return undefined
+  }
+  const item: TodoItem = { text: rec.text, status: rec.status as TodoStatus }
+  if (typeof rec.id === 'string' && rec.id.length > 0) item.id = rec.id
+  return item
 }
 
 const inputSchema = {
@@ -64,7 +114,7 @@ export const todoWriteTool: Tool<TodoWriteInput, string> = {
       text: item.text,
       status: item.status,
     }))
-    const path = join(root, '.ravenclaw', 'todo.json')
+    const path = todoJsonPath(root)
     try {
       mkdirSync(dirname(path), { recursive: true })
       writeFileSync(path, `${JSON.stringify(items, null, 2)}\n`, 'utf8')
