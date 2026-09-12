@@ -1,16 +1,30 @@
+import type { SessionStore } from '../types'
+
 export const MAX_PARALLEL_CHILDREN = 6
+export const AGENT_MAIL_BODY_MAX = 4000
 
-const mailboxes = new Map<string, string[]>()
-
-export function enqueueAgentMail(parentSessionId: string, text: string): void {
-  const queue = mailboxes.get(parentSessionId)
-  if (queue) queue.push(text)
-  else mailboxes.set(parentSessionId, [text])
+export function clipAgentMailBody(text: string): string {
+  return text.length <= AGENT_MAIL_BODY_MAX ? text : text.slice(0, AGENT_MAIL_BODY_MAX)
 }
 
-export function drainAgentMail(parentSessionId: string): string[] {
-  const notices = mailboxes.get(parentSessionId)
-  if (!notices) return []
-  mailboxes.delete(parentSessionId)
-  return notices
+export async function enqueueAgentMail(
+  store: SessionStore,
+  parentSessionId: string,
+  text: string,
+): Promise<void> {
+  await store.enqueueAgentMail(parentSessionId, text)
+}
+
+export async function peekAgentMail(
+  store: SessionStore,
+  parentSessionId: string,
+): Promise<string[]> {
+  return store.peekAgentMail(parentSessionId)
+}
+
+export async function drainAgentMail(
+  store: SessionStore,
+  parentSessionId: string,
+): Promise<string[]> {
+  return store.drainAgentMail(parentSessionId)
 }

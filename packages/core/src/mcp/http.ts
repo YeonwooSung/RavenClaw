@@ -82,25 +82,34 @@ export function createHttpMcpTransport(opts: HttpMcpTransportOpts): McpTransport
     buffered.set(parsed.id, error ? { error } : { result: parsed.result })
   }
 
-  function waitForSse(id: unknown): Promise<unknown> {
+  function waitForSse(id: unknown, signal?: AbortSignal): Promise<unknown> {
     const ready = buffered.get(id)
     if (ready) {
       buffered.delete(id)
       if (ready.error) return Promise.reject(ready.error)
       return Promise.resolve(ready.result)
     }
+    if (signal?.aborted) return Promise.reject(abortError())
     return new Promise<unknown>((resolve, reject) => {
+      const onAbort = () => {
+        pending.delete(id)
+        reject(abortError())
+      }
+      if (signal) signal.addEventListener('abort', onAbort, { once: true })
       const timer = setTimeout(() => {
         pending.delete(id)
+        signal?.removeEventListener('abort', onAbort)
         reject(new Error('MCP SSE response timed out'))
       }, SSE_WAIT_MS)
       pending.set(id, {
         resolve(value) {
           clearTimeout(timer)
+          signal?.removeEventListener('abort', onAbort)
           resolve(value)
         },
         reject(error) {
           clearTimeout(timer)
+          signal?.removeEventListener('abort', onAbort)
           reject(error)
         },
       })
@@ -112,10 +121,16 @@ export function createHttpMcpTransport(opts: HttpMcpTransportOpts): McpTransport
     pending.clear()
   }
 
-  async function send(body: Record<string, unknown>, expectResult: boolean): Promise<unknown> {
+  async function send(
+    body: Record<string, unknown>,
+    expectResult: boolean,
+    signal?: AbortSignal,
+  ): Promise<unknown> {
     if (closed) throw new Error('MCP transport is closed')
+    if (signal?.aborted) throw abortError()
     if (sseMode) await startSseGet()
     if (closed) throw new Error('MCP transport is closed')
+    if (signal?.aborted) throw abortError()
     const headers: Record<string, string> = {
       'content-type': 'application/json',
       accept: 'application/json, text/event-stream',
@@ -126,12 +141,13 @@ export function createHttpMcpTransport(opts: HttpMcpTransportOpts): McpTransport
       method: 'POST',
       headers,
       body: JSON.stringify(body),
+      ...(signal !== undefined ? { signal } : {}),
     })
     const returnedSession = res.headers.get('mcp-session-id')
     if (returnedSession) sessionId = returnedSession
     if (!expectResult) return undefined
     if (sseMode && res.status === 202) {
-      return waitForSse(body.id)
+      return waitForSse(body.id, signal)
     }
     if (!res.ok) {
       const errText = await res.text().catch(() => '')
@@ -143,7 +159,7 @@ export function createHttpMcpTransport(opts: HttpMcpTransportOpts): McpTransport
     }
     if (sseMode) {
       const text = await res.text()
-      if (!text.trim()) return waitForSse(body.id)
+      if (!text.trim()) return waitForSse(body.id, signal)
       const json = JSON.parse(text) as JsonRpcMessage
       if (json.error) throw new Error(json.error.message || 'MCP JSON-RPC error')
       return json.result
@@ -154,11 +170,11 @@ export function createHttpMcpTransport(opts: HttpMcpTransportOpts): McpTransport
   }
 
   return {
-    request(method, params) {
+    request(method, params, reqOpts) {
       const id = nextId++
       const payload: Record<string, unknown> = { jsonrpc: '2.0', id, method }
       if (params !== undefined) payload.params = params
-      return send(payload, true)
+      return send(payload, true, reqOpts?.signal)
     },
     async notify(method, params) {
       const payload: Record<string, unknown> = { jsonrpc: '2.0', method }
@@ -260,4 +276,8 @@ async function readSseResult(res: Response, id: unknown): Promise<unknown> {
 
 function isAbortError(error: unknown): boolean {
   return Boolean(error && typeof error === 'object' && (error as { name?: unknown }).name === 'AbortError')
+}
+
+function abortError(): Error {
+  return Object.assign(new Error('aborted'), { name: 'AbortError' })
 }

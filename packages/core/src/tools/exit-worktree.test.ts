@@ -106,6 +106,19 @@ describe('ExitWorktree', () => {
     expect(exitWorktreeTool.parse({ action: 'drop' }).ok).toBe(false)
   })
 
+  test('isEnabled is false without a session worktree', () => {
+    expect(exitWorktreeTool.isEnabled?.(makeCtx('/tmp'))).toBe(false)
+  })
+
+  test('isEnabled is true after EnterWorktree', async () => {
+    const root = fixtureRoot()
+    initGitRepo(root)
+    const ctx = makeCtx(root)
+    expect(exitWorktreeTool.isEnabled?.(ctx)).toBe(false)
+    await enterWorktreeTool.execute({ name: 'iso' }, ctx)
+    expect(exitWorktreeTool.isEnabled?.(ctx)).toBe(true)
+  })
+
   test('returns a no-op string when the session has no worktree', async () => {
     const out = await exitWorktreeTool.execute({ action: 'keep' }, makeCtx('/tmp'))
     expect(out.toLowerCase()).toMatch(/no session worktree|not in/)

@@ -1,6 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 import { createMcpToolBridge } from './client'
-import { loadMcpTools, mergeToolPool, wrapMcpTool, wrapMcpTools } from './tools'
+import {
+  deferUntilUnlocked,
+  filterMcpDescriptors,
+  loadMcpTools,
+  mergeToolPool,
+  wrapMcpTool,
+  wrapMcpTools,
+} from './tools'
 import type { McpToolBridge, McpToolDescriptor, McpTransport } from './types'
 import type { Tool, ToolContext, Turn } from '../types'
 
@@ -59,9 +66,15 @@ function recordingBridge(
     async listTools() {
       return descriptors
     },
-    async callTool(name, input) {
+    async callTool(name, input, _opts) {
       calls.push({ name, input })
       return result
+    },
+    async listResources() {
+      return []
+    },
+    async readResource(uri) {
+      return { uri }
     },
     async close() {},
   }
@@ -112,6 +125,56 @@ describe('mergeToolPool', () => {
       'a',
       'b',
     ])
+  })
+})
+
+describe('filterMcpDescriptors', () => {
+  const descriptors: McpToolDescriptor[] = [
+    { name: 'keep', description: 'keep', inputSchema: { type: 'object' } },
+    { name: 'drop', description: 'drop', inputSchema: { type: 'object' } },
+    { name: 'also', description: 'also', inputSchema: { type: 'object' } },
+  ]
+
+  test('tools allowlist keeps only listed server-native names', () => {
+    expect(filterMcpDescriptors(descriptors, { tools: ['keep', 'also'] }).map((d) => d.name)).toEqual([
+      'keep',
+      'also',
+    ])
+  })
+
+  test('excludeTools is applied after the allowlist', () => {
+    expect(
+      filterMcpDescriptors(descriptors, { tools: ['keep', 'drop'], excludeTools: ['drop'] }).map(
+        (d) => d.name,
+      ),
+    ).toEqual(['keep'])
+  })
+
+  test('empty tools list yields no descriptors', () => {
+    expect(filterMcpDescriptors(descriptors, { tools: [] })).toEqual([])
+  })
+
+  test('omitted filter returns the original list', () => {
+    expect(filterMcpDescriptors(descriptors)).toBe(descriptors)
+  })
+})
+
+describe('deferUntilUnlocked', () => {
+  test('isEnabled is false until the turn unlocks the name', () => {
+    const tool = deferUntilUnlocked(mockTool('search_docs'))
+    const locked = makeTurn()
+    expect(tool.isEnabled?.(makeCtx(locked))).toBe(false)
+    locked.unlockedToolNames = ['search_docs']
+    expect(tool.isEnabled?.(makeCtx(locked))).toBe(true)
+  })
+
+  test('still honors a prior isEnabled gate after unlock', () => {
+    const inner = mockTool('search_docs')
+    inner.isEnabled = () => false
+    const tool = deferUntilUnlocked(inner)
+    const turn = makeTurn()
+    turn.unlockedToolNames = ['search_docs']
+    expect(tool.isEnabled?.(makeCtx(turn))).toBe(false)
   })
 })
 
@@ -212,6 +275,64 @@ describe('wrapMcpTool', () => {
     await expect(tool.execute({ q: 'mcp' }, makeCtx())).rejects.toThrow(/boom/)
   })
 
+  test('isEnabled is false until the turn unlocks the tool name', () => {
+    const descriptor: McpToolDescriptor = {
+      name: 'search_docs',
+      description: 'Search docs',
+      inputSchema: searchSchema,
+    }
+    const tool = wrapMcpTool(recordingBridge([descriptor]), descriptor)
+    const turn = makeTurn()
+    expect(tool.isEnabled?.(makeCtx(turn))).toBe(false)
+    turn.unlockedToolNames = ['search_docs']
+    expect(tool.isEnabled?.(makeCtx(turn))).toBe(true)
+  })
+
+  test('interruptBehavior is cancel', () => {
+    const descriptor: McpToolDescriptor = {
+      name: 'search_docs',
+      description: 'Search docs',
+      inputSchema: searchSchema,
+    }
+    expect(wrapMcpTool(recordingBridge([descriptor]), descriptor).interruptBehavior?.()).toBe('cancel')
+  })
+
+  test('execute abort mid-flight rejects and does not hang', async () => {
+    const descriptor: McpToolDescriptor = {
+      name: 'search_docs',
+      description: 'Search docs',
+      inputSchema: searchSchema,
+    }
+    const ac = new AbortController()
+    const bridge: McpToolBridge = {
+      async listTools() {
+        return [descriptor]
+      },
+      async callTool(_name, _input, opts) {
+        return new Promise((_resolve, reject) => {
+          const signal = opts?.signal
+          const fail = () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+          if (signal?.aborted) {
+            fail()
+            return
+          }
+          signal?.addEventListener('abort', fail, { once: true })
+        })
+      },
+      async listResources() {
+        return []
+      },
+      async readResource(uri) {
+        return { uri }
+      },
+      async close() {},
+    }
+    const tool = wrapMcpTool(bridge, descriptor)
+    const pending = tool.execute({ q: 'mcp' }, { turn: makeTurn(), signal: ac.signal, onProgress() {} })
+    ac.abort()
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
   test('execute refuses to start when the signal is already aborted', async () => {
     const descriptor: McpToolDescriptor = {
       name: 'search_docs',
@@ -237,6 +358,19 @@ describe('wrapMcpTools / loadMcpTools', () => {
     ]
     const tools = wrapMcpTools(recordingBridge(descriptors), descriptors)
     expect(tools.map((tool) => tool.name)).toEqual(['b', 'a'])
+  })
+
+  test('loadMcpTools applies tools and excludeTools after listTools', async () => {
+    const descriptors: McpToolDescriptor[] = [
+      { name: 'keep', description: 'keep', inputSchema: { type: 'object' } },
+      { name: 'drop', description: 'drop', inputSchema: { type: 'object' } },
+      { name: 'also', description: 'also', inputSchema: { type: 'object' } },
+    ]
+    const tools = await loadMcpTools(recordingBridge(descriptors), {
+      tools: ['keep', 'drop', 'also'],
+      excludeTools: ['drop'],
+    })
+    expect(tools.map((tool) => tool.name)).toEqual(['keep', 'also'])
   })
 
   test('loadMcpTools lists from the bridge and wraps each as a Tool', async () => {

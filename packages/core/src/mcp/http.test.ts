@@ -122,4 +122,24 @@ describe('createHttpMcpTransport', () => {
     await expect(pending).rejects.toThrow(/closed|aborted/i)
     expect(getAborted).toBe(true)
   })
+
+  test('request abort mid-flight rejects with AbortError and does not hang', async () => {
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      const signal = init?.signal
+      return await new Promise<Response>((_resolve, reject) => {
+        const abort = () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+        if (signal?.aborted) {
+          abort()
+          return
+        }
+        signal?.addEventListener('abort', abort, { once: true })
+      })
+    }
+    const transport = createHttpMcpTransport({ url: 'https://example.com/mcp', fetchImpl })
+    const ac = new AbortController()
+    const pending = transport.request('tools/call', { name: 'slow' }, { signal: ac.signal })
+    ac.abort()
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    await transport.close()
+  })
 })

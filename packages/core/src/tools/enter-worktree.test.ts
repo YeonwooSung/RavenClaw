@@ -137,6 +137,25 @@ describe('EnterWorktree', () => {
     expect(ctx.turn.projectCwd).toBeUndefined()
   })
 
+  test('isEnabled is false outside a git work tree', () => {
+    const root = fixtureRoot()
+    expect(enterWorktreeTool.isEnabled?.(makeCtx(root))).toBe(false)
+  })
+
+  test('isEnabled is true inside a git work tree', () => {
+    const root = fixtureRoot()
+    initGitRepo(root)
+    expect(enterWorktreeTool.isEnabled?.(makeCtx(root))).toBe(true)
+  })
+
+  test('isEnabled is true when the session already has a worktree', async () => {
+    const root = fixtureRoot()
+    initGitRepo(root)
+    const ctx = makeCtx(root)
+    await enterWorktreeTool.execute({ name: 'iso' }, ctx)
+    expect(enterWorktreeTool.isEnabled?.(ctx)).toBe(true)
+  })
+
   test('execute refuses when the signal is already aborted', async () => {
     const root = fixtureRoot()
     const ac = new AbortController()

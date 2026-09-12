@@ -92,8 +92,11 @@ bun run raven                          # Ink TUI (default)
 bun run raven --tui opentui
 bun run raven exec "list TypeScript files"
 bun run raven exec --json "summarize README.md"
+bun run raven exec --dont-ask --tools-preset ci "run bun test"
 bun run raven acp                      # editor JSON-RPC, dontAsk
 ```
+
+`exec` is `dontAsk`, not bypass: in-tree Edit/Write/ApplyPatch proceed; leftover Bash is denied unless `.ravenclaw/permissions.json` allows it. See [docs/headless.md](docs/headless.md).
 
 `bun run raven` or `bun run raven setup` writes `~/.ravenclaw/.env` when no key is configured. `exec` and `acp` print a hint instead of prompting.
 
@@ -134,10 +137,11 @@ Prefix session ids are ok.
 | `--provider` | `anthropic` \| `openai_compat` \| `ollama` \| `vllm` |
 | `--model <id>` | Model id |
 | `--tui ink\|opentui` | TUI host (default Ink) |
-| `--dont-ask` | Leftover asks become denials (except in-tree Edit/Write and read-only tools) |
+| `--dont-ask` | Leftover asks become denials (except in-tree Edit/Write/ApplyPatch and read-only tools) |
 | `--json` | `exec` only: StreamEvents as JSONL |
 | `--fallback-model <id>` | On a retryable stream failure, switch to this model |
 | `--allowed-tools a,b` | Restrict the tool pool (plan tools stay) |
+| `--tools-preset read\|write\|ci` | Fill `--allowed-tools` when unset (`ci` still needs a Bash project rule) |
 | `--worktree [name]` | Start in a detached git worktree under `.ravenclaw/worktrees` |
 | `--json-schema <json>` | Require a `StructuredOutput` call matching this object schema |
 | `--agent <id>` | Start with that catalog or disk agent's tools |
@@ -213,7 +217,7 @@ The root session can call:
 | Tool | Notes |
 |---|---|
 | `Read` `Grep` `Glob` `ListDir` `ReadSubtree` | Read. `.ipynb` is shown as cells |
-| `Edit` `Write` `ApplyPatch` `NotebookEdit` | Write. `Edit` tolerates CRLF and indent. ApplyPatch/NotebookEdit leftover-ask |
+| `Edit` `Write` `ApplyPatch` `NotebookEdit` | Write. `Edit` tolerates CRLF and indent. In-tree ApplyPatch is promoted under `acceptEdits`/`dontAsk`; NotebookEdit leftover-asks |
 | `Bash` | Shell. `run_in_background` + `TaskOutput` / `TaskStop` |
 | `Skill` | Load a skill body or a file under that skill dir |
 | `Fetch` | HTTP GET with SSRF guards |
@@ -322,11 +326,11 @@ The Ink/OpenTUI ticker also fires due jobs every 15s. Claim-before-execute; over
 | Mode | Behavior |
 |---|---|
 | `default` | Ask before leftover-ask tools |
-| `acceptEdits` | In-tree Edit/Write (and extra `--add-dir` roots) proceed |
+| `acceptEdits` | In-tree Edit/Write/ApplyPatch (and extra `--add-dir` roots) proceed |
 | `plan` | Mutating tools denied; write `.ravenclaw/plan.md` |
-| `dontAsk` | Leftover asks become denials, except in-tree Edit/Write and read-only tools |
+| `dontAsk` | Leftover asks become denials, except in-tree Edit/Write/ApplyPatch and read-only tools |
 
-There is no `bypass` mode. File hooks: `~/.ravenclaw/hooks.json` and `<cwd>/.ravenclaw/hooks.json`. `pre_tool` / `PreToolUse` can allow or deny. Lifecycle events: `UserPromptSubmit`, `PostToolUse`, `SessionStart`, `Stop`, `Subagent*`, `PreCompact` / `PostCompact`. `--bare` skips them.
+There is no `bypass` mode. Headless `raven exec` uses `dontAsk` plus optional `--tools-preset` / project `.ravenclaw/permissions.json` — see [docs/headless.md](docs/headless.md). File hooks: `~/.ravenclaw/hooks.json` and `<cwd>/.ravenclaw/hooks.json`. `pre_tool` / `PreToolUse` can allow or deny. Lifecycle events: `UserPromptSubmit`, `PostToolUse`, `SessionStart`, `Stop`, `Subagent*`, `PreCompact` / `PostCompact`. `--bare` skips them.
 
 ## MCP
 
@@ -363,6 +367,7 @@ If `included.gatewayUrl` is a real URL and `GET /v1/entitlement` admits the sess
 
 ## Docs
 
+- [Headless / `raven exec` permissions](docs/headless.md)
 - [System design](docs/superpowers/specs/2026-09-08-ravenclaw-coding-agent-design.md)
 - [Cron / scheduler](docs/superpowers/specs/2026-09-12-ravenclaw-cron-scheduler-design.md)
 - Prior art notes: [Hermes](docs/research/hermes-agent-analysis.md), [Freebuff](docs/research/freebuff-analysis.md), [Claude Code loop](docs/research/claude-code-analysis.md)

@@ -51,6 +51,10 @@ export type PermissionReason = 'rule' | 'mode' | 'safety' | 'user' | 'hook'
 export type PermissionScope = 'session' | 'project' | 'user'
 export type Funding = 'byok' | 'included'
 export type PersistErrorCode = 'busy' | 'locked' | 'corrupt' | 'readonly' | 'unknown'
+export type SessionLockHolderName = 'tui' | 'serve' | 'exec' | 'cron' | 'acp' | 'sdk'
+
+export const SESSION_LOCK_TTL_MS = 120_000
+export const SESSION_LOCK_RENEW_MS = 30_000
 
 export interface TokenUsage {
   input: number
@@ -114,6 +118,10 @@ export interface Turn {
   model: string
   readFiles: Set<string>
   skillAllowedTools?: string[]
+  /** Realpaths of subdirectory AGENTS.md files already injected this session. */
+  injectedAgentsDirs?: Set<string>
+  /** MCP / plugin names selected via ToolSearch this turn. */
+  unlockedToolNames?: string[]
 }
 
 export interface Round {
@@ -269,6 +277,22 @@ export class PersistError extends Error {
   }
 }
 
+export class SessionLockError extends Error {
+  readonly holderName?: string
+  readonly expiresAt?: number
+  constructor(message: string, info?: { holderName?: string; expiresAt?: number }) {
+    super(message)
+    this.name = 'SessionLockError'
+    if (info?.holderName !== undefined) this.holderName = info.holderName
+    if (info?.expiresAt !== undefined) this.expiresAt = info.expiresAt
+  }
+}
+
+export function sessionLockedMessage(holderName: string | undefined, expiresAt: number): string {
+  const who = holderName !== undefined && holderName !== '' ? holderName : 'another process'
+  return `session locked by ${who} until ${new Date(expiresAt).toISOString()}`
+}
+
 export interface SessionStore {
   createSession(session: SessionRecord): Promise<void>
   upsertSession(session: SessionRecord): Promise<void>
@@ -294,6 +318,19 @@ export interface SessionStore {
     summary: string,
     inactivatedIds: string[],
   ): Promise<void>
+  enqueueAgentMail(parentSessionId: string, text: string): Promise<void>
+  peekAgentMail(parentSessionId: string): Promise<string[]>
+  drainAgentMail(parentSessionId: string): Promise<string[]>
+  acquireSessionLock(
+    sessionId: string,
+    opts: {
+      holderId: string
+      holderName: string
+      ttlMs?: number
+    },
+  ): Promise<void>
+  renewSessionLock(sessionId: string, holderId: string, ttlMs?: number): Promise<void>
+  releaseSessionLock(sessionId: string, holderId: string): Promise<void>
   withWrite<T>(fn: () => Promise<T>): Promise<T>
 }
 
@@ -312,6 +349,12 @@ export interface SessionEngineOptions {
   jsonSchema?: unknown
   bare?: boolean
   additionalDirectories?: string[]
+  sessionLock?: {
+    holderId: string
+    ttlMs?: number
+  }
+  /** When true, nudge if the turn mutated files without a test/lint command. Default off. */
+  verifyOnStop?: boolean
   askUser: (
     e: Extract<StreamEvent, { type: 'permission_ask' }>,
     signal: AbortSignal,
@@ -330,6 +373,8 @@ export interface SessionEngine {
   setPermissionMode(mode: PermissionMode): Promise<void>
   reloadSystem(system: SystemPart[]): void
   abort(): void
+  /** Fire SessionEnd once, then release the session lock. Safe to call more than once. */
+  close(opts?: { releaseLock?: boolean }): Promise<void>
 }
 
 export interface QueryLoopOptions {
@@ -347,10 +392,18 @@ export interface QueryLoopOptions {
   drainSteering?: () => string[]
   fallbackModel?: string
   jsonSchema?: unknown
+  verifyOnStop?: boolean
   lifecycle?: {
     run(
       event: string,
       payload: Record<string, unknown>,
-    ): Promise<{ preventContinuation?: boolean; message?: string } | undefined>
+    ): Promise<
+      | {
+          preventContinuation?: boolean
+          message?: string
+          updatedInput?: Record<string, unknown>
+        }
+      | undefined
+    >
   }
 }

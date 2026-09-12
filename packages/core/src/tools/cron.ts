@@ -1,5 +1,6 @@
+import { existsSync } from 'node:fs'
 import { formatSchedule, nextFireAt as computeNextFireAt, parseJobSpec } from '../schedule/cron'
-import { newCronId } from '../schedule/store'
+import { cronJobsPath, newCronId } from '../schedule/store'
 import type { CronJob, CronStore } from '../schedule/types'
 import type { Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
@@ -71,6 +72,9 @@ export function createCronTools(store: CronStore): {
     parse(input: unknown) {
       return parseWithSchema<CronCreateInput>(createSchema, input)
     },
+    isEnabled() {
+      return cronFileExists()
+    },
     isConcurrencySafe() {
       return false
     },
@@ -118,6 +122,9 @@ export function createCronTools(store: CronStore): {
     parse(input: unknown) {
       return parseWithSchema<CronListInput>(listSchema, input)
     },
+    isEnabled() {
+      return cronFileExists()
+    },
     isConcurrencySafe() {
       return true
     },
@@ -144,6 +151,9 @@ export function createCronTools(store: CronStore): {
     inputSchema: deleteSchema,
     parse(input: unknown) {
       return parseWithSchema<CronDeleteInput>(deleteSchema, input)
+    },
+    isEnabled() {
+      return cronFileExists()
     },
     isConcurrencySafe() {
       return false
@@ -172,6 +182,9 @@ export function createCronTools(store: CronStore): {
     parse(input: unknown) {
       return parseWithSchema<CronSetEnabledInput>(setEnabledSchema, input)
     },
+    isEnabled() {
+      return cronFileExists()
+    },
     isConcurrencySafe() {
       return false
     },
@@ -195,6 +208,10 @@ export function createCronTools(store: CronStore): {
   }
 
   return { create, list, remove, setEnabled }
+}
+
+function cronFileExists(): boolean {
+  return existsSync(cronJobsPath())
 }
 
 function formatJobLine(job: CronJob): string {

@@ -25,6 +25,9 @@ export const exitWorktreeTool: Tool<ExitWorktreeInput, string> = {
   parse(input: unknown) {
     return parseWithSchema<ExitWorktreeInput>(inputSchema, input)
   },
+  isEnabled(ctx: ToolContext) {
+    return getSessionWorktree(ctx.turn.sessionId) !== undefined
+  },
   isConcurrencySafe() {
     return false
   },

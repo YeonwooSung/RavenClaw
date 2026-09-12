@@ -51,7 +51,7 @@ function fakeRuntime(
   return {
     engine,
     ask: extras.ask ?? createAskBridge(),
-    store: extras.store,
+    store: extras.store ?? fakeStore(),
     cwd: extras.cwd ?? '/proj',
     config: {
       ads: { feedUrl: '' },
@@ -61,6 +61,8 @@ function fakeRuntime(
       mcp: { servers: [] },
     },
     hasPaidCapacityPlan: extras.hasPaidCapacityPlan,
+    lockHolderId: 'holder-opentui',
+    lockHolderName: 'tui',
   } as CliRuntime
 }
 
@@ -98,6 +100,16 @@ function fakeStore(
     async listPermissionRules(sessionId: string) {
       return extras.rules?.[sessionId] ?? []
     },
+    async enqueueAgentMail() {},
+    async peekAgentMail() {
+      return []
+    },
+    async drainAgentMail() {
+      return []
+    },
+    async acquireSessionLock() {},
+    async renewSessionLock() {},
+    async releaseSessionLock() {},
   } as SessionStore & { filters: SessionListFilter[]; upserts: SessionRecord[] }
 }
 
@@ -123,6 +135,7 @@ function fakeEngine(
     async setPermissionMode() {},
     reloadSystem() {},
     abort() {},
+    async close() {},
   }
 }
 

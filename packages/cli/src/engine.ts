@@ -19,6 +19,7 @@ import {
   loadConfig,
   loadFileHooks,
   loadLocalPlugins,
+  deferUntilUnlocked,
   mergeToolPool,
   normalizeOpenAiBaseUrl,
   OLLAMA_DEFAULT_HOST,
@@ -66,6 +67,7 @@ import {
   type ResolvedConfig,
   type SessionEngine,
   type SessionEngineOptions,
+  type SessionLockHolderName,
   type SessionRecord,
   type SessionStore,
   type SystemPart,
@@ -227,7 +229,7 @@ export function createRootTools(
     plan.enter,
     plan.exit,
   ]
-  return [...list, createToolSearchTool(list)]
+  return [...list, createToolSearchTool({ deferred: [], unlock() {} })]
 }
 
 export function createSessionTools(opts: {
@@ -243,9 +245,14 @@ export function createSessionTools(opts: {
   hooks?: PermissionHook[]
   askTool?: Tool
 }): Tool[] {
-  const base = createRootTools(opts.store, opts.bash ?? bashTool, opts.askTool)
-  const mcpTools = opts.mcpTools ?? []
-  const childPool = mcpTools.length > 0 ? mergeToolPool(base, mcpTools) : base
+  const root = createRootTools(opts.store, opts.bash ?? bashTool, opts.askTool)
+  const deferred = (opts.mcpTools ?? []).map(deferUntilUnlocked)
+  const search = createToolSearchTool({
+    deferred,
+    unlock() {},
+  })
+  const always = root.map((tool) => (tool.name === 'ToolSearch' ? search : tool))
+  const childPool = deferred.length > 0 ? mergeToolPool(always, deferred) : always
   const agentOpts: Parameters<typeof createAgentTool>[0] = {
     store: opts.store,
     provider: opts.provider,
@@ -258,8 +265,8 @@ export function createSessionTools(opts: {
   if (opts.system !== undefined) agentOpts.system = opts.system
   if (opts.hooks !== undefined) agentOpts.hooks = opts.hooks
   const agent = createAgentTool(agentOpts)
-  if (mcpTools.length === 0) return [...base, agent]
-  return mergeToolPool([...base, agent], mcpTools)
+  if (deferred.length === 0) return [...always, agent]
+  return mergeToolPool([...always, agent], deferred)
 }
 
 export function compactPolicyFromConfig(compact: {
@@ -327,6 +334,8 @@ export interface CliRuntimeBase {
   preferByok?: boolean
   surface?: IncludedSurface
   remainingSessions?: number
+  lockHolderId: string
+  lockHolderName: SessionLockHolderName
 }
 
 export type CliRuntime = CliRuntimeBase & { engine: SessionEngine }
@@ -343,6 +352,10 @@ export async function openEngine(opts: {
   funding?: Funding
   tools?: Tool[]
   maxRounds?: number
+  lockHolderId?: string
+  lockHolderName?: SessionLockHolderName
+  skipLock?: boolean
+  verifyOnStop?: boolean
 }): Promise<{ engine: SessionEngine; mcpCloser?: () => Promise<void>; askQuestions: AskUserBridge }> {
   const askQuestions = createAskUserBridge()
   const session = opts.session ?? newSessionRecord({
@@ -352,7 +365,46 @@ export async function openEngine(opts: {
     funding: opts.funding ?? 'byok',
   })
   if (!opts.session) await opts.store.createSession(session)
+  const lockHolderId = opts.lockHolderId ?? crypto.randomUUID()
+  const lockHolderName = opts.lockHolderName ?? 'sdk'
+  let acquired = false
+  if (opts.skipLock !== true) {
+    await opts.store.acquireSessionLock(session.id, {
+      holderId: lockHolderId,
+      holderName: lockHolderName,
+    })
+    acquired = true
+  }
 
+  try {
+    return await finishOpenEngine(opts, {
+      session,
+      lockHolderId,
+      askQuestions,
+      acquired,
+    })
+  } catch (error) {
+    if (acquired) {
+      try {
+        await opts.store.releaseSessionLock(session.id, lockHolderId)
+      } catch {
+        // keep the original error
+      }
+    }
+    throw error
+  }
+}
+
+async function finishOpenEngine(
+  opts: Parameters<typeof openEngine>[0],
+  ready: {
+    session: SessionRecord
+    lockHolderId: string
+    askQuestions: AskUserBridge
+    acquired: boolean
+  },
+): Promise<{ engine: SessionEngine; mcpCloser?: () => Promise<void>; askQuestions: AskUserBridge }> {
+  const { session, lockHolderId, askQuestions } = ready
   const compact = compactPolicyFromConfig(opts.config.compact)
   const system = buildSystemParts({
     cwd: session.cwd,
@@ -369,10 +421,15 @@ export async function openEngine(opts: {
   const servers = opts.tools !== undefined ? [] : (opts.config.mcp?.servers ?? [])
   let mcpTools: Tool[] = []
   let mcpCloser: (() => Promise<void>) | undefined
+  try {
   if (servers.length > 0) {
     const loaded = await loadConfiguredMcpTools(servers, {
       ...(opts.spawnMcp ? { spawn: opts.spawnMcp } : {}),
     })
+    if (loaded.errors.length > 0) {
+      await loaded.close()
+      throw new Error(formatMcpLoadErrors(loaded.errors))
+    }
     mcpTools = loaded.tools
     mcpCloser = loaded.close
   }
@@ -440,7 +497,19 @@ export async function openEngine(opts: {
   if (jsonSchema !== undefined) engineOpts.jsonSchema = jsonSchema
   if (opts.config.bare === true) engineOpts.bare = true
   if (extraDirs.length > 0) engineOpts.additionalDirectories = extraDirs
+  engineOpts.sessionLock = { holderId: lockHolderId }
+  if (opts.verifyOnStop === true) engineOpts.verifyOnStop = true
   return { engine: createSessionEngine(engineOpts), mcpCloser, askQuestions }
+  } catch (error) {
+    if (mcpCloser) {
+      try {
+        await mcpCloser()
+      } catch {
+        // keep the original error
+      }
+    }
+    throw error
+  }
 }
 
 export async function providerFromConfig(
@@ -540,6 +609,10 @@ function includedApiKey(config: ResolvedConfig): string {
   )
 }
 
+function formatMcpLoadErrors(errors: Array<{ name: string; message: string }>): string {
+  return errors.map((error) => `MCP server ${error.name} failed: ${error.message}`).join('\n')
+}
+
 function firstNonEmpty(...values: Array<string | undefined>): string | undefined {
   for (const value of values) {
     if (value !== undefined && value !== '') return value
@@ -553,6 +626,7 @@ type BootCliOpts = {
   ask?: AskBridge
   tools?: Tool[]
   maxRounds?: number
+  lockHolder?: SessionLockHolderName
 } & IncludedAccessOptions
 
 export async function bootCli(opts: BootCliOpts & { createSession: false }): Promise<CliRuntimeBase>
@@ -564,6 +638,9 @@ export async function bootCli(
   const config = loadConfig({ home, flags: opts.flags })
   const store = createSqliteStore(join(home, 'state.db'))
   const createSession = opts.createSession !== false
+  const lockHolderId = crypto.randomUUID()
+  const lockHolderName: SessionLockHolderName =
+    opts.lockHolder ?? (opts.surface === 'headless' ? 'exec' : 'tui')
   const probed =
     opts.access ??
     (await resolveIncludedAccess(config, {
@@ -594,7 +671,7 @@ export async function bootCli(
     extras.remainingSessions = access.remainingSessions
   }
   if (!createSession) {
-    return { store, provider, config, cwd, ask, ...extras }
+    return { store, provider, config, cwd, ask, lockHolderId, lockHolderName, ...extras }
   }
   const engineOpts: Parameters<typeof openEngine>[0] = {
     provider,
@@ -603,9 +680,12 @@ export async function bootCli(
     cwd,
     askUser: ask.ask,
     funding: access.admitted ? 'included' : 'byok',
+    lockHolderId,
+    lockHolderName,
   }
   if (opts.tools !== undefined) engineOpts.tools = opts.tools
   if (opts.maxRounds !== undefined) engineOpts.maxRounds = opts.maxRounds
+  if ((opts.surface ?? 'interactive') !== 'headless') engineOpts.verifyOnStop = true
   const { engine, mcpCloser, askQuestions } = await openEngine(engineOpts)
   const wt = opts.flags.worktree
   if (wt !== undefined && wt !== false) {
@@ -614,17 +694,59 @@ export async function bootCli(
     if (entered.ok) {
       engine.session.cwd = entered.cwd
       await store.upsertSession(engine.session)
-      return { engine, store, provider, config, cwd: entered.cwd, ask, mcpCloser, askQuestions, ...extras }
+      return {
+        engine,
+        store,
+        provider,
+        config,
+        cwd: entered.cwd,
+        ask,
+        mcpCloser,
+        askQuestions,
+        lockHolderId,
+        lockHolderName,
+        ...extras,
+      }
     }
   }
-  return { engine, store, provider, config, cwd, ask, mcpCloser, askQuestions, ...extras }
+  return {
+    engine,
+    store,
+    provider,
+    config,
+    cwd,
+    ask,
+    mcpCloser,
+    askQuestions,
+    lockHolderId,
+    lockHolderName,
+    ...extras,
+  }
+}
+
+export const INCLUDED_RESUME_UNAVAILABLE =
+  'This session used included capacity. The included gateway is not available, so RavenClaw will not silently switch to your API keys. Re-run when the gateway is up, or start a new BYOK session.'
+
+export class IncludedResumeError extends Error {
+  constructor(message = INCLUDED_RESUME_UNAVAILABLE) {
+    super(message)
+    this.name = 'IncludedResumeError'
+  }
 }
 
 export async function resumeRuntime(
   runtime: CliRuntimeBase,
   sessionId: string,
 ): Promise<CliRuntime> {
+  const prevEngine = runtime.engine
   const loaded = await resumeSession(runtime.store, sessionId)
+  const lockHolderId = runtime.lockHolderId ?? crypto.randomUUID()
+  const lockHolderName = runtime.lockHolderName ?? 'tui'
+  await runtime.store.acquireSessionLock(loaded.session.id, {
+    holderId: lockHolderId,
+    holderName: lockHolderName,
+  })
+  try {
   await runtime.mcpCloser?.()
   const resumed = await providerForResumedSession(runtime, loaded.session)
   const { engine, mcpCloser, askQuestions } = await openEngine({
@@ -635,7 +757,14 @@ export async function resumeRuntime(
     askUser: runtime.ask.ask,
     session: loaded.session,
     messages: loaded.messages,
+    lockHolderId,
+    lockHolderName,
+    skipLock: true,
+    ...((runtime.surface ?? 'interactive') !== 'headless' ? { verifyOnStop: true } : {}),
   })
+  if (prevEngine) {
+    await prevEngine.close({ releaseLock: prevEngine.session.id !== engine.session.id })
+  }
   return {
     ...runtime,
     engine,
@@ -644,6 +773,16 @@ export async function resumeRuntime(
     mcpCloser,
     askQuestions,
     hasPaidCapacityPlan: resumed.hasPaidCapacityPlan,
+    lockHolderId,
+    lockHolderName,
+  }
+  } catch (error) {
+    try {
+      await runtime.store.releaseSessionLock(loaded.session.id, lockHolderId)
+    } catch {
+      // keep the original error
+    }
+    throw error
   }
 }
 
@@ -669,6 +808,9 @@ export async function openNewSession(
     ...(opts?.sessionId !== undefined ? { id: opts.sessionId } : {}),
   })
   await runtime.store.createSession(session)
+  const prevEngine = runtime.engine
+  const lockHolderId = runtime.lockHolderId ?? crypto.randomUUID()
+  const lockHolderName = runtime.lockHolderName ?? 'tui'
   const { engine, mcpCloser, askQuestions } = await openEngine({
     provider,
     store: runtime.store,
@@ -676,7 +818,13 @@ export async function openNewSession(
     cwd: runtime.cwd,
     askUser: runtime.ask.ask,
     session,
+    lockHolderId,
+    lockHolderName,
+    ...((runtime.surface ?? 'interactive') !== 'headless' ? { verifyOnStop: true } : {}),
   })
+  if (prevEngine && prevEngine.session.id !== engine.session.id) {
+    await prevEngine.close?.()
+  }
   return {
     ...runtime,
     engine,
@@ -685,6 +833,8 @@ export async function openNewSession(
     askQuestions,
     hasPaidCapacityPlan: access.admitted ? access.hasPaidCapacityPlan : false,
     remainingSessions: access.admitted ? access.remainingSessions : undefined,
+    lockHolderId,
+    lockHolderName,
   }
 }
 
@@ -707,7 +857,8 @@ async function providerForResumedSession(
       hasPaidCapacityPlan: access.hasPaidCapacityPlan,
     }
   }
-  return { provider: byokProviderFromConfig(runtime.config), hasPaidCapacityPlan: false }
+  // Included sessions stay on the included gateway; never fall back to BYOK.
+  throw new IncludedResumeError()
 }
 
 export const PERMISSION_MODES = [

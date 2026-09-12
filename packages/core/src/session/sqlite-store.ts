@@ -1,5 +1,10 @@
 import { Database } from 'bun:sqlite'
-import { PersistError } from '../types'
+import {
+  PersistError,
+  SESSION_LOCK_TTL_MS,
+  SessionLockError,
+  sessionLockedMessage,
+} from '../types'
 import type {
   Funding,
   Message,
@@ -10,6 +15,7 @@ import type {
   SessionStore,
   TokenUsage,
 } from '../types'
+import { clipAgentMailBody } from '../tasks/mailbox'
 import { repairRoleAlternation } from '../loop/repair'
 import { applyMigrations } from './schema'
 import {
@@ -77,6 +83,7 @@ function errorMessage(error: unknown): string {
 }
 
 function toPersistError(error: unknown): PersistError {
+  if (error instanceof SessionLockError) throw error
   if (error instanceof PersistError) return error
   const code = sqliteCode(error)
   const errno = sqliteErrno(error)
@@ -314,19 +321,67 @@ export function createSqliteStore(dbPath: string): SessionStore {
      VALUES (?, ?, ?, ?, ?)`,
   )
   const selectRules = db.query(`SELECT * FROM permission_rules WHERE session_id = ?`)
+  const insertMail = db.query(
+    `INSERT INTO agent_mail (parent_session_id, created_at, body) VALUES (?, ?, ?)`,
+  )
+  const selectMail = db.query(
+    `SELECT id, body FROM agent_mail WHERE parent_session_id = ? ORDER BY created_at, id`,
+  )
+  const deleteMailByIds = db.query(`DELETE FROM agent_mail WHERE id = ?`)
+  const deleteExpiredLock = db.query(
+    `DELETE FROM session_locks WHERE session_id = ? AND expires_at < ?`,
+  )
+  const selectLock = db.query(
+    `SELECT holder_id, holder_name, expires_at FROM session_locks WHERE session_id = ?`,
+  )
+  const upsertLock = db.query(
+    `INSERT INTO session_locks (
+       session_id, holder_id, holder_pid, holder_name, acquired_at, expires_at
+     ) VALUES (?, ?, ?, ?, ?, ?)
+     ON CONFLICT(session_id) DO UPDATE SET
+       holder_id = excluded.holder_id,
+       holder_pid = excluded.holder_pid,
+       holder_name = excluded.holder_name,
+       acquired_at = excluded.acquired_at,
+       expires_at = excluded.expires_at`,
+  )
+  const updateLockExpiry = db.query(
+    `UPDATE session_locks SET expires_at = ? WHERE session_id = ? AND holder_id = ?`,
+  )
+  const deleteLock = db.query(
+    `DELETE FROM session_locks WHERE session_id = ? AND holder_id = ?`,
+  )
 
   let tail: Promise<void> = Promise.resolve()
   let depth = 0
+
+  function beginImmediate<T>(fn: () => T): T {
+    db.exec('BEGIN IMMEDIATE')
+    try {
+      const result = fn()
+      db.exec('COMMIT')
+      return result
+    } catch (error) {
+      try {
+        db.exec('ROLLBACK')
+      } catch {
+        // already rolled back
+      }
+      throw error
+    }
+  }
 
   async function retryOnce<T>(fn: () => Promise<T>): Promise<T> {
     try {
       return await fn()
     } catch (error) {
+      if (error instanceof SessionLockError) throw error
       const mapped = toPersistError(error)
       if (mapped.code === 'busy' || mapped.code === 'locked') {
         try {
           return await fn()
         } catch (retryError) {
+          if (retryError instanceof SessionLockError) throw retryError
           throw toPersistError(retryError)
         }
       }
@@ -541,6 +596,80 @@ export function createSqliteStore(dbPath: string): SessionStore {
       await withWrite(async () => {
         recordCompactTx(sessionId, generation, summary, inactivatedIds)
         unindexMessagesFts(db, inactivatedIds)
+      })
+    },
+
+    async enqueueAgentMail(parentSessionId, text) {
+      await withWrite(async () => {
+        insertMail.run(parentSessionId, Date.now(), clipAgentMailBody(text))
+      })
+    },
+
+    async peekAgentMail(parentSessionId) {
+      const rows = selectMail.all(parentSessionId) as Array<{ id: number; body: string }>
+      return rows.map((row) => row.body)
+    },
+
+    async drainAgentMail(parentSessionId) {
+      return withWrite(async () =>
+        beginImmediate(() => {
+          const rows = selectMail.all(parentSessionId) as Array<{ id: number; body: string }>
+          for (const row of rows) deleteMailByIds.run(row.id)
+          return rows.map((row) => row.body)
+        }),
+      )
+    },
+
+    async acquireSessionLock(sessionId, opts) {
+      await withWrite(async () => {
+        beginImmediate(() => {
+          const now = Date.now()
+          const ttl = opts.ttlMs ?? SESSION_LOCK_TTL_MS
+          deleteExpiredLock.run(sessionId, now)
+          const row = selectLock.get(sessionId) as
+            | { holder_id: string; holder_name: string | null; expires_at: number }
+            | null
+          if (row && row.holder_id !== opts.holderId) {
+            throw new SessionLockError(sessionLockedMessage(row.holder_name ?? undefined, row.expires_at), {
+              holderName: row.holder_name ?? undefined,
+              expiresAt: row.expires_at,
+            })
+          }
+          upsertLock.run(
+            sessionId,
+            opts.holderId,
+            process.pid,
+            opts.holderName,
+            now,
+            now + ttl,
+          )
+        })
+      })
+    },
+
+    async renewSessionLock(sessionId, holderId, ttlMs) {
+      await withWrite(async () => {
+        beginImmediate(() => {
+          const now = Date.now()
+          const row = selectLock.get(sessionId) as
+            | { holder_id: string; holder_name: string | null; expires_at: number }
+            | null
+          if (!row || row.holder_id !== holderId) {
+            throw new SessionLockError(
+              sessionLockedMessage(row?.holder_name ?? undefined, row?.expires_at ?? now),
+              row
+                ? { holderName: row.holder_name ?? undefined, expiresAt: row.expires_at }
+                : undefined,
+            )
+          }
+          updateLockExpiry.run(now + (ttlMs ?? SESSION_LOCK_TTL_MS), sessionId, holderId)
+        })
+      })
+    },
+
+    async releaseSessionLock(sessionId, holderId) {
+      await withWrite(async () => {
+        deleteLock.run(sessionId, holderId)
       })
     },
 

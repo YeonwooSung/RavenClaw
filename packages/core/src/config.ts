@@ -30,6 +30,10 @@ export interface McpServerConfig {
   env?: Record<string, string>
   url?: string
   headers?: Record<string, string>
+  /** If set, only these server-native tool names are loaded. */
+  tools?: string[]
+  /** Applied after `tools`. */
+  excludeTools?: string[]
 }
 
 export interface McpConfig {
@@ -491,6 +495,10 @@ function parseMcpServer(rec: Record<string, unknown>): McpServerConfig | undefin
     }
     if (Object.keys(headers).length > 0) server.headers = headers
   }
+  const tools = asStringList(rec.tools)
+  if (tools !== undefined) server.tools = tools
+  const excludeTools = asStringList(rec.excludeTools)
+  if (excludeTools !== undefined) server.excludeTools = excludeTools
   return server
 }
 

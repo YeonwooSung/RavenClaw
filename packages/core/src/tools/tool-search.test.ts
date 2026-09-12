@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { Tool, ToolContext, Turn } from '../types'
+import { filterToolsForTurn } from './skill'
 import { createToolSearchTool } from './tool-search'
 
 function stubTool(name: string, description: string): Tool {
@@ -61,8 +62,12 @@ const pool = [
   stubTool('Glob', 'Find files by glob pattern'),
 ]
 
+function searchTool(pool: Tool[], unlock: (names: string[]) => void = () => {}) {
+  return createToolSearchTool({ deferred: pool, unlock })
+}
+
 describe('ToolSearch', () => {
-  const tool = createToolSearchTool(pool)
+  const tool = searchTool(pool)
 
   test('is a concurrency-safe read-only tool that allows by mode', async () => {
     expect(tool.name).toBe('ToolSearch')
@@ -82,12 +87,35 @@ describe('ToolSearch', () => {
   })
 
   test('select: returns existing names from the pool', async () => {
-    const out = await tool.execute({ query: 'select:Edit,Missing,bash' }, makeCtx())
+    const unlocked: string[] = []
+    const ctx = makeCtx()
+    const selecting = searchTool(pool, (names) => {
+      unlocked.push(...names)
+    })
+    const out = await selecting.execute({ query: 'select:Edit,Missing,bash' }, ctx)
     const lines = out.split('\n')
     expect(lines[0]?.startsWith('Edit — ')).toBe(true)
     expect(lines[1]?.startsWith('Bash — ')).toBe(true)
     expect(out).not.toContain('Missing')
-    expect(lines[lines.length - 1]).toBe('total 6 deferred')
+    expect(lines[lines.length - 1]).toBe('total 4 deferred')
+    expect(unlocked).toEqual(['Edit', 'Bash'])
+    expect(ctx.turn.unlockedToolNames).toEqual(['Edit', 'Bash'])
+  })
+
+  test('select unlocks deferred tools for filterToolsForTurn and shrinks the remaining total', async () => {
+    const mcp = stubTool('mcp_ping', 'Ping a deferred MCP server')
+    mcp.isEnabled = (ctx) => ctx.turn.unlockedToolNames?.includes('mcp_ping') === true
+    const ctx = makeCtx()
+    const search = searchTool([mcp])
+    const catalog = [search, mcp]
+    expect(filterToolsForTurn(catalog, ctx.turn).map((tool) => tool.name)).toEqual(['ToolSearch'])
+    const out = await search.execute({ query: 'select:mcp_ping' }, ctx)
+    expect(out).toContain('mcp_ping — ')
+    expect(out.endsWith('total 0 deferred')).toBe(true)
+    expect(filterToolsForTurn(catalog, ctx.turn).map((tool) => tool.name)).toEqual([
+      'ToolSearch',
+      'mcp_ping',
+    ])
   })
 
   test('keyword match is case-insensitive on name and description', async () => {

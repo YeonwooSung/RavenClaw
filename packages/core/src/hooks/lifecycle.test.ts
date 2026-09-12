@@ -163,6 +163,18 @@ process.stdout.write(JSON.stringify({
     expect(await hooks.run('SessionEnd', {})).toBeUndefined()
   }, 15_000)
 
+  test('updatedInput is passed through run()', async () => {
+    const home = tempDir('ravenclaw-life-rewrite-')
+    const cwd = tempDir('ravenclaw-life-rewrite-cwd-')
+    writeHooks(home, {
+      PreToolUse: [{ command: `printf '%s' '{"updatedInput":{"text":"rewritten"}}'` }],
+    })
+    const hooks = loadLifecycleHooks(cwd, home)
+    expect(await hooks.run('PreToolUse', { name: 'Echo', input: { text: 'orig' } })).toEqual({
+      updatedInput: { text: 'rewritten' },
+    })
+  })
+
   test('empty stdout is void', async () => {
     const home = tempDir('ravenclaw-life-empty-')
     const cwd = tempDir('ravenclaw-life-empty-cwd-')

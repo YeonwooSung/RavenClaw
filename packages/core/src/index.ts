@@ -117,7 +117,13 @@ export { parseCronSlashArg, CRON_USAGE } from './schedule/slash'
 export type { CronJob, CronStore, JobSchedule, CronFireStatus } from './schedule/types'
 export { createTaskRegistry, formatTasksNotice, parseTasksArg } from './tasks/registry'
 export type { TaskRegistry, TaskSnapshot } from './tasks/registry'
-export { enqueueAgentMail, drainAgentMail, MAX_PARALLEL_CHILDREN } from './tasks/mailbox'
+export {
+  enqueueAgentMail,
+  peekAgentMail,
+  drainAgentMail,
+  MAX_PARALLEL_CHILDREN,
+  AGENT_MAIL_BODY_MAX,
+} from './tasks/mailbox'
 export { createFileHistory, formatUndoNotice } from './session/file-history'
 export type { FileHistory, UndoResult } from './session/file-history'
 export {
@@ -150,7 +156,13 @@ export type { DiscoveredSkill, SkillInput, SkillSource } from './tools/skill'
 export { createMcpToolBridge, createStdioMcpTransport } from './mcp/client'
 export { createHttpMcpTransport } from './mcp/http'
 export { createMcpResourceTools } from './mcp/resources'
-export { loadMcpTools, mergeToolPool, wrapMcpTools } from './mcp/tools'
+export {
+  deferUntilUnlocked,
+  filterMcpDescriptors,
+  loadMcpTools,
+  mergeToolPool,
+  wrapMcpTools,
+} from './mcp/tools'
 export type { McpResource, McpToolBridge, McpToolDescriptor, McpTransport } from './mcp/types'
 export { getAgentDefinition, agentCatalog } from './agent/catalog'
 export { addDirectory } from './permissions/directories'
@@ -167,6 +179,7 @@ export { buildSystemParts } from './prompt/builder'
 export type { PromptBuildInput } from './prompt/builder'
 export { loadMemorySnapshot } from './prompt/memory'
 export { loadProjectFileTree } from './prompt/file-tree'
+export { loadNearestSubdirAgents, SUBDIR_AGENTS_CHAR_CAP } from './prompt/subdir-agents'
 export { createAgentTool } from './tools/agent'
 export type { AgentInput } from './tools/agent'
 export { loadLocalPlugins } from './plugins/load'

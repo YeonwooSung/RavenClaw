@@ -23,7 +23,6 @@ import {
   type StreamEvent,
   type TokenUsage,
   buildSystemParts,
-  drainAgentMail,
 } from '@ravenclaw/core'
 import { AdDock } from './ad-dock'
 import {
@@ -158,6 +157,12 @@ export function App(props: AppProps) {
   }, [])
 
   useEffect(() => {
+    return () => {
+      void runtimeRef.current.engine.close()
+    }
+  }, [])
+
+  useEffect(() => {
     runtimeRef.current.ask.bind(async (event, signal) => {
       return await new Promise<'allow' | 'deny' | 'allow_always'>((resolve, reject) => {
         const pending: PendingAsk = {
@@ -251,8 +256,11 @@ export function App(props: AppProps) {
             if (looped.prompt !== undefined) void runTurn(looped.prompt)
           } else {
             loopRef.current = null
-            const mail = drainAgentMail(runtimeRef.current.engine.session.id)
-            if (mail.length > 0) void runTurn(`[mailbox]\n${mail.join('\n\n')}`)
+            void runtimeRef.current.store
+              .peekAgentMail(runtimeRef.current.engine.session.id)
+              .then((mail) => {
+                if (mail.length > 0) void runTurn('[mailbox]')
+              })
           }
         }
       }
@@ -332,6 +340,7 @@ export function App(props: AppProps) {
           return
         case 'clear':
           void (async () => {
+            await runtimeRef.current.engine.close()
             await runtimeRef.current.mcpCloser?.()
             const next = await openNewSession(runtimeRef.current)
             runtimeRef.current = next
@@ -677,8 +686,18 @@ export function App(props: AppProps) {
       void (async () => {
         try {
           if (!busyRef.current) {
-            const mail = drainAgentMail(runtimeRef.current.engine.session.id)
-            if (mail.length > 0) void runTurn(`[mailbox]\n${mail.join('\n\n')}`)
+            const mail = await runtimeRef.current.store.peekAgentMail(
+              runtimeRef.current.engine.session.id,
+            )
+            if (mail.length > 0) void runTurn('[mailbox]')
+            try {
+              await runtimeRef.current.store.renewSessionLock(
+                runtimeRef.current.engine.session.id,
+                runtimeRef.current.lockHolderId,
+              )
+            } catch {
+              // idle renew is best-effort
+            }
           }
           const home = runtimeRef.current.config.home
           const fired = await fireDueJobs({

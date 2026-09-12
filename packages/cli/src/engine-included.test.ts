@@ -12,6 +12,8 @@ import {
 import type { Entitlement } from '@ravenclaw/ads'
 import {
   bootCli,
+  IncludedResumeError,
+  INCLUDED_RESUME_UNAVAILABLE,
   newSessionRecord,
   normalizeIncludedGatewayUrl,
   openEngine,
@@ -619,6 +621,50 @@ describe('included gateway access', () => {
     }
   })
 
+  test('resume of an included session throws when the gateway is not admitted', async () => {
+    const home = tempHome()
+    const previousHome = process.env.RAVENCLAW_HOME
+    process.env.RAVENCLAW_HOME = home
+    writeFileSync(join(home, '.env'), 'ANTHROPIC_API_KEY=sk-ant\n')
+    writeFileSync(
+      join(home, 'config.yaml'),
+      ['included:', '  enabled: true', '  gatewayUrl: https://gw.example.com/v1', ''].join('\n'),
+    )
+    let store: { close?: () => void } | undefined
+    try {
+      let probes = 0
+      const created = await bootCli({
+        flags: {},
+        cwd: '/tmp/resume-included-denied',
+        probe: async () => {
+          probes += 1
+          return probes === 1 ? admitted() : denied()
+        },
+      })
+      store = created.store
+      expect(created.engine.session.funding).toBe('included')
+      expect(created.provider.id).toBe('included-gateway')
+      created.config.env = {}
+      let thrown: unknown
+      try {
+        await resumeRuntime(created, created.engine.session.id)
+      } catch (error) {
+        thrown = error
+      }
+      expect(thrown).toBeInstanceOf(IncludedResumeError)
+      expect(thrown).toMatchObject({
+        name: 'IncludedResumeError',
+        message: INCLUDED_RESUME_UNAVAILABLE,
+      })
+      expect(String(thrown)).not.toMatch(/ANTHROPIC_API_KEY|OPENAI_API_KEY/)
+      expect(created.provider.id).toBe('included-gateway')
+    } finally {
+      store?.close?.()
+      if (previousHome === undefined) delete process.env.RAVENCLAW_HOME
+      else process.env.RAVENCLAW_HOME = previousHome
+    }
+  })
+
   test('resume-style boot (createSession: false) does not create a store row and does not increment', async () => {
     const home = tempHome()
     const previousHome = process.env.RAVENCLAW_HOME
@@ -778,5 +824,31 @@ describe('included gateway access', () => {
       },
     })
     expect(engine.session.funding).toBe('included')
+  })
+
+  test('openEngine releases the session lock when later setup throws', async () => {
+    const store = createMemoryStore()
+    const session = newSessionRecord({
+      cwd: '/tmp',
+      model: 'dummy',
+      permissionMode: 'default',
+      funding: 'byok',
+    })
+    await store.createSession(session)
+    await expect(
+      openEngine({
+        provider: stubProvider(),
+        store,
+        config: { ...config(), jsonSchema: 'not-json' },
+        cwd: '/tmp',
+        session,
+        lockHolderId: 'holder-a',
+        lockHolderName: 'exec',
+        async askUser() {
+          return 'deny'
+        },
+      }),
+    ).rejects.toThrow('--json-schema is not valid JSON')
+    await store.acquireSessionLock(session.id, { holderId: 'holder-b', holderName: 'tui' })
   })
 })

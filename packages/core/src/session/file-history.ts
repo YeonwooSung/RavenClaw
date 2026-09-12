@@ -21,6 +21,8 @@ export interface FileHistory {
   undo(): UndoResult
   pendingCount(): number
   peekLast?(): { open: boolean } | undefined
+  /** Snapshots recorded on the current (this-turn) generation. */
+  turnWriteCount(): number
 }
 
 interface Generation {
@@ -107,6 +109,10 @@ export function createFileHistory(sessionId: string, home = ravenclawHome()): Fi
 
     pendingCount() {
       return generations.reduce((sum, gen) => sum + gen.rows.length, 0)
+    },
+
+    turnWriteCount() {
+      return current ? current.rows.length : 0
     },
 
     peekLast() {

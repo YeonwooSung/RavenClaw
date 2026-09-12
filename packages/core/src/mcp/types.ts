@@ -1,7 +1,11 @@
 import { readPackageVersion } from '../package-version'
 
+export interface McpRequestOpts {
+  signal?: AbortSignal
+}
+
 export interface McpTransport {
-  request(method: string, params?: unknown): Promise<unknown>
+  request(method: string, params?: unknown, opts?: McpRequestOpts): Promise<unknown>
   notify?(method: string, params?: unknown): Promise<void>
   close(): Promise<void>
 }
@@ -29,7 +33,7 @@ export interface McpResourceContents {
 
 export interface McpToolBridge {
   listTools(): Promise<McpToolDescriptor[]>
-  callTool(name: string, input: unknown): Promise<unknown>
+  callTool(name: string, input: unknown, opts?: McpRequestOpts): Promise<unknown>
   listResources(): Promise<McpResource[]>
   readResource(uri: string): Promise<McpResourceContents>
   close(): Promise<void>

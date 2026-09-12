@@ -146,6 +146,23 @@ describe('createLspTool', () => {
     expect(out).toBe('definition src/a.ts:2:0')
   })
 
+  test('isEnabled is false without lsp.json and true once configured', () => {
+    const root = fixtureRoot()
+    const tool = createLspTool()
+    expect(tool.isEnabled?.(makeCtx(root))).toBe(false)
+    writeLspConfig(root)
+    expect(tool.isEnabled?.(makeCtx(root))).toBe(true)
+  })
+
+  test('isEnabled reads lsp.json from projectCwd', () => {
+    const project = fixtureRoot()
+    const worktree = fixtureRoot()
+    writeLspConfig(project)
+    const tool = createLspTool()
+    expect(tool.isEnabled?.(makeCtx(worktree))).toBe(false)
+    expect(tool.isEnabled?.(makeCtx(worktree, { projectCwd: project }))).toBe(true)
+  })
+
   test('execute refuses when the signal is already aborted', async () => {
     const tool = createLspTool()
     const ac = new AbortController()

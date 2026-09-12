@@ -12,9 +12,15 @@ export const FTS5_SQL = readFileSync(
   'utf8',
 )
 
+export const AGENT_MAIL_SQL = readFileSync(
+  join(import.meta.dir, '../migrations/003_agent_mail.sql'),
+  'utf8',
+)
+
 const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: 1, sql: INIT_SQL },
   { version: 2, sql: FTS5_SQL },
+  { version: 3, sql: AGENT_MAIL_SQL },
 ]
 
 function currentSchemaVersion(db: Database): number {

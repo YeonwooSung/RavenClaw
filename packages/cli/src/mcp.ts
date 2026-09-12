@@ -30,10 +30,16 @@ export type McpSpawnFn = (
   options: { stdio: ['pipe', 'pipe', 'ignore']; env: NodeJS.ProcessEnv },
 ) => McpChild
 
+export interface McpLoadError {
+  name: string
+  message: string
+}
+
 export interface LoadedMcpTools {
   tools: Tool[]
   close: () => Promise<void>
   bridge?: McpToolBridge
+  errors: McpLoadError[]
 }
 
 export function spawnMcpServer(
@@ -54,6 +60,7 @@ export async function loadConfiguredMcpTools(
   const spawnFn = opts?.spawn ?? (spawn as unknown as McpSpawnFn)
   const tools: Tool[] = []
   const closers: Array<() => Promise<void>> = []
+  const errors: McpLoadError[] = []
 
   const hosts: Array<{ name: string; bridge: McpToolBridge }> = []
   for (const server of servers) {
@@ -62,8 +69,8 @@ export async function loadConfiguredMcpTools(
       tools.push(...loaded.tools)
       closers.push(loaded.close)
       if (loaded.bridge) hosts.push({ name: server.name, bridge: loaded.bridge })
-    } catch {
-      // fail-open: skip this server
+    } catch (error) {
+      errors.push({ name: server.name, message: errorMessage(error) })
     }
   }
   if (hosts.length > 0) {
@@ -72,6 +79,7 @@ export async function loadConfiguredMcpTools(
 
   return {
     tools,
+    errors,
     async close() {
       for (const closer of closers) {
         try {
@@ -110,8 +118,8 @@ async function loadHttpMcpServer(server: McpServerConfig): Promise<LoadedMcpTool
     }
   }
   try {
-    const tools = await loadMcpTools(bridge)
-    return { tools, close, bridge }
+    const tools = await loadMcpTools(bridge, mcpToolFilter(server))
+    return { tools, close, bridge, errors: [] }
   } catch (error) {
     await close()
     throw error
@@ -151,12 +159,23 @@ async function loadStdioMcpServer(
   }
 
   try {
-    const tools = await raceChildFailure(child, loadMcpTools(bridge))
-    return { tools, close, bridge }
+    const tools = await raceChildFailure(child, loadMcpTools(bridge, mcpToolFilter(server)))
+    return { tools, close, bridge, errors: [] }
   } catch (error) {
     await close()
     throw error
   }
+}
+
+function mcpToolFilter(server: McpServerConfig): { tools?: string[]; excludeTools?: string[] } {
+  const filter: { tools?: string[]; excludeTools?: string[] } = {}
+  if (server.tools !== undefined) filter.tools = server.tools
+  if (server.excludeTools !== undefined) filter.excludeTools = server.excludeTools
+  return filter
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error)
 }
 
 function raceChildFailure<T>(child: McpChild, work: Promise<T>): Promise<T> {

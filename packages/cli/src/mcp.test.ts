@@ -3,12 +3,18 @@ import { EventEmitter } from 'node:events'
 import {
   createMemoryStore,
   createMcpToolBridge,
+  defaultConfig,
   loadMcpTools,
   mergeToolPool,
   type McpServerConfig,
+  type ModelProfile,
+  type Provider,
+  type ProviderChunk,
+  type ProviderRequest,
+  type ResolvedConfig,
   type Tool,
 } from '@ravenclaw/core'
-import { createRootTools } from './engine'
+import { createRootTools, openEngine } from './engine'
 import {
   loadConfiguredMcpTools,
   spawnMcpServer,
@@ -179,6 +185,7 @@ describe('loadConfiguredMcpTools', () => {
       { spawn: () => child },
     )
 
+    expect(loaded.errors).toEqual([])
     expect(loaded.tools.map((tool) => tool.name)).toEqual([
       'Read',
       'mcp_ping',
@@ -217,7 +224,7 @@ describe('loadConfiguredMcpTools', () => {
     expect(names.indexOf('mcp_ping')).toBe(names.indexOf(lastBuiltin ?? '') + 1)
   })
 
-  test('skips a server whose spawn throws and keeps tools from the rest', async () => {
+  test('records a spawn error and still returns tools from the rest', async () => {
     const child = fakeMcpChild([{ name: 'mcp_ping' }])
     const servers: McpServerConfig[] = [
       { name: 'broken', command: 'nope' },
@@ -229,6 +236,7 @@ describe('loadConfiguredMcpTools', () => {
         return child
       },
     })
+    expect(loaded.errors).toEqual([{ name: 'broken', message: 'ENOENT' }])
     expect(loaded.tools.map((tool) => tool.name)).toEqual([
       'mcp_ping',
       'ListMcpResources',
@@ -237,7 +245,7 @@ describe('loadConfiguredMcpTools', () => {
     await loaded.close()
   })
 
-  test('skips a server whose listTools fails', async () => {
+  test('records a listTools failure instead of returning a quiet empty pool', async () => {
     const loaded = await loadConfiguredMcpTools([{ name: 'broken', command: 'fake-mcp' }], {
       spawn() {
         const stdout = new EventEmitter()
@@ -265,6 +273,86 @@ describe('loadConfiguredMcpTools', () => {
       },
     })
     expect(loaded.tools).toEqual([] as Tool[])
+    expect(loaded.errors).toHaveLength(1)
+    expect(loaded.errors[0]?.name).toBe('broken')
+    expect(loaded.errors[0]?.message).toMatch(/list failed|exited/)
     await loaded.close()
+  })
+
+  test('applies per-server tools allowlist and excludeTools', async () => {
+    const child = fakeMcpChild([{ name: 'keep' }, { name: 'drop' }, { name: 'also' }])
+    const loaded = await loadConfiguredMcpTools(
+      [{ name: 'fs', command: 'fake-mcp', tools: ['keep', 'drop'], excludeTools: ['drop'] }],
+      { spawn: () => child },
+    )
+    expect(loaded.errors).toEqual([])
+    expect(loaded.tools.map((tool) => tool.name)).toEqual([
+      'keep',
+      'ListMcpResources',
+      'ReadMcpResource',
+    ])
+    await loaded.close()
+  })
+})
+
+function defaultModel(id = 'dummy'): ModelProfile {
+  return {
+    id,
+    contextWindow: 32_000,
+    reserveOutputTokens: 3_200,
+    inputUsdPerMTok: 0,
+    outputUsdPerMTok: 0,
+    cacheReadUsdPerMTok: 0,
+    cacheWriteUsdPerMTok: 0,
+    supportsThinking: false,
+  }
+}
+
+function testResolvedConfig(): ResolvedConfig {
+  return {
+    ...defaultConfig(),
+    home: '/tmp',
+    env: { ANTHROPIC_API_KEY: 'sk-test' },
+    profile: defaultModel('anthropic/claude-sonnet-4'),
+  }
+}
+
+function createFakeProvider(): Provider {
+  return {
+    id: 'fake',
+    apiMode: 'openai_compat',
+    profile(model: string) {
+      return defaultModel(model)
+    },
+    async *stream(_req: ProviderRequest): AsyncGenerator<ProviderChunk> {
+      yield { type: 'stop', reason: null }
+    },
+  }
+}
+
+describe('openEngine MCP fail-loud', () => {
+  test('throws a multi-line error listing each failed server', async () => {
+    await expect(
+      openEngine({
+        provider: createFakeProvider(),
+        store: createMemoryStore(),
+        config: {
+          ...testResolvedConfig(),
+          mcp: {
+            servers: [
+              { name: 'broken', command: 'nope' },
+              { name: 'also-broken', command: 'nope-2' },
+            ],
+          },
+        },
+        cwd: '/tmp',
+        async askUser() {
+          return 'deny'
+        },
+        spawnMcp(command) {
+          throw new Error(`ENOENT ${command}`)
+        },
+      }),
+    ).rejects.toThrow(/MCP server broken failed: ENOENT nope\nMCP server also-broken failed: ENOENT nope-2/)
   })
 })

@@ -1,9 +1,14 @@
-import type { Tool, ToolContext } from '../types'
+import type { Tool, ToolContext, Turn } from '../types'
 import { parseWithSchema } from './parse'
 
 export interface ToolSearchInput {
   query: string
   max_results?: number
+}
+
+export interface ToolSearchOpts {
+  deferred: Tool[]
+  unlock(names: string[]): void
 }
 
 const DEFAULT_MAX = 5
@@ -20,7 +25,7 @@ const inputSchema = {
   },
 }
 
-export function createToolSearchTool(pool: Tool[]): Tool<ToolSearchInput, string> {
+export function createToolSearchTool(opts: ToolSearchOpts): Tool<ToolSearchInput, string> {
   return {
     name: 'ToolSearch',
     description:
@@ -43,14 +48,38 @@ export function createToolSearchTool(pool: Tool[]): Tool<ToolSearchInput, string
     },
     async execute(input: ToolSearchInput, ctx: ToolContext) {
       if (ctx.signal.aborted) throw abortError()
-      const matches = input.query.startsWith(SELECT_PREFIX)
-        ? selectTools(pool, input.query.slice(SELECT_PREFIX.length))
-        : keywordTools(pool, input.query, input.max_results ?? DEFAULT_MAX)
+      const leftover = remainingDeferred(opts.deferred, ctx.turn)
+      const selecting = input.query.startsWith(SELECT_PREFIX)
+      const matches = selecting
+        ? selectTools(opts.deferred, input.query.slice(SELECT_PREFIX.length))
+        : keywordTools(leftover, input.query, input.max_results ?? DEFAULT_MAX)
+      if (selecting) {
+        const names = matches.map((tool) => tool.name)
+        unlockOnTurn(ctx.turn, names)
+        if (names.length > 0) opts.unlock(names)
+      }
       const lines = matches.map(formatMatch)
-      lines.push(`total ${pool.length} deferred`)
+      lines.push(`total ${remainingDeferred(opts.deferred, ctx.turn).length} deferred`)
       return lines.join('\n')
     },
   }
+}
+
+function remainingDeferred(pool: Tool[], turn: Turn): Tool[] {
+  const unlocked = new Set(turn.unlockedToolNames ?? [])
+  return pool.filter((tool) => !unlocked.has(tool.name))
+}
+
+function unlockOnTurn(turn: Turn, names: string[]): void {
+  if (names.length === 0) return
+  const next = [...(turn.unlockedToolNames ?? [])]
+  const seen = new Set(next)
+  for (const name of names) {
+    if (seen.has(name)) continue
+    seen.add(name)
+    next.push(name)
+  }
+  turn.unlockedToolNames = next
 }
 
 function selectTools(pool: Tool[], raw: string): Tool[] {

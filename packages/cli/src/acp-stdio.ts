@@ -101,6 +101,7 @@ async function defaultBoot(): Promise<{
     flags: { dontAsk: true },
     createSession: false,
     surface: 'headless',
+    lockHolder: 'acp',
   })
   return {
     create: async (sessionId) => (await openNewSession(runtime, { sessionId })).engine,

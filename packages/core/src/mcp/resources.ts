@@ -1,5 +1,5 @@
 import { parseWithSchema } from '../tools/parse'
-import type { Tool } from '../types'
+import type { Tool, ToolContext } from '../types'
 import type { McpResource, McpToolBridge } from './types'
 
 export interface NamedMcpBridge {
@@ -26,6 +26,9 @@ function listMcpResourcesTool(hosts: NamedMcpBridge[]): Tool<{ server?: string }
     inputSchema: schema,
     parse(input: unknown) {
       return parseWithSchema<{ server?: string }>(schema, input ?? {})
+    },
+    isEnabled(ctx: ToolContext) {
+      return ctx.turn.unlockedToolNames?.includes('ListMcpResources') === true
     },
     isConcurrencySafe() {
       return true
@@ -72,6 +75,9 @@ function readMcpResourceTool(
     inputSchema: schema,
     parse(input: unknown) {
       return parseWithSchema<{ uri: string; server?: string }>(schema, input)
+    },
+    isEnabled(ctx: ToolContext) {
+      return ctx.turn.unlockedToolNames?.includes('ReadMcpResource') === true
     },
     isConcurrencySafe() {
       return true

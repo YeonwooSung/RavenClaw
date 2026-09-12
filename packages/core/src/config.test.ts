@@ -518,6 +518,40 @@ describe('parseConfigYaml', () => {
     ])
   })
 
+  test('parses mcp server tools and excludeTools', () => {
+    const parsed = parseConfigYaml(
+      [
+        'mcp:',
+        '  servers:',
+        '    - name: filesystem',
+        '      command: npx',
+        '      tools: [read_file, list_dir]',
+        '      excludeTools: [write_file]',
+        '    - name: git',
+        '      command: uvx',
+        '      tools:',
+        '        - git_status',
+        '      excludeTools:',
+        '        - git_push',
+        '',
+      ].join('\n'),
+    )
+    expect(parsed.mcp?.servers).toEqual([
+      {
+        name: 'filesystem',
+        command: 'npx',
+        tools: ['read_file', 'list_dir'],
+        excludeTools: ['write_file'],
+      },
+      {
+        name: 'git',
+        command: 'uvx',
+        tools: ['git_status'],
+        excludeTools: ['git_push'],
+      },
+    ])
+  })
+
   test('skips mcp servers that lack name or command', () => {
     const parsed = parseConfigYaml(
       [

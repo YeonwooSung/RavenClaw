@@ -1,10 +1,12 @@
 import { describe, expect, test } from 'bun:test'
 import {
   PersistError,
+  SessionLockError,
   defaultConfig,
   getModelProfile,
   ravenclawHome,
   reserveOutputTokens,
+  sessionLockedMessage,
   type ApiMode,
   type Funding,
   type Message,
@@ -22,6 +24,21 @@ const PERSIST_ERROR_CODES: PersistErrorCode[] = [
   'readonly',
   'unknown',
 ]
+
+describe('SessionLockError', () => {
+  test('includes holder name and expiry in the message', () => {
+    const expiresAt = Date.parse('2026-09-12T00:00:00.000Z')
+    const err = new SessionLockError(sessionLockedMessage('serve', expiresAt), {
+      holderName: 'serve',
+      expiresAt,
+    })
+    expect(err).toBeInstanceOf(Error)
+    expect(err.name).toBe('SessionLockError')
+    expect(err.holderName).toBe('serve')
+    expect(err.expiresAt).toBe(expiresAt)
+    expect(err.message).toBe('session locked by serve until 2026-09-12T00:00:00.000Z')
+  })
+})
 
 describe('PersistError', () => {
   test('constructs with each PersistErrorCode and exposes code + message', () => {
@@ -191,6 +208,16 @@ describe('port shapes', () => {
         return []
       },
       async recordCompact() {},
+      async enqueueAgentMail() {},
+      async peekAgentMail() {
+        return []
+      },
+      async drainAgentMail() {
+        return []
+      },
+      async acquireSessionLock() {},
+      async renewSessionLock() {},
+      async releaseSessionLock() {},
       async withWrite<T>(fn: () => Promise<T>) {
         return fn()
       },

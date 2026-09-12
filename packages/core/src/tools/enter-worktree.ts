@@ -1,6 +1,6 @@
 import type { Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
-import { enterSessionWorktree } from './session-worktree'
+import { enterSessionWorktree, getSessionWorktree, gitToplevel } from './session-worktree'
 
 export interface EnterWorktreeInput {
   name?: string
@@ -21,6 +21,12 @@ export const enterWorktreeTool: Tool<EnterWorktreeInput, string> = {
   inputSchema,
   parse(input: unknown) {
     return parseWithSchema<EnterWorktreeInput>(inputSchema, input)
+  },
+  isEnabled(ctx: ToolContext) {
+    return (
+      getSessionWorktree(ctx.turn.sessionId) !== undefined ||
+      gitToplevel(ctx.turn.cwd) !== undefined
+    )
   },
   isConcurrencySafe() {
     return false

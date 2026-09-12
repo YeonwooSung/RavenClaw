@@ -44,12 +44,16 @@ export function createMcpToolBridge(transport: McpTransport): McpToolBridge {
       } while (cursor !== undefined)
       return tools
     },
-    async callTool(name, input) {
+    async callTool(name, input, opts) {
       await ensureReady()
-      return transport.request('tools/call', {
-        name,
-        arguments: input ?? {},
-      })
+      return transport.request(
+        'tools/call',
+        {
+          name,
+          arguments: input ?? {},
+        },
+        opts,
+      )
     },
     async listResources() {
       await ensureReady()
@@ -91,8 +95,10 @@ export function createStdioMcpTransport(streams: McpStdioStreams): McpTransport 
   streams.stdout.on('data', onData)
 
   return {
-    request(method, params) {
+    request(method, params, opts) {
       if (closed) return Promise.reject(new Error('MCP transport is closed'))
+      const signal = opts?.signal
+      if (signal?.aborted) return Promise.reject(abortError())
       const id = nextId++
       const payload: Record<string, unknown> = {
         jsonrpc: '2.0',
@@ -101,7 +107,21 @@ export function createStdioMcpTransport(streams: McpStdioStreams): McpTransport 
       }
       if (params !== undefined) payload.params = params
       return new Promise<unknown>((resolve, reject) => {
-        pending.set(id, { resolve, reject })
+        const onAbort = () => {
+          pending.delete(id)
+          reject(abortError())
+        }
+        if (signal) signal.addEventListener('abort', onAbort, { once: true })
+        pending.set(id, {
+          resolve(value) {
+            signal?.removeEventListener('abort', onAbort)
+            resolve(value)
+          },
+          reject(error) {
+            signal?.removeEventListener('abort', onAbort)
+            reject(error)
+          },
+        })
         streams.stdin.write(encodeJsonRpcFrame(payload))
       })
     },
@@ -228,6 +248,10 @@ function parseReadResourceResult(raw: unknown, uri: string): import('./types').M
   if (typeof item.text === 'string') out.text = item.text
   if (typeof item.blob === 'string') out.blob = item.blob
   return out
+}
+
+function abortError(): Error {
+  return Object.assign(new Error('aborted'), { name: 'AbortError' })
 }
 
 function normalizeToolDescriptor(item: unknown): McpToolDescriptor | undefined {

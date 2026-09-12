@@ -109,13 +109,17 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         }
         if (!(await promptFirstRun(home))) return 1
       }
-      const booted = await bootCli({ flags: parsed.flags, createSession: false })
+      const booted = await bootCli({ flags: parsed.flags, createSession: false, lockHolder: 'tui' })
       const runtime = await resumeRuntime(booted, resolved)
       process.stdout.write(`resumed ${resolved.slice(0, 8)}\n`)
-      if (parsed.tui === 'opentui') return await runOpenTuiApp(runtime)
-      const instance = render(createElement(App, { runtime }))
-      await instance.waitUntilExit()
-      return 0
+      try {
+        if (parsed.tui === 'opentui') return await runOpenTuiApp(runtime)
+        const instance = render(createElement(App, { runtime }))
+        await instance.waitUntilExit()
+        return 0
+      } finally {
+        await runtime.engine.close?.()
+      }
     } catch (error) {
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
       return 1
@@ -265,11 +269,16 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         tools: [],
         maxRounds: 1,
         surface: 'headless',
+        lockHolder: 'exec',
       })
-      const result = await runExec({ prompt: SMOKE_PROMPT, engine: runtime.engine })
-      const verdict = evaluateSmoke(result.text)
-      process.stdout.write(`${verdict.detail}\n`)
-      return verdict.code
+      try {
+        const result = await runExec({ prompt: SMOKE_PROMPT, engine: runtime.engine })
+        const verdict = evaluateSmoke(result.text)
+        process.stdout.write(`${verdict.detail}\n`)
+        return verdict.code
+      } finally {
+        await runtime.engine.close?.()
+      }
     } catch (error) {
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
       return 1
@@ -284,6 +293,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
             flags: parsed.flags,
             createSession: false,
             surface: 'headless',
+            lockHolder: 'acp',
           })
           return {
             create: async (sessionId) => (await openNewSession(runtime, { sessionId })).engine,
@@ -304,6 +314,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         flags: parsed.flags,
         createSession: false,
         surface: 'headless',
+        lockHolder: 'cron',
       })
       const tickOnce = async () => {
         const text = await runCronTick({
@@ -332,14 +343,18 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       return 2
     }
     try {
-      const runtime = await bootCli({ flags: parsed.flags, surface: 'headless' })
-      const execOpts: Parameters<typeof runExec>[0] = {
-        prompt: parsed.prompt,
-        engine: runtime.engine,
+      const runtime = await bootCli({ flags: parsed.flags, surface: 'headless', lockHolder: 'exec' })
+      try {
+        const execOpts: Parameters<typeof runExec>[0] = {
+          prompt: parsed.prompt,
+          engine: runtime.engine,
+        }
+        if (parsed.json) execOpts.json = true
+        const result = await runExec(execOpts)
+        return result.end.reason === 'completed' ? 0 : 1
+      } finally {
+        await runtime.engine.close?.()
       }
-      if (parsed.json) execOpts.json = true
-      const result = await runExec(execOpts)
-      return result.end.reason === 'completed' ? 0 : 1
     } catch (error) {
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
       return 1
@@ -364,13 +379,17 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       }
       if (!(await promptFirstRun(home))) return 1
     }
-    const runtime = await bootCli({ flags: parsed.flags })
-    if (parsed.cmd === 'interactive' && parsed.tui === 'opentui') {
-      return await runOpenTuiApp(runtime)
+    const runtime = await bootCli({ flags: parsed.flags, lockHolder: 'tui' })
+    try {
+      if (parsed.cmd === 'interactive' && parsed.tui === 'opentui') {
+        return await runOpenTuiApp(runtime)
+      }
+      const instance = render(createElement(App, { runtime }))
+      await instance.waitUntilExit()
+      return 0
+    } finally {
+      await runtime.engine.close?.()
     }
-    const instance = render(createElement(App, { runtime }))
-    await instance.waitUntilExit()
-    return 0
   } catch (error) {
     process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
     return 1

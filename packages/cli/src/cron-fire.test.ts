@@ -65,6 +65,8 @@ describe('cronFireSessionRuntime', () => {
       preferByok: true,
       probe,
       fetch: fetchImpl as typeof fetch,
+      lockHolderId: 'holder-parent',
+      lockHolderName: 'tui' as const,
     }
     const next = cronFireSessionRuntime(runtime, job())
     expect(next.surface).toBe('headless')
@@ -76,6 +78,9 @@ describe('cronFireSessionRuntime', () => {
     expect(next.config.permissionMode).toBe('dontAsk')
     expect(runtime.config.permissionMode).toBe('default')
     expect(runtime.cwd).toBe('/parent')
+    expect(next.lockHolderName).toBe('cron')
+    expect(next.lockHolderId).toBe('holder-parent')
+    expect('engine' in next).toBe(false)
   })
 
   test('forces headless even when the parent TUI is interactive', () => {
@@ -86,9 +91,12 @@ describe('cronFireSessionRuntime', () => {
       cwd: '/parent',
       ask: createAskBridge(),
       surface: 'interactive' as const,
+      lockHolderId: 'holder-parent',
+      lockHolderName: 'tui' as const,
     }
     const next = cronFireSessionRuntime(runtime, job())
     expect(next.surface).toBe('headless')
     expect(runtime.surface).toBe('interactive')
+    expect(next.lockHolderName).toBe('cron')
   })
 })

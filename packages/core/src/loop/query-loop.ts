@@ -30,7 +30,12 @@ export async function* queryLoop(
     fallbackUsed: false,
     outputNudges: 0,
     schemaNudges: 0,
+    emptyNudges: 0,
+    verifyNudges: 0,
+    mutatedThisTurn: false,
+    sawVerifyCommand: false,
   }
+  if (!state.turn.injectedAgentsDirs) state.turn.injectedAgentsDirs = new Set()
 
   while (true) {
     const begin = yield* beginRound(state)

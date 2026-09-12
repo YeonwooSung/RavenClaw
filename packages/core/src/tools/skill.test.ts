@@ -483,6 +483,28 @@ describe('filterToolsForTurn', () => {
     expect(pool.map((tool) => tool.name)).toEqual(before)
   })
 
+  test('drops tools whose isEnabled is false', () => {
+    const gated = namedTool('Gated')
+    gated.isEnabled = () => false
+    const on = namedTool('On')
+    on.isEnabled = () => true
+    const turn = makeTurn('/tmp')
+    expect(filterToolsForTurn([gated, on, namedTool('Plain')], turn).map((tool) => tool.name)).toEqual([
+      'On',
+      'Plain',
+    ])
+  })
+
+  test('skill allow list cannot restore a tool whose isEnabled is false', () => {
+    const gated = namedTool('Read')
+    gated.isEnabled = () => false
+    const turn = makeTurn('/tmp')
+    turn.skillAllowedTools = ['Read']
+    expect(
+      filterToolsForTurn([gated, namedTool('Skill'), namedTool('Write')], turn).map((tool) => tool.name),
+    ).toEqual(['Skill'])
+  })
+
   test('keeps remaining builtins as a contiguous sorted prefix ahead of surviving MCP tools', () => {
     const builtins = [
       namedTool('Write'),

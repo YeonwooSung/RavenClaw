@@ -57,7 +57,7 @@ function session(over: Partial<SessionRecord> = {}): SessionRecord {
 }
 
 describe('createSqliteStore', () => {
-  test('fresh install uses WAL and schema_version 2', () => {
+  test('fresh install uses WAL and schema_version 3', () => {
     const path = tempDbPath()
     openStore(path)
     const db = new Database(path, { readonly: true })
@@ -67,11 +67,17 @@ describe('createSqliteStore', () => {
       const version = db
         .query("SELECT value FROM meta WHERE key = 'schema_version'")
         .get() as { value: string }
-      expect(version.value).toBe('2')
+      expect(version.value).toBe('3')
       expect(
         db
           .query("SELECT 1 AS ok FROM sqlite_master WHERE name = 'messages_fts'")
           .get(),
+      ).toBeTruthy()
+      expect(
+        db.query("SELECT 1 AS ok FROM sqlite_master WHERE name = 'agent_mail'").get(),
+      ).toBeTruthy()
+      expect(
+        db.query("SELECT 1 AS ok FROM sqlite_master WHERE name = 'session_locks'").get(),
       ).toBeTruthy()
     } finally {
       db.close()
@@ -402,6 +408,27 @@ describe('createSqliteStore', () => {
     const reader = openStore(path)
     const loaded = await reader.loadSession('s1')
     expect(loaded.messages.map((m) => m.id)).toEqual(['u1'])
+  })
+
+  test('concurrent drain delivers each notice once', async () => {
+    const path = tempDbPath()
+    const a = openStore(path)
+    const b = openStore(path)
+    await a.createSession(session())
+    await a.enqueueAgentMail('s1', 'only-once')
+    const [first, second] = await Promise.all([a.drainAgentMail('s1'), b.drainAgentMail('s1')])
+    const combined = [...first, ...second]
+    expect(combined).toEqual(['only-once'])
+  })
+
+  test('peekAgentMail does not consume rows', async () => {
+    const store = openStore()
+    await store.createSession(session())
+    await store.enqueueAgentMail('s1', 'keep')
+    expect(await store.peekAgentMail('s1')).toEqual(['keep'])
+    expect(await store.peekAgentMail('s1')).toEqual(['keep'])
+    expect(await store.drainAgentMail('s1')).toEqual(['keep'])
+    expect(await store.peekAgentMail('s1')).toEqual([])
   })
 
   test('deleteSession removes the session, children, and messages', async () => {

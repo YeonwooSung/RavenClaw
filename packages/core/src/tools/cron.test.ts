@@ -1,5 +1,6 @@
 import { describe, expect, mock, test } from 'bun:test'
-import { existsSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { decidePermission } from '../permissions/pipeline'
 import { MIN_INTERVAL_MS, type CronJob, type CronStore, type JobSchedule } from '../schedule/types'
@@ -292,5 +293,30 @@ describe('createCronTools', () => {
 
     const bad = await create.execute({ spec: 'every 1s', prompt: 'too soon' }, makeCtx())
     expect(bad).toContain('CronCreate failed')
+  })
+
+  test('isEnabled is false until ~/.ravenclaw/cron/jobs.json exists', () => {
+    const home = mkdtempSync(join(tmpdir(), 'ravenclaw-cron-gate-'))
+    const prev = process.env.RAVENCLAW_HOME
+    process.env.RAVENCLAW_HOME = home
+    try {
+      const { create, list, remove, setEnabled } = createCronTools(memoryStore())
+      const ctx = makeCtx()
+      expect(create.isEnabled?.(ctx)).toBe(false)
+      expect(list.isEnabled?.(ctx)).toBe(false)
+      expect(remove.isEnabled?.(ctx)).toBe(false)
+      expect(setEnabled.isEnabled?.(ctx)).toBe(false)
+
+      mkdirSync(join(home, 'cron'), { recursive: true })
+      writeFileSync(join(home, 'cron', 'jobs.json'), `${JSON.stringify({ jobs: [] })}\n`)
+      expect(create.isEnabled?.(ctx)).toBe(true)
+      expect(list.isEnabled?.(ctx)).toBe(true)
+      expect(remove.isEnabled?.(ctx)).toBe(true)
+      expect(setEnabled.isEnabled?.(ctx)).toBe(true)
+    } finally {
+      if (prev === undefined) delete process.env.RAVENCLAW_HOME
+      else process.env.RAVENCLAW_HOME = prev
+      rmSync(home, { recursive: true, force: true })
+    }
   })
 })

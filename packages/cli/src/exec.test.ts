@@ -1,10 +1,14 @@
-import { describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import {
   createMemoryStore,
   createMcpToolBridge,
   createSessionEngine,
   defaultCompactPolicy,
   defaultConfig,
+  filterToolsForTurn,
   loadMcpTools,
   type ModelProfile,
   type Provider,
@@ -14,6 +18,7 @@ import {
   type SessionRecord,
   type StreamEvent,
   type SystemPart,
+  type Turn,
 } from '@ravenclaw/core'
 import { runExec } from './exec'
 import { createRootTools, createSessionTools, openEngine } from './engine'
@@ -110,6 +115,38 @@ describe('createRootTools', () => {
     expect(names).not.toContain('Agent')
   })
 
+  test('filterToolsForTurn hides gated builtins without lsp.json, git, or cron jobs', () => {
+    const home = mkdtempSync(join(tmpdir(), 'ravenclaw-exec-gate-'))
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-exec-cwd-'))
+    tempDirs.push(home, cwd)
+    const prev = process.env.RAVENCLAW_HOME
+    process.env.RAVENCLAW_HOME = home
+    try {
+      const tools = createRootTools(createMemoryStore())
+      const names = tools.map((tool) => tool.name)
+      expect(names).toContain('LSP')
+      expect(names).toContain('EnterWorktree')
+      expect(names).toContain('ExitWorktree')
+      expect(names).toContain('CronCreate')
+      expect(names).toContain('ToolSearch')
+
+      const turn = makeFilterTurn(cwd)
+      const filtered = filterToolsForTurn(tools, turn).map((tool) => tool.name)
+      expect(filtered).not.toContain('LSP')
+      expect(filtered).not.toContain('EnterWorktree')
+      expect(filtered).not.toContain('ExitWorktree')
+      expect(filtered).not.toContain('CronCreate')
+      expect(filtered).not.toContain('CronList')
+      expect(filtered).not.toContain('CronDelete')
+      expect(filtered).not.toContain('CronSetEnabled')
+      expect(filtered).toContain('Read')
+      expect(filtered).toContain('ToolSearch')
+    } finally {
+      if (prev === undefined) delete process.env.RAVENCLAW_HOME
+      else process.env.RAVENCLAW_HOME = prev
+    }
+  })
+
   test('createSessionTools appends Agent after the static root tools', () => {
     const store = createMemoryStore()
     const provider = createFakeProvider([])
@@ -200,8 +237,74 @@ describe('createRootTools', () => {
     expect(names).toContain('Agent')
     expect(names.at(-1)).toBe('mcp_ping')
     expect(names.indexOf('mcp_ping')).toBeGreaterThan(names.indexOf('Agent'))
+
+    const turn = makeFilterTurn('/tmp')
+    const exposed = filterToolsForTurn(
+      createSessionTools({
+        store,
+        provider: createFakeProvider([]),
+        compact: defaultCompactPolicy(),
+        model: defaultModel(),
+        childMaxRounds: 30,
+        mcpTools,
+        async askUser() {
+          return 'deny'
+        },
+      }),
+      turn,
+    ).map((tool) => tool.name)
+    expect(exposed).not.toContain('mcp_ping')
+    expect(exposed).toContain('ToolSearch')
+    turn.unlockedToolNames = ['mcp_ping']
+    const unlocked = filterToolsForTurn(
+      createSessionTools({
+        store,
+        provider: createFakeProvider([]),
+        compact: defaultCompactPolicy(),
+        model: defaultModel(),
+        childMaxRounds: 30,
+        mcpTools,
+        async askUser() {
+          return 'deny'
+        },
+      }),
+      turn,
+    ).map((tool) => tool.name)
+    expect(unlocked).toContain('mcp_ping')
   })
 })
+
+const tempDirs: string[] = []
+
+beforeEach(() => {
+  tempDirs.length = 0
+})
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop()
+    if (dir) rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+function makeFilterTurn(cwd: string): Turn {
+  return {
+    id: 'turn_1',
+    sessionId: 'sess_1',
+    messages: [],
+    round: 1,
+    maxRounds: 80,
+    graceUsed: false,
+    abort: new AbortController(),
+    permissionMode: 'default',
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    compactGeneration: 0,
+    funding: 'byok',
+    cwd,
+    model: 'dummy',
+    readFiles: new Set(),
+  }
+}
 
 describe('runExec', () => {
   test('collects assistant text and events from a fake provider', async () => {

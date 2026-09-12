@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import type {
   ContentBlock,
   Message,
@@ -32,6 +33,7 @@ import {
   unknownToolText,
 } from './pairing'
 import { repairRoleAlternation, selectProtectedTail } from './repair'
+import { loadNearestSubdirAgents } from '../prompt/subdir-agents'
 
 export interface LoopState extends QueryLoopOptions {
   lastHadToolUse: boolean
@@ -48,7 +50,22 @@ export interface LoopState extends QueryLoopOptions {
   fallbackUsed: boolean
   outputNudges: number
   schemaNudges: number
+  emptyNudges: number
+  verifyNudges: number
+  mutatedThisTurn: boolean
+  sawVerifyCommand: boolean
 }
+
+const EMPTY_COMPLETION_NUDGE =
+  'Your previous reply was empty. Continue the task. Use tools if you need information. Do not apologize.'
+
+const VERIFY_ON_STOP_NUDGE =
+  'Code changed this turn but no test or lint command ran. Run the project\'s test or lint command now, or say you are skipping verification.'
+
+const VERIFY_COMMAND =
+  /\b(test|lint|typecheck|tsc|vitest|jest|bun test|npm test|pytest|cargo test|go test)\b/i
+
+const MUTATING_TOOLS = new Set(['Edit', 'Write', 'ApplyPatch', 'NotebookEdit'])
 
 export type PhaseResult =
   | { action: 'continue' }
@@ -558,6 +575,29 @@ export async function* normalizeResponse(
       yield { type: 'status', message: 'output truncated; continuing' }
       return { action: 'continue' }
     }
+    if (isEmptyCompletion(state) && state.emptyNudges < 2) {
+      state.emptyNudges += 1
+      state.turn.messages.push(asst)
+      try {
+        await state.store.persistAssistant(state.turn.sessionId, asst)
+      } catch (error) {
+        return { action: 'return', end: { reason: 'persist_failed', error } }
+      }
+      const nudge: Extract<Message, { role: 'user' }> = {
+        id: crypto.randomUUID(),
+        role: 'user',
+        blocks: [{ type: 'text', text: EMPTY_COMPLETION_NUDGE }],
+        createdAt: Date.now(),
+      }
+      state.turn.messages.push(nudge)
+      try {
+        await state.store.persistUser(state.turn.sessionId, nudge)
+      } catch (error) {
+        return { action: 'return', end: { reason: 'persist_failed', error } }
+      }
+      yield { type: 'status', message: 'empty completion; retrying' }
+      return { action: 'continue' }
+    }
     state.turn.messages.push(asst)
     try {
       await state.store.persistAssistant(state.turn.sessionId, asst)
@@ -587,6 +627,23 @@ export async function* normalizeResponse(
         return { action: 'return', end: { reason: 'persist_failed', error } }
       }
       yield { type: 'status', message: 'structured output required' }
+      return { action: 'continue' }
+    }
+    if (shouldVerifyOnStop(state)) {
+      state.verifyNudges += 1
+      const nudge: Extract<Message, { role: 'user' }> = {
+        id: crypto.randomUUID(),
+        role: 'user',
+        blocks: [{ type: 'text', text: VERIFY_ON_STOP_NUDGE }],
+        createdAt: Date.now(),
+      }
+      state.turn.messages.push(nudge)
+      try {
+        await state.store.persistUser(state.turn.sessionId, nudge)
+      } catch (error) {
+        return { action: 'return', end: { reason: 'persist_failed', error } }
+      }
+      yield { type: 'status', message: 'verify on stop; retrying' }
       return { action: 'continue' }
     }
     return { action: 'return', end: { reason: 'completed' } }
@@ -791,6 +848,29 @@ async function executeOneCall(
       abortRest: false,
     }
   }
+  let input = parsed.value
+
+  if (state.lifecycle) {
+    const pre = await state.lifecycle.run('PreToolUse', { name: call.name, input })
+    if (pre?.preventContinuation === true) {
+      return {
+        messages: [makeToolMessage(call.id, false, denyText(pre.message ?? 'stopped by hook'))],
+        events,
+        abortRest: false,
+      }
+    }
+    if (pre?.updatedInput !== undefined) {
+      const reparsed = tool.parse(pre.updatedInput)
+      if (!reparsed.ok) {
+        return {
+          messages: [makeToolMessage(call.id, false, parseFailedText(reparsed.message))],
+          events,
+          abortRest: false,
+        }
+      }
+      input = reparsed.value
+    }
+  }
 
   const progress: StreamEvent[] = []
   const ctx: ToolContext = {
@@ -808,7 +888,7 @@ async function executeOneCall(
     const decision = await decidePermission({
       tool,
       name: call.name,
-      input: parsed.value,
+      input,
       ctx,
       mode: state.turn.permissionMode,
       rules: box.rules,
@@ -826,7 +906,7 @@ async function executeOneCall(
         type: 'permission_ask',
         id: call.id,
         tool: call.name,
-        input: parsed.value,
+        input,
         message: decision.message,
       }
       if (decision.saveAs !== undefined) event.saveAs = decision.saveAs
@@ -849,7 +929,7 @@ async function executeOneCall(
             cwd: policyCwd,
             scope,
             tool: call.name,
-            spec: commandOrPath(parsed.value) ?? {},
+            spec: commandOrPath(input) ?? {},
           })
           box.rules = await loadPermissionRules({
             cwd: policyCwd,
@@ -892,21 +972,23 @@ async function executeOneCall(
   const executeCtx: ToolContext = { ...ctx, signal: executeSignal }
 
   try {
-    const output = await tool.execute(parsed.value, executeCtx)
+    const output = await tool.execute(input, executeCtx)
     events.push(...progress)
     const formatted = formatOutput(tool, output)
+    noteToolSideEffects(state, call.name, input)
+    const content = appendSubdirAgents(state, input, formatted.content, formatted.persistPath)
     if (state.lifecycle) {
       const hook = await state.lifecycle.run('PostToolUse', {
         name: call.name,
-        input: parsed.value,
-        output: formatted.content,
+        input,
+        output: content,
       })
       if (hook?.preventContinuation === true) {
-        const msg = makeToolMessage(call.id, true, formatted.content, formatted.persistPath)
+        const msg = makeToolMessage(call.id, true, content, formatted.persistPath)
         events.push({ type: 'tool_result', id: call.id, result: {
           toolUseId: call.id,
           ok: true,
-          content: formatted.content,
+          content,
         } })
         events.push({ type: 'status', message: hook.message ?? 'stopped by hook' })
         return { messages: [msg], events, abortRest: true }
@@ -915,7 +997,7 @@ async function executeOneCall(
     const result: Extract<StreamEvent, { type: 'tool_result' }>['result'] = {
       toolUseId: call.id,
       ok: true,
-      content: formatted.content,
+      content,
     }
     if (formatted.persistPath !== undefined) result.persistPath = formatted.persistPath
     events.push({
@@ -924,7 +1006,7 @@ async function executeOneCall(
       result,
     })
     return {
-      messages: [makeToolMessage(call.id, true, formatted.content, formatted.persistPath)],
+      messages: [makeToolMessage(call.id, true, content, formatted.persistPath)],
       events,
       abortRest: false,
     }
@@ -945,6 +1027,65 @@ async function executeOneCall(
       abortRest: false,
     }
   }
+}
+
+function isEmptyCompletion(state: LoopState): boolean {
+  return state.pendingText.trim() === '' && state.pendingThinking === ''
+}
+
+function shouldVerifyOnStop(state: LoopState): boolean {
+  if (state.verifyOnStop !== true) return false
+  if (state.verifyNudges >= 2) return false
+  if (state.sawVerifyCommand) return false
+  if (state.mutatedThisTurn) return true
+  return (state.fileHistory?.turnWriteCount() ?? 0) > 0
+}
+
+function noteToolSideEffects(state: LoopState, name: string, input: unknown): void {
+  if (MUTATING_TOOLS.has(name)) state.mutatedThisTurn = true
+  if (name === 'Bash') {
+    const command = input && typeof input === 'object' ? (input as { command?: unknown }).command : undefined
+    if (typeof command === 'string' && VERIFY_COMMAND.test(command)) state.sawVerifyCommand = true
+  }
+}
+
+function appendSubdirAgents(
+  state: LoopState,
+  input: unknown,
+  content: string,
+  persistPath?: string,
+): string {
+  const path = extractToolPath(input, persistPath, content)
+  if (path === undefined) return content
+  const seen = state.turn.injectedAgentsDirs ?? new Set<string>()
+  if (!state.turn.injectedAgentsDirs) state.turn.injectedAgentsDirs = seen
+  const injection = loadNearestSubdirAgents(state.turn.cwd, resolve(state.turn.cwd, path), seen)
+  if (injection === undefined) return content
+  return `${content}\n\n${injection}`
+}
+
+function extractToolPath(input: unknown, persistPath?: string, resultContent?: string): string | undefined {
+  if (input && typeof input === 'object') {
+    const rec = input as Record<string, unknown>
+    if (typeof rec.path === 'string' && rec.path.length > 0) return rec.path
+    if (typeof rec.file_path === 'string' && rec.file_path.length > 0) return rec.file_path
+    if (Array.isArray(rec.operations)) {
+      const first = rec.operations[0]
+      if (first && typeof first === 'object' && typeof (first as { path?: unknown }).path === 'string') {
+        const opPath = (first as { path: string }).path
+        if (opPath.length > 0) return opPath
+      }
+    }
+  }
+  if (typeof persistPath === 'string' && persistPath.length > 0) return persistPath
+  if (typeof resultContent === 'string' && resultContent.length > 0) {
+    const first = resultContent.split(/\r?\n/).find((line) => line.trim() !== '')
+    if (first === undefined) return undefined
+    const hit = /^(.+?):(\d+):/.exec(first)
+    if (hit?.[1] && hit[1].length > 0) return hit[1]
+    if (first.length < 512 && !first.includes(' ') && !first.startsWith('[')) return first
+  }
+  return undefined
 }
 
 function createAskSerializer(): <T>(fn: () => Promise<T>) => Promise<T> {

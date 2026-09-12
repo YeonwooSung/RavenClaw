@@ -307,4 +307,25 @@ describe('createStdioMcpTransport', () => {
     await expect(second).resolves.toEqual({ ok: 2 })
     await transport.close()
   })
+
+  test('abort mid-flight rejects with AbortError and does not hang', async () => {
+    const child = mockChild()
+    const transport = createStdioMcpTransport(child)
+    const ac = new AbortController()
+    const pending = transport.request('tools/call', { name: 'slow', arguments: {} }, { signal: ac.signal })
+    ac.abort()
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    await transport.close()
+  })
+
+  test('already-aborted signal rejects immediately', async () => {
+    const child = mockChild()
+    const transport = createStdioMcpTransport(child)
+    const ac = new AbortController()
+    ac.abort()
+    await expect(
+      transport.request('tools/call', { name: 'slow', arguments: {} }, { signal: ac.signal }),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    await transport.close()
+  })
 })

@@ -8,7 +8,6 @@ import {
   buildSystemParts,
   createJsonCronStore,
   fireDueJobs,
-  drainAgentMail,
   parseLoopArg,
   startLoop,
   takeLoopTurn,
@@ -156,8 +155,9 @@ export async function runOpenTuiApp(
           if (looped.prompt !== undefined) void runTurn(looped.prompt)
         } else {
           loopState = null
-          const mail = drainAgentMail(current.engine.session.id)
-          if (mail.length > 0) void runTurn(`[mailbox]\n${mail.join('\n\n')}`)
+          void current.store.peekAgentMail(current.engine.session.id).then((mail) => {
+            if (mail.length > 0) void runTurn('[mailbox]')
+          })
         }
       }
     }
@@ -184,8 +184,13 @@ export async function runOpenTuiApp(
     void (async () => {
       try {
         if (!turnBusy) {
-          const mail = drainAgentMail(current.engine.session.id)
-          if (mail.length > 0) void runTurn(`[mailbox]\n${mail.join('\n\n')}`)
+          const mail = await current.store.peekAgentMail(current.engine.session.id)
+          if (mail.length > 0) void runTurn('[mailbox]')
+          try {
+            await current.store.renewSessionLock(current.engine.session.id, current.lockHolderId)
+          } catch {
+            // idle renew is best-effort
+          }
         }
         const home = current.config.home
         const fired = await fireDueJobs({
@@ -268,6 +273,7 @@ export async function runOpenTuiApp(
           continue
         case 'clear': {
           try {
+            await current.engine.close()
             await current.mcpCloser?.()
             current = await startNew(current)
             bindHosts()
@@ -523,7 +529,9 @@ export async function runOpenTuiApp(
     }
   } finally {
     clearInterval(cronTimer)
+    await current.engine.close()
     close()
+    await current.engine.close?.()
   }
 }
 

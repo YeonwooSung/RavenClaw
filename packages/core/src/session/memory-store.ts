@@ -1,4 +1,9 @@
-import { PersistError } from '../types'
+import {
+  PersistError,
+  SESSION_LOCK_TTL_MS,
+  SessionLockError,
+  sessionLockedMessage,
+} from '../types'
 import type {
   Message,
   PermissionRule,
@@ -7,10 +12,43 @@ import type {
   SessionStore,
 } from '../types'
 import { repairRoleAlternation } from '../loop/repair'
+import { clipAgentMailBody } from '../tasks/mailbox'
 
 type Stored = {
   message: Message
   active: boolean
+}
+
+type MemoryLock = {
+  holderId: string
+  holderPid?: number
+  holderName?: string
+  acquiredAt: number
+  expiresAt: number
+}
+
+function claimMemoryLock(
+  locks: Map<string, MemoryLock>,
+  sessionId: string,
+  opts: { holderId: string; holderName: string; ttlMs?: number },
+): void {
+  const now = Date.now()
+  const existing = locks.get(sessionId)
+  if (existing && existing.expiresAt < now) locks.delete(sessionId)
+  const live = locks.get(sessionId)
+  if (live && live.holderId !== opts.holderId) {
+    throw new SessionLockError(sessionLockedMessage(live.holderName, live.expiresAt), {
+      holderName: live.holderName,
+      expiresAt: live.expiresAt,
+    })
+  }
+  locks.set(sessionId, {
+    holderId: opts.holderId,
+    holderPid: process.pid,
+    holderName: opts.holderName,
+    acquiredAt: now,
+    expiresAt: now + (opts.ttlMs ?? SESSION_LOCK_TTL_MS),
+  })
 }
 
 export function createMemoryStore(): SessionStore {
@@ -18,6 +56,9 @@ export function createMemoryStore(): SessionStore {
   const messages = new Map<string, Stored[]>()
   const assistantKind = new Map<string, 'assistant' | 'tool_calls'>()
   const rules = new Map<string, PermissionRule[]>()
+  const mail = new Map<string, Array<{ id: number; createdAt: number; body: string }>>()
+  const locks = new Map<string, MemoryLock>()
+  let mailSeq = 0
 
   let tail: Promise<void> = Promise.resolve()
   let depth = 0
@@ -144,6 +185,8 @@ export function createMemoryStore(): SessionStore {
         sessions.delete(sessionId)
         messages.delete(sessionId)
         rules.delete(sessionId)
+        mail.delete(sessionId)
+        locks.delete(sessionId)
         for (const key of [...assistantKind.keys()]) {
           if (key.startsWith(`${sessionId}:`)) assistantKind.delete(key)
         }
@@ -223,6 +266,58 @@ export function createMemoryStore(): SessionStore {
         for (const row of bucket(sessionId)) {
           if (ids.has(row.message.id)) row.active = false
         }
+      })
+    },
+
+    async enqueueAgentMail(parentSessionId, text) {
+      await withWrite(async () => {
+        const body = clipAgentMailBody(text)
+        const queue = mail.get(parentSessionId)
+        const row = { id: ++mailSeq, createdAt: Date.now(), body }
+        if (queue) queue.push(row)
+        else mail.set(parentSessionId, [row])
+      })
+    },
+
+    async peekAgentMail(parentSessionId) {
+      const queue = mail.get(parentSessionId)
+      if (!queue || queue.length === 0) return []
+      return queue.map((row) => row.body)
+    },
+
+    async drainAgentMail(parentSessionId) {
+      return withWrite(async () => {
+        const queue = mail.get(parentSessionId)
+        if (!queue || queue.length === 0) return []
+        mail.delete(parentSessionId)
+        return queue.map((row) => row.body)
+      })
+    },
+
+    async acquireSessionLock(sessionId, opts) {
+      await withWrite(async () => {
+        claimMemoryLock(locks, sessionId, opts)
+      })
+    },
+
+    async renewSessionLock(sessionId, holderId, ttlMs) {
+      await withWrite(async () => {
+        const now = Date.now()
+        const row = locks.get(sessionId)
+        if (!row || row.holderId !== holderId) {
+          throw new SessionLockError(
+            sessionLockedMessage(row?.holderName, row?.expiresAt ?? now),
+            row ? { holderName: row.holderName, expiresAt: row.expiresAt } : undefined,
+          )
+        }
+        row.expiresAt = now + (ttlMs ?? SESSION_LOCK_TTL_MS)
+      })
+    },
+
+    async releaseSessionLock(sessionId, holderId) {
+      await withWrite(async () => {
+        const row = locks.get(sessionId)
+        if (row && row.holderId === holderId) locks.delete(sessionId)
       })
     },
 

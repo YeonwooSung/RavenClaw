@@ -229,6 +229,7 @@ function engineOpts(over: {
   session?: SessionRecord
   messages?: Message[]
   maxRounds?: number
+  verifyOnStop?: boolean
 }) {
   const session = over.session ?? makeSession()
   const opts: Parameters<typeof createSessionEngine>[0] = {
@@ -244,6 +245,7 @@ function engineOpts(over: {
     },
   }
   if (over.messages) opts.messages = over.messages
+  if (over.verifyOnStop === true) opts.verifyOnStop = true
   return opts
 }
 
@@ -1224,6 +1226,157 @@ describe('queryLoop via SessionEngine', () => {
     )
     expect(secondResult?.ok).toBe(false)
     expect(secondResult?.blocks[0]?.text.startsWith('aborted:')).toBe(true)
+  })
+
+  test('empty completion twice then a reply: two nudges then completed', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_empty_then_reply' })
+    await store.createSession(session)
+    const provider = createFakeProvider([
+      [{ type: 'stop', reason: 'end' }],
+      [{ type: 'text_delta', text: '   \n' }, { type: 'stop', reason: 'end' }],
+      textThenStop('hello'),
+    ])
+    const engine = createSessionEngine(engineOpts({ provider, store, session }))
+    const { result, events } = await collect(engine.submitMessage('hi'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(provider.streamCount).toBe(3)
+    expect(
+      events.filter((event) => event.type === 'status' && event.message === 'empty completion; retrying'),
+    ).toHaveLength(2)
+    const loaded = await store.loadSession(session.id)
+    const nudges = loaded.messages.filter(
+      (msg) =>
+        msg.role === 'user' &&
+        msg.blocks[0]?.type === 'text' &&
+        msg.blocks[0].text.includes('Your previous reply was empty'),
+    )
+    expect(nudges).toHaveLength(2)
+  })
+
+  test('three empty completions complete after two nudges', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_empty_three' })
+    await store.createSession(session)
+    const provider = createFakeProvider([
+      [{ type: 'stop', reason: 'end' }],
+      [{ type: 'stop', reason: 'end' }],
+      [{ type: 'stop', reason: 'end' }],
+      textThenStop('should not run'),
+    ])
+    const engine = createSessionEngine(engineOpts({ provider, store, session }))
+    const { result, events } = await collect(engine.submitMessage('hi'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(provider.streamCount).toBe(3)
+    expect(
+      events.filter((event) => event.type === 'status' && event.message === 'empty completion; retrying'),
+    ).toHaveLength(2)
+  })
+
+  test('edit then complete without tests nudges verify-on-stop', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_verify_edit' })
+    await store.createSession(session)
+    const edit = stubNamedTool('Edit')
+    const provider = createFakeProvider([
+      toolThenStop('e1', 'Edit', { path: 'a.ts', old_string: 'a', new_string: 'b' }),
+      textThenStop('done'),
+      textThenStop('skipping verification'),
+      textThenStop('ok'),
+    ])
+    const engine = createSessionEngine(
+      engineOpts({ provider, store, session, tools: [edit], verifyOnStop: true }),
+    )
+    const { result, events } = await collect(engine.submitMessage('edit it'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(provider.streamCount).toBe(4)
+    expect(
+      events.filter((event) => event.type === 'status' && event.message === 'verify on stop; retrying'),
+    ).toHaveLength(2)
+    const loaded = await store.loadSession(session.id)
+    expect(
+      loaded.messages.some(
+        (msg) =>
+          msg.role === 'user' &&
+          msg.blocks[0]?.type === 'text' &&
+          msg.blocks[0].text.includes('Code changed this turn but no test or lint command ran'),
+      ),
+    ).toBe(true)
+  })
+
+  test('edit plus bun test bash does not verify-nudge', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_verify_tested' })
+    await store.createSession(session)
+    const edit = stubNamedTool('Edit')
+    const bash = stubNamedTool('Bash')
+    const provider = createFakeProvider([
+      toolThenStop('e1', 'Edit', { path: 'a.ts', old_string: 'a', new_string: 'b' }),
+      toolThenStop('b1', 'Bash', { command: 'bun test' }),
+      textThenStop('all good'),
+    ])
+    const engine = createSessionEngine(
+      engineOpts({ provider, store, session, tools: [edit, bash], verifyOnStop: true }),
+    )
+    const { result, events } = await collect(engine.submitMessage('edit and test'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(provider.streamCount).toBe(3)
+    expect(
+      events.some((event) => event.type === 'status' && event.message === 'verify on stop; retrying'),
+    ).toBe(false)
+  })
+
+  test('exec path does not verify-nudge after an edit', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_verify_exec' })
+    await store.createSession(session)
+    const edit = stubNamedTool('Edit')
+    const provider = createFakeProvider([
+      toolThenStop('e1', 'Edit', { path: 'a.ts', old_string: 'a', new_string: 'b' }),
+      textThenStop('done'),
+    ])
+    const engine = createSessionEngine(engineOpts({ provider, store, session, tools: [edit] }))
+    const { result, events } = await collect(engine.submitMessage('edit it'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(provider.streamCount).toBe(2)
+    expect(
+      events.some((event) => event.type === 'status' && event.message.includes('verify')),
+    ).toBe(false)
+  })
+
+  test('Read of pkg/foo/a.ts injects pkg/foo/AGENTS.md once', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-ql-agents-'))
+    try {
+      mkdirSync(join(cwd, 'pkg', 'foo'), { recursive: true })
+      writeFileSync(join(cwd, 'AGENTS.md'), 'ROOT_SHOULD_NOT_INJECT\n')
+      writeFileSync(join(cwd, 'pkg', 'foo', 'AGENTS.md'), 'PKG_FOO_AGENTS\n')
+      writeFileSync(join(cwd, 'pkg', 'foo', 'a.ts'), 'export const a = 1\n')
+      const store = createMemoryStore()
+      const session = makeSession({ id: 'sess_subdir_agents', cwd })
+      await store.createSession(session)
+      const read = stubNamedTool('Read')
+      const provider = createFakeProvider([
+        toolThenStop('r1', 'Read', { path: 'pkg/foo/a.ts' }),
+        toolThenStop('r2', 'Read', { path: 'pkg/foo/a.ts' }),
+        textThenStop('done'),
+      ])
+      const engine = createSessionEngine(engineOpts({ provider, store, session, tools: [read] }))
+      const { result } = await collect(engine.submitMessage('read it'))
+      expect(result).toEqual({ reason: 'completed' })
+      const loaded = await store.loadSession(session.id)
+      const toolRows = loaded.messages.filter(
+        (msg): msg is Extract<Message, { role: 'tool' }> => msg.role === 'tool',
+      )
+      expect(toolRows).toHaveLength(2)
+      const first = toolRows[0]?.blocks[0]?.type === 'text' ? toolRows[0].blocks[0].text : ''
+      const second = toolRows[1]?.blocks[0]?.type === 'text' ? toolRows[1].blocks[0].text : ''
+      expect(first).toContain('[AGENTS.md: pkg/foo]')
+      expect(first).toContain('PKG_FOO_AGENTS')
+      expect(first).not.toContain('ROOT_SHOULD_NOT_INJECT')
+      expect(second).not.toContain('[AGENTS.md:')
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
   })
 })
 

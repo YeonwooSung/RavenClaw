@@ -67,9 +67,19 @@ export const skillTool: Tool<SkillInput, string> = {
 const TURN_ALWAYS_TOOLS = new Set(['Skill', 'EnterPlanMode', 'ExitPlanMode', 'Agent'])
 
 export function filterToolsForTurn(tools: Tool[], turn: Turn): Tool[] {
-  if (turn.skillAllowedTools === undefined) return tools
-  const allow = new Set(turn.skillAllowedTools)
-  return tools.filter((tool) => allow.has(tool.name) || TURN_ALWAYS_TOOLS.has(tool.name))
+  let out = tools
+  if (turn.skillAllowedTools !== undefined) {
+    const allow = new Set(turn.skillAllowedTools)
+    out = out.filter((tool) => allow.has(tool.name) || TURN_ALWAYS_TOOLS.has(tool.name))
+  }
+  if (!out.some((tool) => tool.isEnabled)) return out
+  const ctx = toolContextFromTurn(turn)
+  return out.filter((tool) => (tool.isEnabled ? tool.isEnabled(ctx) : true))
+}
+
+function toolContextFromTurn(turn: Turn): ToolContext {
+  const signal = turn.abort?.signal ?? new AbortController().signal
+  return { turn, signal, onProgress: () => {} }
 }
 
 export function builtinSkillsRoot(): string {

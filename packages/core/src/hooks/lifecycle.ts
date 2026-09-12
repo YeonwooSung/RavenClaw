@@ -29,20 +29,24 @@ export type HookCommandResult = {
   preventContinuation?: boolean
   message?: string
   behavior?: 'allow' | 'deny'
+  updatedInput?: Record<string, unknown>
+}
+
+export type LifecycleRunResult = {
+  preventContinuation?: boolean
+  message?: string
+  updatedInput?: Record<string, unknown>
 }
 
 export interface LifecycleHooks {
-  run(
-    event: LifecycleEvent,
-    payload: Record<string, unknown>,
-  ): Promise<{ preventContinuation?: boolean; message?: string } | undefined>
+  run(event: LifecycleEvent, payload: Record<string, unknown>): Promise<LifecycleRunResult | undefined>
 }
 
 export function loadLifecycleHooks(cwd: string, home = ravenclawHome()): LifecycleHooks {
   const files = readHookFiles(cwd, home)
   return {
     async run(event, payload) {
-      let last: { preventContinuation?: boolean; message?: string } | undefined
+      let last: LifecycleRunResult | undefined
       for (const spec of specsFor(files, event)) {
         if (!matchesToolIf(spec.if, payload.name)) continue
         const raw = runHookCommand(spec.command, payload, cwd)
@@ -99,19 +103,30 @@ export function runHookCommand(
     return undefined
   }
   if (!body || typeof body !== 'object') return undefined
-  const rec = body as { preventContinuation?: unknown; message?: unknown; behavior?: unknown }
+  const rec = body as {
+    preventContinuation?: unknown
+    message?: unknown
+    behavior?: unknown
+    updatedInput?: unknown
+  }
   const out: HookCommandResult = {}
   if (rec.preventContinuation === true) out.preventContinuation = true
   if (typeof rec.message === 'string' && rec.message !== '') out.message = rec.message
   if (rec.behavior === 'allow' || rec.behavior === 'deny') out.behavior = rec.behavior
+  if (isPlainObject(rec.updatedInput)) out.updatedInput = rec.updatedInput
   if (
     out.preventContinuation === undefined &&
     out.message === undefined &&
-    out.behavior === undefined
+    out.behavior === undefined &&
+    out.updatedInput === undefined
   ) {
     return undefined
   }
   return out
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }
 
 function readHookFiles(cwd: string, home: string): unknown[] {
@@ -167,14 +182,12 @@ function readSpecArray(value: unknown): HookCommand[] {
   return out
 }
 
-function mapRunResult(
-  event: LifecycleEvent,
-  raw: HookCommandResult,
-): { preventContinuation?: boolean; message?: string } | undefined {
+function mapRunResult(event: LifecycleEvent, raw: HookCommandResult): LifecycleRunResult | undefined {
   const prevent = raw.preventContinuation === true || (event === 'PreToolUse' && raw.behavior === 'deny')
-  if (!prevent && raw.message === undefined) return undefined
-  const out: { preventContinuation?: boolean; message?: string } = {}
+  if (!prevent && raw.message === undefined && raw.updatedInput === undefined) return undefined
+  const out: LifecycleRunResult = {}
   if (prevent) out.preventContinuation = true
   if (raw.message !== undefined) out.message = raw.message
+  if (raw.updatedInput !== undefined) out.updatedInput = raw.updatedInput
   return out
 }

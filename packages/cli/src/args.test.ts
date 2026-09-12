@@ -48,6 +48,64 @@ describe('parseArgv', () => {
     })
   })
 
+  test('--tools-preset fills allowedTools when --allowed-tools is unset', () => {
+    expect(parseArgv(['exec', '--tools-preset', 'ci', 'run bun test'])).toEqual({
+      cmd: 'exec',
+      prompt: 'run bun test',
+      flags: {
+        dontAsk: true,
+        allowedTools: [
+          'Read',
+          'Grep',
+          'Glob',
+          'ListDir',
+          'ReadSubtree',
+          'Skill',
+          'Edit',
+          'Write',
+          'ApplyPatch',
+          'NotebookEdit',
+          'Bash',
+        ],
+      },
+    })
+    expect(parseArgv(['--tools-preset=write']).flags.allowedTools).toEqual([
+      'Read',
+      'Grep',
+      'Glob',
+      'ListDir',
+      'ReadSubtree',
+      'Skill',
+      'Edit',
+      'Write',
+      'ApplyPatch',
+      'NotebookEdit',
+    ])
+    expect(parseArgv(['--tools-preset', 'read']).flags.allowedTools).toEqual([
+      'Read',
+      'Grep',
+      'Glob',
+      'ListDir',
+      'ReadSubtree',
+      'Skill',
+    ])
+  })
+
+  test('--allowed-tools wins over --tools-preset', () => {
+    expect(
+      parseArgv(['--tools-preset', 'ci', '--allowed-tools', 'Read,Grep']).flags.allowedTools,
+    ).toEqual(['Read', 'Grep'])
+    expect(
+      parseArgv(['--allowed-tools', 'Read', '--tools-preset', 'ci']).flags.allowedTools,
+    ).toEqual(['Read'])
+  })
+
+  test('rejects an unknown or missing --tools-preset', () => {
+    expect(() => parseArgv(['--tools-preset', 'yolo'])).toThrow(/tools preset/)
+    expect(() => parseArgv(['--tools-preset'])).toThrow(/tools-preset/)
+    expect(() => parseArgv(['--tools-preset='])).toThrow(/tools preset/)
+  })
+
   test('--fallback-model --allowed-tools and --worktree parse', () => {
     expect(parseArgv(['--fallback-model', 'haiku', '--allowed-tools', 'Read,Grep'])).toEqual({
       cmd: 'interactive',

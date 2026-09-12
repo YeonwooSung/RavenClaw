@@ -1,5 +1,6 @@
 import {
   createLspClient,
+  loadLspConfig,
   type LspClientOpts,
   type LspQueryRequest,
 } from '../lsp/client'
@@ -30,6 +31,9 @@ export function createLspTool(opts?: LspClientOpts): Tool<LspInput, string> {
     inputSchema,
     parse(input: unknown) {
       return parseWithSchema<LspInput>(inputSchema, input)
+    },
+    isEnabled(ctx: ToolContext) {
+      return loadLspConfig(ctx.turn.projectCwd ?? ctx.turn.cwd) != null
     },
     isConcurrencySafe() {
       return true

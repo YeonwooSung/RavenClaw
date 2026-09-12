@@ -61,6 +61,7 @@ Options:
   --json                 exec only: write StreamEvents as JSONL
   --fallback-model <id>  retry a failed stream on this model
   --allowed-tools <a,b>  restrict the tool pool to these names
+  --tools-preset <name>  read|write|ci; fills --allowed-tools if unset
   --worktree [name]      start the session in a git worktree
   --json-schema <json>   require StructuredOutput matching this schema
   --agent <id>           start with this catalog/disk agent

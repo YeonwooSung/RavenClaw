@@ -3,24 +3,24 @@ import { mechanicalSummary } from '../compact/summarize'
 import { loadLifecycleHooks } from '../hooks/lifecycle'
 import { createFileHistory } from '../session/file-history'
 import { createTaskRegistry } from '../tasks/registry'
-import type {
-  Message,
-  PermissionMode,
-  QueryLoopOptions,
-  RoundEnd,
-  SessionEngine,
-  SessionEngineOptions,
-  StreamEvent,
-  SystemPart,
-  Turn,
-  UserOrToolBlock,
-  UserSubmitInput,
+import {
+  SESSION_LOCK_RENEW_MS,
+  type Message,
+  type PermissionMode,
+  type QueryLoopOptions,
+  type RoundEnd,
+  type SessionEngine,
+  type SessionEngineOptions,
+  type StreamEvent,
+  type SystemPart,
+  type Turn,
+  type UserOrToolBlock,
+  type UserSubmitInput,
 } from '../types'
 import { abortTurn } from './abort'
 import { queryLoop } from './query-loop'
 import { selectProtectedTail } from './repair'
 import { rewindLastTurn } from '../session/rewind'
-import { drainAgentMail, enqueueAgentMail } from '../tasks/mailbox'
 import { getSessionWorktree } from '../tools/session-worktree'
 
 const TITLE_MAX = 50
@@ -32,6 +32,8 @@ function titleFromUserText(text: string): string | undefined {
   return line.length <= TITLE_MAX ? line : line.slice(0, TITLE_MAX)
 }
 
+const STOP_REASONS = new Set(['completed', 'max_rounds', 'aborted', 'context_full', 'model_error'])
+
 export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
   const session = { ...opts.session }
   let messages: Message[] = opts.messages ? [...opts.messages] : []
@@ -40,6 +42,8 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
   const tasks = createTaskRegistry()
   const fileHistory = createFileHistory(session.id)
   const steering: string[] = []
+  const injectedAgentsDirs = new Set<string>()
+  let closed = false
   const lifecycle = opts.bare
     ? { run: async () => undefined }
     : loadLifecycleHooks(session.cwd)
@@ -86,11 +90,20 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
     },
 
     async *submitMessage(input: UserSubmitInput): AsyncGenerator<StreamEvent, RoundEnd> {
+      const lock = opts.sessionLock
+      if (lock) {
+        await opts.store.renewSessionLock(session.id, lock.holderId, lock.ttlMs)
+      }
+      const stopLockRenew = lock ? startLockRenew(opts.store, session.id, lock) : undefined
+      try {
       const { text, blocks } = userSubmitToBlocks(input)
       const blocked = await lifecycle.run('UserPromptSubmit', { text })
       if (blocked?.preventContinuation === true) {
         yield { type: 'status', message: blocked.message ?? 'stopped by hook' }
-        return { reason: 'completed' }
+        const end = { reason: 'completed' as const }
+        const stop = await lifecycle.run('Stop', { sessionId: session.id, reason: end.reason })
+        if (stop?.message) yield { type: 'status', message: stop.message }
+        return end
       }
       const userMsg: Extract<Message, { role: 'user' }> = {
         id: crypto.randomUUID(),
@@ -116,6 +129,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         cwd: session.cwd,
         model: session.model,
         readFiles: new Set(),
+        injectedAgentsDirs,
       }
       const extras = opts.additionalDirectories
       if (extras !== undefined && extras.length > 0) {
@@ -126,9 +140,9 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       if (session.prePlanMode !== undefined) turn.prePlanMode = session.prePlanMode
       liveTurn = turn
 
-      const notices = drainAgentMail(session.id)
+      const notices = await opts.store.drainAgentMail(session.id)
       if (notices.length > 0) {
-        const mailboxText = `[mailbox]\n${notices.join('\n\n')}\n\n${text}`
+        const mailboxText = mergeMailboxNotices(notices, text)
         const first = userMsg.blocks[0]
         if (first && first.type === 'text') first.text = mailboxText
         else userMsg.blocks.unshift({ type: 'text', text: mailboxText })
@@ -137,7 +151,13 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       try {
         await opts.store.persistUser(session.id, userMsg)
       } catch (error) {
-        for (const notice of notices) enqueueAgentMail(session.id, notice)
+        for (const notice of notices) {
+          try {
+            await opts.store.enqueueAgentMail(session.id, notice)
+          } catch {
+            // keep the persist error
+          }
+        }
         messages = messages.slice(0, -1)
         liveTurn = null
         fileHistory.endTurn()
@@ -171,6 +191,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         loopOpts.lifecycle = lifecycle
         if (opts.fallbackModel !== undefined) loopOpts.fallbackModel = opts.fallbackModel
         if (opts.jsonSchema !== undefined) loopOpts.jsonSchema = opts.jsonSchema
+        if (opts.verifyOnStop === true) loopOpts.verifyOnStop = true
         const end = yield* queryLoop(loopOpts)
         messages = turn.messages
         session.usage = turn.usage
@@ -180,10 +201,17 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         session.cwd = turn.cwd
         session.updatedAt = Date.now()
         await opts.store.upsertSession(session)
+        if (STOP_REASONS.has(end.reason)) {
+          const stop = await lifecycle.run('Stop', { sessionId: session.id, reason: end.reason })
+          if (stop?.message) yield { type: 'status', message: stop.message }
+        }
         return end
       } finally {
         fileHistory.endTurn()
         liveTurn = null
+      }
+      } finally {
+        stopLockRenew?.()
       }
     },
 
@@ -242,7 +270,45 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
     abort() {
       if (liveTurn) abortTurn(liveTurn.abort)
     },
+
+    async close(closeOpts) {
+      if (closed) return
+      closed = true
+      try {
+        await lifecycle.run('SessionEnd', { sessionId: session.id, cwd: session.cwd })
+      } finally {
+        if (closeOpts?.releaseLock === false) return
+        const lock = opts.sessionLock
+        if (!lock) return
+        try {
+          await opts.store.releaseSessionLock(session.id, lock.holderId)
+        } catch {
+          // best-effort lock release
+        }
+      }
+    },
   }
+}
+
+function startLockRenew(
+  store: SessionEngineOptions['store'],
+  sessionId: string,
+  lock: { holderId: string; ttlMs?: number },
+): () => void {
+  const timer = setInterval(() => {
+    void store.renewSessionLock(sessionId, lock.holderId, lock.ttlMs).catch(() => {
+      // keep the turn going; next renew or submit will fail closed
+    })
+  }, SESSION_LOCK_RENEW_MS)
+  timer.unref?.()
+  return () => clearInterval(timer)
+}
+
+function mergeMailboxNotices(notices: string[], text: string): string {
+  const body = `[mailbox]\n${notices.join('\n\n')}`
+  const trimmed = text.trim()
+  if (trimmed === '' || trimmed === '[mailbox]') return body
+  return `${body}\n\n${text}`
 }
 
 function userSubmitToBlocks(input: UserSubmitInput): { text: string; blocks: UserOrToolBlock[] } {

@@ -63,6 +63,9 @@ function mockHistory(): FileHistory & { snaps: string[] } {
     pendingCount() {
       return snaps.length
     },
+    turnWriteCount() {
+      return snaps.length
+    },
   }
 }
 

@@ -141,6 +141,14 @@ async function makeState(over: {
     toolResults: [],
     compactFailures: over.compactFailures ?? 0,
     overflowCompacted: false,
+    lastStopReason: null,
+    fallbackUsed: false,
+    outputNudges: 0,
+    schemaNudges: 0,
+    emptyNudges: 0,
+    verifyNudges: 0,
+    mutatedThisTurn: false,
+    sawVerifyCommand: false,
   }
   return state
 }

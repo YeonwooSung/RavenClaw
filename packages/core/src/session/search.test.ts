@@ -63,7 +63,7 @@ describe('messages FTS5', () => {
     const version = db
       .query("SELECT value FROM meta WHERE key = 'schema_version'")
       .get() as { value: string }
-    expect(version.value).toBe('2')
+    expect(version.value).toBe('3')
     expect(
       db
         .query("SELECT 1 AS ok FROM sqlite_master WHERE name = 'messages_fts'")
@@ -81,7 +81,7 @@ describe('messages FTS5', () => {
     const again = db
       .query("SELECT value FROM meta WHERE key = 'schema_version'")
       .get() as { value: string }
-    expect(again.value).toBe('2')
+    expect(again.value).toBe('3')
     expect(searchMessages(db, 'uniquezebra').map((h) => h.messageId)).toEqual(['u1'])
     db.close()
   })

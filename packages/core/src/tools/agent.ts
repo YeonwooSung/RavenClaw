@@ -38,7 +38,7 @@ import { takeChildOutput } from './set-output'
 import { filterToolsForTurn } from './skill'
 import { prepareChildWorktree, type IsolationMode } from './worktree'
 import { createFileHistory } from '../session/file-history'
-import { enqueueAgentMail, MAX_PARALLEL_CHILDREN } from '../tasks/mailbox'
+import { MAX_PARALLEL_CHILDREN } from '../tasks/mailbox'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ravenclawHome } from '../home'
@@ -261,17 +261,21 @@ function startBackgroundAgent(
   childHistory.beginTurn()
   const bgCtx: ToolContext = { ...ctx, signal: abort.signal, fileHistory: childHistory }
   void spawnChild({ ...input, run_in_background: false }, bgCtx, opts, childSessionId).then(
-    (text) => {
+    async (text) => {
       try {
         writeFileSync(outputFile, text, 'utf8')
       } catch {
         // keep empty log if the final write fails
       }
+      try {
+        await opts.store.enqueueAgentMail(
+          ctx.turn.sessionId,
+          `subagent finished (${task.id}):\n` + text.slice(0, 4000),
+        )
+      } catch {
+        // mailbox is best-effort; still mark the task complete
+      }
       tasks.complete(task.id, 0)
-      enqueueAgentMail(
-        ctx.turn.sessionId,
-        `subagent finished (${task.id}):\n` + text.slice(0, 4000),
-      )
     },
     () => {
       tasks.complete(task.id, 1)
@@ -372,6 +376,9 @@ function buildChildTurn(
   if (session.prePlanMode !== undefined) turn.prePlanMode = session.prePlanMode
   if (parent.skillAllowedTools !== undefined) {
     turn.skillAllowedTools = [...parent.skillAllowedTools]
+  }
+  if (parent.unlockedToolNames !== undefined) {
+    turn.unlockedToolNames = [...parent.unlockedToolNames]
   }
   return turn
 }

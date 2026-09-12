@@ -71,11 +71,31 @@ function isAcceptEditsPromote(
   cwd: string,
   extraRoots?: string[],
 ): boolean {
+  if (name === 'ApplyPatch') {
+    const paths = applyPatchPaths(input)
+    if (paths === undefined) return false
+    return paths.every((path) => isInTreePath(cwd, path, extraRoots))
+  }
   if (name !== 'Edit' && name !== 'Write') return false
   if (!input || typeof input !== 'object') return false
   const path = (input as { path?: unknown }).path
   if (typeof path !== 'string' || path.length === 0) return false
   return isInTreePath(cwd, path, extraRoots)
+}
+
+/** Every operation must have a path; mixed or empty patches are not promoted. */
+function applyPatchPaths(input: unknown): string[] | undefined {
+  if (!input || typeof input !== 'object') return undefined
+  const operations = (input as { operations?: unknown }).operations
+  if (!Array.isArray(operations) || operations.length === 0) return undefined
+  const paths: string[] = []
+  for (const operation of operations) {
+    if (!operation || typeof operation !== 'object') return undefined
+    const path = (operation as { path?: unknown }).path
+    if (typeof path !== 'string' || path.length === 0) return undefined
+    paths.push(path)
+  }
+  return paths
 }
 
 /** Plan-mode one-path exception: Edit/Write of cwd/.ravenclaw/plan.md only. */

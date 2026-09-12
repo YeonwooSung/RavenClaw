@@ -170,6 +170,11 @@ export async function createRavenSession(
     session.permissionMode = opts.permissionMode
   }
   if (opts.session === undefined) await store.createSession(session)
+  const lockHolderId = crypto.randomUUID()
+  await store.acquireSessionLock(session.id, {
+    holderId: lockHolderId,
+    holderName: 'sdk',
+  })
 
   const compact = compactPolicyFromConfig(config.compact)
   const system = buildSystemParts({
@@ -191,6 +196,7 @@ export async function createRavenSession(
     system,
   }
   if (opts.messages !== undefined) engineOpts.messages = opts.messages
+  engineOpts.sessionLock = { holderId: lockHolderId }
 
   const engine = createSessionEngine(engineOpts)
   return {
@@ -202,6 +208,7 @@ export async function createRavenSession(
       return engine.submitMessage(prompt)
     },
     async close() {
+      await engine.close()
       closer?.()
     },
   }

@@ -1,4 +1,9 @@
 import type { ConfigFlags, ProviderKind } from '@ravenclaw/core'
+import {
+  headlessAllowedTools,
+  parseHeadlessToolsPreset,
+  type HeadlessToolsPreset,
+} from './headless-permissions'
 
 const PROVIDERS = new Set<ProviderKind>(['anthropic', 'openai_compat', 'ollama', 'vllm'])
 
@@ -42,6 +47,7 @@ export function parseArgv(argv: string[]): ParsedArgv {
   let all = false
   let project = false
   let tui: TuiKind | undefined
+  let toolsPreset: HeadlessToolsPreset | undefined
   const flags: ConfigFlags = {}
   const positional: string[] = []
 
@@ -84,6 +90,10 @@ export function parseArgv(argv: string[]): ParsedArgv {
         tui = parseTui(eq.value)
         continue
       }
+      if (eq.key === 'tools-preset') {
+        toolsPreset = parseHeadlessToolsPreset(eq.value)
+        continue
+      }
       applyFlag(flags, eq.key, eq.value)
       continue
     }
@@ -104,6 +114,15 @@ export function parseArgv(argv: string[]): ParsedArgv {
       } else {
         flags.worktree = true
       }
+      continue
+    }
+    if (arg === '--tools-preset') {
+      const value = argv[i + 1]
+      if (value === undefined || value.startsWith('-')) {
+        throw new Error('--tools-preset requires a value')
+      }
+      toolsPreset = parseHeadlessToolsPreset(value)
+      i++
       continue
     }
     if (
@@ -168,6 +187,9 @@ export function parseArgv(argv: string[]): ParsedArgv {
   }
 
   if (cmd === 'exec' || cmd === 'acp' || cmd === 'smoke' || cmd === 'serve') flags.dontAsk = true
+  if (flags.allowedTools === undefined && toolsPreset !== undefined) {
+    flags.allowedTools = headlessAllowedTools(toolsPreset)
+  }
 
   const out: ParsedArgv = { cmd, flags }
   if (json) out.json = true

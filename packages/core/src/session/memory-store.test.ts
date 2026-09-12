@@ -199,4 +199,30 @@ describe('createMemoryStore', () => {
     await expect(store.loadSession('child')).rejects.toBeInstanceOf(PersistError)
     expect(await store.listSessions()).toEqual([])
   })
+
+  test('mailbox is FIFO and session-isolated', async () => {
+    const store = createMemoryStore()
+    await store.createSession(session())
+    await store.createSession(session({ id: 's2' }))
+    await store.enqueueAgentMail('s1', 'one')
+    await store.enqueueAgentMail('s1', 'two')
+    await store.enqueueAgentMail('s2', 'other')
+    expect(await store.peekAgentMail('s1')).toEqual(['one', 'two'])
+    expect(await store.drainAgentMail('s1')).toEqual(['one', 'two'])
+    expect(await store.drainAgentMail('s1')).toEqual([])
+    expect(await store.drainAgentMail('s2')).toEqual(['other'])
+  })
+
+  test('session lock is exclusive until release or expiry', async () => {
+    const store = createMemoryStore()
+    await store.createSession(session())
+    await store.acquireSessionLock('s1', { holderId: 'a', holderName: 'tui' })
+    await expect(
+      store.acquireSessionLock('s1', { holderId: 'b', holderName: 'serve' }),
+    ).rejects.toMatchObject({ name: 'SessionLockError' })
+    await store.releaseSessionLock('s1', 'a')
+    await store.acquireSessionLock('s1', { holderId: 'b', holderName: 'serve' })
+    await store.renewSessionLock('s1', 'b', 50)
+    await store.releaseSessionLock('s1', 'b')
+  })
 })

@@ -1510,8 +1510,8 @@ describe('createAgentTool', () => {
     const savedHome = process.env.RAVENCLAW_HOME
     process.env.RAVENCLAW_HOME = home
     const session = makeSession()
+    const store = createMemoryStore()
     try {
-      const store = createMemoryStore()
       await store.createSession(session)
       const provider = createFakeProvider([textThenStop('bg-done')])
       const { tool } = createTestAgent({ store, provider })
@@ -1544,11 +1544,11 @@ describe('createAgentTool', () => {
       expect(children).toHaveLength(1)
       expect(children[0]?.id).toBe(parsed.childSessionId)
 
-      const notices = drainAgentMail(session.id)
+      const notices = await drainAgentMail(store, session.id)
       expect(notices).toHaveLength(1)
       expect(notices[0]).toBe(`subagent finished (${parsed.taskId}):\nbg-done`)
     } finally {
-      drainAgentMail(session.id)
+      await drainAgentMail(store, session.id)
       if (savedHome === undefined) delete process.env.RAVENCLAW_HOME
       else process.env.RAVENCLAW_HOME = savedHome
     }
