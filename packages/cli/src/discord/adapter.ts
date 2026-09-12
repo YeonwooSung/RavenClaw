@@ -112,59 +112,66 @@ async function handleTurn(opts: {
   })
   const permissionMode = isDm ? 'default' : 'dontAsk'
   const replyChannelId = inbound.threadId ?? inbound.channelId
-  const session = await opts.openSession({
-    sessionKey,
-    permissionMode,
-    isDm,
-    askUser: (_event, signal) =>
-      askDiscordPermission({
-        signal,
-        timeoutMs: opts.timeoutMs,
-        isDm,
-      }),
-  })
-
-  await singleFlight(opts.turnFlights, session.sessionId, async () => {
-    const stub = await api.createMessage({
-      channelId: replyChannelId,
-      content: STUB_TEXT,
+  try {
+    const session = await opts.openSession({
+      sessionKey,
+      permissionMode,
+      isDm,
+      askUser: (_event, signal) =>
+        askDiscordPermission({
+          signal,
+          timeoutMs: opts.timeoutMs,
+          isDm,
+        }),
     })
-    let messageId = stub.ok ? stub.id : undefined
-    let acc = ''
-    let lastUpdate = 0
 
-    const publish = async (final: boolean) => {
-      const body = clipDiscordText(acc === '' ? (final ? '(no output)' : STUB_TEXT) : acc)
-      if (messageId !== undefined) {
-        const updated = await api.editMessage({
+    await singleFlight(opts.turnFlights, session.sessionId, async () => {
+      const stub = await api.createMessage({
+        channelId: replyChannelId,
+        content: STUB_TEXT,
+      })
+      let messageId = stub.ok ? stub.id : undefined
+      let acc = ''
+      let lastUpdate = 0
+
+      const publish = async (final: boolean) => {
+        const body = clipDiscordText(acc === '' ? (final ? '(no output)' : STUB_TEXT) : acc)
+        if (messageId !== undefined) {
+          const updated = await api.editMessage({
+            channelId: replyChannelId,
+            messageId,
+            content: body,
+          })
+          if (updated.ok) return
+        }
+        const posted = await api.createMessage({
           channelId: replyChannelId,
-          messageId,
           content: body,
         })
-        if (updated.ok) return
+        if (posted.ok && posted.id !== undefined) messageId = posted.id
       }
-      const posted = await api.createMessage({
-        channelId: replyChannelId,
-        content: body,
-      })
-      if (posted.ok && posted.id !== undefined) messageId = posted.id
-    }
 
-    try {
-      await consumeSubmit(session, inbound.content, async (delta) => {
-        acc += delta
-        const t = opts.now()
-        if (t - lastUpdate >= UPDATE_THROTTLE_MS) {
-          lastUpdate = t
-          await publish(false)
-        }
-      })
-      await publish(true)
-    } catch (error) {
-      acc = turnFailureBody(error)
-      await publish(true)
-    }
-  })
+      try {
+        await consumeSubmit(session, inbound.content, async (delta) => {
+          acc += delta
+          const t = opts.now()
+          if (t - lastUpdate >= UPDATE_THROTTLE_MS) {
+            lastUpdate = t
+            await publish(false)
+          }
+        })
+        await publish(true)
+      } catch (error) {
+        acc = turnFailureBody(error)
+        await publish(true)
+      }
+    })
+  } catch (error) {
+    await api.createMessage({
+      channelId: replyChannelId,
+      content: turnFailureBody(error),
+    })
+  }
 }
 
 async function consumeSubmit(

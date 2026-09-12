@@ -231,6 +231,10 @@ export function searchSessionStore(
   }
 }
 
+export function sqliteStoreDatabase(store: SessionStore): Database | undefined {
+  return sqliteStoreDbs.get(store)
+}
+
 // One live writer per session id. withWrite is a process-local mutex
 // (store-wide is ok). A second store instance on the same file may read.
 export function createSqliteStore(dbPath: string): SessionStore {

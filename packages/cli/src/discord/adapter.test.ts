@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createMemoryDeliveries } from '@ravenclaw/core'
+import { createMemoryDeliveries, SessionLockError, sessionLockedMessage } from '@ravenclaw/core'
 import { runDiscordAdapter } from './adapter'
 import type {
   DiscordApi,
@@ -260,6 +260,25 @@ describe('runDiscordAdapter', () => {
     const texts = [...api.posts.map((p) => p.content), ...api.edits.map((e) => e.content)]
     expect(texts.some((t) => t === 'turn failed')).toBe(true)
     expect(texts.some((t) => t.includes('boom'))).toBe(false)
+  })
+
+  test('openSession SessionLockError posts lock line, not silence', async () => {
+    const gateway = new FakeDiscordGateway()
+    const api = new FakeDiscordApi()
+    const expiresAt = Date.parse('2026-09-13T00:00:00.000Z')
+    const lockLine = sessionLockedMessage('discord', expiresAt)
+    const running = runOnce({
+      gateway,
+      api,
+      openSession: async () => {
+        throw new SessionLockError(lockLine, { holderName: 'discord', expiresAt })
+      },
+    })
+    gateway.push(guildMention({ id: 'm-lock' }))
+    gateway.end()
+    await running
+    expect(api.posts.map((p) => p.content)).toEqual([lockLine])
+    expect(api.edits).toEqual([])
   })
 
   test('turnFlights serializes two messages on the same session', async () => {

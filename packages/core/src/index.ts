@@ -24,7 +24,7 @@ export {
   selectProtectedTail,
 } from './loop/repair'
 export { createMemoryStore } from './session/memory-store'
-export { createSqliteStore, searchSessionStore } from './session/sqlite-store'
+export { createSqliteStore, searchSessionStore, sqliteStoreDatabase } from './session/sqlite-store'
 export { createMemoryDeliveries, createSqliteDeliveries, deliveryKey } from './session/deliveries'
 export type { DeliveryLedger } from './session/deliveries'
 export { resumeSession } from './session/resume'

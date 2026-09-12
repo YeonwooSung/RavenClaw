@@ -1,6 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { existsSync, readFileSync } from 'node:fs'
-import { Database } from 'bun:sqlite'
 import { join } from 'node:path'
 import {
   createSqliteDeliveries,
@@ -11,6 +10,7 @@ import {
   ravenclawHome,
   resolveSessionId,
   saveSessionMap,
+  sqliteStoreDatabase,
   type ConfigFlags,
   type SessionLockHolderName,
 } from '@ravenclaw/core'
@@ -73,7 +73,8 @@ export async function runDiscord(opts: { flags: ConfigFlags }): Promise<number> 
     return ask({ id: event.id, tool: event.tool, message: event.message }, signal)
   })
 
-  const db = new Database(join(home, 'state.db'))
+  const db = sqliteStoreDatabase(shared.store)
+  if (db === undefined) throw new Error('discord ledger requires sqlite session store')
   const ledger = createSqliteDeliveries(db)
   ledger.gc(Date.now() - DELIVERY_TTL_MS)
 
