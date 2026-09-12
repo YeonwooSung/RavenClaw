@@ -1,12 +1,19 @@
 import { spawnSync } from 'node:child_process'
-import { mkdirSync } from 'node:fs'
+import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 
 export type IsolationMode = 'none' | 'worktree'
 
+export interface WorktreeCleanupReport {
+  path: string
+  dirty: boolean
+  pruned: boolean
+}
+
 export interface ChildWorktree {
   cwd: string
-  cleanup: () => void
+  created: boolean
+  cleanup: () => WorktreeCleanupReport
 }
 
 const GIT_TIMEOUT_MS = 30_000
@@ -16,7 +23,11 @@ export function prepareChildWorktree(
   childSessionId: string,
   isolation: IsolationMode,
 ): ChildWorktree {
-  const fallback: ChildWorktree = { cwd: parentCwd, cleanup: () => {} }
+  const fallback: ChildWorktree = {
+    cwd: parentCwd,
+    created: false,
+    cleanup: () => ({ path: parentCwd, dirty: false, pruned: false }),
+  }
   if (isolation !== 'worktree') return fallback
 
   const toplevel = gitToplevel(parentCwd)
@@ -34,12 +45,20 @@ export function prepareChildWorktree(
 
   return {
     cwd: worktreePath,
+    created: true,
     cleanup: () => {
-      if (isWorktreeDirty(worktreePath)) return
+      if (isWorktreeDirty(worktreePath)) {
+        return { path: worktreePath, dirty: true, pruned: false }
+      }
       const removed = runGit(toplevel, ['worktree', 'remove', worktreePath])
       if (!removed.ok && !isWorktreeDirty(worktreePath)) {
         runGit(toplevel, ['worktree', 'remove', '--force', worktreePath])
       }
+      // Path gone after prune: status fails and must not look dirty.
+      if (existsSync(worktreePath) && isWorktreeDirty(worktreePath)) {
+        return { path: worktreePath, dirty: true, pruned: false }
+      }
+      return { path: worktreePath, dirty: false, pruned: true }
     },
   }
 }

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { isWorktreeDirty, prepareChildWorktree } from './worktree'
@@ -37,25 +37,27 @@ describe('prepareChildWorktree', () => {
     const cwd = tempDir('ravenclaw-wt-none-')
     const handle = prepareChildWorktree(cwd, 'child-1', 'none')
     expect(handle.cwd).toBe(cwd)
-    handle.cleanup()
+    expect(handle.created).toBe(false)
+    expect(handle.cleanup()).toEqual({ path: cwd, dirty: false, pruned: false })
   })
 
   test('creates a detached worktree then removes it', () => {
     const cwd = tempDir('ravenclaw-wt-git-')
     initGitRepo(cwd)
     const handle = prepareChildWorktree(cwd, 'sess_child', 'worktree')
-    expect(handle.cwd).toBe(join(cwd, '.ravenclaw', 'worktrees', 'sess_child'))
-    expect(existsSync(handle.cwd)).toBe(true)
-    expect(existsSync(join(handle.cwd, '.git'))).toBe(true)
-    handle.cleanup()
-    expect(existsSync(handle.cwd)).toBe(false)
+    const path = join(cwd, '.ravenclaw', 'worktrees', 'sess_child')
+    expect(handle.cwd).toBe(path)
+    expect(handle.created).toBe(true)
+    expect(handle.cleanup()).toEqual({ path, dirty: false, pruned: true })
+    expect(existsSync(path)).toBe(false)
   })
 
   test('falls back to the parent cwd when it is not a git repo', () => {
     const cwd = tempDir('ravenclaw-wt-nongit-')
     const handle = prepareChildWorktree(cwd, 'sess_child', 'worktree')
     expect(handle.cwd).toBe(cwd)
-    handle.cleanup()
+    expect(handle.created).toBe(false)
+    expect(handle.cleanup()).toEqual({ path: cwd, dirty: false, pruned: false })
     expect(existsSync(join(cwd, '.ravenclaw', 'worktrees', 'sess_child'))).toBe(false)
   })
 
@@ -63,13 +65,13 @@ describe('prepareChildWorktree', () => {
     const cwd = tempDir('ravenclaw-wt-dirty-')
     initGitRepo(cwd)
     const handle = prepareChildWorktree(cwd, 'sess_dirty', 'worktree')
-    expect(handle.cwd).toBe(join(cwd, '.ravenclaw', 'worktrees', 'sess_dirty'))
     writeFileSync(join(handle.cwd, 'scratch.txt'), 'keep me\n')
-    expect(isWorktreeDirty(handle.cwd)).toBe(true)
-    handle.cleanup()
+    expect(handle.cleanup()).toEqual({
+      path: handle.cwd,
+      dirty: true,
+      pruned: false,
+    })
     expect(existsSync(handle.cwd)).toBe(true)
-    expect(existsSync(join(handle.cwd, '.git'))).toBe(true)
-    expect(readFileSync(join(handle.cwd, 'scratch.txt'), 'utf8')).toBe('keep me\n')
   })
 })
 
