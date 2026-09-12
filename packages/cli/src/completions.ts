@@ -18,6 +18,7 @@ export const COMPLETION_COMMANDS = [
   'skills',
   'cron',
   'serve',
+  'slack',
   'help',
   'version',
 ] as const

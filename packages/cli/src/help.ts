@@ -71,6 +71,7 @@ Options:
   --cwd <dir>            working directory
   --effort <level>       thinking effort hint
   --bare                 skip extra hooks/memory discovery
+  --verify-on-stop       headless/cron opt-in; TUI already default on
   -h, --help
   -V, --version
 

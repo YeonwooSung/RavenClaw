@@ -100,7 +100,7 @@ bun run raven --tui opentui
 bun run raven exec "list TypeScript files"
 bun run raven exec --json "summarize README.md"
 bun run raven exec --dont-ask --tools-preset ci "run bun test"
-bun run raven acp                      # editor JSON-RPC, dontAsk
+bun run raven acp                      # editor JSON-RPC, editor ask; optional --dont-ask
 ```
 
 `exec` is `dontAsk`, not bypass: in-tree Edit/Write/ApplyPatch proceed; leftover Bash is denied unless `.ravenclaw/permissions.json` allows it. See [docs/headless.md](docs/headless.md).
@@ -134,6 +134,7 @@ After setup, `bun run smoke` does one live text-only turn and expects `pong`. CI
 | `cron list\|add\|rm\|on\|off` | no | Local scheduled jobs |
 | `cron tick\|watch` | if a job fires | Run due jobs once, or poll |
 | `serve` | yes | Loopback HTTP turn + HMAC webhook (`dontAsk`) |
+| `slack` | yes | Slack Socket Mode bot (allowlist; no public URL) |
 
 Prefix session ids are ok.
 
@@ -156,6 +157,7 @@ Prefix session ids are ok.
 | `--cwd <dir>` | Working directory |
 | `--effort <level>` | Thinking-effort hint in the system prompt |
 | `--bare` | Skip file hooks, lifecycle hooks, and MEMORY/USER load |
+| `--verify-on-stop` | Headless/cron opt-in: nudge if a turn edited files without a test/lint command (TUI default on) |
 | `--listen host:port` | `raven serve` bind (loopback only, default `127.0.0.1:8787`) |
 
 ```bash
