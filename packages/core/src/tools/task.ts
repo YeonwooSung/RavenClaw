@@ -11,6 +11,11 @@ export interface TaskStopInput {
   task_id: string
 }
 
+export interface TaskSteerInput {
+  taskId: string
+  text: string
+}
+
 const outputSchema = {
   type: 'object',
   additionalProperties: false,
@@ -28,6 +33,16 @@ const stopSchema = {
   required: ['task_id'],
   properties: {
     task_id: { type: 'string', minLength: 1 },
+  },
+}
+
+const steerSchema = {
+  type: 'object',
+  additionalProperties: false,
+  required: ['taskId', 'text'],
+  properties: {
+    taskId: { type: 'string', minLength: 1 },
+    text: { type: 'string' },
   },
 }
 
@@ -97,6 +112,36 @@ export const taskStopTool: Tool<TaskStopInput, string> = {
     const task = tasks.kill(input.task_id)
     if (!task) return `TaskStop failed: unknown task ${input.task_id}`
     return `stopped ${task.id} (${task.status})`
+  },
+}
+
+export const taskSteerTool: Tool<TaskSteerInput, string> = {
+  name: 'TaskSteer',
+  description:
+    'Inject a mid-turn hint into a live background Agent started with run_in_background. Does not re-run tools. Fails if the task is Bash, finished, or not yet started.',
+  inputSchema: steerSchema,
+  parse(input: unknown) {
+    return parseWithSchema<TaskSteerInput>(steerSchema, input)
+  },
+  isConcurrencySafe() {
+    return true
+  },
+  isReadOnly() {
+    return true
+  },
+  interruptBehavior() {
+    return 'cancel'
+  },
+  async checkPermissions() {
+    return { behavior: 'allow', reason: 'mode' }
+  },
+  async execute(input: TaskSteerInput, ctx: ToolContext) {
+    const tasks = ctx.tasks
+    if (!tasks) return 'TaskSteer failed: no task registry'
+    const result = tasks.steer(input.taskId, input.text)
+    if (!result.ok) return `TaskSteer failed: ${result.error}`
+    const preview = input.text.trim().slice(0, 40)
+    return `steered ${input.taskId} ${preview}`
   },
 }
 

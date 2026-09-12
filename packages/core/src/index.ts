@@ -116,7 +116,7 @@ export { compactSummary, mechanicalSummary, summarizeSpan } from './compact/summ
 export { editTool } from './tools/edit'
 export { writeTool } from './tools/write'
 export { bashTool, createBashTool, matchesDangerousPattern } from './tools/bash'
-export { taskOutputTool, taskStopTool } from './tools/task'
+export { taskOutputTool, taskStopTool, taskSteerTool } from './tools/task'
 export { createCronTools } from './tools/cron'
 export { parseJobSpec, nextFireAt, formatSchedule } from './schedule/cron'
 export { createJsonCronStore, cronJobsPath, newCronId } from './schedule/store'
