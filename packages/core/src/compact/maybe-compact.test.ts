@@ -148,6 +148,7 @@ async function makeState(over: {
     schemaNudges: 0,
     emptyNudges: 0,
     thinkingNudges: 0,
+    stopNudges: 0,
     verifyNudges: 0,
     mutatedThisTurn: false,
     sawVerifyCommand: false,

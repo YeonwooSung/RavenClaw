@@ -162,6 +162,7 @@ export type StreamEvent =
 
 export type RoundEnd =
   | { reason: 'completed' }
+  | { reason: 'hook_stopped' }
   | { reason: 'max_rounds'; round: number }
   | { reason: 'aborted' }
   | { reason: 'context_full' }

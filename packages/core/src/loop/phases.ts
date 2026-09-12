@@ -56,6 +56,7 @@ export interface LoopState extends QueryLoopOptions {
   schemaNudges: number
   emptyNudges: number
   thinkingNudges: number
+  stopNudges: number
   verifyNudges: number
   mutatedThisTurn: boolean
   sawVerifyCommand: boolean
@@ -725,6 +726,8 @@ export async function* normalizeResponse(
       }
     }
     if (state.turn.graceUsed) {
+      const stopped = yield* runStopHook(state, asst, { reason: 'max_rounds', round: state.turn.round })
+      if (stopped) return stopped
       const fail = await persistAssistantOnce(state, asst)
       if (fail) return { action: 'return', end: fail }
       return { action: 'return', end: { reason: 'max_rounds', round: state.turn.round } }
@@ -747,6 +750,8 @@ export async function* normalizeResponse(
       yield { type: 'status', message: 'verify on stop; retrying' }
       return { action: 'continue' }
     }
+    const stopped = yield* runStopHook(state, asst, { reason: 'completed' })
+    if (stopped) return stopped
     const fail = await persistAssistantOnce(state, asst)
     if (fail) return { action: 'return', end: fail }
     return { action: 'return', end: { reason: 'completed' } }
@@ -948,6 +953,34 @@ export async function persistAssistantOnce(
   } catch (error) {
     return { reason: 'persist_failed', error }
   }
+}
+
+async function* runStopHook(
+  state: LoopState,
+  asst: Extract<Message, { role: 'assistant' }>,
+  end: Extract<RoundEnd, { reason: 'completed' | 'max_rounds' }>,
+): AsyncGenerator<StreamEvent, PhaseResult | undefined> {
+  if (!state.lifecycle) return undefined
+  const stop = await state.lifecycle.run('Stop', {
+    sessionId: state.turn.sessionId,
+    reason: end.reason,
+  })
+  if (!stop) return undefined
+  if (stop.preventContinuation === true) {
+    const fail = await persistAssistantOnce(state, asst)
+    if (fail) return { action: 'return', end: fail }
+    if (stop.message) yield { type: 'status', message: stop.message }
+    return { action: 'return', end: { reason: 'hook_stopped' } }
+  }
+  if (stop.message && end.reason === 'completed' && state.stopNudges < 1) {
+    state.stopNudges += 1
+    const fail = await applyMidTurnHint(state, asst, stop.message)
+    if (fail) return { action: 'return', end: fail }
+    yield { type: 'status', message: 'stop hook; continuing' }
+    return { action: 'continue' }
+  }
+  if (stop.message) yield { type: 'status', message: stop.message }
+  return undefined
 }
 
 async function applyMidTurnHint(

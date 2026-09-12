@@ -33,8 +33,6 @@ function titleFromUserText(text: string): string | undefined {
   return line.length <= TITLE_MAX ? line : line.slice(0, TITLE_MAX)
 }
 
-const STOP_REASONS = new Set(['completed', 'max_rounds', 'aborted', 'context_full', 'model_error'])
-
 export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
   const session = { ...opts.session }
   let messages: Message[] = opts.messages ? [...opts.messages] : []
@@ -104,10 +102,11 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       const blocked = await lifecycle.run('UserPromptSubmit', { text })
       if (blocked?.preventContinuation === true) {
         yield { type: 'status', message: blocked.message ?? 'stopped by hook' }
-        const end = { reason: 'completed' as const }
-        const stop = await lifecycle.run('Stop', { sessionId: session.id, reason: end.reason })
+        const stop = await lifecycle.run('Stop', { sessionId: session.id, reason: 'completed' })
         if (stop?.message) yield { type: 'status', message: stop.message }
-        return end
+        return stop?.preventContinuation === true
+          ? { reason: 'hook_stopped' as const }
+          : { reason: 'completed' as const }
       }
       const userMsg: Extract<Message, { role: 'user' }> = {
         id: crypto.randomUUID(),
@@ -205,8 +204,12 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         session.cwd = turn.cwd
         session.updatedAt = Date.now()
         await opts.store.upsertSession(session)
-        if (STOP_REASONS.has(end.reason)) {
+        if (end.reason === 'context_full') {
           const stop = await lifecycle.run('Stop', { sessionId: session.id, reason: end.reason })
+          if (stop?.preventContinuation === true) {
+            if (stop.message) yield { type: 'status', message: stop.message }
+            return { reason: 'hook_stopped' }
+          }
           if (stop?.message) yield { type: 'status', message: stop.message }
         }
         return end

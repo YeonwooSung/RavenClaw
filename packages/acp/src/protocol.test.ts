@@ -146,6 +146,7 @@ describe('RoundEnd mapping', () => {
     expect(isRoundEnd({ reason: 'completed' })).toBe(true)
     expect(isRoundEnd({ reason: 'nope' })).toBe(false)
     expect(roundEndToStopReason({ reason: 'completed' })).toBe('end_turn')
+    expect(roundEndToStopReason({ reason: 'hook_stopped' })).toBe('end_turn')
     expect(roundEndToStopReason({ reason: 'aborted' })).toBe('cancelled')
     expect(roundEndToStopReason({ reason: 'max_rounds', round: 8 })).toBe('max_turn_requests')
     expect(roundEndToStopReason({ reason: 'context_full' })).toBe('max_tokens')

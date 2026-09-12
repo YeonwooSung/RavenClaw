@@ -26,6 +26,8 @@ Discord rewrite, `execute_code`, Electron, `bypass` / yolo, streaming tool execu
 
 ### L2. Stop hook can force another round
 
+**Status.** Done.
+
 **Why.** Claude `src/query.ts` `handleStopHooks`: `preventContinuation` → `stop_hook_prevented`; blocking errors append a tool/user row and continue the same turn. RavenClaw `packages/core/src/loop/session-engine.ts` runs `Stop` *after* `completed` and ignores `preventContinuation`. Named hook is decorative.
 
 **Contract.** After a no-`tool_use` completion, run `Stop` *before* returning. `preventContinuation` → `hook_stopped` (or `stop_hook_prevented`) and do not start another API call. A blocking `message` is a cache-safe mid-turn hint (`injectMidTurnHint`) and the loop continues once. Skip `Stop` on `model_error` / `aborted` (Claude death-spiral rule). Pairing still 1:1.

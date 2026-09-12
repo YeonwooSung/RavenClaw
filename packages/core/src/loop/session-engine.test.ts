@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createMemoryStore } from '../session/memory-store'
@@ -454,6 +454,7 @@ describe('lifecycle Stop / SessionEnd / PreToolUse', () => {
         session: sess,
         provider: createFakeProvider([
           [{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: 'end' }],
+          [{ type: 'text_delta', text: 'ok2' }, { type: 'stop', reason: 'end' }],
         ]),
         store,
         tools: [],
@@ -466,7 +467,113 @@ describe('lifecycle Stop / SessionEnd / PreToolUse', () => {
       })
       const { result, events } = await drain(engine.submitMessage('hi'))
       expect(result).toEqual({ reason: 'completed' })
-      expect(events.some((event) => event.type === 'status' && event.message === 'stop-ok')).toBe(true)
+      expect(events.some((event) => event.type === 'status' && event.message === 'stop hook; continuing')).toBe(
+        true,
+      )
+    } finally {
+      if (saved === undefined) delete process.env.RAVENCLAW_HOME
+      else process.env.RAVENCLAW_HOME = saved
+      while (tempDirs.length > 0) {
+        const dir = tempDirs.pop()
+        if (dir) rmSync(dir, { recursive: true, force: true })
+      }
+    }
+  })
+
+  test('Stop preventContinuation returns hook_stopped without another API call', async () => {
+    const home = tempDir('ravenclaw-stop-prevent-home-')
+    const cwd = tempDir('ravenclaw-stop-prevent-cwd-')
+    const saved = process.env.RAVENCLAW_HOME
+    process.env.RAVENCLAW_HOME = home
+    try {
+      writeHooks(home, {
+        Stop: [
+          {
+            command: `printf '%s' '{"preventContinuation":true,"message":"halt"}'`,
+          },
+        ],
+      })
+      const store = createMemoryStore()
+      const sess = makeSession({ id: 'sess_stop_prevent', cwd })
+      await store.createSession(sess)
+      const provider = createFakeProvider([
+        [{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: 'end' }],
+        [{ type: 'text_delta', text: 'should-not-run' }, { type: 'stop', reason: 'end' }],
+      ])
+      const engine = createSessionEngine({
+        session: sess,
+        provider,
+        store,
+        tools: [],
+        compact: defaultCompact({ enabled: false }),
+        model: defaultModel(),
+        maxRounds: 4,
+        async askUser() {
+          return 'deny'
+        },
+      })
+      const { result, events } = await drain(engine.submitMessage('hi'))
+      expect(result).toEqual({ reason: 'hook_stopped' })
+      expect(provider.streamCount).toBe(1)
+      expect(events.some((event) => event.type === 'status' && event.message === 'halt')).toBe(true)
+    } finally {
+      if (saved === undefined) delete process.env.RAVENCLAW_HOME
+      else process.env.RAVENCLAW_HOME = saved
+      while (tempDirs.length > 0) {
+        const dir = tempDirs.pop()
+        if (dir) rmSync(dir, { recursive: true, force: true })
+      }
+    }
+  })
+
+  test('Stop is skipped on aborted', async () => {
+    const home = tempDir('ravenclaw-stop-abort-home-')
+    const cwd = tempDir('ravenclaw-stop-abort-cwd-')
+    const saved = process.env.RAVENCLAW_HOME
+    process.env.RAVENCLAW_HOME = home
+    const marker = join(home, 'stop-abort.txt')
+    try {
+      writeHooks(home, {
+        Stop: [{ command: `printf '%s' '{"message":"stop-ran"}' >> "${marker}"` }],
+      })
+      const store = createMemoryStore()
+      const sess = makeSession({ id: 'sess_stop_abort', cwd })
+      await store.createSession(sess)
+      const provider: Provider = {
+        id: 'fake',
+        apiMode: 'openai_compat',
+        profile(model: string) {
+          return defaultModel(model)
+        },
+        async *stream(_req, signal) {
+          await new Promise<void>((resolve) => {
+            if (signal.aborted) {
+              resolve()
+              return
+            }
+            signal.addEventListener('abort', () => resolve(), { once: true })
+          })
+        },
+      }
+      const engine = createSessionEngine({
+        session: sess,
+        provider,
+        store,
+        tools: [],
+        compact: defaultCompact({ enabled: false }),
+        model: defaultModel(),
+        maxRounds: 4,
+        async askUser() {
+          return 'deny'
+        },
+      })
+      const gen = engine.submitMessage('hi')
+      const first = await gen.next()
+      expect(first.done).toBe(false)
+      engine.abort()
+      const { result } = await drain(gen)
+      expect(result).toEqual({ reason: 'aborted' })
+      expect(existsSync(marker)).toBe(false)
     } finally {
       if (saved === undefined) delete process.env.RAVENCLAW_HOME
       else process.env.RAVENCLAW_HOME = saved

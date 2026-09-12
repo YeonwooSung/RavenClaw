@@ -388,6 +388,7 @@ export function isRoundEnd(value: unknown): value is RoundEnd {
   const reason = (value as { reason?: unknown }).reason
   return (
     reason === 'completed' ||
+    reason === 'hook_stopped' ||
     reason === 'max_rounds' ||
     reason === 'aborted' ||
     reason === 'context_full' ||
@@ -401,6 +402,7 @@ export function roundEndToStopReason(end: unknown): StopReason {
   if (!isRoundEnd(end)) return 'end_turn'
   switch (end.reason) {
     case 'completed':
+    case 'hook_stopped':
       return 'end_turn'
     case 'aborted':
       return 'cancelled'
