@@ -18,6 +18,8 @@ Discord rewrite, `execute_code`, Electron, `bypass` / yolo, streaming tool execu
 
 ### L1. Real LSP handshake
 
+**Status.** Done.
+
 **Why.** Claude `src/services/lsp/LSPClient.ts` and Hermes `agent/lsp/client.py` speak JSON-RPC: `initialize`, `textDocument/didOpen`+`didChange` (versioned, not timestamps), then `hover` / `definition` / `references`. RavenClaw `packages/core/src/lsp/client.ts` only `spawn --version` and echoes the query. The `LSP` tool is a lie.
 
 **Contract.** Persistent client per `(command, workspace)` in `packages/core/src/lsp/client.ts`. Honor `.ravenclaw/lsp.json`. `initialize` + whole-document sync; `LSP` tool `execute` sends the real request and returns the server payload (clipped). Crash → next query restarts. No marketplace, no diagnostic panel.

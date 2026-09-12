@@ -99,7 +99,9 @@ describe('createLspTool', () => {
     const root = fixtureRoot()
     const tool = createLspTool({
       query: async () => 'should not run',
-      spawn: async () => ({ ok: true }),
+      start() {
+        throw new Error('must not start')
+      },
     })
     expect(await tool.execute({ operation: 'hover', path: 'a.ts', line: 0 }, makeCtx(root))).toBe(
       NO_SERVER_MESSAGE,
@@ -116,8 +118,8 @@ describe('createLspTool', () => {
     writeLspConfig(root)
     const tool = createLspTool({
       query: async (req) => `ok ${req.operation} ${req.path}:${req.line}:${req.character ?? 0}`,
-      spawn: async () => {
-        throw new Error('must not spawn a language server')
+      start() {
+        throw new Error('must not start a language server')
       },
     })
     const out = await tool.execute(
@@ -127,23 +129,26 @@ describe('createLspTool', () => {
     expect(out).toBe('ok hover src/a.ts:10:3')
   })
 
-  test('reads lsp.json from projectCwd and probes spawn --version without a query', async () => {
+  test('reads lsp.json from projectCwd and sends a real definition request', async () => {
     const project = fixtureRoot()
     const worktree = fixtureRoot()
+    mkdirSync(join(project, 'src'), { recursive: true })
+    writeFileSync(join(project, 'src', 'a.ts'), 'export const a = 1\n')
     writeLspConfig(project)
-    const calls: Array<{ command: string; args: string[] }> = []
+    const started: Array<{ command: string; cwd: string }> = []
     const tool = createLspTool({
-      spawn: (command, args) => {
-        calls.push({ command, args })
-        return { ok: true }
+      query: async (req) => `ok ${req.operation} ${req.path}:${req.line}`,
+      start(command, _args, opts) {
+        started.push({ command, cwd: opts.cwd })
+        throw new Error('query mock should win')
       },
     })
     const out = await tool.execute(
       { operation: 'definition', path: 'src/a.ts', line: 2 },
       makeCtx(worktree, { projectCwd: project }),
     )
-    expect(calls).toEqual([{ command: 'fake-ls', args: ['--version'] }])
-    expect(out).toBe('definition src/a.ts:2:0')
+    expect(started).toEqual([])
+    expect(out).toBe('ok definition src/a.ts:2')
   })
 
   test('isEnabled is false without lsp.json and true once configured', () => {

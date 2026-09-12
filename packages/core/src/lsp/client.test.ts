@@ -1,13 +1,17 @@
 import { afterEach, describe, expect, test } from 'bun:test'
+import { EventEmitter } from 'node:events'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { consumeJsonRpcFrames, encodeJsonRpcFrame } from '../mcp/client'
 import {
+  LSP_RESULT_CAP,
   NO_SERVER_MESSAGE,
   createLspClient,
   findServerForPath,
   loadLspConfig,
   lspConfigPath,
+  type LspChild,
   type LspConfig,
 } from './client'
 
@@ -61,7 +65,9 @@ describe('lsp client', () => {
     const root = fixtureRoot()
     const client = createLspClient({
       query: async () => 'should not run',
-      spawn: async () => ({ ok: true }),
+      start() {
+        throw new Error('must not start')
+      },
     })
     expect(
       await client.query({ operation: 'hover', path: 'src/a.ts', line: 0 }, root),
@@ -78,9 +84,9 @@ describe('lsp client', () => {
     writeConfig(root, { servers: [{ command: 'fake-ls', extensions: ['.ts'] }] })
     const spawned: string[] = []
     const client = createLspClient({
-      spawn: async (command) => {
+      start(command) {
         spawned.push(command)
-        return { ok: true }
+        throw new Error('must not start a language server')
       },
       query: async (req) => `mock ${req.operation} ${req.path}:${req.line}:${req.character ?? 0}`,
     })
@@ -92,31 +98,156 @@ describe('lsp client', () => {
     expect(spawned).toEqual([])
   })
 
-  test('probes command --version through the injected spawn and skips protocol', async () => {
+  test('speaks initialize, didOpen, and the real method then returns the payload', async () => {
     const root = fixtureRoot()
+    writeFileSync(join(root, 'lib.ts'), 'export const n = 1\n')
     writeConfig(root, {
       servers: [{ command: 'fake-ls', args: ['--stdio'], extensions: ['.ts'] }],
     })
-    const calls: Array<{ command: string; args: string[] }> = []
+    const fake = fakeLspChild({
+      hover: { contents: { kind: 'markdown', value: 'const n: number' } },
+    })
     const client = createLspClient({
-      spawn: (command, args) => {
-        calls.push({ command, args })
-        return { ok: true, stdout: 'fake-ls 0.0.0' }
+      start(command, args, opts) {
+        fake.starts.push({ command, args: [...args], cwd: opts.cwd })
+        return fake.child
       },
     })
-    const out = await client.query({ operation: 'references', path: 'lib.ts', line: 1 }, root)
-    expect(calls).toEqual([{ command: 'fake-ls', args: ['--version'] }])
-    expect(out).toBe('references lib.ts:1:0')
+    const out = await client.query({ operation: 'hover', path: 'lib.ts', line: 0, character: 13 }, root)
+    expect(fake.starts).toEqual([{ command: 'fake-ls', args: ['--stdio'], cwd: root }])
+    expect(fake.methods).toEqual(['initialize', 'initialized', 'textDocument/didOpen', 'textDocument/hover'])
+    expect(out).toContain('const n: number')
+    expect(JSON.parse(out)).toEqual({ contents: { kind: 'markdown', value: 'const n: number' } })
   })
 
-  test('reports a missing language server when the version probe fails', async () => {
+  test('reuses one process and bumps didChange version when the file changes', async () => {
     const root = fixtureRoot()
+    const path = join(root, 'lib.ts')
+    writeFileSync(path, 'const a = 1\n')
+    writeConfig(root, { servers: [{ command: 'fake-ls', extensions: ['.ts'] }] })
+    const fake = fakeLspChild({
+      definition: [{ uri: 'file:///lib.ts', range: { start: { line: 0, character: 6 } } }],
+    })
+    const client = createLspClient({ start: () => fake.child })
+    await client.query({ operation: 'definition', path: 'lib.ts', line: 0, character: 6 }, root)
+    writeFileSync(path, 'const a = 2\n')
+    await client.query({ operation: 'definition', path: 'lib.ts', line: 0, character: 6 }, root)
+    expect(fake.methods.filter((method) => method === 'initialize')).toHaveLength(1)
+    expect(fake.methods.filter((method) => method === 'textDocument/didOpen')).toHaveLength(1)
+    expect(fake.methods.filter((method) => method === 'textDocument/didChange')).toHaveLength(1)
+    const change = fake.params.find(
+      (item): item is { textDocument?: { version?: number }; contentChanges?: Array<{ text?: string }> } =>
+        Boolean(item && typeof item === 'object' && 'contentChanges' in item),
+    )
+    expect(change?.textDocument?.version).toBe(2)
+    expect(change?.contentChanges?.[0]?.text).toBe('const a = 2\n')
+  })
+
+  test('restarts after the language server exits', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'a.ts'), 'x\n')
+    writeConfig(root, { servers: [{ command: 'fake-ls', extensions: ['.ts'] }] })
+    const first = fakeLspChild({ hover: { contents: 'one' } })
+    const second = fakeLspChild({ hover: { contents: 'two' } })
+    const kids = [first, second]
+    const client = createLspClient({
+      start() {
+        const next = kids.shift()
+        if (!next) throw new Error('no more servers')
+        return next.child
+      },
+    })
+    expect(await client.query({ operation: 'hover', path: 'a.ts', line: 0 }, root)).toContain('one')
+    first.exit()
+    expect(await client.query({ operation: 'hover', path: 'a.ts', line: 0 }, root)).toContain('two')
+    expect(second.methods).toContain('initialize')
+  })
+
+  test('reports a missing language server when start fails', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'a.ts'), 'x\n')
     writeConfig(root, { servers: [{ command: 'missing-ls', extensions: ['.ts'] }] })
     const client = createLspClient({
-      spawn: () => ({ ok: false, stderr: 'not found' }),
+      start() {
+        throw new Error('ENOENT')
+      },
     })
     expect(await client.query({ operation: 'hover', path: 'a.ts', line: 0 }, root)).toBe(
       'LSP failed: language server not available',
     )
   })
+
+  test('clips a large server payload', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'a.ts'), 'x\n')
+    writeConfig(root, { servers: [{ command: 'fake-ls', extensions: ['.ts'] }] })
+    const fake = fakeLspChild({ hover: { contents: 'x'.repeat(LSP_RESULT_CAP + 50) } })
+    const client = createLspClient({ start: () => fake.child })
+    const out = await client.query({ operation: 'hover', path: 'a.ts', line: 0 }, root)
+    expect(out.length).toBeGreaterThan(LSP_RESULT_CAP)
+    expect(out).toContain('... [truncated]')
+    expect(out).not.toContain('x'.repeat(LSP_RESULT_CAP + 1))
+  })
 })
+
+function fakeLspChild(results: Partial<Record<string, unknown>>): {
+  child: LspChild
+  methods: string[]
+  params: unknown[]
+  starts: Array<{ command: string; args: string[]; cwd: string }>
+  exit: () => void
+} {
+  const stdout = new EventEmitter()
+  const methods: string[] = []
+  const params: unknown[] = []
+  let buffer = Buffer.alloc(0)
+  const child: LspChild = {
+    stdin: {
+      write(chunk: string | Uint8Array) {
+        const incoming = typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk
+        buffer = Buffer.concat([buffer, incoming])
+        const parsed = consumeJsonRpcFrames(buffer)
+        buffer = parsed.rest
+        for (const message of parsed.messages) {
+          if (!message || typeof message !== 'object') continue
+          const rec = message as { id?: unknown; method?: unknown; params?: unknown }
+          if (typeof rec.method !== 'string') continue
+          methods.push(rec.method)
+          params.push(rec.params)
+          if (rec.id === undefined) continue
+          const short = rec.method.split('/').at(-1) ?? rec.method
+          const result =
+            rec.method === 'initialize'
+              ? { capabilities: { hoverProvider: true, definitionProvider: true, referencesProvider: true } }
+              : (results[short] ?? results[rec.method] ?? null)
+          queueMicrotask(() => {
+            stdout.emit('data', encodeJsonRpcFrame({ jsonrpc: '2.0', id: rec.id, result }))
+          })
+        }
+        return true
+      },
+      end() {},
+    },
+    stdout,
+    kill() {
+      return true
+    },
+    on(event, listener) {
+      stdout.on(event, listener)
+      return this
+    },
+    off(event, listener) {
+      stdout.off(event, listener)
+      return this
+    },
+  }
+  return {
+    child,
+    methods,
+    params,
+    starts: [],
+    exit() {
+      stdout.emit('exit', 1)
+    },
+  }
+}

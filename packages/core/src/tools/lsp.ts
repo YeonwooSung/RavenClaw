@@ -3,12 +3,13 @@ import {
   loadLspConfig,
   type LspClientOpts,
   type LspQueryRequest,
+  type LspStartFn,
 } from '../lsp/client'
 import type { Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
 
 export type LspInput = LspQueryRequest
-export type { LspClientOpts, LspQueryRequest }
+export type { LspClientOpts, LspQueryRequest, LspStartFn }
 
 const inputSchema = {
   type: 'object',
@@ -27,7 +28,7 @@ export function createLspTool(opts?: LspClientOpts): Tool<LspInput, string> {
   return {
     name: 'LSP',
     description:
-      'Query a local language server for hover, definition, or references. path is a workspace file; line is 0-based; character defaults to 0. Requires .ravenclaw/lsp.json.',
+      'Query a local language server for hover, definition, or references via JSON-RPC. path is a workspace file; line is 0-based; character defaults to 0. Requires .ravenclaw/lsp.json.',
     inputSchema,
     parse(input: unknown) {
       return parseWithSchema<LspInput>(inputSchema, input)
