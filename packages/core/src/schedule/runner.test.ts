@@ -92,6 +92,21 @@ describe('fireDueJobs', () => {
     expect(store.get('c_abc')?.runningUntil).toBeUndefined()
   })
 
+  test('run error timeout is persisted as lastError', async () => {
+    const store = memory([job({ id: 'c_to' })])
+    const fired = await fireDueJobs({
+      store,
+      now: 10,
+      async run() {
+        return { ok: false, sessionId: 'sess_to', error: 'timeout' }
+      },
+    })
+    expect(fired[0]?.status).toBe('error')
+    expect(store.get('c_to')?.lastError).toBe('timeout')
+    expect(store.get('c_to')?.lastSessionId).toBe('sess_to')
+    expect(store.get('c_to')?.runningUntil).toBeUndefined()
+  })
+
   test('run throw records error', async () => {
     const store = memory([job({ id: 'c_err' })])
     const fired = await fireDueJobs({

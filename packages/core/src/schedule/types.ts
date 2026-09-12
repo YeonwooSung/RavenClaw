@@ -4,6 +4,19 @@ export type JobSchedule = CronSchedule | IntervalSchedule
 
 export type CronFireStatus = 'ok' | 'error' | 'skipped'
 
+export const DEFAULT_CRON_TIMEOUT_MS = 600_000
+export const MIN_CRON_TIMEOUT_MS = 15_000
+export const MAX_CRON_TIMEOUT_MS = 3_600_000
+export const CRON_PRE_SCRIPT_TIMEOUT_MS = 30_000
+
+export function clampCronTimeoutMs(timeoutMs?: number): number {
+  if (timeoutMs === undefined || !Number.isFinite(timeoutMs)) return DEFAULT_CRON_TIMEOUT_MS
+  const n = Math.trunc(timeoutMs)
+  if (n < MIN_CRON_TIMEOUT_MS) return MIN_CRON_TIMEOUT_MS
+  if (n > MAX_CRON_TIMEOUT_MS) return MAX_CRON_TIMEOUT_MS
+  return n
+}
+
 export interface CronJob {
   id: string
   name: string
@@ -18,6 +31,10 @@ export interface CronJob {
   lastError?: string
   lastSessionId?: string
   runningUntil?: number
+  timeoutMs?: number
+  skipMemory?: boolean
+  preScript?: string
+  verifyOnStop?: boolean
 }
 
 export interface CronLastFirePatch {

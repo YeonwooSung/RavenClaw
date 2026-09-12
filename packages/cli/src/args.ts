@@ -83,6 +83,10 @@ export function parseArgv(argv: string[]): ParsedArgv {
       flags.bare = true
       continue
     }
+    if (arg === '--verify-on-stop') {
+      flags.verifyOnStop = true
+      continue
+    }
 
     const eq = splitEq(arg)
     if (eq) {

@@ -3,7 +3,14 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, rmdirSync } f
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { CRON_RUNNING_LEASE_MS, cronJobsPath, createJsonCronStore, newCronId } from './store'
-import { CRON_ID_PREFIX, type CronJob } from './types'
+import {
+  clampCronTimeoutMs,
+  CRON_ID_PREFIX,
+  DEFAULT_CRON_TIMEOUT_MS,
+  MAX_CRON_TIMEOUT_MS,
+  MIN_CRON_TIMEOUT_MS,
+  type CronJob,
+} from './types'
 
 const ENV_KEY = 'RAVENCLAW_HOME'
 let savedHome: string | undefined
@@ -45,6 +52,10 @@ function makeJob(over: Partial<CronJob> = {}): CronJob {
   if (over.lastError !== undefined) job.lastError = over.lastError
   if (over.lastSessionId !== undefined) job.lastSessionId = over.lastSessionId
   if (over.runningUntil !== undefined) job.runningUntil = over.runningUntil
+  if (over.timeoutMs !== undefined) job.timeoutMs = over.timeoutMs
+  if (over.skipMemory !== undefined) job.skipMemory = over.skipMemory
+  if (over.preScript !== undefined) job.preScript = over.preScript
+  if (over.verifyOnStop !== undefined) job.verifyOnStop = over.verifyOnStop
   return job
 }
 
@@ -423,5 +434,59 @@ describe('createJsonCronStore', () => {
     expect(patched?.lastError).toBe('boom')
     expect(patched?.nextFireAt).toBe(now + 15_000)
     expect(store.get('c_lease001')?.runningUntil).toBeUndefined()
+  })
+
+  test('upsert/load preserves timeoutMs skipMemory preScript verifyOnStop', () => {
+    const home = tempHome()
+    const store = createJsonCronStore({ home })
+    store.upsert(
+      makeJob({
+        id: 'c_opts0001',
+        timeoutMs: 45_000,
+        skipMemory: true,
+        preScript: 'git status',
+        verifyOnStop: true,
+      }),
+    )
+
+    const loaded = store.get('c_opts0001')
+    expect(loaded?.timeoutMs).toBe(45_000)
+    expect(loaded?.skipMemory).toBe(true)
+    expect(loaded?.preScript).toBe('git status')
+    expect(loaded?.verifyOnStop).toBe(true)
+
+    const raw = JSON.parse(readFileSync(cronJobsPath(home), 'utf8')) as { jobs: CronJob[] }
+    expect(raw.jobs[0]?.timeoutMs).toBe(45_000)
+    expect(raw.jobs[0]?.skipMemory).toBe(true)
+    expect(raw.jobs[0]?.preScript).toBe('git status')
+    expect(raw.jobs[0]?.verifyOnStop).toBe(true)
+
+    const relisted = createJsonCronStore({ home }).get('c_opts0001')
+    expect(relisted?.timeoutMs).toBe(45_000)
+    expect(relisted?.skipMemory).toBe(true)
+    expect(relisted?.preScript).toBe('git status')
+    expect(relisted?.verifyOnStop).toBe(true)
+  })
+
+  test('old jobs without new fields stay valid', () => {
+    const home = tempHome()
+    const store = createJsonCronStore({ home })
+    store.upsert(makeJob({ id: 'c_old00001' }))
+    const loaded = store.get('c_old00001')
+    expect(loaded?.timeoutMs).toBeUndefined()
+    expect(loaded?.skipMemory).toBeUndefined()
+    expect(loaded?.preScript).toBeUndefined()
+    expect(loaded?.verifyOnStop).toBeUndefined()
+    expect(loaded?.prompt).toBe('do work')
+  })
+})
+
+describe('clampCronTimeoutMs', () => {
+  test('defaults and clamps to the allowed window', () => {
+    expect(clampCronTimeoutMs()).toBe(DEFAULT_CRON_TIMEOUT_MS)
+    expect(clampCronTimeoutMs(Number.NaN)).toBe(DEFAULT_CRON_TIMEOUT_MS)
+    expect(clampCronTimeoutMs(1)).toBe(MIN_CRON_TIMEOUT_MS)
+    expect(clampCronTimeoutMs(9_999_999)).toBe(MAX_CRON_TIMEOUT_MS)
+    expect(clampCronTimeoutMs(45_000)).toBe(45_000)
   })
 })

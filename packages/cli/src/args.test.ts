@@ -136,6 +136,19 @@ describe('parseArgv', () => {
     })
   })
 
+  test('exec --verify-on-stop sets flags.verifyOnStop', () => {
+    expect(parseArgv(['exec', '--verify-on-stop', 'implement the fix'])).toEqual({
+      cmd: 'exec',
+      prompt: 'implement the fix',
+      flags: { dontAsk: true, verifyOnStop: true },
+    })
+  })
+
+  test('default exec does not set verifyOnStop', () => {
+    expect(parseArgv(['exec', 'hello']).flags.verifyOnStop).toBeUndefined()
+    expect(parseArgv(['exec', 'hello']).flags).toEqual({ dontAsk: true })
+  })
+
   test('exec without a prompt still forces dontAsk', () => {
     expect(parseArgv(['exec'])).toEqual({
       cmd: 'exec',

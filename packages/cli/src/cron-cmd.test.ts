@@ -81,6 +81,24 @@ describe('handleCronCli', () => {
     expect(job?.cwd).toBe('/work')
     expect(job?.enabled).toBe(true)
   })
+
+  test('add accepts timeout skip-memory pre-script and verify-on-stop', () => {
+    const home = tempHome()
+    const added = handleCronCli(
+      'add every 30m --timeout-ms 45000 --skip-memory --pre-script "git status" --verify-on-stop lint the repo',
+      '/work',
+      home,
+    )
+    expect(added.code).toBe(0)
+    const id = added.text.split(/\s+/)[0] ?? ''
+    const job = createJsonCronStore({ home }).get(id)
+    expect(job?.prompt).toBe('lint the repo')
+    expect(job?.name).toBe('lint the repo')
+    expect(job?.timeoutMs).toBe(45_000)
+    expect(job?.skipMemory).toBe(true)
+    expect(job?.preScript).toBe('git status')
+    expect(job?.verifyOnStop).toBe(true)
+  })
 })
 
 describe('runCronTick', () => {

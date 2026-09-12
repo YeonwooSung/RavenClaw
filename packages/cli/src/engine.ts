@@ -357,6 +357,7 @@ export interface CliRuntimeBase {
   remainingSessions?: number
   lockHolderId: string
   lockHolderName: SessionLockHolderName
+  verifyOnStop?: boolean
 }
 
 export type CliRuntime = CliRuntimeBase & { engine: SessionEngine }
@@ -701,7 +702,13 @@ export async function bootCli(
   const paid = access.admitted ? access.hasPaidCapacityPlan : undefined
   const extras: Pick<
     CliRuntimeBase,
-    'hasPaidCapacityPlan' | 'probe' | 'fetch' | 'preferByok' | 'surface' | 'remainingSessions'
+    | 'hasPaidCapacityPlan'
+    | 'probe'
+    | 'fetch'
+    | 'preferByok'
+    | 'surface'
+    | 'remainingSessions'
+    | 'verifyOnStop'
   > = {
     hasPaidCapacityPlan: paid,
   }
@@ -709,6 +716,7 @@ export async function bootCli(
   if (opts.fetch !== undefined) extras.fetch = opts.fetch
   if (opts.flags.provider !== undefined) extras.preferByok = true
   if (opts.surface !== undefined) extras.surface = opts.surface
+  if (opts.flags.verifyOnStop === true) extras.verifyOnStop = true
   if (access.admitted && access.remainingSessions !== undefined) {
     extras.remainingSessions = access.remainingSessions
   }
@@ -727,7 +735,9 @@ export async function bootCli(
   }
   if (opts.tools !== undefined) engineOpts.tools = opts.tools
   if (opts.maxRounds !== undefined) engineOpts.maxRounds = opts.maxRounds
-  if ((opts.surface ?? 'interactive') !== 'headless') engineOpts.verifyOnStop = true
+  if ((opts.surface ?? 'interactive') !== 'headless' || opts.flags.verifyOnStop === true) {
+    engineOpts.verifyOnStop = true
+  }
   const { engine, mcpCloser, askQuestions, mcpErrors } = await openEngine(engineOpts)
   const mcpStatus = mcpErrors.length > 0 ? formatMcpLoadErrors(mcpErrors) : undefined
   const wt = opts.flags.worktree
@@ -807,7 +817,9 @@ export async function resumeRuntime(
     lockHolderId,
     lockHolderName,
     skipLock: true,
-    ...((runtime.surface ?? 'interactive') !== 'headless' ? { verifyOnStop: true } : {}),
+    ...((runtime.surface ?? 'interactive') !== 'headless' || runtime.verifyOnStop === true
+      ? { verifyOnStop: true }
+      : {}),
   })
   if (prevEngine) {
     await prevEngine.close({ releaseLock: prevEngine.session.id !== engine.session.id })
@@ -870,7 +882,9 @@ export async function openNewSession(
     session,
     lockHolderId,
     lockHolderName,
-    ...((runtime.surface ?? 'interactive') !== 'headless' ? { verifyOnStop: true } : {}),
+    ...((runtime.surface ?? 'interactive') !== 'headless' || runtime.verifyOnStop === true
+      ? { verifyOnStop: true }
+      : {}),
   })
   if (prevEngine && prevEngine.session.id !== engine.session.id) {
     await prevEngine.close?.()

@@ -89,6 +89,7 @@ export interface ConfigFlags {
   cwd?: string
   effort?: string
   listen?: string
+  verifyOnStop?: boolean
 }
 
 export interface ResolvedEnv {

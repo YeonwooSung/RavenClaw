@@ -53,3 +53,17 @@ terminal:
 ```
 
 Use it when you want process isolation for the Bash that a project rule already allowed. It is not a substitute for `dontAsk` or for seeding `permissions.json`.
+
+## Verify-on-stop (`--verify-on-stop`)
+
+TUI sessions nudge (at most twice) if a turn edited files without a test/lint command. The loop does **not** run tests itself.
+
+Headless `exec` and cron fires leave this **off** by default so CI is not surprised.
+
+Opt in for a one-shot:
+
+```bash
+raven exec --verify-on-stop "implement the fix"
+```
+
+A cron job may set `verifyOnStop: true` in `~/.ravenclaw/cron/jobs.json` (or pass `--verify-on-stop` on `raven cron add`). The same nudge cap applies. Default for exec/cron remains false.
