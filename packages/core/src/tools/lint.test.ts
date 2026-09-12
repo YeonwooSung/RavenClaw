@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { appendLintBlock, lintWrittenFile } from './lint'
@@ -29,6 +29,14 @@ describe('lintWrittenFile', () => {
     writeFileSync(txt, 'hello')
     expect(lintWrittenFile(ts, root)).toBeUndefined()
     expect(lintWrittenFile(txt, root)).toBeUndefined()
+  })
+
+  test('python check does not write __pycache__', () => {
+    const root = fixture()
+    const file = join(root, 'a.py')
+    writeFileSync(file, 'x = 1\n')
+    lintWrittenFile(file, root)
+    expect(existsSync(join(root, '__pycache__'))).toBe(false)
   })
 
   test('skips files outside the cwd tree', () => {

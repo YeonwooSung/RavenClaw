@@ -56,6 +56,7 @@ function runChecker(absPath: string, checker: Checker): LintReport {
   const spawned = spawnSync(checker.command, checker.args, {
     encoding: 'utf8',
     timeout: LINT_TIMEOUT_MS,
+    env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1' },
   })
   if (spawned.error || spawned.status === null) {
     if (checker.command === 'python3') {
