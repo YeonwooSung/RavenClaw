@@ -159,6 +159,7 @@ async function spawnChild(
   ctx: ToolContext,
   opts: AgentToolOpts,
   childSessionId?: string,
+  taskId?: string,
 ): Promise<string> {
   const projectCwd = ctx.turn.projectCwd ?? ctx.turn.cwd
   const spawnable = new Set([
@@ -249,6 +250,7 @@ async function spawnChild(
     engine = wrapSessionEngineLog(createSessionEngine(engineOpts), openRavenclawLog(), {
       closeLog: false,
     })
+    if (taskId !== undefined) ctx.tasks?.attachEngine(taskId, engine)
     const unlinkEngine = linkEngineAbort(ctx.signal, engine)
     try {
       const end = await drainLoop(engine.submitMessage(userPayload))
@@ -308,7 +310,13 @@ function startBackgroundAgent(
   const childHistory = createFileHistory(`bg_${task.id}`)
   childHistory.beginTurn()
   const bgCtx: ToolContext = { ...ctx, signal: abort.signal, fileHistory: childHistory }
-  void spawnChild({ ...input, run_in_background: false }, bgCtx, opts, childSessionId).then(
+  void spawnChild(
+    { ...input, run_in_background: false },
+    bgCtx,
+    opts,
+    childSessionId,
+    task.id,
+  ).then(
     async (text) => {
       try {
         writeFileSync(outputFile, text, 'utf8')

@@ -1621,6 +1621,73 @@ describe('createAgentTool', () => {
     }
   })
 
+  test('background spawn attaches the child engine so TaskSteer works', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'ravenclaw-agent-steer-attach-'))
+    tempDirs.push(home)
+    const savedHome = process.env.RAVENCLAW_HOME
+    process.env.RAVENCLAW_HOME = home
+    const session = makeSession()
+    const store = createMemoryStore()
+    try {
+      await store.createSession(session)
+      let release!: () => void
+      const gate = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const slow: Tool = {
+        ...stubTool('Read'),
+        async execute(_input, ctx) {
+          await new Promise<void>((resolve, reject) => {
+            if (ctx.signal.aborted) {
+              reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+              return
+            }
+            const timer = setTimeout(resolve, 2_000)
+            ctx.signal.addEventListener(
+              'abort',
+              () => {
+                clearTimeout(timer)
+                reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+              },
+              { once: true },
+            )
+          })
+          return 'slow-done'
+        },
+      }
+      const provider = createFakeProvider([
+        toolThenStop('r1', 'Read', { path: 'x' }),
+        textThenStop('after-steer'),
+      ])
+      const { tool } = createTestAgent({
+        store,
+        provider,
+        tools: parentPool().map((item) => (item.name === 'Read' ? slow : item)),
+      })
+      const tasks = createTaskRegistry()
+      const ctx = { ...makeCtx(makeTurn(session)), tasks }
+      const dispatched = JSON.parse(
+        await tool.execute({ prompt: 'bg', run_in_background: true }, ctx),
+      ) as { taskId: string }
+      const deadline = Date.now() + 2000
+      let started = false
+      while (Date.now() < deadline) {
+        const hit = tasks.steer(dispatched.taskId, 'turn left')
+        if (hit.ok) {
+          started = true
+          break
+        }
+        expect(hit.error === 'agent not started' || hit.error === 'not a live agent task').toBe(true)
+        await Bun.sleep(10)
+      }
+      expect(started).toBe(true)
+      tasks.kill(dispatched.taskId)
+    } finally {
+      if (savedHome === undefined) delete process.env.RAVENCLAW_HOME
+      else process.env.RAVENCLAW_HOME = savedHome
+    }
+  })
+
   test('command-runner one-shot persists tool_use before Bash.execute', async () => {
     const store = createMemoryStore()
     const session = makeSession()
