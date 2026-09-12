@@ -66,6 +66,7 @@ export type {
   ProviderKind,
   RavenClawConfig,
   ResolvedConfig,
+  ReviewConfig,
 } from './config'
 export {
   conservativeProfile,
@@ -206,7 +207,17 @@ export { researcherWebAgent } from './agent/researcher-web'
 export { runPermissionHooks } from './permissions/hooks'
 export type { PermissionHook } from './permissions/hooks'
 export { loadFileHooks } from './permissions/load-hooks'
-export { applyReviewToMemory, forkMemoryReview } from './review/fork'
+export {
+  applyReviewToMemory,
+  forkMemoryReview,
+  filterBackgroundReviewTools,
+  shouldNudgeMemory,
+  shouldNudgeLearn,
+  shouldStartBackgroundReview,
+  BACKGROUND_REVIEW_PROMPT,
+  MEMORY_NUDGE,
+  LEARN_NUDGE,
+} from './review/fork'
 export { buildSystemParts, applyPermissionMode } from './prompt/builder'
 export type { PromptBuildInput } from './prompt/builder'
 export { loadCodingPosture } from './prompt/coding-posture'

@@ -12,6 +12,7 @@ import type {
   ProviderRequest,
   SessionRecord,
   StreamEvent,
+  SystemPart,
   Tool,
 } from '../types'
 import { createSessionEngine } from './session-engine'
@@ -883,5 +884,153 @@ describe('setPermissionMode volatile rewrite', () => {
     expect(volatile?.text).toContain('Current permission mode: dontAsk')
     expect(volatile?.text).not.toContain('Current permission mode: default')
     expect(applyPermissionMode(system, 'plan')[2]?.text).toContain('Current permission mode: plan')
+  })
+})
+
+async function drain(engine: ReturnType<typeof createSessionEngine>, text: string): Promise<void> {
+  const gen = engine.submitMessage(text)
+  while (true) {
+    const next = await gen.next()
+    if (next.done) return
+  }
+}
+
+function stubTool(name: string): Tool {
+  return {
+    name,
+    description: name,
+    inputSchema: { type: 'object' },
+    parse() {
+      return { ok: true as const, value: {} }
+    },
+    isConcurrencySafe() {
+      return true
+    },
+    isReadOnly() {
+      return true
+    },
+    async checkPermissions() {
+      return { behavior: 'allow' as const, reason: 'mode' as const }
+    },
+    async execute() {
+      return name
+    },
+  }
+}
+
+describe('background review and nudges', () => {
+  test('injects consider Memory on the 10th user turn', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_mem_nudge' })
+    await store.createSession(sess)
+    const requests: ProviderRequest[] = []
+    const provider: Provider = {
+      id: 'fake',
+      apiMode: 'openai_compat',
+      profile: () => defaultModel(),
+      async *stream(req) {
+        requests.push(req)
+        yield { type: 'text_delta', text: 'ok' }
+        yield { type: 'stop', reason: 'end' }
+      },
+    }
+    const engine = createSessionEngine({
+      session: sess,
+      provider,
+      store,
+      tools: [],
+      compact: defaultCompact({ enabled: false }),
+      model: defaultModel(),
+      maxRounds: 4,
+      async askUser() {
+        return 'deny'
+      },
+    })
+    for (let i = 0; i < 10; i++) await drain(engine, `turn ${i}`)
+    const last = requests[9]
+    const blob = JSON.stringify(last?.messages ?? [])
+    expect(blob).toContain('consider Memory')
+    expect(JSON.stringify(requests[8]?.messages ?? [])).not.toContain('consider Memory')
+  })
+
+  test('forks a persist-detached review with the parent system hash and review tools only', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_bg_review' })
+    await store.createSession(sess)
+    const system: SystemPart[] = [{ tier: 'stable', text: 'PARENT SYSTEM', cacheBreakpoint: true }]
+    let releaseChild!: () => void
+    const childStarted = new Promise<void>((resolve) => {
+      releaseChild = resolve
+    })
+    const requests: ProviderRequest[] = []
+    const provider: Provider = {
+      id: 'fake',
+      apiMode: 'openai_compat',
+      profile: () => defaultModel(),
+      async *stream(req) {
+        requests.push(req)
+        if (requests.length === 2) releaseChild()
+        yield { type: 'text_delta', text: 'ok' }
+        yield { type: 'stop', reason: 'end' }
+      },
+    }
+    const engine = createSessionEngine({
+      session: sess,
+      provider,
+      store,
+      tools: [stubTool('Read'), stubTool('Grep'), stubTool('Memory'), stubTool('Skill'), stubTool('Bash')],
+      compact: defaultCompact({ enabled: false }),
+      model: defaultModel(),
+      maxRounds: 4,
+      system,
+      backgroundReview: true,
+      async askUser() {
+        return 'deny'
+      },
+    })
+    await drain(engine, 'done')
+    await childStarted
+    expect(requests.length).toBeGreaterThanOrEqual(2)
+    const parent = requests[0]
+    const child = requests[1]
+    expect(parent?.system).toEqual(system)
+    expect(child?.system).toEqual(system)
+    expect(child?.tools.map((tool) => tool.name).sort()).toEqual(['Grep', 'Memory', 'Read', 'Skill'])
+    expect(child?.tools.map((tool) => tool.name)).not.toContain('Bash')
+    const loaded = await store.loadSession(sess.id)
+    expect(loaded.messages.some((msg) => JSON.stringify(msg).includes('durable lesson'))).toBe(false)
+  })
+
+  test('does not fork included sessions even when backgroundReview is on', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_included', funding: 'included' })
+    await store.createSession(sess)
+    let streams = 0
+    const provider: Provider = {
+      id: 'fake',
+      apiMode: 'openai_compat',
+      profile: () => defaultModel(),
+      async *stream() {
+        streams += 1
+        yield { type: 'text_delta', text: 'ok' }
+        yield { type: 'stop', reason: 'end' }
+      },
+    }
+    const engine = createSessionEngine({
+      session: sess,
+      provider,
+      store,
+      tools: [stubTool('Memory')],
+      compact: defaultCompact({ enabled: false }),
+      model: defaultModel(),
+      maxRounds: 4,
+      backgroundReview: true,
+      async askUser() {
+        return 'deny'
+      },
+    })
+    await drain(engine, 'hi')
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(streams).toBe(1)
   })
 })

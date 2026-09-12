@@ -106,6 +106,8 @@ Discord rewrite, `execute_code`, Electron, `bypass` / yolo, streaming tool execu
 
 ### L10. Detached memory/skill review fork
 
+**Status.** Done.
+
 **Why.** Hermes `agent/background_review.py`: after delivery, a persistence-detached child inherits the parent’s byte-identical system prompt + `tools[]` (same prefix cache), whitelist `memory` / `skill_manage` / `read_file` / `search_files`, auto-deny Bash, cancel when the next live turn starts. RavenClaw `packages/core/src/review/fork.ts` is a user `/review` one-shot with `tools: []`. Cheap self-improve loop is missing: memory nudge every N user turns + skill nudge after a long tool turn.
 
 **Contract.** After a completed TUI turn (not exec/cron/dontAsk), optionally fork `createSessionEngine` with `bare` persist off, parent system-part hash unchanged, tools = Memory + Skill + Read + Grep only. Cancel on next `submitMessage`. Mid-turn hints (not new user rows) every 10 user turns (“consider Memory”) and after ≥10 tool rounds (“consider /learn”). Default off (`review.background: false`). Included sessions skip.

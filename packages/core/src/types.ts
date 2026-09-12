@@ -375,6 +375,8 @@ export interface SessionEngineOptions {
   verifyOnStop?: boolean
   /** After a tool batch, return newly ready deferred tools (MCP). Prefix stays unchanged. */
   refreshTools?: () => Promise<Tool[] | undefined> | Tool[] | undefined
+  /** After a completed TUI turn, fork a persist-detached memory/skill review. Default off. */
+  backgroundReview?: boolean
   /** Reuse a parent FileHistory. Unset creates one for this engine. */
   fileHistory?: import('./session/file-history').FileHistory
   /**

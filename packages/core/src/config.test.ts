@@ -711,6 +711,16 @@ describe('parseConfigYaml', () => {
     expect(parsed.tools).toBeUndefined()
   })
 
+  test('parses review.background and defaults it off', () => {
+    expect(parseConfigYaml('model: anthropic/claude-sonnet-4\n').review).toBeUndefined()
+    expect(parseConfigYaml(['review:', '  background: true', ''].join('\n')).review).toEqual({
+      background: true,
+    })
+    expect(parseConfigYaml(['review:', '  background: false', ''].join('\n')).review).toEqual({
+      background: false,
+    })
+  })
+
   test('skips mcp servers that lack name or command', () => {
     const parsed = parseConfigYaml(
       [

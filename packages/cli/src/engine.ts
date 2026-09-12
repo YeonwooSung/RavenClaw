@@ -388,6 +388,7 @@ export async function openEngine(opts: {
   skipLock?: boolean
   verifyOnStop?: boolean
   askUserHost?: boolean
+  backgroundReview?: boolean
 }): Promise<{
   engine: SessionEngine
   mcpCloser?: () => Promise<void>
@@ -556,6 +557,7 @@ async function finishOpenEngine(
   if (extraDirs.length > 0) engineOpts.additionalDirectories = extraDirs
   engineOpts.sessionLock = { holderId: lockHolderId }
   if (opts.verifyOnStop === true) engineOpts.verifyOnStop = true
+  if (opts.backgroundReview === true) engineOpts.backgroundReview = true
   if (refreshMcp !== undefined) {
     engineOpts.refreshTools = async () => {
       try {
@@ -783,6 +785,9 @@ export async function bootCli(
     engineOpts.verifyOnStop = true
   }
   if ((opts.surface ?? 'interactive') !== 'headless') engineOpts.askUserHost = true
+  if (wantBackgroundReview(config, opts.surface, access.admitted ? 'included' : 'byok')) {
+    engineOpts.backgroundReview = true
+  }
   const { engine, mcpCloser, askQuestions, mcpErrors } = await openEngine(engineOpts)
   const mcpStatus = mcpErrors.length > 0 ? formatMcpLoadErrors(mcpErrors) : undefined
   const wt = opts.flags.worktree
@@ -868,6 +873,13 @@ export async function resumeRuntime(
     ...((runtime.surface ?? 'interactive') !== 'headless' || runtime.askUserHost === true
       ? { askUserHost: true }
       : {}),
+    ...(wantBackgroundReview(
+      runtime.config,
+      runtime.surface,
+      loaded.session.funding,
+    )
+      ? { backgroundReview: true }
+      : {}),
   })
   if (prevEngine) {
     await prevEngine.close({ releaseLock: prevEngine.session.id !== engine.session.id })
@@ -936,6 +948,9 @@ export async function openNewSession(
     ...((runtime.surface ?? 'interactive') !== 'headless' || runtime.askUserHost === true
       ? { askUserHost: true }
       : {}),
+    ...(wantBackgroundReview(runtime.config, runtime.surface, funding)
+      ? { backgroundReview: true }
+      : {}),
   })
   if (prevEngine && prevEngine.session.id !== engine.session.id) {
     await prevEngine.close?.()
@@ -985,6 +1000,19 @@ export const PERMISSION_MODES = [
   'plan',
   'dontAsk',
 ] as const satisfies readonly PermissionMode[]
+
+function wantBackgroundReview(
+  config: ResolvedConfig,
+  surface: IncludedSurface | undefined,
+  funding: Funding,
+): boolean {
+  return (
+    (surface ?? 'interactive') !== 'headless' &&
+    config.review?.background === true &&
+    config.permissionMode !== 'dontAsk' &&
+    funding !== 'included'
+  )
+}
 
 export function parsePermissionMode(raw: string): PermissionMode | undefined {
   const key = raw.trim().toLowerCase()

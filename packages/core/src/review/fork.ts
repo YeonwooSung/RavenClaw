@@ -12,7 +12,42 @@ import type {
 
 export const MEMORY_REVIEW_REL = join('.ravenclaw', 'MEMORY.md')
 
+export const BACKGROUND_REVIEW_TOOL_NAMES = ['Memory', 'Skill', 'Read', 'Grep'] as const
+export const MEMORY_NUDGE_EVERY = 10
+export const LEARN_NUDGE_ROUNDS = 10
+export const MEMORY_NUDGE = 'consider Memory'
+export const LEARN_NUDGE = 'consider /learn'
+export const BACKGROUND_REVIEW_PROMPT =
+  'If this session taught a durable lesson, write it with Memory. If a reusable procedure emerged, consider a Skill. Do not recap.'
+
 const MUTATING_TOOLS = new Set(['Edit', 'Write', 'Bash'])
+const REVIEW_TOOL_SET = new Set<string>(BACKGROUND_REVIEW_TOOL_NAMES)
+
+export function filterBackgroundReviewTools<T extends { name: string }>(tools: T[]): T[] {
+  return tools.filter((tool) => REVIEW_TOOL_SET.has(tool.name))
+}
+
+export function shouldNudgeMemory(userTurns: number): boolean {
+  return userTurns > 0 && userTurns % MEMORY_NUDGE_EVERY === 0
+}
+
+export function shouldNudgeLearn(toolRounds: number): boolean {
+  return toolRounds >= LEARN_NUDGE_ROUNDS
+}
+
+export function shouldStartBackgroundReview(opts: {
+  enabled?: boolean
+  reason: string
+  funding?: string
+  permissionMode?: string
+}): boolean {
+  return (
+    opts.enabled === true &&
+    opts.reason === 'completed' &&
+    opts.funding !== 'included' &&
+    opts.permissionMode !== 'dontAsk'
+  )
+}
 
 export interface ForkMemoryReviewOpts {
   provider: Provider

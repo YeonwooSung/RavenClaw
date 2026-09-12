@@ -11,7 +11,14 @@ import type {
   ProviderRequest,
   SessionRecord,
 } from '../types'
-import { applyReviewToMemory, forkMemoryReview } from './fork'
+import {
+  applyReviewToMemory,
+  filterBackgroundReviewTools,
+  forkMemoryReview,
+  shouldNudgeLearn,
+  shouldNudgeMemory,
+  shouldStartBackgroundReview,
+} from './fork'
 
 const tempDirs: string[] = []
 
@@ -85,6 +92,45 @@ function createFakeProvider(scripts: ProviderChunk[][]): Provider & {
     },
   }
 }
+
+describe('background review helpers', () => {
+  test('keeps only Memory Skill Read Grep', () => {
+    expect(
+      filterBackgroundReviewTools([
+        { name: 'Read' },
+        { name: 'Bash' },
+        { name: 'Memory' },
+        { name: 'Write' },
+        { name: 'Skill' },
+        { name: 'Grep' },
+      ]).map((tool) => tool.name),
+    ).toEqual(['Read', 'Memory', 'Skill', 'Grep'])
+  })
+
+  test('nudges every 10 user turns and after 10 tool rounds', () => {
+    expect(shouldNudgeMemory(9)).toBe(false)
+    expect(shouldNudgeMemory(10)).toBe(true)
+    expect(shouldNudgeMemory(20)).toBe(true)
+    expect(shouldNudgeLearn(9)).toBe(false)
+    expect(shouldNudgeLearn(10)).toBe(true)
+  })
+
+  test('background review stays off for included, dontAsk, and default', () => {
+    expect(shouldStartBackgroundReview({ enabled: true, reason: 'completed' })).toBe(true)
+    expect(
+      shouldStartBackgroundReview({ enabled: true, reason: 'completed', funding: 'included' }),
+    ).toBe(false)
+    expect(
+      shouldStartBackgroundReview({
+        enabled: true,
+        reason: 'completed',
+        permissionMode: 'dontAsk',
+      }),
+    ).toBe(false)
+    expect(shouldStartBackgroundReview({ enabled: false, reason: 'completed' })).toBe(false)
+    expect(shouldStartBackgroundReview({ enabled: true, reason: 'aborted' })).toBe(false)
+  })
+})
 
 describe('forkMemoryReview', () => {
   test('returns provider text and writes .ravenclaw/MEMORY.md', async () => {

@@ -49,6 +49,10 @@ export interface ToolsConfig {
   network?: boolean
 }
 
+export interface ReviewConfig {
+  background?: boolean
+}
+
 export interface SlackConfig {
   enabled: boolean
   appToken: string
@@ -84,6 +88,7 @@ export interface RavenClawConfig {
   tools?: ToolsConfig
   slack?: SlackConfig
   discord?: DiscordConfig
+  review?: ReviewConfig
 }
 
 export interface ModelPriceFields {
@@ -293,6 +298,11 @@ export function parseConfigYaml(text: string): Partial<RavenClawConfig> {
   const discordRaw = asMap(raw.discord)
   if (discordRaw) out.discord = parseDiscordConfig(discordRaw)
 
+  const reviewRaw = asMap(raw.review)
+  if (reviewRaw) {
+    out.review = { background: asBoolean(reviewRaw.background) === true }
+  }
+
   return out
 }
 
@@ -386,6 +396,7 @@ export function loadConfig(opts?: { home?: string; flags?: ConfigFlags }): Resol
   if (parsed.tools !== undefined) resolved.tools = parsed.tools
   if (parsed.slack !== undefined) resolved.slack = resolveSlackConfig(parsed.slack, fileEnv)
   if (parsed.discord !== undefined) resolved.discord = resolveDiscordConfig(parsed.discord, fileEnv)
+  if (parsed.review !== undefined) resolved.review = parsed.review
   if (flags?.fallbackModel !== undefined) resolved.fallbackModel = flags.fallbackModel
   if (flags?.allowedTools !== undefined && flags.allowedTools.length > 0) {
     resolved.allowedTools = flags.allowedTools

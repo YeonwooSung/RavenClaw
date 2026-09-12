@@ -23,6 +23,17 @@ import { selectProtectedTail } from './repair'
 import { rewindLastTurn } from '../session/rewind'
 import { getSessionWorktree } from '../tools/session-worktree'
 import { applyPermissionMode } from '../prompt/builder'
+import { injectMidTurnHint } from '../prompt/cache'
+import { createMemoryStore } from '../session/memory-store'
+import {
+  BACKGROUND_REVIEW_PROMPT,
+  filterBackgroundReviewTools,
+  LEARN_NUDGE,
+  MEMORY_NUDGE,
+  shouldNudgeLearn,
+  shouldNudgeMemory,
+  shouldStartBackgroundReview,
+} from '../review/fork'
 
 const TITLE_MAX = 50
 
@@ -45,6 +56,8 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
   const injectedAgentsDirs = new Set<string>()
   let closed = false
   let sessionStartDone = false
+  let userTurns = 0
+  let cancelBackgroundReview: (() => void) | undefined
   const lifecycle = opts.bare
     ? { run: async () => undefined }
     : loadLifecycleHooks(session.cwd)
@@ -88,6 +101,8 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
     },
 
     async *submitMessage(input: UserSubmitInput): AsyncGenerator<StreamEvent, RoundEnd> {
+      cancelBackgroundReview?.()
+      cancelBackgroundReview = undefined
       const lock = opts.sessionLock
       if (lock) {
         await opts.store.renewSessionLock(session.id, lock.holderId, lock.ttlMs)
@@ -196,8 +211,17 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         if (opts.jsonSchema !== undefined) loopOpts.jsonSchema = opts.jsonSchema
         if (opts.verifyOnStop === true) loopOpts.verifyOnStop = true
         if (opts.refreshTools !== undefined) loopOpts.refreshTools = opts.refreshTools
+        userTurns += 1
+        if (shouldNudgeMemory(userTurns)) {
+          turn.messages = injectMidTurnHint(turn.messages, MEMORY_NUDGE)
+          messages = turn.messages
+        }
         const end = yield* queryLoop(loopOpts)
         messages = turn.messages
+        if (end.reason === 'completed' && shouldNudgeLearn(turn.round)) {
+          messages = injectMidTurnHint(messages, LEARN_NUDGE)
+          turn.messages = messages
+        }
         session.usage = turn.usage
         session.compactGeneration = turn.compactGeneration
         session.permissionMode = turn.permissionMode
@@ -208,6 +232,25 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         if (end.reason === 'context_full') {
           const stop = await lifecycle.run('Stop', { sessionId: session.id, reason: end.reason })
           if (stop?.message) yield { type: 'status', message: stop.message }
+        }
+        if (
+          shouldStartBackgroundReview({
+            enabled: opts.backgroundReview,
+            reason: end.reason,
+            funding: session.funding,
+            permissionMode: session.permissionMode,
+          })
+        ) {
+          cancelBackgroundReview = startDetachedReview({
+            provider: opts.provider,
+            parentSession: session,
+            messages,
+            system,
+            tools: opts.tools,
+            compact: opts.compact,
+            model: opts.model,
+            askUser: opts.askUser,
+          })
         }
         return end
       } finally {
@@ -273,10 +316,14 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
     },
 
     abort() {
+      cancelBackgroundReview?.()
+      cancelBackgroundReview = undefined
       if (liveTurn) abortTurn(liveTurn.abort)
     },
 
     async close(closeOpts) {
+      cancelBackgroundReview?.()
+      cancelBackgroundReview = undefined
       if (closed) return
       closed = true
       try {
@@ -292,6 +339,67 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         }
       }
     },
+  }
+}
+
+function startDetachedReview(opts: {
+  provider: SessionEngineOptions['provider']
+  parentSession: import('../types').SessionRecord
+  messages: Message[]
+  system: SystemPart[] | undefined
+  tools: SessionEngineOptions['tools']
+  compact: SessionEngineOptions['compact']
+  model: SessionEngineOptions['model']
+  askUser: SessionEngineOptions['askUser']
+}): () => void {
+  const reviewTools = filterBackgroundReviewTools(opts.tools)
+  if (reviewTools.length === 0) return () => {}
+  const store = createMemoryStore()
+  const session = { ...opts.parentSession, id: crypto.randomUUID() }
+  let cancelled = false
+  let child: SessionEngine | undefined
+  void (async () => {
+    try {
+      await store.createSession(session)
+      const childOpts: SessionEngineOptions = {
+        session,
+        messages: opts.messages.map((msg) => ({ ...msg, blocks: [...msg.blocks] })) as Message[],
+        provider: opts.provider,
+        store,
+        tools: reviewTools,
+        compact: opts.compact,
+        model: opts.model,
+        maxRounds: 8,
+        askUser: async () => 'deny',
+        bare: true,
+      }
+      if (opts.system !== undefined) childOpts.system = opts.system
+      child = createSessionEngine(childOpts)
+      if (cancelled) {
+        child.abort()
+        return
+      }
+      const gen = child.submitMessage(BACKGROUND_REVIEW_PROMPT)
+      for await (const _ of gen) {
+        if (cancelled) {
+          child.abort()
+          break
+        }
+      }
+    } catch {
+      // persist-detached; the parent turn already finished
+    } finally {
+      try {
+        child?.abort()
+        await child?.close({ releaseLock: false })
+      } catch {
+        // ignore
+      }
+    }
+  })()
+  return () => {
+    cancelled = true
+    child?.abort()
   }
 }
 
