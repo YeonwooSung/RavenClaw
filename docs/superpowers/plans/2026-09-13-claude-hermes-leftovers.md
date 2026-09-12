@@ -74,6 +74,8 @@ Discord rewrite, `execute_code`, Electron, `bypass` / yolo, streaming tool execu
 
 ### L7. Docker backend `start()`
 
+**Status.** Done.
+
 **Why.** Hermes terminal backends and Claude Bash both support background jobs. RavenClaw `createDockerTerminalBackend` has `exec` only; `packages/core/src/tools/bash.ts` returns “run_in_background requires the local terminal backend.” Headless Docker cannot run `bun test` in the background.
 
 **Contract.** Implement `start()` on the Docker backend: `docker exec -d` or a long-lived `docker exec` whose stdout is tailed into the existing task output file. `TaskOutput` / `TaskStop` work. Kill is `docker kill` of that exec, not the container. Local backend unchanged.

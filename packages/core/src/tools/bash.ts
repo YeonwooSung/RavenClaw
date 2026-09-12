@@ -120,7 +120,7 @@ function startBackground(
 ): BashResult {
   if (!backend.start) {
     return {
-      content: 'Bash failed: run_in_background requires the local terminal backend',
+      content: 'Bash failed: run_in_background requires a terminal backend that supports start()',
       exitCode: 1,
     }
   }

@@ -149,6 +149,47 @@ describe('Bash', () => {
     expect(output).toContain('bg-hi')
   })
 
+  test('docker backend run_in_background registers a task and TaskStop kills the job', async () => {
+    const root = fixtureRoot()
+    const home = fixtureRoot()
+    savedHome = process.env[HOME_ENV]
+    process.env[HOME_ENV] = home
+    const { createTaskRegistry } = await import('../tasks/registry')
+    const { taskStopTool } = await import('./task')
+    const { createDockerTerminalBackend } = await import('./terminal-backend')
+    const killed: string[] = []
+    const backend = createDockerTerminalBackend({
+      image: 'bash:5',
+      runCommand: async ({ signal }) => {
+        await new Promise<void>((_, reject) => {
+          const fail = () =>
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+          if (signal.aborted) {
+            fail()
+            return
+          }
+          signal.addEventListener('abort', fail)
+        })
+        return { stdout: '', stderr: '', exitCode: 0 }
+      },
+      killCommand: (name) => {
+        killed.push(name)
+      },
+    })
+    const tasks = createTaskRegistry()
+    const ctx = makeCtx(root)
+    ctx.tasks = tasks
+    const tool = createBashTool(backend)
+    const result = await tool.execute({ command: 'sleep 30', run_in_background: true }, ctx)
+    expect(result.exitCode).toBe(0)
+    expect(result.content).toContain('started background task')
+    const match = /started background task (b_[a-f0-9]+)/.exec(result.content)
+    expect(match?.[1]).toBeTruthy()
+    const stop = await taskStopTool.execute({ task_id: match![1]! }, ctx)
+    expect(stop.toLowerCase()).toMatch(/kill|stop/)
+    expect(killed).toHaveLength(1)
+  })
+
   test('echo hi appears in content with exit code and ending cwd', async () => {
     const root = fixtureRoot()
     const result = await bashTool.execute({ command: 'echo hi' }, makeCtx(root))

@@ -43,6 +43,7 @@ export interface DockerTerminalBackendOpts {
   image: string
   extraArgs?: string[]
   runCommand?: TerminalRunCommand
+  killCommand?: (name: string) => void
 }
 
 export type TerminalBackendKind = 'local' | 'docker'
@@ -72,6 +73,9 @@ export function createDockerTerminalBackend(opts: DockerTerminalBackendOpts): Te
   return {
     exec(execOpts: TerminalExecOpts) {
       return execDocker(execOpts, opts)
+    },
+    start(execOpts: TerminalExecOpts) {
+      return startDocker(execOpts, opts)
     },
   }
 }
@@ -134,6 +138,29 @@ function startLocal(opts: TerminalExecOpts): TerminalJob {
   }
 }
 
+function dockerRunRequest(
+  opts: TerminalExecOpts,
+  docker: DockerTerminalBackendOpts,
+  timeoutMs: number,
+  marker: string,
+  name?: string,
+): TerminalRunRequest {
+  const script = wrapCwdMarkerScript(opts.command, marker)
+  const extraArgs = docker.extraArgs ?? []
+  const args = ['run', '--rm', '-i']
+  if (name !== undefined) args.push('--name', name)
+  args.push('-v', `${opts.cwd}:${opts.cwd}`, '-w', opts.cwd, ...extraArgs, docker.image, 'bash', '-c', script)
+  return {
+    command: 'docker',
+    args,
+    cwd: opts.cwd,
+    env: dockerAllowlistEnv(),
+    timeoutMs,
+    signal: opts.signal,
+    onOutput: opts.onOutput,
+  }
+}
+
 async function execDocker(
   opts: TerminalExecOpts,
   docker: DockerTerminalBackendOpts,
@@ -142,30 +169,7 @@ async function execDocker(
 
   const timeoutMs = opts.timeoutMs > 0 ? opts.timeoutMs : DEFAULT_TIMEOUT_MS
   const marker = cwdMarker()
-  const script = wrapCwdMarkerScript(opts.command, marker)
-  const extraArgs = docker.extraArgs ?? []
-  const req: TerminalRunRequest = {
-    command: 'docker',
-    args: [
-      'run',
-      '--rm',
-      '-i',
-      '-v',
-      `${opts.cwd}:${opts.cwd}`,
-      '-w',
-      opts.cwd,
-      ...extraArgs,
-      docker.image,
-      'bash',
-      '-c',
-      script,
-    ],
-    cwd: opts.cwd,
-    env: dockerAllowlistEnv(),
-    timeoutMs,
-    signal: opts.signal,
-    onOutput: opts.onOutput,
-  }
+  const req = dockerRunRequest(opts, docker, timeoutMs, marker)
 
   try {
     if (docker.runCommand) {
@@ -187,6 +191,66 @@ async function execDocker(
       stderr: errorMessage(error),
       exitCode: 1,
       cwd: opts.cwd,
+    }
+  }
+}
+
+function startDocker(opts: TerminalExecOpts, docker: DockerTerminalBackendOpts): TerminalJob {
+  const marker = cwdMarker()
+  const timeoutMs = opts.timeoutMs > 0 ? opts.timeoutMs : 0
+  const controller = new AbortController()
+  const name = `rc-job-${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`
+  const req = dockerRunRequest(
+    { ...opts, signal: controller.signal },
+    docker,
+    timeoutMs,
+    marker,
+    name,
+  )
+  const wait = runDockerJob(req, docker, marker, opts.cwd, controller.signal)
+  return {
+    kill() {
+      try {
+        if (docker.killCommand) docker.killCommand(name)
+        else spawnSync('docker', ['kill', name], { stdio: 'ignore' })
+      } catch {
+        // already gone
+      }
+      controller.abort()
+    },
+    wait() {
+      return wait
+    },
+  }
+}
+
+async function runDockerJob(
+  req: TerminalRunRequest,
+  docker: DockerTerminalBackendOpts,
+  marker: string,
+  fallbackCwd: string,
+  signal: AbortSignal,
+): Promise<TerminalExecResult> {
+  try {
+    if (docker.runCommand) {
+      const ran = await docker.runCommand(req)
+      if (signal.aborted) return Promise.reject(abortError())
+      const parsed = splitCwdMarker(ran.stdout, marker, fallbackCwd)
+      return {
+        stdout: parsed.stdout,
+        stderr: ran.stderr,
+        exitCode: ran.exitCode,
+        cwd: parsed.cwd,
+      }
+    }
+    return await runSpawned(req, { spawnError: 'result', marker, fallbackCwd })
+  } catch (error) {
+    if (signal.aborted || isAbortError(error)) return Promise.reject(abortError())
+    return {
+      stdout: '',
+      stderr: errorMessage(error),
+      exitCode: 1,
+      cwd: fallbackCwd,
     }
   }
 }

@@ -91,13 +91,87 @@ function dockerHasImage(image: string): boolean {
   return inspect.error === undefined && inspect.status === 0
 }
 
-const dockerReady = dockerInfoOk()
-const liveDocker = dockerReady && dockerHasImage(LIVE_DOCKER_IMAGE)
+let dockerReadyCache: boolean | undefined
+let liveDockerCache: boolean | undefined
+
+function dockerReady(): boolean {
+  dockerReadyCache ??= dockerInfoOk()
+  return dockerReadyCache
+}
+
+function liveDocker(): boolean {
+  liveDockerCache ??= dockerReady() && dockerHasImage(LIVE_DOCKER_IMAGE)
+  return liveDockerCache
+}
 
 describe('createDockerTerminalBackend', () => {
-  test('returns an object with exec', () => {
+  test('returns an object with exec and start', () => {
     const backend = createDockerTerminalBackend({ image: 'bash:5' })
     expect(typeof backend.exec).toBe('function')
+    expect(typeof backend.start).toBe('function')
+  })
+
+  test('start() uses docker run --name and kill() kills that job', async () => {
+    let seen: TerminalRunRequest | undefined
+    const killed: string[] = []
+    const backend = createDockerTerminalBackend({
+      image: 'bash:5',
+      extraArgs: ['--network', 'none'],
+      runCommand: async (req) => {
+        seen = req
+        return { stdout: 'bg\n', stderr: '', exitCode: 0 }
+      },
+      killCommand: (name) => {
+        killed.push(name)
+      },
+    })
+    const job = backend.start!({
+      command: 'sleep 30',
+      cwd: '/tmp/ravenclaw-docker-bg',
+      timeoutMs: 0,
+      signal: new AbortController().signal,
+    })
+    const result = await job.wait()
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toBe('bg\n')
+    expect(seen?.args.slice(0, 3)).toEqual(['run', '--rm', '-i'])
+    expect(seen?.args[3]).toBe('--name')
+    const name = seen?.args[4]
+    expect(name?.startsWith('rc-job-')).toBe(true)
+    job.kill()
+    expect(killed).toEqual([name])
+  })
+
+  test('start() kill aborts a still-running docker job', async () => {
+    const killed: string[] = []
+    const backend = createDockerTerminalBackend({
+      image: 'bash:5',
+      runCommand: async ({ signal }) => {
+        await new Promise<void>((_, reject) => {
+          const fail = () =>
+            reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+          if (signal.aborted) {
+            fail()
+            return
+          }
+          signal.addEventListener('abort', fail)
+        })
+        return { stdout: '', stderr: '', exitCode: 0 }
+      },
+      killCommand: (name) => {
+        killed.push(name)
+      },
+    })
+    const job = backend.start!({
+      command: 'sleep 30',
+      cwd: '/tmp',
+      timeoutMs: 0,
+      signal: new AbortController().signal,
+    })
+    job.kill()
+    await expect(job.wait()).rejects.toMatchObject({ name: 'AbortError' })
+    expect(killed).toHaveLength(1)
+    expect(killed[0]?.startsWith('rc-job-')).toBe(true)
   })
 
   test('builds docker run argv with volume mount, workdir, image, and extraArgs', async () => {
@@ -232,22 +306,21 @@ describe('createDockerTerminalBackend', () => {
     expect(result.stderr).toMatch(/docker|not found|ENOENT/i)
   })
 
-  test.skipIf(dockerReady)(
-    'unavailable docker returns a non-zero result without throwing',
-    async () => {
-      const backend = createDockerTerminalBackend({ image: LIVE_DOCKER_IMAGE })
-      const result = await backend.exec({
-        command: 'echo hi',
-        cwd: fixtureRoot(),
-        timeoutMs: 8_000,
-        signal: new AbortController().signal,
-      })
-      expect(result.exitCode).not.toBe(0)
-      expect(result.stderr.length).toBeGreaterThan(0)
-    },
-  )
+  test('unavailable docker returns a non-zero result without throwing', async () => {
+    if (dockerReady()) return
+    const backend = createDockerTerminalBackend({ image: LIVE_DOCKER_IMAGE })
+    const result = await backend.exec({
+      command: 'echo hi',
+      cwd: fixtureRoot(),
+      timeoutMs: 8_000,
+      signal: new AbortController().signal,
+    })
+    expect(result.exitCode).not.toBe(0)
+    expect(result.stderr.length).toBeGreaterThan(0)
+  })
 
-  test.skipIf(!liveDocker)('live docker run echoes and reports cwd', async () => {
+  test('live docker run echoes and reports cwd', async () => {
+    if (!liveDocker()) return
     const root = fixtureRoot()
     const backend = createDockerTerminalBackend({ image: LIVE_DOCKER_IMAGE })
     const result = await backend.exec({
