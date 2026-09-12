@@ -650,6 +650,38 @@ describe('parseConfigYaml', () => {
     ])
   })
 
+  test('parses mcp server oauth clientId, scope, and redirectPort', () => {
+    const parsed = parseConfigYaml(
+      [
+        'mcp:',
+        '  servers:',
+        '    - name: docs',
+        '      url: https://example.com/mcp',
+        '      oauth:',
+        '        clientId: cli-1',
+        '        scope: mcp',
+        '        redirectPort: 8756',
+        '        authorizationUrl: https://auth.example/authorize',
+        '        tokenUrl: https://auth.example/token',
+        '',
+      ].join('\n'),
+    )
+    expect(parsed.mcp?.servers).toEqual([
+      {
+        name: 'docs',
+        type: 'http',
+        url: 'https://example.com/mcp',
+        oauth: {
+          clientId: 'cli-1',
+          scope: 'mcp',
+          redirectPort: 8756,
+          authorizationUrl: 'https://auth.example/authorize',
+          tokenUrl: 'https://auth.example/token',
+        },
+      },
+    ])
+  })
+
   test('parses mcp server tools and excludeTools', () => {
     const parsed = parseConfigYaml(
       [

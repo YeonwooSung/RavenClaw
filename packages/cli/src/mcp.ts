@@ -4,7 +4,11 @@ import {
   createMcpResourceTools,
   createMcpToolBridge,
   createStdioMcpTransport,
+  ensureMcpOAuthAccess,
+  loadMcpOAuthTokens,
   loadMcpTools,
+  ravenclawHome,
+  refreshMcpOAuth,
   type McpServerConfig,
   type McpToolBridge,
   type Tool,
@@ -229,6 +233,33 @@ async function loadHttpMcpServer(server: McpServerConfig): Promise<ConnectedMcpS
     url: server.url,
     ...(server.headers !== undefined ? { headers: server.headers } : {}),
     ...(server.type === 'sse' ? { mode: 'sse' as const } : { mode: 'http' as const }),
+    ...(server.oauth !== undefined
+      ? {
+          oauth: {
+            async getAccessToken() {
+              const tokens = await ensureMcpOAuthAccess({
+                serverName: server.name,
+                oauth: server.oauth!,
+                resourceUrl: server.url,
+                home: ravenclawHome(),
+              })
+              return tokens.accessToken
+            },
+            async refreshAccessToken() {
+              const existing = loadMcpOAuthTokens(server.name, ravenclawHome())
+              if (!existing?.refreshToken) return undefined
+              const tokens = await refreshMcpOAuth({
+                serverName: server.name,
+                oauth: server.oauth!,
+                refreshToken: existing.refreshToken,
+                resourceUrl: server.url,
+                home: ravenclawHome(),
+              })
+              return tokens.accessToken
+            },
+          },
+        }
+      : {}),
   })
   const bridge = createMcpToolBridge(transport)
   const close = async () => {

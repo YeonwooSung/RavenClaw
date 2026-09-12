@@ -62,6 +62,7 @@ export {
 export type {
   ConfigFlags,
   McpConfig,
+  McpOAuthConfig,
   McpServerConfig,
   ProviderKind,
   RavenClawConfig,
@@ -187,6 +188,14 @@ export {
 export type { DiscoveredSkill, SkillInput, SkillSource } from './tools/skill'
 export { createMcpToolBridge, createStdioMcpTransport } from './mcp/client'
 export { createHttpMcpTransport } from './mcp/http'
+export {
+  ensureMcpOAuthAccess,
+  refreshMcpOAuth,
+  loadMcpOAuthTokens,
+  saveMcpOAuthTokens,
+  createPkcePair,
+  MCP_AUTH_REQUIRED,
+} from './mcp/oauth'
 export { createMcpResourceTools } from './mcp/resources'
 export {
   appendDeferredMcpTools,
@@ -211,6 +220,7 @@ export {
   applyReviewToMemory,
   forkMemoryReview,
   filterBackgroundReviewTools,
+  backgroundReviewSession,
   shouldNudgeMemory,
   shouldNudgeLearn,
   shouldStartBackgroundReview,

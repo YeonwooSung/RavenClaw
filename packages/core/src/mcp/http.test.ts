@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { createHttpMcpTransport } from './http'
+import { MCP_AUTH_REQUIRED } from './oauth'
 
 describe('createHttpMcpTransport', () => {
   test('POSTs JSON-RPC and returns result, forwarding session id', async () => {
@@ -140,6 +141,59 @@ describe('createHttpMcpTransport', () => {
     const pending = transport.request('tools/call', { name: 'slow' }, { signal: ac.signal })
     ac.abort()
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    await transport.close()
+  })
+
+  test('401 refreshes the bearer token and retries once', async () => {
+    const statuses: number[] = []
+    const auths: Array<string | undefined> = []
+    let token = 'old'
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      const headers = Object.fromEntries(new Headers(init?.headers).entries())
+      auths.push(headers.authorization)
+      if (token === 'old') {
+        statuses.push(401)
+        return new Response('nope', { status: 401 })
+      }
+      statuses.push(200)
+      return new Response(JSON.stringify({ jsonrpc: '2.0', id: 1, result: { ok: true } }), {
+        status: 200,
+        headers: { 'content-type': 'application/json' },
+      })
+    }
+    const transport = createHttpMcpTransport({
+      url: 'https://example.com/mcp',
+      fetchImpl,
+      oauth: {
+        async getAccessToken() {
+          return token
+        },
+        async refreshAccessToken() {
+          token = 'new'
+          return token
+        },
+      },
+    })
+    await expect(transport.request('tools/list')).resolves.toEqual({ ok: true })
+    expect(statuses).toEqual([401, 200])
+    expect(auths).toEqual(['Bearer old', 'Bearer new'])
+    await transport.close()
+  })
+
+  test('401 without a refresh fails closed as auth required', async () => {
+    const transport = createHttpMcpTransport({
+      url: 'https://example.com/mcp',
+      fetchImpl: async () => new Response('nope', { status: 401 }),
+      oauth: {
+        async getAccessToken() {
+          return 'stale'
+        },
+        async refreshAccessToken() {
+          return undefined
+        },
+      },
+    })
+    await expect(transport.request('tools/list')).rejects.toMatchObject({ message: MCP_AUTH_REQUIRED })
     await transport.close()
   })
 })

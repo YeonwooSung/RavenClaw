@@ -1,10 +1,15 @@
 import type { McpTransport, McpTransportHealth } from './types'
+import { MCP_AUTH_REQUIRED } from './oauth'
 
 export interface HttpMcpTransportOpts {
   url: string
   headers?: Record<string, string>
   fetchImpl?: typeof fetch
   mode?: 'http' | 'sse'
+  oauth?: {
+    getAccessToken(): Promise<string | undefined>
+    refreshAccessToken(): Promise<string | undefined>
+  }
 }
 
 const SSE_WAIT_MS = 15_000
@@ -43,7 +48,7 @@ export function createHttpMcpTransport(opts: HttpMcpTransportOpts): McpTransport
       try {
         const headers: Record<string, string> = {
           accept: 'text/event-stream',
-          ...opts.headers,
+          ...(await authHeaders()),
         }
         if (sessionId) headers['mcp-session-id'] = sessionId
         const res = await fetchImpl(opts.url, {
@@ -122,10 +127,20 @@ export function createHttpMcpTransport(opts: HttpMcpTransportOpts): McpTransport
     pending.clear()
   }
 
+  async function authHeaders(): Promise<Record<string, string>> {
+    const headers: Record<string, string> = { ...opts.headers }
+    if (opts.oauth) {
+      const token = await opts.oauth.getAccessToken()
+      if (token) headers.authorization = `Bearer ${token}`
+    }
+    return headers
+  }
+
   async function send(
     body: Record<string, unknown>,
     expectResult: boolean,
     signal?: AbortSignal,
+    retried = false,
   ): Promise<unknown> {
     if (closed) throw new Error('MCP transport is closed')
     if (signal?.aborted) throw abortError()
@@ -135,7 +150,7 @@ export function createHttpMcpTransport(opts: HttpMcpTransportOpts): McpTransport
     const headers: Record<string, string> = {
       'content-type': 'application/json',
       accept: 'application/json, text/event-stream',
-      ...opts.headers,
+      ...(await authHeaders()),
     }
     if (sessionId) headers['mcp-session-id'] = sessionId
     const res = await fetchImpl(opts.url, {
@@ -146,6 +161,13 @@ export function createHttpMcpTransport(opts: HttpMcpTransportOpts): McpTransport
     })
     const returnedSession = res.headers.get('mcp-session-id')
     if (returnedSession) sessionId = returnedSession
+    if (res.status === 401) {
+      if (!retried && opts.oauth) {
+        const next = await opts.oauth.refreshAccessToken()
+        if (next) return send(body, expectResult, signal, true)
+      }
+      throw new Error(MCP_AUTH_REQUIRED)
+    }
     if (!expectResult) return undefined
     if (sseMode && res.status === 202) {
       return waitForSse(body.id, signal)

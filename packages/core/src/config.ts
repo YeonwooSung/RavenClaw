@@ -34,6 +34,15 @@ export interface McpServerConfig {
   tools?: string[]
   /** Applied after `tools`. */
   excludeTools?: string[]
+  oauth?: McpOAuthConfig
+}
+
+export interface McpOAuthConfig {
+  clientId: string
+  scope?: string
+  redirectPort?: number
+  authorizationUrl?: string
+  tokenUrl?: string
 }
 
 export interface McpConfig {
@@ -631,6 +640,22 @@ function parseMcpServer(rec: Record<string, unknown>): McpServerConfig | undefin
   if (tools !== undefined) server.tools = tools
   const excludeTools = asStringList(rec.excludeTools)
   if (excludeTools !== undefined) server.excludeTools = excludeTools
+  const oauthRaw = asMap(rec.oauth)
+  if (oauthRaw) {
+    const clientId = asString(oauthRaw.clientId) ?? asString(oauthRaw.client_id)
+    if (clientId !== undefined && clientId !== '') {
+      const oauth: McpOAuthConfig = { clientId }
+      const scope = asString(oauthRaw.scope)
+      if (scope !== undefined) oauth.scope = scope
+      const redirectPort = asNumber(oauthRaw.redirectPort) ?? asNumber(oauthRaw.redirect_port)
+      if (redirectPort !== undefined) oauth.redirectPort = redirectPort
+      const authorizationUrl = asString(oauthRaw.authorizationUrl) ?? asString(oauthRaw.authorization_url)
+      if (authorizationUrl !== undefined) oauth.authorizationUrl = authorizationUrl
+      const tokenUrl = asString(oauthRaw.tokenUrl) ?? asString(oauthRaw.token_url)
+      if (tokenUrl !== undefined) oauth.tokenUrl = tokenUrl
+      server.oauth = oauth
+    }
+  }
   return server
 }
 

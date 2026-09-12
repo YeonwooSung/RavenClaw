@@ -88,6 +88,8 @@ Discord rewrite, `execute_code`, Electron, `bypass` / yolo, streaming tool execu
 
 ### L8. MCP OAuth PKCE loopback
 
+**Status.** Done.
+
 **Why.** Hermes `tools/mcp_oauth.py` is OAuth 2.1 + PKCE + localhost callback + on-disk tokens. RavenClaw HTTP/SSE MCP is headers-only (`packages/core/src/mcp/http.ts`). README already calls PKCE “future.” Interactive HTTP MCP that needs a user login cannot connect.
 
 **Contract.** Optional `mcp.servers[].oauth` (client id, scope, redirect port). Browser + loopback; tokens in `~/.ravenclaw/mcp-oauth/<server>.json` mode 0600. Refresh on 401. Fail closed to “auth required” tool error, never a company broker. Stdio unchanged.
