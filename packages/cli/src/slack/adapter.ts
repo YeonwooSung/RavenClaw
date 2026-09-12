@@ -1,3 +1,4 @@
+import { singleFlight } from '../serve'
 import { admitSlackEvent } from './admit'
 import { createSlackWebApi } from './api'
 import { normalizeSlackEnvelope } from './normalize'
@@ -27,6 +28,7 @@ export async function runSlackAdapter(opts: {
   botUserId?: string
   permissionTimeoutMs?: number
   now?: () => number
+  turnFlights?: Map<string, Promise<unknown>>
 }): Promise<void> {
   if (opts.config.enabled !== true && opts.socket === undefined) {
     throw new Error('slack is disabled (set slack.enabled: true in config.yaml)')
@@ -48,6 +50,7 @@ export async function runSlackAdapter(opts: {
   const permits = new Map<string, PendingPermit>()
   const seen = new Set<string>()
   const inflight = new Set<Promise<void>>()
+  const turnFlights = opts.turnFlights ?? new Map<string, Promise<unknown>>()
   const timeoutMs = opts.permissionTimeoutMs ?? SLACK_PERMISSION_TIMEOUT_MS
   const now = opts.now ?? Date.now
 
@@ -82,6 +85,7 @@ export async function runSlackAdapter(opts: {
         permits,
         timeoutMs,
         now,
+        turnFlights,
       }).catch(() => {
         // turn failures are reported in-channel when possible
       })
@@ -111,6 +115,7 @@ async function handleTurn(opts: {
   permits: Map<string, PendingPermit>
   timeoutMs: number
   now: () => number
+  turnFlights: Map<string, Promise<unknown>>
 }): Promise<void> {
   const { inbound, text, api } = opts
   const isDm = slackEventIsDm(inbound)
@@ -143,47 +148,49 @@ async function handleTurn(opts: {
       }),
   })
 
-  const stub = await api.postMessage({
-    channel: inbound.channel,
-    text: STUB_TEXT,
-    threadTs,
-  })
-  let messageTs = stub.ok ? stub.ts : undefined
-  let acc = ''
-  let lastUpdate = 0
-
-  const publish = async (final: boolean) => {
-    const body = clipSlackText(acc === '' ? (final ? '(no output)' : STUB_TEXT) : acc)
-    if (messageTs !== undefined) {
-      const updated = await api.updateMessage({
-        channel: inbound.channel,
-        ts: messageTs,
-        text: body,
-      })
-      if (updated.ok) return
-    }
-    const posted = await api.postMessage({
+  await singleFlight(opts.turnFlights, session.sessionId, async () => {
+    const stub = await api.postMessage({
       channel: inbound.channel,
-      text: body,
+      text: STUB_TEXT,
       threadTs,
     })
-    if (posted.ok && posted.ts !== undefined) messageTs = posted.ts
-  }
+    let messageTs = stub.ok ? stub.ts : undefined
+    let acc = ''
+    let lastUpdate = 0
 
-  try {
-    await consumeSubmit(session, text, async (delta) => {
-      acc += delta
-      const t = opts.now()
-      if (t - lastUpdate >= UPDATE_THROTTLE_MS) {
-        lastUpdate = t
-        await publish(false)
+    const publish = async (final: boolean) => {
+      const body = clipSlackText(acc === '' ? (final ? '(no output)' : STUB_TEXT) : acc)
+      if (messageTs !== undefined) {
+        const updated = await api.updateMessage({
+          channel: inbound.channel,
+          ts: messageTs,
+          text: body,
+        })
+        if (updated.ok) return
       }
-    })
-    await publish(true)
-  } catch (error) {
-    acc = error instanceof Error ? error.message : String(error)
-    await publish(true)
-  }
+      const posted = await api.postMessage({
+        channel: inbound.channel,
+        text: body,
+        threadTs,
+      })
+      if (posted.ok && posted.ts !== undefined) messageTs = posted.ts
+    }
+
+    try {
+      await consumeSubmit(session, text, async (delta) => {
+        acc += delta
+        const t = opts.now()
+        if (t - lastUpdate >= UPDATE_THROTTLE_MS) {
+          lastUpdate = t
+          await publish(false)
+        }
+      })
+      await publish(true)
+    } catch (error) {
+      acc = error instanceof Error ? error.message : String(error)
+      await publish(true)
+    }
+  })
 }
 
 async function consumeSubmit(

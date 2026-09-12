@@ -405,4 +405,62 @@ describe('runSlackAdapter', () => {
     expect(api2.posts.some((post) => post.text.includes('pong:hi'))).toBe(true)
     expect(api2.updates).toEqual([])
   })
+
+  test('overlapping turns on the same session do not call submitMessage concurrently', async () => {
+    const socket = new FakeSlackSocket()
+    const submitted: string[] = []
+    let inFlight = 0
+    let maxInFlight = 0
+    let submits = 0
+    let opened = 0
+    let releaseFirst!: () => void
+    const firstHeld = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    let firstBegan!: () => void
+    const sawFirst = new Promise<void>((resolve) => {
+      firstBegan = resolve
+    })
+    let secondOpened!: () => void
+    const sawSecondOpen = new Promise<void>((resolve) => {
+      secondOpened = resolve
+    })
+
+    const openSession: SlackOpenSession = async () => {
+      opened += 1
+      if (opened === 2) secondOpened()
+      const session: SlackBoundSession = {
+        sessionId: 'sess-shared',
+        async *submitMessage(text: string) {
+          submits += 1
+          inFlight += 1
+          maxInFlight = Math.max(maxInFlight, inFlight)
+          submitted.push(text)
+          if (submits === 1) {
+            firstBegan()
+            await firstHeld
+          }
+          inFlight -= 1
+          yield { type: 'text_delta', text: `pong:${text}` }
+        },
+      }
+      return session
+    }
+
+    const running = runOnce({ socket, openSession })
+    socket.push(appMention({ text: '<@UBOT> first', ts: '60.0', threadTs: '60.0' }))
+    await sawFirst
+    socket.push(appMention({ text: '<@UBOT> second', ts: '61.0', threadTs: '60.0' }))
+    await sawSecondOpen
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(submits).toBe(1)
+    expect(inFlight).toBe(1)
+    releaseFirst()
+    socket.end()
+    await running
+    expect(submitted).toEqual(['first', 'second'])
+    expect(submits).toBe(2)
+    expect(maxInFlight).toBe(1)
+  })
 })

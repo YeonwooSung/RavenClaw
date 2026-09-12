@@ -25,21 +25,29 @@ describe('gatewaySecret', () => {
 })
 
 describe('singleFlight', () => {
-  test('concurrent starts share one in-flight promise', async () => {
+  test('serializes starts for the same key (second waits, then runs)', async () => {
     const flights = new Map<string, Promise<number>>()
     let runs = 0
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
     const start = () =>
       new Promise<number>((resolve) => {
         runs += 1
-        setTimeout(() => resolve(runs), 20)
+        const n = runs
+        if (n === 1) void held.then(() => resolve(n))
+        else resolve(n)
       })
-    const [a, b] = await Promise.all([
-      singleFlight(flights, 's1', start),
-      singleFlight(flights, 's1', start),
-    ])
-    expect(a).toBe(1)
-    expect(b).toBe(1)
+    const first = singleFlight(flights, 's1', start)
+    const second = singleFlight(flights, 's1', start)
     expect(runs).toBe(1)
+    expect(flights.size).toBe(1)
+    release()
+    const [a, b] = await Promise.all([first, second])
+    expect(a).toBe(1)
+    expect(b).toBe(2)
+    expect(runs).toBe(2)
     expect(flights.size).toBe(0)
   })
 })
@@ -130,6 +138,26 @@ describe('tickMailbox', () => {
     expect(submitted).toEqual(['[mailbox]'])
     expect(submits).toBe(1)
     expect(flights.size).toBe(0)
+  })
+
+  test('existing turnFlights entry for s1 waits and does not start a second submit', async () => {
+    let release!: () => void
+    let waited = false
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    }).then(() => {
+      waited = true
+    })
+    const { runtime, submitted } = liveEngine({ id: 's1', peek: () => ['child done'] })
+    const turnFlights = new Map<string, Promise<unknown>>([['s1', held]])
+    const tick = tickMailbox(new Map([['s1', runtime]]), turnFlights)
+    await Promise.resolve()
+    expect(submitted).toEqual([])
+    expect(waited).toBe(false)
+    release()
+    await tick
+    expect(waited).toBe(true)
+    expect(submitted).toEqual([])
   })
 })
 

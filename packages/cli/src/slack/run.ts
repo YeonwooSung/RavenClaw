@@ -37,7 +37,7 @@ export async function runSlack(opts: { flags: ConfigFlags }): Promise<number> {
   const map = loadSessionMap(home)
   const engines = new Map<string, CliRuntime>()
   const opening = new Map<string, Promise<CliRuntime>>()
-  const mailboxFlights = new Map<string, Promise<unknown>>()
+  const turnFlights = new Map<string, Promise<unknown>>()
   const shared = await bootCli({
     flags: opts.flags,
     createSession: false,
@@ -92,14 +92,14 @@ export async function runSlack(opts: { flags: ConfigFlags }): Promise<number> {
   }
 
   const stop = new AbortController()
-  const stopMailbox = startMailboxPoller(engines, mailboxFlights)
+  const stopMailbox = startMailboxPoller(engines, turnFlights)
   let stopped = false
   const shutdown = async () => {
     if (stopped) return
     stopped = true
     stop.abort()
     stopMailbox()
-    await Promise.allSettled([...mailboxFlights.values()])
+    await Promise.allSettled([...turnFlights.values()])
     for (const runtime of engines.values()) {
       await runtime.engine.close?.()
       await runtime.mcpCloser?.()
@@ -131,6 +131,7 @@ export async function runSlack(opts: { flags: ConfigFlags }): Promise<number> {
         socket,
         api,
         signal: stop.signal,
+        turnFlights,
       }
       if (botUserId !== undefined) adapterOpts.botUserId = botUserId
       await runSlackAdapter(adapterOpts)

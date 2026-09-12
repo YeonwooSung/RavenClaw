@@ -27,16 +27,26 @@ export type MailboxLiveEngine = {
 }
 
 export function singleFlight<T>(
-  flights: Map<string, Promise<T>>,
+  flights: Map<string, Promise<T>> | Map<string, Promise<unknown>>,
   key: string,
   start: () => Promise<T>,
 ): Promise<T> {
-  const existing = flights.get(key)
-  if (existing) return existing
-  const task = start().finally(() => {
-    if (flights.get(key) === task) flights.delete(key)
+  const map = flights as Map<string, Promise<unknown>>
+  const existing = map.get(key)
+  const task = (async () => {
+    if (existing) {
+      try {
+        await existing
+      } catch {
+        // prior flight owns its error
+      }
+    }
+    return await start()
+  })()
+  map.set(key, task)
+  void task.finally(() => {
+    if (map.get(key) === task) map.delete(key)
   })
-  flights.set(key, task)
   return task
 }
 
@@ -57,6 +67,11 @@ export async function tickMailbox(
       const sessionId = runtime.engine.session.id
       const mail = await runtime.store.peekAgentMail(sessionId)
       if (mail.length === 0) continue
+      const existing = flights.get(sessionId)
+      if (existing) {
+        pending.push(existing.catch(() => undefined))
+        continue
+      }
       pending.push(
         singleFlight(flights, sessionId, async () => {
           try {
@@ -120,7 +135,7 @@ export async function runServe(opts: { flags: ConfigFlags }): Promise<number> {
   const map = loadSessionMap(home)
   const engines = new Map<string, CliRuntime>()
   const opening = new Map<string, Promise<CliRuntime>>()
-  const mailboxFlights = new Map<string, Promise<unknown>>()
+  const turnFlights = new Map<string, Promise<unknown>>()
   const shared = await bootCli({
     flags: { ...opts.flags, dontAsk: true },
     createSession: false,
@@ -170,11 +185,13 @@ export async function runServe(opts: { flags: ConfigFlags }): Promise<number> {
         if (!parsed.ok) return Response.json({ error: parsed.error }, { status: 400 })
         try {
           const runtime = await runtimeFor(parsed.sessionKey, false)
-          const result = await runExec({
-            prompt: parsed.text,
-            engine: runtime.engine,
-            closeEngine: false,
-          })
+          const result = await singleFlight(turnFlights, runtime.engine.session.id, () =>
+            runExec({
+              prompt: parsed.text,
+              engine: runtime.engine,
+              closeEngine: false,
+            }),
+          )
           return Response.json({ text: result.text, end: result.end, sessionId: runtime.engine.session.id })
         } catch (error) {
           return Response.json(
@@ -221,11 +238,11 @@ export async function runServe(opts: { flags: ConfigFlags }): Promise<number> {
   process.stdout.write(`raven serve ${server.hostname}:${server.port}\n`)
   process.stdout.write('POST /v1/turn  Authorization: Bearer <GATEWAY_SECRET>\n')
   process.stdout.write('POST /webhooks/<route>  X-Raven-Signature: t=<unix>,v1=<hmac>\n')
-  const stopMailbox = startMailboxPoller(engines, mailboxFlights)
+  const stopMailbox = startMailboxPoller(engines, turnFlights)
   const shutdown = async () => {
     stopMailbox()
     server.stop()
-    await Promise.allSettled([...mailboxFlights.values()])
+    await Promise.allSettled([...turnFlights.values()])
     for (const runtime of engines.values()) {
       await runtime.engine.close?.()
       await runtime.mcpCloser?.()
