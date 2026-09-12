@@ -1,6 +1,6 @@
 # Headless permissions (`raven exec`)
 
-`raven exec` (and `acp` / `serve` / cron fires) force `dontAsk`. That is **not** `bypass`. Leftover asks become denials. There is no yolo / auto-allow-all-Bash mode.
+`raven exec` (and `serve` / cron fires) force `dontAsk`. Interactive `raven acp` defaults to `default` so the editor can answer leftover asks; pass `--dont-ask` for unattended ACP. That is **not** `bypass`. Leftover asks become denials. There is no yolo / auto-allow-all-Bash mode.
 
 ## What `dontAsk` allows
 

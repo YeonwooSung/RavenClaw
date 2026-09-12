@@ -1,7 +1,8 @@
 # RavenClaw roadmap
 
 Date: 2026-09-12  
-Status: plan  
+Status: historical (H0 + harness-honesty done at `5629c82`)  
+Remaining H1/H2 and honesty leftovers: **`2026-09-12-ravenclaw-remaining-roadmap.md`**.  
 Sources: current tree at `d4c018e`+, Hermes (`/Users/yeonwoosung/Desktop/hermes-agent`), original design `2026-09-08-ravenclaw-coding-agent-design.md`.
 
 Steal contracts. Do not copy Claude or Hermes source.

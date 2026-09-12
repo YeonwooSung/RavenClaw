@@ -35,7 +35,7 @@ Usage:
 Commands:
   (default)     Interactive TUI (Ink)
   exec          One-shot prompt; forces --dont-ask
-  acp           Agent Client Protocol on stdin/stdout; forces --dont-ask
+  acp           Agent Client Protocol on stdin/stdout (editor ask; --dont-ask optional)
   setup         Write ~/.ravenclaw/.env (provider + API key)
   smoke         One live text-only turn; expects the model to say pong
   sessions      List recent sessions for this directory (no API key)
