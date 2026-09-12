@@ -21,8 +21,13 @@ import {
   type PermissionMode,
   type SessionRecord,
   type StreamEvent,
+  type TaskSnapshot,
   type TokenUsage,
+  type TodoItem,
   buildSystemParts,
+  loadTodos,
+  nearCompact,
+  todosFromToolResult,
 } from '@ravenclaw/core'
 import { AdDock } from './ad-dock'
 import {
@@ -48,11 +53,14 @@ import { applySessionTitle } from './resume'
 import { applyCronMutate } from './cron-cmd'
 import { fireCronJob } from './cron-fire'
 import {
+  compactPolicyFromConfig,
   openNewSession,
   parsePermissionMode,
   resumeRuntime,
   type CliRuntime,
 } from './engine'
+import { ChildAgentList } from './child-agents'
+import { TodoPanel } from './todo-panel'
 import { parseBangLine, runBangCommand } from './bash-line'
 import { appendPrompt, loadPrompts } from './prompt-history'
 import { expandMentions } from './mentions'
@@ -73,6 +81,9 @@ import { StatusLine, shortSessionId } from './status-line'
 import {
   applyStreamEvent,
   rowsFromMessages,
+  selectedToolId,
+  shouldToggleExpand,
+  toggleExpanded,
   Transcript,
   type TranscriptRow,
 } from './transcript'
@@ -114,6 +125,11 @@ export function App(props: AppProps) {
   const [ask, setAsk] = useState<PermissionAsk | undefined>(undefined)
   const [picker, setPicker] = useState<SessionRecord[] | undefined>(undefined)
   const [pickerIndex, setPickerIndex] = useState(0)
+  const [todos, setTodos] = useState<TodoItem[]>(() => loadTodos(props.runtime.cwd))
+  const [tasks, setTasks] = useState<TaskSnapshot[]>(() => props.runtime.engine.tasks.list())
+  const [selectedIndex, setSelectedIndex] = useState<number | undefined>(undefined)
+  const [expandedIds, setExpandedIds] = useState(() => new Set<string>())
+  const [lastAssembleInput, setLastAssembleInput] = useState(0)
 
   const syncSession = useCallback(() => {
     const session = runtimeRef.current.engine.session
@@ -228,6 +244,7 @@ export function App(props: AppProps) {
           }
           const event: StreamEvent = next.value
           if (event.type === 'usage') {
+            setLastAssembleInput(event.usage.input)
             setUsage((prev) => ({
               input: prev.input + event.usage.input,
               output: prev.output + event.usage.output,
@@ -235,7 +252,17 @@ export function App(props: AppProps) {
               cacheWrite: prev.cacheWrite + event.usage.cacheWrite,
             }))
           }
-          setRows((prev) => applyStreamEvent(prev, event))
+          setRows((prev) => {
+            const next = applyStreamEvent(prev, event)
+            if (event.type === 'tool_result') {
+              const name = next.find((row) => row.kind === 'tool' && row.id === event.id)?.name ?? ''
+              setTodos((prevTodos) =>
+                todosFromToolResult(name, runtimeRef.current.cwd, prevTodos),
+              )
+              setTasks(runtimeRef.current.engine.tasks.list())
+            }
+            return next
+          })
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
@@ -275,6 +302,11 @@ export function App(props: AppProps) {
         runtimeRef.current = next
         bindAskQuestions()
         setRows(rowsFromMessages((await next.store.loadSession(id)).messages))
+        setTodos(loadTodos(next.cwd))
+        setTasks(next.engine.tasks.list())
+        setSelectedIndex(undefined)
+        setExpandedIds(new Set())
+        setLastAssembleInput(0)
         syncSession()
         setNotice(`resumed ${shortSessionId(id)}`)
       } catch (error) {
@@ -346,6 +378,11 @@ export function App(props: AppProps) {
             runtimeRef.current = next
             bindAskQuestions()
             setRows([])
+            setTodos(loadTodos(next.cwd))
+            setTasks(next.engine.tasks.list())
+            setSelectedIndex(undefined)
+            setExpandedIds(new Set())
+            setLastAssembleInput(0)
             syncSession()
             setNotice(`new session ${shortSessionId(next.engine.session.id)}`)
           })()
@@ -678,6 +715,13 @@ export function App(props: AppProps) {
   )
 
   useEffect(() => {
+    const id = setInterval(() => {
+      setTasks(runtimeRef.current.engine.tasks.list())
+    }, 500)
+    return () => clearInterval(id)
+  }, [])
+
+  useEffect(() => {
     let cancelled = false
     let inflight = false
     const id = setInterval(() => {
@@ -724,6 +768,28 @@ export function App(props: AppProps) {
   useInput((input, key) => {
     if (key.ctrl && input === 'c') {
       exit()
+      return
+    }
+
+    if (shouldToggleExpand(input, key)) {
+      const id = selectedToolId(rows, selectedIndex) ?? lastToolId(rows)
+      if (id !== undefined) setExpandedIds((prev) => toggleExpanded(prev, id))
+      return
+    }
+    if (key.shift && key.upArrow) {
+      setSelectedIndex((i) => {
+        if (rows.length === 0) return undefined
+        if (i === undefined) return rows.length - 1
+        return Math.max(0, i - 1)
+      })
+      return
+    }
+    if (key.shift && key.downArrow) {
+      setSelectedIndex((i) => {
+        if (rows.length === 0) return undefined
+        if (i === undefined) return 0
+        return Math.min(rows.length - 1, i + 1)
+      })
       return
     }
 
@@ -805,9 +871,22 @@ export function App(props: AppProps) {
     if (input) setDraft((value) => value + input)
   })
 
+  const compactSoon = nearCompact({
+    estimatedTokens: lastAssembleInput,
+    model: runtimeRef.current.config.profile,
+    compact: compactPolicyFromConfig(runtimeRef.current.config.compact),
+    usage: { input: lastAssembleInput },
+  })
+
   return (
     <Box flexDirection="column">
-      <Transcript rows={rows} />
+      <Transcript
+        rows={rows}
+        selectedIndex={selectedIndex}
+        expandedIds={expandedIds}
+      />
+      <TodoPanel items={todos} />
+      <ChildAgentList tasks={tasks} />
       {picker ? <ResumePicker sessions={picker} index={pickerIndex} /> : null}
       {ask ? <PermissionDialog event={ask} /> : null}
       {funding === 'included' ? (
@@ -825,6 +904,7 @@ export function App(props: AppProps) {
         usage={usage}
         sessionId={sessionId}
         funding={funding}
+        compactSoon={compactSoon}
         usd={formatCostNotice({
           usage,
           profile: runtimeRef.current.config.profile,
@@ -834,6 +914,14 @@ export function App(props: AppProps) {
       />
     </Box>
   )
+}
+
+function lastToolId(rows: TranscriptRow[]): string | undefined {
+  for (let i = rows.length - 1; i >= 0; i--) {
+    const row = rows[i]
+    if (row?.kind === 'tool') return row.id
+  }
+  return undefined
 }
 
 function ResumePicker(props: { sessions: SessionRecord[]; index: number }) {
