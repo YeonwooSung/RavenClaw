@@ -19,6 +19,7 @@ import {
 import { createSessionEngine } from './session-engine'
 import { createMemoryStore } from '../session/memory-store'
 import { skillTool } from '../tools/skill'
+import { toolCallTool } from '../tools/tool-call'
 import { GRACE_NOTICE } from './budget'
 
 const INCOMPLETE_TEXT =
@@ -822,14 +823,17 @@ describe('queryLoop via SessionEngine', () => {
       expect(provider.requests[1]?.tools.map((tool) => tool.name)).toEqual([
         'Read',
         'Grep',
+        'Edit',
+        'Write',
+        'Bash',
         'Skill',
         'Agent',
         'EnterPlanMode',
         'ExitPlanMode',
       ])
-      expect(provider.requests[1]?.tools.map((tool) => tool.name)).not.toContain('Edit')
-      expect(provider.requests[1]?.tools.map((tool) => tool.name)).not.toContain('Write')
-      expect(provider.requests[1]?.tools.map((tool) => tool.name)).not.toContain('Bash')
+      expect(provider.requests[1]?.tools.map((tool) => tool.name)).toContain('Edit')
+      expect(provider.requests[1]?.tools.map((tool) => tool.name)).toContain('Write')
+      expect(provider.requests[1]?.tools.map((tool) => tool.name)).toContain('Bash')
 
       const loaded = await store.loadSession(session.id)
       expect(pairingHolds(loaded.messages)).toBe(true)
@@ -910,6 +914,7 @@ describe('queryLoop via SessionEngine', () => {
       )
       expect(editResult?.ok).toBe(false)
       expect(editResult?.blocks[0]?.text.startsWith('unknown_tool:')).toBe(true)
+      expect(provider.requests[1]?.tools.map((tool) => tool.name)).toContain('Edit')
     } finally {
       if (savedHome === undefined) delete process.env.RAVENCLAW_HOME
       else process.env.RAVENCLAW_HOME = savedHome
@@ -1377,6 +1382,91 @@ describe('queryLoop via SessionEngine', () => {
     } finally {
       rmSync(cwd, { recursive: true, force: true })
     }
+  })
+
+  test('ToolCall unwraps a deferred MCP tool and asks under the real name', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_toolcall' })
+    await store.createSession(session)
+    const asked: string[] = []
+    let pingCount = 0
+    const mcp: Tool<Record<string, unknown>, string> = {
+      name: 'mcp_ping',
+      description: 'ping',
+      inputSchema: { type: 'object' },
+      isEnabled() {
+        return false
+      },
+      parse(input: unknown) {
+        return { ok: true as const, value: (input ?? {}) as Record<string, unknown> }
+      },
+      isConcurrencySafe: () => false,
+      isReadOnly: () => false,
+      async checkPermissions() {
+        return { behavior: 'ask', message: 'Use this MCP tool?', saveAs: 'session' }
+      },
+      async execute() {
+        pingCount += 1
+        return 'pong'
+      },
+    }
+    const provider = createFakeProvider([
+      toolThenStop('tc1', 'ToolCall', { name: 'mcp_ping', arguments: { q: 1 } }),
+      textThenStop('done'),
+    ])
+    const opts = engineOpts({
+      provider,
+      store,
+      session,
+      tools: [toolCallTool, mcp, stubNamedTool('Edit')],
+    })
+    opts.askUser = async (event) => {
+      asked.push(event.tool)
+      return 'allow'
+    }
+    const engine = createSessionEngine(opts)
+    const { result, events } = await collect(engine.submitMessage('call mcp'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(pingCount).toBe(1)
+    expect(asked).toEqual(['mcp_ping'])
+    expect(events.some((event) => event.type === 'permission_ask' && event.tool === 'mcp_ping')).toBe(
+      true,
+    )
+    expect(provider.requests[0]?.tools.map((tool) => tool.name)).toEqual(['ToolCall', 'Edit'])
+    expect(provider.requests[1]?.tools.map((tool) => tool.name)).not.toContain('mcp_ping')
+
+    const loaded = await store.loadSession(session.id)
+    const toolRow = loaded.messages.find(
+      (m): m is Extract<Message, { role: 'tool' }> => m.role === 'tool' && m.toolUseId === 'tc1',
+    )
+    expect(toolRow?.ok).toBe(true)
+    expect(toolRow?.blocks[0]?.text).toBe('pong')
+  })
+
+  test('stall guard blocks the same tool+args+result after 3 successes', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_stall' })
+    await store.createSession(session)
+    const echo = createEcho()
+    const provider = createFakeProvider([
+      toolThenStop('s1', 'Echo', { text: 'loop' }),
+      toolThenStop('s2', 'Echo', { text: 'loop' }),
+      toolThenStop('s3', 'Echo', { text: 'loop' }),
+      toolThenStop('s4', 'Echo', { text: 'loop' }),
+      textThenStop('done'),
+    ])
+    const engine = createSessionEngine(engineOpts({ provider, store, session, tools: [echo] }))
+    const { result } = await collect(engine.submitMessage('loop'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(echo.executeCount).toBe(3)
+    const loaded = await store.loadSession(session.id)
+    const fourth = loaded.messages.find(
+      (m): m is Extract<Message, { role: 'tool' }> => m.role === 'tool' && m.toolUseId === 's4',
+    )
+    expect(fourth?.ok).toBe(false)
+    expect(fourth?.blocks[0]?.text).toBe(
+      'stall: same tool+args+result repeated 3 times; change approach.',
+    )
   })
 })
 

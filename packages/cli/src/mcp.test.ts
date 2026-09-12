@@ -317,42 +317,77 @@ function testResolvedConfig(): ResolvedConfig {
   }
 }
 
-function createFakeProvider(): Provider {
+function createFakeProvider(scripts: ProviderChunk[][] = []): Provider & {
+  requests: ProviderRequest[]
+} {
+  const requests: ProviderRequest[] = []
+  const queue = [...scripts]
   return {
     id: 'fake',
     apiMode: 'openai_compat',
+    requests,
     profile(model: string) {
       return defaultModel(model)
     },
-    async *stream(_req: ProviderRequest): AsyncGenerator<ProviderChunk> {
-      yield { type: 'stop', reason: null }
+    async *stream(req: ProviderRequest): AsyncGenerator<ProviderChunk> {
+      requests.push(req)
+      const script = queue.shift() ?? [{ type: 'stop', reason: null }]
+      for (const chunk of script) yield chunk
     },
   }
 }
 
-describe('openEngine MCP fail-loud', () => {
-  test('throws a multi-line error listing each failed server', async () => {
-    await expect(
-      openEngine({
-        provider: createFakeProvider(),
-        store: createMemoryStore(),
-        config: {
-          ...testResolvedConfig(),
-          mcp: {
-            servers: [
-              { name: 'broken', command: 'nope' },
-              { name: 'also-broken', command: 'nope-2' },
-            ],
-          },
+describe('openEngine MCP fail-open', () => {
+  test('opens and keeps mcp_ping when a sibling server fails', async () => {
+    const child = fakeMcpChild([{ name: 'mcp_ping' }])
+    const asks: Array<{ tool: string }> = []
+    const provider = createFakeProvider([
+      [
+        {
+          type: 'tool_call',
+          id: 'tc1',
+          name: 'ToolCall',
+          input: { name: 'mcp_ping', arguments: {} },
         },
-        cwd: '/tmp',
-        async askUser() {
-          return 'deny'
+        { type: 'stop', reason: 'tool_use' },
+      ],
+      [
+        { type: 'text_delta', text: 'done' },
+        { type: 'stop', reason: 'end' },
+      ],
+    ])
+    const { engine, mcpErrors } = await openEngine({
+      provider,
+      store: createMemoryStore(),
+      config: {
+        ...testResolvedConfig(),
+        mcp: {
+          servers: [
+            { name: 'broken', command: 'nope' },
+            { name: 'ok', command: 'fake-mcp' },
+          ],
         },
-        spawnMcp(command) {
-          throw new Error(`ENOENT ${command}`)
-        },
-      }),
-    ).rejects.toThrow(/MCP server broken failed: ENOENT nope\nMCP server also-broken failed: ENOENT nope-2/)
+      },
+      cwd: '/tmp',
+      async askUser(event) {
+        asks.push({ tool: event.tool })
+        return 'deny'
+      },
+      spawnMcp(command) {
+        if (command === 'nope') throw new Error('ENOENT nope')
+        return child
+      },
+    })
+    expect(engine.session.cwd).toBe('/tmp')
+    expect(mcpErrors).toEqual([{ name: 'broken', message: 'ENOENT nope' }])
+
+    const gen = engine.submitMessage('ping')
+    while (true) {
+      const next = await gen.next()
+      if (next.done) break
+    }
+    expect(provider.requests[0]?.tools.map((tool) => tool.name)).toContain('ToolCall')
+    expect(provider.requests[0]?.tools.map((tool) => tool.name)).not.toContain('mcp_ping')
+    expect(asks.some((ask) => ask.tool === 'mcp_ping')).toBe(true)
   })
 })

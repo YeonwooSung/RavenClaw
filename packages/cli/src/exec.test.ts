@@ -92,15 +92,8 @@ describe('createRootTools', () => {
       'TaskOutput',
       'TaskStop',
       'AskUser',
-      'SuggestFollowups',
       'SetOutput',
-      'Sleep',
-      'ThinkDeeply',
       'AddDir',
-      'TaskCreate',
-      'TaskGet',
-      'TaskUpdate',
-      'TaskList',
       'LSP',
       'EnterWorktree',
       'ExitWorktree',
@@ -110,9 +103,14 @@ describe('createRootTools', () => {
       'CronSetEnabled',
       'EnterPlanMode',
       'ExitPlanMode',
-      'ToolSearch',
     ])
     expect(names).not.toContain('Agent')
+    expect(names).not.toContain('ToolSearch')
+    expect(names).not.toContain('ToolCall')
+    expect(names).not.toContain('Sleep')
+    expect(names).not.toContain('ThinkDeeply')
+    expect(names).not.toContain('SuggestFollowups')
+    expect(names).not.toContain('TaskCreate')
   })
 
   test('filterToolsForTurn hides gated builtins without lsp.json, git, or cron jobs', () => {
@@ -128,7 +126,7 @@ describe('createRootTools', () => {
       expect(names).toContain('EnterWorktree')
       expect(names).toContain('ExitWorktree')
       expect(names).toContain('CronCreate')
-      expect(names).toContain('ToolSearch')
+      expect(names).not.toContain('ToolSearch')
 
       const turn = makeFilterTurn(cwd)
       const filtered = filterToolsForTurn(tools, turn).map((tool) => tool.name)
@@ -140,7 +138,8 @@ describe('createRootTools', () => {
       expect(filtered).not.toContain('CronDelete')
       expect(filtered).not.toContain('CronSetEnabled')
       expect(filtered).toContain('Read')
-      expect(filtered).toContain('ToolSearch')
+      expect(filtered).not.toContain('ToolSearch')
+      expect(filtered).not.toContain('ToolCall')
     } finally {
       if (prev === undefined) delete process.env.RAVENCLAW_HOME
       else process.env.RAVENCLAW_HOME = prev
@@ -178,15 +177,8 @@ describe('createRootTools', () => {
       'TaskOutput',
       'TaskStop',
       'AskUser',
-      'SuggestFollowups',
       'SetOutput',
-      'Sleep',
-      'ThinkDeeply',
       'AddDir',
-      'TaskCreate',
-      'TaskGet',
-      'TaskUpdate',
-      'TaskList',
       'LSP',
       'EnterWorktree',
       'ExitWorktree',
@@ -196,9 +188,10 @@ describe('createRootTools', () => {
       'CronSetEnabled',
       'EnterPlanMode',
       'ExitPlanMode',
-      'ToolSearch',
       'Agent',
     ])
+    expect(names).not.toContain('ToolSearch')
+    expect(names).not.toContain('ToolCall')
   })
 
   test('createSessionTools merges MCP tools after builtins and drops colliding Read', async () => {
@@ -235,42 +228,30 @@ describe('createRootTools', () => {
     }).map((tool) => tool.name)
     expect(names.filter((name) => name === 'Read')).toHaveLength(1)
     expect(names).toContain('Agent')
+    expect(names).toContain('ToolSearch')
+    expect(names).toContain('ToolCall')
     expect(names.at(-1)).toBe('mcp_ping')
     expect(names.indexOf('mcp_ping')).toBeGreaterThan(names.indexOf('Agent'))
 
     const turn = makeFilterTurn('/tmp')
-    const exposed = filterToolsForTurn(
-      createSessionTools({
-        store,
-        provider: createFakeProvider([]),
-        compact: defaultCompactPolicy(),
-        model: defaultModel(),
-        childMaxRounds: 30,
-        mcpTools,
-        async askUser() {
-          return 'deny'
-        },
-      }),
-      turn,
-    ).map((tool) => tool.name)
+    const sessionTools = createSessionTools({
+      store,
+      provider: createFakeProvider([]),
+      compact: defaultCompactPolicy(),
+      model: defaultModel(),
+      childMaxRounds: 30,
+      mcpTools,
+      async askUser() {
+        return 'deny'
+      },
+    })
+    const exposed = filterToolsForTurn(sessionTools, turn).map((tool) => tool.name)
     expect(exposed).not.toContain('mcp_ping')
     expect(exposed).toContain('ToolSearch')
+    expect(exposed).toContain('ToolCall')
     turn.unlockedToolNames = ['mcp_ping']
-    const unlocked = filterToolsForTurn(
-      createSessionTools({
-        store,
-        provider: createFakeProvider([]),
-        compact: defaultCompactPolicy(),
-        model: defaultModel(),
-        childMaxRounds: 30,
-        mcpTools,
-        async askUser() {
-          return 'deny'
-        },
-      }),
-      turn,
-    ).map((tool) => tool.name)
-    expect(unlocked).toContain('mcp_ping')
+    const unlocked = filterToolsForTurn(sessionTools, turn).map((tool) => tool.name)
+    expect(unlocked).not.toContain('mcp_ping')
   })
 })
 

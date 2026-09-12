@@ -183,6 +183,38 @@ describe('assembleRequest', () => {
     const req = assembleRequest(state({ turn: turn({ graceUsed: true }) }))
     expect(req.tools).toEqual([])
   })
+
+  test('freezes the isEnabled snapshot and ignores a later skill jail', () => {
+    const read = { ...echo(), name: 'Read' }
+    const edit = { ...echo(), name: 'Edit' }
+    const current = state({ tools: [read, edit, gated()] })
+    const first = assembleRequest(current)
+    expect(first.tools.map((tool) => tool.name)).toEqual(['Read', 'Edit'])
+    expect(current.turn.frozenToolNames).toEqual(['Read', 'Edit'])
+    current.turn.skillAllowedTools = ['Read']
+    const second = assembleRequest(current)
+    expect(second.tools.map((tool) => tool.name)).toEqual(['Read', 'Edit'])
+  })
+
+  test('ToolSearch select does not add a deferred MCP name to later assembleRequest tools', () => {
+    const mcp = {
+      ...echo(),
+      name: 'mcp_ping',
+      isEnabled() {
+        return false
+      },
+    }
+    const current = state({
+      tools: [echo(), mcp],
+      turn: turn({ unlockedToolNames: ['mcp_ping'] }),
+    })
+    const req = assembleRequest(current)
+    expect(req.tools.map((tool) => tool.name)).toEqual(['Echo'])
+    expect(req.tools.map((tool) => tool.name)).not.toContain('mcp_ping')
+    current.turn.unlockedToolNames = ['mcp_ping', 'Echo']
+    const again = assembleRequest(current)
+    expect(again.tools.map((tool) => tool.name)).toEqual(['Echo'])
+  })
 })
 
 describe('beginRound', () => {

@@ -19,7 +19,6 @@ import {
   loadConfig,
   loadFileHooks,
   loadLocalPlugins,
-  deferUntilUnlocked,
   mergeToolPool,
   normalizeOpenAiBaseUrl,
   OLLAMA_DEFAULT_HOST,
@@ -38,7 +37,6 @@ import {
   readSubtreeTool,
   applyPatchTool,
   webSearchTool,
-  suggestFollowupsTool,
   askUserTool,
   createAskUserTool,
   setOutputTool,
@@ -46,10 +44,8 @@ import {
   enterWorktreeTool,
   exitWorktreeTool,
   createToolSearchTool,
-  sleepTool,
-  thinkDeeplyTool,
+  toolCallTool,
   addDirTool,
-  createTaskV2Tools,
   createLspTool,
   createStructuredOutputTool,
   enterSessionWorktree,
@@ -182,9 +178,13 @@ function includedSessionCap(
   return perDay
 }
 
-function createTaskV2ToolsList(): Tool[] {
-  const tasks = createTaskV2Tools()
-  return [tasks.create, tasks.get, tasks.update, tasks.list]
+function hideDeferredFromWire(tool: Tool): Tool {
+  return {
+    ...tool,
+    isEnabled() {
+      return false
+    },
+  }
 }
 
 function cronToolList(): Tool[] {
@@ -216,12 +216,8 @@ export function createRootTools(
     taskOutputTool,
     taskStopTool,
     ask,
-    suggestFollowupsTool,
     setOutputTool,
-    sleepTool,
-    thinkDeeplyTool,
     addDirTool,
-    ...createTaskV2ToolsList(),
     createLspTool(),
     enterWorktreeTool,
     exitWorktreeTool,
@@ -229,7 +225,7 @@ export function createRootTools(
     plan.enter,
     plan.exit,
   ]
-  return [...list, createToolSearchTool({ deferred: [], unlock() {} })]
+  return list
 }
 
 export function createSessionTools(opts: {
@@ -246,12 +242,17 @@ export function createSessionTools(opts: {
   askTool?: Tool
 }): Tool[] {
   const root = createRootTools(opts.store, opts.bash ?? bashTool, opts.askTool)
-  const deferred = (opts.mcpTools ?? []).map(deferUntilUnlocked)
-  const search = createToolSearchTool({
-    deferred,
-    unlock() {},
-  })
-  const always = root.map((tool) => (tool.name === 'ToolSearch' ? search : tool))
+  const deferred = (opts.mcpTools ?? []).map(hideDeferredFromWire)
+  const always = [...root]
+  if (deferred.length > 0) {
+    always.push(
+      createToolSearchTool({
+        deferred,
+        unlock() {},
+      }),
+      toolCallTool,
+    )
+  }
   const childPool = deferred.length > 0 ? mergeToolPool(always, deferred) : always
   const agentOpts: Parameters<typeof createAgentTool>[0] = {
     store: opts.store,
@@ -328,6 +329,8 @@ export interface CliRuntimeBase {
   ask: AskBridge
   askQuestions?: AskUserBridge
   mcpCloser?: () => Promise<void>
+  mcpErrors?: Array<{ name: string; message: string }>
+  status?: string
   hasPaidCapacityPlan?: boolean
   probe?: EntitlementProbe
   fetch?: typeof fetch
@@ -356,7 +359,12 @@ export async function openEngine(opts: {
   lockHolderName?: SessionLockHolderName
   skipLock?: boolean
   verifyOnStop?: boolean
-}): Promise<{ engine: SessionEngine; mcpCloser?: () => Promise<void>; askQuestions: AskUserBridge }> {
+}): Promise<{
+  engine: SessionEngine
+  mcpCloser?: () => Promise<void>
+  askQuestions: AskUserBridge
+  mcpErrors: Array<{ name: string; message: string }>
+}> {
   const askQuestions = createAskUserBridge()
   const session = opts.session ?? newSessionRecord({
     cwd: opts.cwd,
@@ -403,7 +411,12 @@ async function finishOpenEngine(
     askQuestions: AskUserBridge
     acquired: boolean
   },
-): Promise<{ engine: SessionEngine; mcpCloser?: () => Promise<void>; askQuestions: AskUserBridge }> {
+): Promise<{
+  engine: SessionEngine
+  mcpCloser?: () => Promise<void>
+  askQuestions: AskUserBridge
+  mcpErrors: Array<{ name: string; message: string }>
+}> {
   const { session, lockHolderId, askQuestions } = ready
   const compact = compactPolicyFromConfig(opts.config.compact)
   const system = buildSystemParts({
@@ -421,17 +434,15 @@ async function finishOpenEngine(
   const servers = opts.tools !== undefined ? [] : (opts.config.mcp?.servers ?? [])
   let mcpTools: Tool[] = []
   let mcpCloser: (() => Promise<void>) | undefined
+  const mcpErrors: Array<{ name: string; message: string }> = []
   try {
   if (servers.length > 0) {
     const loaded = await loadConfiguredMcpTools(servers, {
       ...(opts.spawnMcp ? { spawn: opts.spawnMcp } : {}),
     })
-    if (loaded.errors.length > 0) {
-      await loaded.close()
-      throw new Error(formatMcpLoadErrors(loaded.errors))
-    }
     mcpTools = loaded.tools
     mcpCloser = loaded.close
+    mcpErrors.push(...loaded.errors)
   }
   if (opts.tools === undefined) {
     const plugins = loadLocalPlugins(session.cwd, opts.config.home, { project: true })
@@ -499,7 +510,7 @@ async function finishOpenEngine(
   if (extraDirs.length > 0) engineOpts.additionalDirectories = extraDirs
   engineOpts.sessionLock = { holderId: lockHolderId }
   if (opts.verifyOnStop === true) engineOpts.verifyOnStop = true
-  return { engine: createSessionEngine(engineOpts), mcpCloser, askQuestions }
+  return { engine: createSessionEngine(engineOpts), mcpCloser, askQuestions, mcpErrors }
   } catch (error) {
     if (mcpCloser) {
       try {
@@ -686,7 +697,8 @@ export async function bootCli(
   if (opts.tools !== undefined) engineOpts.tools = opts.tools
   if (opts.maxRounds !== undefined) engineOpts.maxRounds = opts.maxRounds
   if ((opts.surface ?? 'interactive') !== 'headless') engineOpts.verifyOnStop = true
-  const { engine, mcpCloser, askQuestions } = await openEngine(engineOpts)
+  const { engine, mcpCloser, askQuestions, mcpErrors } = await openEngine(engineOpts)
+  const mcpStatus = mcpErrors.length > 0 ? formatMcpLoadErrors(mcpErrors) : undefined
   const wt = opts.flags.worktree
   if (wt !== undefined && wt !== false) {
     const name = wt === true ? undefined : wt
@@ -703,6 +715,8 @@ export async function bootCli(
         ask,
         mcpCloser,
         askQuestions,
+        mcpErrors,
+        ...(mcpStatus !== undefined ? { status: mcpStatus } : {}),
         lockHolderId,
         lockHolderName,
         ...extras,
@@ -718,6 +732,8 @@ export async function bootCli(
     ask,
     mcpCloser,
     askQuestions,
+    mcpErrors,
+    ...(mcpStatus !== undefined ? { status: mcpStatus } : {}),
     lockHolderId,
     lockHolderName,
     ...extras,
@@ -749,7 +765,7 @@ export async function resumeRuntime(
   try {
   await runtime.mcpCloser?.()
   const resumed = await providerForResumedSession(runtime, loaded.session)
-  const { engine, mcpCloser, askQuestions } = await openEngine({
+  const { engine, mcpCloser, askQuestions, mcpErrors } = await openEngine({
     provider: resumed.provider,
     store: runtime.store,
     config: runtime.config,
@@ -765,6 +781,7 @@ export async function resumeRuntime(
   if (prevEngine) {
     await prevEngine.close({ releaseLock: prevEngine.session.id !== engine.session.id })
   }
+  const mcpStatus = mcpErrors.length > 0 ? formatMcpLoadErrors(mcpErrors) : undefined
   return {
     ...runtime,
     engine,
@@ -772,6 +789,8 @@ export async function resumeRuntime(
     cwd: loaded.session.cwd,
     mcpCloser,
     askQuestions,
+    mcpErrors,
+    status: mcpStatus,
     hasPaidCapacityPlan: resumed.hasPaidCapacityPlan,
     lockHolderId,
     lockHolderName,
@@ -811,7 +830,7 @@ export async function openNewSession(
   const prevEngine = runtime.engine
   const lockHolderId = runtime.lockHolderId ?? crypto.randomUUID()
   const lockHolderName = runtime.lockHolderName ?? 'tui'
-  const { engine, mcpCloser, askQuestions } = await openEngine({
+  const { engine, mcpCloser, askQuestions, mcpErrors } = await openEngine({
     provider,
     store: runtime.store,
     config: runtime.config,
@@ -825,12 +844,15 @@ export async function openNewSession(
   if (prevEngine && prevEngine.session.id !== engine.session.id) {
     await prevEngine.close?.()
   }
+  const mcpStatus = mcpErrors.length > 0 ? formatMcpLoadErrors(mcpErrors) : undefined
   return {
     ...runtime,
     engine,
     provider,
     mcpCloser,
     askQuestions,
+    mcpErrors,
+    status: mcpStatus,
     hasPaidCapacityPlan: access.admitted ? access.hasPaidCapacityPlan : false,
     remainingSessions: access.admitted ? access.remainingSessions : undefined,
     lockHolderId,

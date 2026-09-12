@@ -22,6 +22,7 @@ import type { PermissionRuleSet } from '../permissions/types'
 import { commandOrPath, loadPermissionRules, persistAllowAlways } from '../permissions/rules'
 import { isAbortError, nextOrAbort } from './abort'
 import { partitionToolCalls } from '../tools/partition'
+import { toolCallTool } from '../tools/tool-call'
 import { filterToolsForTurn } from '../tools/skill'
 import { estimateTokens, shouldEnterGrace, suffixGraceNotice } from './budget'
 import {
@@ -333,13 +334,7 @@ export function assembleRequest(state: LoopState): ProviderRequest {
       return { ...msg, blocks: msg.blocks.filter((block) => block.type !== 'thinking') }
     })
   }
-  const tools = state.turn.graceUsed
-    ? []
-    : filterToolsForTurn(state.tools, state.turn).map((tool) => ({
-        name: tool.name,
-        description: tool.description,
-        inputSchema: tool.inputSchema,
-      }))
+  const tools = state.turn.graceUsed ? [] : wireToolsForTurn(state)
   return {
     model: state.turn.model,
     system: state.system ?? [],
@@ -347,6 +342,102 @@ export function assembleRequest(state: LoopState): ProviderRequest {
     tools,
     maxTokens: state.model.reserveOutputTokens,
   }
+}
+
+const STALL_TEXT = 'stall: same tool+args+result repeated 3 times; change approach.'
+const TOOLCALL_BRIDGES = new Set(['ToolCall', 'ToolSearch'])
+
+function snapshotFrozenNames(state: LoopState): string[] {
+  return filterToolsForTurn(state.tools, state.turn).map((tool) => tool.name)
+}
+
+function wireToolsForTurn(
+  state: LoopState,
+): Array<{ name: string; description: string; inputSchema: unknown }> {
+  if (state.turn.frozenToolNames === undefined) {
+    state.turn.frozenToolNames = snapshotFrozenNames(state)
+  }
+  const byName = new Map(state.tools.map((tool) => [tool.name, tool]))
+  const tools: Array<{ name: string; description: string; inputSchema: unknown }> = []
+  for (const name of state.turn.frozenToolNames) {
+    const tool = byName.get(name)
+    if (!tool) continue
+    tools.push({
+      name: tool.name,
+      description: tool.description,
+      inputSchema: tool.inputSchema,
+    })
+  }
+  return tools
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(stableValue(value))
+}
+
+function stableValue(value: unknown): unknown {
+  if (value === null || typeof value !== 'object') return value
+  if (Array.isArray(value)) return value.map(stableValue)
+  const rec = value as Record<string, unknown>
+  const out: Record<string, unknown> = {}
+  for (const key of Object.keys(rec).sort()) {
+    out[key] = stableValue(rec[key])
+  }
+  return out
+}
+
+function stallPrefix(name: string, input: unknown): string {
+  return `${name}\0${stableJson(input)}\0`
+}
+
+function stallKey(name: string, input: unknown, resultText: string): string {
+  return `${stallPrefix(name, input)}${resultText}`
+}
+
+function isStalled(state: LoopState, name: string, input: unknown): boolean {
+  const counts = state.turn.stallCounts
+  if (!counts) return false
+  const prefix = stallPrefix(name, input)
+  for (const [key, count] of Object.entries(counts)) {
+    if (key.startsWith(prefix) && count >= 3) return true
+  }
+  return false
+}
+
+function recordStall(state: LoopState, name: string, input: unknown, resultText: string): void {
+  const key = stallKey(name, input, resultText)
+  if (!state.turn.stallCounts) state.turn.stallCounts = {}
+  state.turn.stallCounts[key] = (state.turn.stallCounts[key] ?? 0) + 1
+}
+
+function toolCallTargetText(name: string): string {
+  return `unknown_tool: '${name}' is not a deferred ToolCall target.`
+}
+
+function resolveCallTool(
+  state: LoopState,
+  call: { id: string; name: string; input: unknown },
+):
+  | { ok: true; tool: Tool; name: string; input: unknown }
+  | { ok: false; message: string } {
+  const enabled = filterToolsForTurn(state.tools, state.turn)
+  if (call.name !== 'ToolCall') {
+    const tool = enabled.find((entry) => entry.name === call.name)
+    if (!tool) return { ok: false, message: unknownToolText(call.name) }
+    return { ok: true, tool, name: call.name, input: call.input }
+  }
+
+  const bridge = enabled.find((entry) => entry.name === 'ToolCall')
+  if (!bridge) return { ok: false, message: unknownToolText('ToolCall') }
+  const parsed = toolCallTool.parse(call.input)
+  if (!parsed.ok) return { ok: false, message: parseFailedText(parsed.message) }
+  const realName = parsed.value.name
+  if (TOOLCALL_BRIDGES.has(realName)) return { ok: false, message: toolCallTargetText(realName) }
+  const frozen = state.turn.frozenToolNames ?? snapshotFrozenNames(state)
+  if (frozen.includes(realName)) return { ok: false, message: toolCallTargetText(realName) }
+  const real = state.tools.find((entry) => entry.name === realName)
+  if (!real) return { ok: false, message: unknownToolText(realName) }
+  return { ok: true, tool: real, name: realName, input: parsed.value.arguments }
 }
 
 const CONTEXT_OVERFLOW = /prompt too long|context.?length|too many tokens/i
@@ -831,16 +922,18 @@ async function executeOneCall(
     return { messages: pairMissing([call.id], 'aborted'), events, abortRest: true }
   }
 
-  const tool = filterToolsForTurn(state.tools, state.turn).find((entry) => entry.name === call.name)
-  if (!tool) {
+  const resolved = resolveCallTool(state, call)
+  if (!resolved.ok) {
     return {
-      messages: [makeToolMessage(call.id, false, unknownToolText(call.name))],
+      messages: [makeToolMessage(call.id, false, resolved.message)],
       events,
       abortRest: false,
     }
   }
+  const tool = resolved.tool
+  const callName = resolved.name
 
-  const parsed = tool.parse(call.input)
+  const parsed = tool.parse(resolved.input)
   if (!parsed.ok) {
     return {
       messages: [makeToolMessage(call.id, false, parseFailedText(parsed.message))],
@@ -851,7 +944,7 @@ async function executeOneCall(
   let input = parsed.value
 
   if (state.lifecycle) {
-    const pre = await state.lifecycle.run('PreToolUse', { name: call.name, input })
+    const pre = await state.lifecycle.run('PreToolUse', { name: callName, input })
     if (pre?.preventContinuation === true) {
       return {
         messages: [makeToolMessage(call.id, false, denyText(pre.message ?? 'stopped by hook'))],
@@ -887,7 +980,7 @@ async function executeOneCall(
   try {
     const decision = await decidePermission({
       tool,
-      name: call.name,
+      name: callName,
       input,
       ctx,
       mode: state.turn.permissionMode,
@@ -905,7 +998,7 @@ async function executeOneCall(
       const event: Extract<StreamEvent, { type: 'permission_ask' }> = {
         type: 'permission_ask',
         id: call.id,
-        tool: call.name,
+        tool: callName,
         input,
         message: decision.message,
       }
@@ -928,7 +1021,7 @@ async function executeOneCall(
             sessionId: state.turn.sessionId,
             cwd: policyCwd,
             scope,
-            tool: call.name,
+            tool: callName,
             spec: commandOrPath(input) ?? {},
           })
           box.rules = await loadPermissionRules({
@@ -968,6 +1061,14 @@ async function executeOneCall(
     }
   }
 
+  if (isStalled(state, callName, input)) {
+    return {
+      messages: [makeToolMessage(call.id, false, STALL_TEXT)],
+      events,
+      abortRest: false,
+    }
+  }
+
   const executeSignal = blockInterrupt ? new AbortController().signal : signal
   const executeCtx: ToolContext = { ...ctx, signal: executeSignal }
 
@@ -975,11 +1076,12 @@ async function executeOneCall(
     const output = await tool.execute(input, executeCtx)
     events.push(...progress)
     const formatted = formatOutput(tool, output)
-    noteToolSideEffects(state, call.name, input)
+    noteToolSideEffects(state, callName, input)
     const content = appendSubdirAgents(state, input, formatted.content, formatted.persistPath)
+    recordStall(state, callName, input, content)
     if (state.lifecycle) {
       const hook = await state.lifecycle.run('PostToolUse', {
-        name: call.name,
+        name: callName,
         input,
         output: content,
       })

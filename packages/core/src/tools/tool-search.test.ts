@@ -98,24 +98,24 @@ describe('ToolSearch', () => {
     expect(lines[1]?.startsWith('Bash — ')).toBe(true)
     expect(out).not.toContain('Missing')
     expect(lines[lines.length - 1]).toBe('total 4 deferred')
-    expect(unlocked).toEqual(['Edit', 'Bash'])
-    expect(ctx.turn.unlockedToolNames).toEqual(['Edit', 'Bash'])
+    expect(unlocked).toEqual([])
+    expect(ctx.turn.unlockedToolNames).toBeUndefined()
   })
 
-  test('select unlocks deferred tools for filterToolsForTurn and shrinks the remaining total', async () => {
+  test('select does not unlock deferred tools onto the filter/wire prefix', async () => {
     const mcp = stubTool('mcp_ping', 'Ping a deferred MCP server')
     mcp.isEnabled = (ctx) => ctx.turn.unlockedToolNames?.includes('mcp_ping') === true
     const ctx = makeCtx()
-    const search = searchTool([mcp])
+    const search = searchTool([mcp], (names) => {
+      throw new Error(`unlock should not run: ${names.join(',')}`)
+    })
     const catalog = [search, mcp]
     expect(filterToolsForTurn(catalog, ctx.turn).map((tool) => tool.name)).toEqual(['ToolSearch'])
     const out = await search.execute({ query: 'select:mcp_ping' }, ctx)
     expect(out).toContain('mcp_ping — ')
     expect(out.endsWith('total 0 deferred')).toBe(true)
-    expect(filterToolsForTurn(catalog, ctx.turn).map((tool) => tool.name)).toEqual([
-      'ToolSearch',
-      'mcp_ping',
-    ])
+    expect(ctx.turn.unlockedToolNames).toBeUndefined()
+    expect(filterToolsForTurn(catalog, ctx.turn).map((tool) => tool.name)).toEqual(['ToolSearch'])
   })
 
   test('keyword match is case-insensitive on name and description', async () => {

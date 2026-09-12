@@ -122,6 +122,10 @@ export interface Turn {
   injectedAgentsDirs?: Set<string>
   /** MCP / plugin names selected via ToolSearch this turn. */
   unlockedToolNames?: string[]
+  /** isEnabled snapshot for the wire prefix; later assembles look these up by name. */
+  frozenToolNames?: string[]
+  /** Same tool+args+result repeats this turn. Key is name + args + result text. */
+  stallCounts?: Record<string, number>
 }
 
 export interface Round {
