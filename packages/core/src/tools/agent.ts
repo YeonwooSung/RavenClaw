@@ -1,5 +1,5 @@
-import { queryLoop } from '../loop/query-loop'
-import { ABORTED_TEXT, INCOMPLETE_TEXT } from '../loop/pairing'
+import { createSessionEngine } from '../loop/session-engine'
+import { ABORTED_TEXT, INCOMPLETE_TEXT, PERSIST_FAILED_TEXT, makeToolMessage } from '../loop/pairing'
 import { isAbortError } from '../loop/abort'
 import { getAgentDefinition } from '../agent/catalog'
 import { loadDiskAgents } from '../agent/load'
@@ -9,7 +9,7 @@ import { loadPermissionRules } from '../permissions/rules'
 import {
   addTokenUsage,
   boundChildResult,
-  buildChildMessages,
+  buildChildPreamble,
   childSystemParts,
   filterChildTools,
   lastAssistantText,
@@ -21,8 +21,8 @@ import type {
   Message,
   ModelProfile,
   Provider,
-  QueryLoopOptions,
   RoundEnd,
+  SessionEngine,
   SessionEngineOptions,
   SessionRecord,
   SessionStore,
@@ -183,43 +183,73 @@ async function spawnChild(
   )
   const isolated = prepareChildWorktree(ctx.turn.cwd, childSession.id, input.isolation ?? 'none')
   const userMessage = buildChildUserMessage(input, definition, now)
-  const childMessages = buildChildMessages(definition, ctx.turn.messages, userMessage)
+  const preambleMessages = buildChildPreamble(definition, ctx.turn.messages)
+  const parentCwd = childSession.cwd
 
   const childAbort = new AbortController()
   const unlink = linkAbort(ctx.signal, childAbort)
-  const childTurn = buildChildTurn(childSession, childMessages, childAbort, maxRounds, ctx.turn)
+  const childTurn = buildChildTurn(
+    childSession,
+    [...preambleMessages, userMessage],
+    childAbort,
+    maxRounds,
+    ctx.turn,
+  )
   // Worktree path is live-only. session.cwd stays the parent so resume
   // still has a real directory after cleanup removes the worktree.
   childTurn.cwd = isolated.cwd
-  childTurn.projectCwd = ctx.turn.projectCwd ?? ctx.turn.cwd
-  const childTools = filterToolsForTurn(filterChildTools(opts.tools, definition), childTurn)
+  childTurn.projectCwd = projectCwd
+  const childTools = bindChildTurnFields(
+    filterToolsForTurn(filterChildTools(opts.tools, definition), childTurn),
+    {
+      cwd: isolated.cwd,
+      projectCwd,
+      skillAllowedTools: ctx.turn.skillAllowedTools,
+      unlockedToolNames: ctx.turn.unlockedToolNames,
+    },
+  )
+  let engine: SessionEngine | undefined
 
   try {
     await opts.store.createSession(childSession)
-    await opts.store.persistUser(childSession.id, userMessage)
 
     const oneShot = await maybeRunCommandRunner(input, definition, childTools, childTurn, ctx, opts)
     if (oneShot?.done) return oneShot.text
     if (oneShot && !oneShot.done) appendCommandOutput(userMessage, oneShot.text)
 
-    const loopOpts: QueryLoopOptions = {
-      turn: childTurn,
-      tools: childTools,
+    const userPayload = userText(userMessage)
+
+    const engineOpts: SessionEngineOptions = {
+      session: childSession,
+      messages: preambleMessages,
       provider: opts.provider,
       store: opts.store,
+      tools: childTools,
       compact: opts.compact,
       model: opts.model,
+      maxRounds,
       askUser: opts.askUser,
+      bare: true,
     }
     const system = childSystemParts(definition, opts.system)
-    if (system !== undefined) loopOpts.system = system
-    if (opts.hooks !== undefined) loopOpts.hooks = opts.hooks
-    if (ctx.tasks) loopOpts.tasks = ctx.tasks
-    if (ctx.fileHistory) loopOpts.fileHistory = ctx.fileHistory
-    const end = await drainLoop(queryLoop(loopOpts))
-    await persistChildSession(opts.store, childSession, childTurn)
-    return childResult(end, childTurn.messages, ctx.signal, childSession.id)
+    if (system !== undefined) engineOpts.system = system
+    if (opts.hooks !== undefined) engineOpts.hooks = opts.hooks
+    engine = createSessionEngine(engineOpts)
+    const unlinkEngine = linkEngineAbort(ctx.signal, engine)
+    try {
+      const end = await drainLoop(engine.submitMessage(userPayload))
+      syncChildFromEngine(childSession, childTurn, engine, parentCwd)
+      const loaded = await opts.store.loadSession(childSession.id).catch(() => undefined)
+      if (loaded) childTurn.messages = loaded.messages
+      await persistChildSession(opts.store, childSession, childTurn)
+      return childResult(end, childTurn.messages, ctx.signal, childSession.id)
+    } finally {
+      unlinkEngine()
+      await engine.close({ releaseLock: false }).catch(() => undefined)
+    }
   } catch (error) {
+    if (engine) syncChildFromEngine(childSession, childTurn, engine, parentCwd)
+    childSession.cwd = parentCwd
     await persistChildSession(opts.store, childSession, childTurn).catch(() => undefined)
     if (error instanceof PersistError) throw error
     if (isAbortError(error) || ctx.signal.aborted || childAbort.signal.aborted) {
@@ -227,10 +257,14 @@ async function spawnChild(
     }
     const structured = takeChildOutput(childSession.id)
     if (structured !== undefined) return boundChildResult(structured)
-    const text = lastAssistantText(childTurn.messages)
+    const loaded = await opts.store.loadSession(childSession.id).catch(() => undefined)
+    const text = lastAssistantText(loaded?.messages ?? childTurn.messages)
     return text ? boundChildResult(text) : INCOMPLETE_TEXT
   } finally {
-    ctx.turn.usage = addTokenUsage(ctx.turn.usage, childTurn.usage)
+    ctx.turn.usage = addTokenUsage(
+      ctx.turn.usage,
+      engine ? engine.session.usage : childTurn.usage,
+    )
     unlink()
     isolated.cleanup()
   }
@@ -395,6 +429,81 @@ function linkAbort(parent: AbortSignal, child: AbortController): () => void {
   return () => parent.removeEventListener('abort', onAbort)
 }
 
+function linkEngineAbort(parent: AbortSignal, engine: SessionEngine): () => void {
+  if (parent.aborted) {
+    engine.abort()
+    return () => {}
+  }
+  const onAbort = () => engine.abort()
+  parent.addEventListener('abort', onAbort)
+  return () => parent.removeEventListener('abort', onAbort)
+}
+
+function userText(message: Extract<Message, { role: 'user' }>): string {
+  const block = message.blocks[0]
+  return block && block.type === 'text' ? block.text : ''
+}
+
+function syncChildFromEngine(
+  session: SessionRecord,
+  turn: Turn,
+  engine: SessionEngine,
+  parentCwd: string,
+): void {
+  session.usage = engine.session.usage
+  session.compactGeneration = engine.session.compactGeneration
+  session.permissionMode = engine.session.permissionMode
+  if (engine.session.prePlanMode !== undefined) session.prePlanMode = engine.session.prePlanMode
+  else if (session.prePlanMode !== undefined) delete session.prePlanMode
+  session.cwd = parentCwd
+  session.updatedAt = Date.now()
+  turn.usage = engine.session.usage
+  turn.compactGeneration = engine.session.compactGeneration
+  turn.permissionMode = engine.session.permissionMode
+  if (engine.session.prePlanMode !== undefined) turn.prePlanMode = engine.session.prePlanMode
+}
+
+function bindChildTurnFields(
+  tools: Tool[],
+  live: {
+    cwd: string
+    projectCwd: string
+    skillAllowedTools?: string[]
+    unlockedToolNames?: string[]
+  },
+): Tool[] {
+  const stamp = (turn: Turn) => {
+    turn.cwd = live.cwd
+    turn.projectCwd = live.projectCwd
+    if (live.skillAllowedTools !== undefined && turn.skillAllowedTools === undefined) {
+      turn.skillAllowedTools = [...live.skillAllowedTools]
+    }
+    if (live.unlockedToolNames !== undefined && turn.unlockedToolNames === undefined) {
+      turn.unlockedToolNames = [...live.unlockedToolNames]
+    }
+  }
+  return tools.map((tool) => {
+    const bound: Tool = {
+      ...tool,
+      async checkPermissions(input, ctx) {
+        stamp(ctx.turn)
+        return tool.checkPermissions(input, ctx)
+      },
+      async execute(input, ctx) {
+        stamp(ctx.turn)
+        return tool.execute(input, ctx)
+      },
+    }
+    if (tool.isEnabled) {
+      bound.isEnabled = (ctx) => {
+        stamp(ctx.turn)
+        return tool.isEnabled!(ctx)
+      }
+    }
+    return bound
+  })
+}
+
 async function drainLoop(
   gen: AsyncGenerator<StreamEvent, RoundEnd>,
 ): Promise<RoundEnd> {
@@ -476,12 +585,30 @@ async function maybeRunCommandRunner(
   }
   if (decision.behavior === 'ask') return undefined
 
+  const toolUseId = crypto.randomUUID()
+  const asst: Extract<Message, { role: 'assistant' }> = {
+    id: crypto.randomUUID(),
+    role: 'assistant',
+    blocks: [{ type: 'tool_use', id: toolUseId, name: 'Bash', input: value }],
+    createdAt: Date.now(),
+  }
+  try {
+    await opts.store.persistToolCalls(childTurn.sessionId, asst)
+  } catch {
+    return { done: true, text: PERSIST_FAILED_TEXT }
+  }
+
   const output = await bash.execute(value, {
     turn: childTurn,
     signal: childTurn.abort.signal,
     onProgress: ctx.onProgress,
   })
   const text = formatToolOutput(bash, output)
+  try {
+    await opts.store.persistToolResults(childTurn.sessionId, [makeToolMessage(toolUseId, true, text)])
+  } catch {
+    // pairing is best-effort once the one-shot has returned
+  }
   if (text.length < COMMAND_RUNNER_ONESHOT_LIMIT) {
     return { done: true, text: boundChildResult(text) }
   }

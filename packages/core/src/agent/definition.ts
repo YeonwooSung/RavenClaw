@@ -75,14 +75,20 @@ export function childSystemParts(
   return undefined
 }
 
+export function buildChildPreamble(
+  definition: Pick<AgentDefinition, 'includeMessageHistory'>,
+  parentMessages: Message[],
+): Message[] {
+  if (!definition.includeMessageHistory) return []
+  return repairRoleAlternation(stripCurrentAgentToolUse(parentMessages))
+}
+
 export function buildChildMessages(
   definition: Pick<AgentDefinition, 'includeMessageHistory'>,
   parentMessages: Message[],
   user: Extract<Message, { role: 'user' }>,
 ): Message[] {
-  if (!definition.includeMessageHistory) return [user]
-  const history = repairRoleAlternation(stripCurrentAgentToolUse(parentMessages))
-  return repairRoleAlternation([...history, user])
+  return repairRoleAlternation([...buildChildPreamble(definition, parentMessages), user])
 }
 
 function stripCurrentAgentToolUse(messages: Message[]): Message[] {

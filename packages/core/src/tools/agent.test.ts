@@ -1554,6 +1554,115 @@ describe('createAgentTool', () => {
     }
   })
 
+  test('command-runner one-shot persists tool_use before Bash.execute', async () => {
+    const store = createMemoryStore()
+    const session = makeSession()
+    await store.createSession(session)
+
+    const order: string[] = []
+    const origPersist = store.persistToolCalls.bind(store)
+    store.persistToolCalls = async (sessionId, message) => {
+      order.push('persistToolCalls')
+      return origPersist(sessionId, message)
+    }
+
+    let bashCalls = 0
+    const bash: Tool = {
+      ...stubTool('Bash'),
+      async execute(input) {
+        order.push('execute')
+        bashCalls += 1
+        return `ran ${(input as { command?: string }).command}`
+      },
+    }
+    const provider = createFakeProvider([textThenStop('should not run')])
+    const { tool } = createTestAgent({
+      store,
+      provider,
+      tools: parentPool().map((item) => (item.name === 'Bash' ? bash : item)),
+    })
+    const result = await tool.execute(
+      { prompt: 'run this', subagent: 'command-runner', command: 'ls -la' },
+      makeCtx(makeTurn(session)),
+    )
+
+    expect(result).toContain('ran ls -la')
+    expect(bashCalls).toBe(1)
+    expect(provider.streamCount).toBe(0)
+    expect(order).toEqual(['persistToolCalls', 'execute'])
+
+    const child = (await store.listSessions({ parentSessionId: session.id }))[0]
+    expect(child).toBeDefined()
+    const loaded = await store.loadSession(child!.id)
+    const asst = loaded.messages.find(
+      (msg): msg is Extract<Message, { role: 'assistant' }> =>
+        msg.role === 'assistant' &&
+        msg.blocks.some((block) => block.type === 'tool_use' && block.name === 'Bash'),
+    )
+    expect(asst).toBeDefined()
+    const toolUse = asst?.blocks.find(
+      (block): block is Extract<(typeof asst.blocks)[number], { type: 'tool_use' }> =>
+        block.type === 'tool_use' && block.name === 'Bash',
+    )
+    expect(toolUse?.input).toEqual({ command: 'ls -la' })
+    const toolResult = loaded.messages.find(
+      (msg): msg is Extract<Message, { role: 'tool' }> =>
+        msg.role === 'tool' && msg.toolUseId === toolUse?.id,
+    )
+    expect(toolResult?.ok).toBe(true)
+    expect(toolResult?.blocks[0]?.text).toContain('ran ls -la')
+  })
+
+  test('command-runner persistToolCalls failure does not execute Bash', async () => {
+    const store = createMemoryStore()
+    const session = makeSession()
+    await store.createSession(session)
+    store.persistToolCalls = async () => {
+      throw new PersistError('readonly', 'cannot persist child tool_use')
+    }
+
+    let bashCalls = 0
+    const bash: Tool = {
+      ...stubTool('Bash'),
+      async execute() {
+        bashCalls += 1
+        return 'should not run'
+      },
+    }
+    const provider = createFakeProvider([textThenStop('should not run')])
+    const { tool } = createTestAgent({
+      store,
+      provider,
+      tools: parentPool().map((item) => (item.name === 'Bash' ? bash : item)),
+    })
+    const result = await tool.execute(
+      { prompt: 'run this', subagent: 'command-runner', command: 'echo hi' },
+      makeCtx(makeTurn(session)),
+    )
+
+    expect(bashCalls).toBe(0)
+    expect(provider.streamCount).toBe(0)
+    expect(result).toMatch(/persist_failed/)
+  })
+
+  test('spawnChild persistUsers once via submitMessage (one user row, not two)', async () => {
+    const store = createMemoryStore()
+    const session = makeSession()
+    await store.createSession(session)
+    const provider = createFakeProvider([textThenStop('child done')])
+    const { tool } = createTestAgent({ store, provider })
+    const result = await tool.execute({ prompt: 'single user row' }, makeCtx(makeTurn(session)))
+    expect(result).toBe('child done')
+
+    const child = (await store.listSessions({ parentSessionId: session.id }))[0]
+    expect(child).toBeDefined()
+    const loaded = await store.loadSession(child!.id)
+    const users = loaded.messages.filter((msg) => msg.role === 'user')
+    expect(users).toHaveLength(1)
+    const text = users[0]?.blocks[0]?.type === 'text' ? users[0].blocks[0].text : ''
+    expect(text).toContain('single user row')
+  })
+
   test('isolation worktree falls back to parent cwd when not a git repo', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-agent-nowt-'))
     tempDirs.push(cwd)
