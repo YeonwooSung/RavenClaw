@@ -34,6 +34,7 @@ import { SMOKE_PROMPT, evaluateSmoke } from './smoke'
 import { handleCronCli, runCronTick } from './cron-cmd'
 import { fireCronJob } from './cron-fire'
 import { runServe } from './serve'
+import { runSlack } from './slack'
 
 export { parseArgv } from './args'
 export { CLI_VERSION, HELP_TEXT, formatVersion } from './help'
@@ -254,7 +255,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     parsed.cmd === 'exec' ||
     parsed.cmd === 'smoke' ||
     parsed.cmd === 'cron' ||
-    parsed.cmd === 'serve'
+    parsed.cmd === 'serve' ||
+    parsed.cmd === 'slack'
   ) {
     const home = await ensureHomeDir()
     if (!providerConfigured(home, parsed.flags)) {
@@ -352,6 +354,15 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (parsed.cmd === 'serve') {
     try {
       return await runServe({ flags: parsed.flags })
+    } catch (error) {
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
+      return 1
+    }
+  }
+
+  if (parsed.cmd === 'slack') {
+    try {
+      return await runSlack({ flags: parsed.flags })
     } catch (error) {
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
       return 1

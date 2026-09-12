@@ -67,6 +67,7 @@ describe('defaultConfig', () => {
     expect(cfg.auxiliary).toBeUndefined()
     expect(cfg.specialistModel).toBeUndefined()
     expect(cfg.tools).toBeUndefined()
+    expect(cfg.slack).toBeUndefined()
   })
 })
 
@@ -379,6 +380,81 @@ describe('loadConfig', () => {
         env: { FOO: 'bar' },
       },
     ])
+  })
+
+  test('yaml slack block defaults fail closed and interpolates $ENV tokens', () => {
+    const savedApp = process.env.SLACK_APP_TOKEN
+    const savedBot = process.env.SLACK_BOT_TOKEN
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test'
+    process.env.SLACK_APP_TOKEN = 'xapp-from-env'
+    process.env.SLACK_BOT_TOKEN = 'xoxb-from-env'
+    try {
+      const home = tempHome()
+      writeFileSync(
+        join(home, 'config.yaml'),
+        [
+          'provider: anthropic',
+          'slack:',
+          '  enabled: true',
+          '  appToken: $SLACK_APP_TOKEN',
+          '  botToken: ${SLACK_BOT_TOKEN}',
+          '  allowFrom:',
+          '    - U1',
+          '  channels:',
+          '    - C1',
+          '',
+        ].join('\n'),
+      )
+      const cfg = loadConfig({ home })
+      expect(cfg.slack).toEqual({
+        enabled: true,
+        appToken: 'xapp-from-env',
+        botToken: 'xoxb-from-env',
+        allowFrom: ['U1'],
+        channels: ['C1'],
+        mentionOnly: true,
+      })
+    } finally {
+      if (savedApp === undefined) delete process.env.SLACK_APP_TOKEN
+      else process.env.SLACK_APP_TOKEN = savedApp
+      if (savedBot === undefined) delete process.env.SLACK_BOT_TOKEN
+      else process.env.SLACK_BOT_TOKEN = savedBot
+    }
+  })
+
+  test('slack enabled defaults false; empty allowFrom/channels deny/DM-only', () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test'
+    const home = tempHome()
+    writeFileSync(
+      join(home, 'config.yaml'),
+      [
+        'provider: anthropic',
+        'slack:',
+        '  appToken: xapp-literal',
+        '  botToken: xoxb-literal',
+        '',
+      ].join('\n'),
+    )
+    const cfg = loadConfig({ home })
+    expect(cfg.slack).toEqual({
+      enabled: false,
+      appToken: 'xapp-literal',
+      botToken: 'xoxb-literal',
+      allowFrom: [],
+      channels: [],
+      mentionOnly: true,
+    })
+  })
+
+  test('slack tokens fall back to .env when yaml omits them', () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test'
+    const home = tempHome()
+    writeFileSync(join(home, 'config.yaml'), ['provider: anthropic', 'slack:', '  enabled: true', ''].join('\n'))
+    writeFileSync(join(home, '.env'), 'SLACK_APP_TOKEN=xapp-file\nSLACK_BOT_TOKEN=xoxb-file\n')
+    const cfg = loadConfig({ home })
+    expect(cfg.slack?.appToken).toBe('xapp-file')
+    expect(cfg.slack?.botToken).toBe('xoxb-file')
+    expect(cfg.slack?.enabled).toBe(true)
   })
 })
 

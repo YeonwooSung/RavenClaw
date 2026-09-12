@@ -49,6 +49,15 @@ export interface ToolsConfig {
   network?: boolean
 }
 
+export interface SlackConfig {
+  enabled: boolean
+  appToken: string
+  botToken: string
+  allowFrom: string[]
+  channels: string[]
+  mentionOnly: boolean
+}
+
 export interface RavenClawConfig {
   model: string
   provider: ProviderKind
@@ -65,6 +74,7 @@ export interface RavenClawConfig {
   auxiliary?: AuxiliaryConfig
   specialistModel?: string
   tools?: ToolsConfig
+  slack?: SlackConfig
 }
 
 export interface ModelPriceFields {
@@ -268,6 +278,9 @@ export function parseConfigYaml(text: string): Partial<RavenClawConfig> {
     out.tools = tools
   }
 
+  const slackRaw = asMap(raw.slack)
+  if (slackRaw) out.slack = parseSlackConfig(slackRaw)
+
   return out
 }
 
@@ -359,6 +372,7 @@ export function loadConfig(opts?: { home?: string; flags?: ConfigFlags }): Resol
   if (parsed.auxiliary !== undefined) resolved.auxiliary = parsed.auxiliary
   if (parsed.specialistModel !== undefined) resolved.specialistModel = parsed.specialistModel
   if (parsed.tools !== undefined) resolved.tools = parsed.tools
+  if (parsed.slack !== undefined) resolved.slack = resolveSlackConfig(parsed.slack, fileEnv)
   if (flags?.fallbackModel !== undefined) resolved.fallbackModel = flags.fallbackModel
   if (flags?.allowedTools !== undefined && flags.allowedTools.length > 0) {
     resolved.allowedTools = flags.allowedTools
@@ -477,6 +491,46 @@ function asStringList(value: unknown): string[] | undefined {
     else if (typeof item === 'number' && Number.isFinite(item)) out.push(String(item))
   }
   return out
+}
+
+function parseSlackConfig(raw: Record<string, unknown>): SlackConfig {
+  return {
+    enabled: asBoolean(raw.enabled) ?? false,
+    appToken: asString(raw.appToken) ?? '',
+    botToken: asString(raw.botToken) ?? '',
+    allowFrom: asStringList(raw.allowFrom) ?? [],
+    channels: asStringList(raw.channels) ?? [],
+    mentionOnly: asBoolean(raw.mentionOnly) ?? true,
+  }
+}
+
+function resolveSlackConfig(slack: SlackConfig, fileEnv: Record<string, string>): SlackConfig {
+  return {
+    ...slack,
+    appToken: resolveSecretRef(slack.appToken, 'SLACK_APP_TOKEN', fileEnv),
+    botToken: resolveSecretRef(slack.botToken, 'SLACK_BOT_TOKEN', fileEnv),
+  }
+}
+
+function resolveSecretRef(
+  value: string,
+  fallbackKey: string,
+  fileEnv: Record<string, string>,
+): string {
+  const expanded = expandEnvRef(value, fileEnv)
+  if (expanded !== '') return expanded
+  return firstNonEmpty(process.env[fallbackKey], fileEnv[fallbackKey]) ?? ''
+}
+
+function expandEnvRef(value: string, fileEnv: Record<string, string>): string {
+  const trimmed = value.trim()
+  const match =
+    /^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$/.exec(trimmed) ??
+    /^\$([A-Za-z_][A-Za-z0-9_]*)$/.exec(trimmed)
+  if (!match) return trimmed
+  const key = match[1]
+  if (key === undefined) return ''
+  return firstNonEmpty(process.env[key], fileEnv[key]) ?? ''
 }
 
 function parseMcpConfig(raw: Record<string, unknown>): McpConfig {

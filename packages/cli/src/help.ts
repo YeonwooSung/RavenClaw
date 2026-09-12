@@ -28,6 +28,7 @@ Usage:
   raven skills [new|rm <name>] [--project]
   raven cron [list|add|rm|on|off|tick|watch]
   raven serve [--listen host:port]
+  raven slack
   raven --help
   raven --version
 
@@ -52,6 +53,7 @@ Commands:
   skills        List skills; new writes SKILL.md, rm deletes it (--project = cwd)
   cron          List/add/remove local jobs; tick/watch fire due ones
   serve         Local HTTP turn + HMAC webhook (dontAsk, loopback default)
+  slack         Slack Socket Mode bot (allowlist; no public URL)
 
 Options:
   --provider <anthropic|openai_compat|ollama|vllm>

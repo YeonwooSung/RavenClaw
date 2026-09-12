@@ -303,6 +303,13 @@ describe('parseArgv', () => {
     expect(parseArgv(['smoke'])).toEqual({ cmd: 'smoke', flags: { dontAsk: true } })
   })
 
+  test('slack does not force dontAsk', () => {
+    expect(parseArgv(['slack'])).toEqual({ cmd: 'slack', flags: {} })
+    expect(parseArgv(['slack', '--provider', 'anthropic']).flags).toEqual({
+      provider: 'anthropic',
+    })
+  })
+
   test('--help and -h select the help command', () => {
     expect(parseArgv(['--help'])).toEqual({ cmd: 'help', flags: {} })
     expect(parseArgv(['-h'])).toEqual({ cmd: 'help', flags: {} })
