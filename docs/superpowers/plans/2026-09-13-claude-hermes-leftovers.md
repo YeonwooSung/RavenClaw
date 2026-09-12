@@ -104,6 +104,8 @@ Discord rewrite, `execute_code`, Electron, `bypass` / yolo, streaming tool execu
 
 ### L11. Write/Edit lint sidecar
 
+**Status.** Done.
+
 **Why.** Hermes `tools/file_operations_lint.py` returns syntax-lint in the write/patch result (`py_compile`, `node --check`, …; skip noisy project-wide `tsc` when LSP owns the file). RavenClaw `packages/core/src/tools/write.ts` / `edit.ts` return success only. The model learns about a broken file on the next Read.
 
 **Contract.** After a successful in-tree Write/Edit/ApplyPatch, if a cheap file-local checker exists for the extension, append a short lint block to the tool result (cap ~1k). Failure of the linter is `skipped`, never a write rollback. Do not run `tsc --noEmit` on a single file. LSP handshake (L1) may later replace the sidecar for claimed extensions.

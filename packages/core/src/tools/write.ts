@@ -4,6 +4,7 @@ import { basename, dirname, join, resolve } from 'node:path'
 import type { Tool, ToolContext } from '../types'
 import { ravenclawHome } from '../home'
 import { parseWithSchema } from './parse'
+import { appendLintBlock, lintWrittenFile } from './lint'
 
 export interface WriteInput {
   path: string
@@ -55,7 +56,7 @@ export const writeTool: Tool<WriteInput, string> = {
       const message = error instanceof Error ? error.message : String(error)
       return `Write failed: ${message}`
     }
-    return `Wrote ${input.path}`
+    return appendLintBlock(`Wrote ${input.path}`, [lintWrittenFile(resolved, ctx.turn.cwd)])
   },
 }
 

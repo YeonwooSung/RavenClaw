@@ -2,6 +2,7 @@ import { readFileSync, realpathSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type { Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
+import { appendLintBlock, lintWrittenFile } from './lint'
 import { isHardDeniedWritePath, resolveWritePath } from './write'
 
 export interface EditInput {
@@ -83,7 +84,7 @@ export const editTool: Tool<EditInput, string> = {
       const message = error instanceof Error ? error.message : String(error)
       return `Edit failed: ${message}`
     }
-    return `Updated ${input.path}`
+    return appendLintBlock(`Updated ${input.path}`, [lintWrittenFile(resolved, ctx.turn.cwd)])
   },
 }
 

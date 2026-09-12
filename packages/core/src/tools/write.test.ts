@@ -133,4 +133,14 @@ describe('Write', () => {
     ).rejects.toMatchObject({ name: 'AbortError' })
     expect(existsSync(join(root, 'a.txt'))).toBe(false)
   })
+
+  test('appends a lint block after a successful json write without rolling back', async () => {
+    const root = fixtureRoot()
+    const ctx = makeCtx(root)
+    const out = await writeTool.execute({ path: 'bad.json', content: '{' }, ctx)
+    expect(out.startsWith('Wrote bad.json')).toBe(true)
+    expect(out).toContain('<lint>')
+    expect(out.toLowerCase()).toContain('error')
+    expect(readFileSync(join(root, 'bad.json'), 'utf8')).toBe('{')
+  })
 })

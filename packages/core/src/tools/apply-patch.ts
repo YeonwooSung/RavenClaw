@@ -2,6 +2,7 @@ import { mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from
 import { dirname, resolve } from 'node:path'
 import type { Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
+import { appendLintBlock, lintWrittenFile } from './lint'
 import { isHardDeniedWritePath, resolveWritePath } from './write'
 
 export type ApplyPatchOp =
@@ -65,12 +66,19 @@ export const applyPatchTool: Tool<ApplyPatchInput, string> = {
   async execute(input: ApplyPatchInput, ctx: ToolContext) {
     if (ctx.signal.aborted) throw abortError()
     const actions: string[] = []
+    const lintPaths: string[] = []
     for (const op of input.operations) {
       const result = applyOne(op, ctx)
       if (result.ok === false) return `ApplyPatch failed: ${result.message}`
       actions.push(result.action)
+      if (op.type !== 'delete_file') {
+        lintPaths.push(resolveWritePath(ctx.turn.cwd, op.path))
+      }
     }
-    return actions.join('\n')
+    return appendLintBlock(
+      actions.join('\n'),
+      lintPaths.map((path) => lintWrittenFile(path, ctx.turn.cwd)),
+    )
   },
 }
 
