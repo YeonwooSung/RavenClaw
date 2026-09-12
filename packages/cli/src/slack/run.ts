@@ -6,6 +6,7 @@ import {
   resolveSessionId,
   saveSessionMap,
   type ConfigFlags,
+  type SessionLockHolderName,
 } from '@ravenclaw/core'
 import { bootCli, openNewSession, resumeRuntime, type CliRuntime } from '../engine'
 import { singleFlight, startMailboxPoller } from '../serve'
@@ -20,6 +21,8 @@ type SlackAsk = (
 ) => Promise<SlackPermissionAnswer>
 
 const askStore = new AsyncLocalStorage<SlackAsk>()
+
+export const SLACK_LOCK_HOLDER: SessionLockHolderName = 'slack'
 
 export async function runSlack(opts: { flags: ConfigFlags }): Promise<number> {
   const home = ravenclawHome()
@@ -42,7 +45,7 @@ export async function runSlack(opts: { flags: ConfigFlags }): Promise<number> {
     flags: opts.flags,
     createSession: false,
     surface: 'headless',
-    lockHolder: 'serve',
+    lockHolder: SLACK_LOCK_HOLDER,
   })
   shared.ask.bind(async (event, signal) => {
     const ask = askStore.getStore()

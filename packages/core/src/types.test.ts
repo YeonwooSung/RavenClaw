@@ -38,6 +38,17 @@ describe('SessionLockError', () => {
     expect(err.expiresAt).toBe(expiresAt)
     expect(err.message).toBe('session locked by serve until 2026-09-12T00:00:00.000Z')
   })
+
+  test('names slack holder slack, not serve', () => {
+    const expiresAt = Date.parse('2026-09-12T00:00:00.000Z')
+    const err = new SessionLockError(sessionLockedMessage('slack', expiresAt), {
+      holderName: 'slack',
+      expiresAt,
+    })
+    expect(err.holderName).toBe('slack')
+    expect(err.message).toBe('session locked by slack until 2026-09-12T00:00:00.000Z')
+    expect(err.message).not.toContain('serve')
+  })
 })
 
 describe('PersistError', () => {
