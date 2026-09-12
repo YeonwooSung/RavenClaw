@@ -1,5 +1,13 @@
 import { describe, expect, test } from 'bun:test'
-import { gatewaySecret, parseListen, singleFlight } from './serve'
+import {
+  gatewaySecret,
+  MAILBOX_POLL_MS,
+  parseListen,
+  singleFlight,
+  startMailboxPoller,
+  tickMailbox,
+  type MailboxLiveEngine,
+} from './serve'
 
 describe('parseListen', () => {
   test('defaults to loopback 8787', () => {
@@ -33,5 +41,117 @@ describe('singleFlight', () => {
     expect(b).toBe(1)
     expect(runs).toBe(1)
     expect(flights.size).toBe(0)
+  })
+})
+
+function liveEngine(opts: {
+  id: string
+  peek: () => Promise<string[]> | string[]
+  onSubmit?: (text: string) => Promise<void>
+}): { runtime: MailboxLiveEngine; submitted: string[] } {
+  const submitted: string[] = []
+  return {
+    submitted,
+    runtime: {
+      engine: {
+        session: { id: opts.id },
+        async *submitMessage(text: string) {
+          submitted.push(text)
+          await opts.onSubmit?.(text)
+        },
+      },
+      store: {
+        async peekAgentMail() {
+          return await opts.peek()
+        },
+      },
+    },
+  }
+}
+
+describe('tickMailbox', () => {
+  test('peek empty does not submit', async () => {
+    const { runtime, submitted } = liveEngine({ id: 's1', peek: () => [] })
+    const flights = new Map<string, Promise<unknown>>()
+    await tickMailbox(new Map([['s1', runtime]]), flights)
+    expect(submitted).toEqual([])
+    expect(flights.size).toBe(0)
+  })
+
+  test('peek nonempty submits [mailbox] via singleFlight', async () => {
+    const { runtime, submitted } = liveEngine({ id: 's1', peek: () => ['child done'] })
+    const flights = new Map<string, Promise<unknown>>()
+    await tickMailbox(new Map([['s1', runtime]]), flights)
+    expect(submitted).toEqual(['[mailbox]'])
+    expect(flights.size).toBe(0)
+  })
+
+  test('overlapping ticks do not double-submit', async () => {
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let began!: () => void
+    const submitBegan = new Promise<void>((resolve) => {
+      began = resolve
+    })
+    let secondPeeked!: () => void
+    const sawSecondPeek = new Promise<void>((resolve) => {
+      secondPeeked = resolve
+    })
+    let peeks = 0
+    let submits = 0
+    const { runtime, submitted } = liveEngine({
+      id: 's1',
+      peek: () => {
+        peeks += 1
+        if (peeks === 2) secondPeeked()
+        return ['still here']
+      },
+      onSubmit: async () => {
+        submits += 1
+        began()
+        await held
+      },
+    })
+    const engines = new Map([['s1', runtime]])
+    const flights = new Map<string, Promise<unknown>>()
+    const first = tickMailbox(engines, flights)
+    await submitBegan
+    expect(submits).toBe(1)
+    expect(flights.size).toBe(1)
+    const second = tickMailbox(engines, flights)
+    await sawSecondPeek
+    await Promise.resolve()
+    expect(submits).toBe(1)
+    expect(flights.size).toBe(1)
+    release()
+    await Promise.all([first, second])
+    expect(submitted).toEqual(['[mailbox]'])
+    expect(submits).toBe(1)
+    expect(flights.size).toBe(0)
+  })
+})
+
+describe('startMailboxPoller', () => {
+  test('polls every 15s and stop clears the interval', () => {
+    expect(MAILBOX_POLL_MS).toBe(15_000)
+    const scheduled: number[] = []
+    let cleared = 0
+    const handle = { id: 7 }
+    const stop = startMailboxPoller(new Map(), new Map(), {
+      setIntervalFn: (fn, ms) => {
+        scheduled.push(ms)
+        expect(typeof fn).toBe('function')
+        return handle
+      },
+      clearIntervalFn: (id) => {
+        expect(id).toBe(handle)
+        cleared += 1
+      },
+    })
+    expect(scheduled).toEqual([15_000])
+    stop()
+    expect(cleared).toBe(1)
   })
 })

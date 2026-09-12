@@ -14,6 +14,18 @@ import type { ConfigFlags } from '@ravenclaw/core'
 
 const DEFAULT_LISTEN = '127.0.0.1:8787'
 
+export const MAILBOX_POLL_MS = 15_000
+
+export type MailboxLiveEngine = {
+  engine: {
+    session: { id: string }
+    submitMessage: (text: string) => AsyncGenerator<unknown, unknown>
+  }
+  store: {
+    peekAgentMail: (parentSessionId: string) => Promise<string[]>
+  }
+}
+
 export function singleFlight<T>(
   flights: Map<string, Promise<T>>,
   key: string,
@@ -26,6 +38,57 @@ export function singleFlight<T>(
   })
   flights.set(key, task)
   return task
+}
+
+async function consumeSubmit(gen: AsyncGenerator<unknown, unknown>): Promise<void> {
+  while (true) {
+    const next = await gen.next()
+    if (next.done) return
+  }
+}
+
+export async function tickMailbox(
+  engines: Iterable<[string, MailboxLiveEngine]>,
+  flights: Map<string, Promise<unknown>>,
+): Promise<void> {
+  const pending: Promise<unknown>[] = []
+  for (const [, runtime] of engines) {
+    try {
+      const sessionId = runtime.engine.session.id
+      const mail = await runtime.store.peekAgentMail(sessionId)
+      if (mail.length === 0) continue
+      pending.push(
+        singleFlight(flights, sessionId, async () => {
+          try {
+            await consumeSubmit(runtime.engine.submitMessage('[mailbox]'))
+          } catch {
+            // mailbox wake is best-effort; next tick can retry
+          }
+        }),
+      )
+    } catch {
+      // poller must not take down serve
+    }
+  }
+  await Promise.all(pending)
+}
+
+export function startMailboxPoller(
+  engines: Iterable<[string, MailboxLiveEngine]>,
+  flights: Map<string, Promise<unknown>>,
+  opts?: {
+    intervalMs?: number
+    setIntervalFn?: (fn: () => void, ms: number) => { unref?: () => void }
+    clearIntervalFn?: (id: unknown) => void
+  },
+): () => void {
+  const schedule = opts?.setIntervalFn ?? setInterval
+  const clear = opts?.clearIntervalFn ?? clearInterval
+  const timer = schedule(() => {
+    void tickMailbox(engines, flights)
+  }, opts?.intervalMs ?? MAILBOX_POLL_MS)
+  timer.unref?.()
+  return () => clear(timer)
 }
 
 export function parseListen(raw?: string): { host: string; port: number } {
@@ -57,6 +120,7 @@ export async function runServe(opts: { flags: ConfigFlags }): Promise<number> {
   const map = loadSessionMap(home)
   const engines = new Map<string, CliRuntime>()
   const opening = new Map<string, Promise<CliRuntime>>()
+  const mailboxFlights = new Map<string, Promise<unknown>>()
   const shared = await bootCli({
     flags: { ...opts.flags, dontAsk: true },
     createSession: false,
@@ -157,8 +221,11 @@ export async function runServe(opts: { flags: ConfigFlags }): Promise<number> {
   process.stdout.write(`raven serve ${server.hostname}:${server.port}\n`)
   process.stdout.write('POST /v1/turn  Authorization: Bearer <GATEWAY_SECRET>\n')
   process.stdout.write('POST /webhooks/<route>  X-Raven-Signature: t=<unix>,v1=<hmac>\n')
+  const stopMailbox = startMailboxPoller(engines, mailboxFlights)
   const shutdown = async () => {
+    stopMailbox()
     server.stop()
+    await Promise.allSettled([...mailboxFlights.values()])
     for (const runtime of engines.values()) {
       await runtime.engine.close?.()
       await runtime.mcpCloser?.()
