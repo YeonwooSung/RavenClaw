@@ -54,6 +54,7 @@ import {
   addDirectory,
   getAgentDefinition,
   filterChildTools,
+  openRavenclawLog,
   type CompactPolicy,
   type ConfigFlags,
   type Funding,
@@ -62,12 +63,15 @@ import {
   type PermissionHook,
   type PermissionMode,
   type Provider,
+  type RavenclawLog,
   type ResolvedConfig,
+  type RoundEnd,
   type SessionEngine,
   type SessionEngineOptions,
   type SessionLockHolderName,
   type SessionRecord,
   type SessionStore,
+  type StreamEvent,
   type SystemPart,
   type Tool,
 } from '@ravenclaw/core'
@@ -542,7 +546,20 @@ async function finishOpenEngine(
   if (extraDirs.length > 0) engineOpts.additionalDirectories = extraDirs
   engineOpts.sessionLock = { holderId: lockHolderId }
   if (opts.verifyOnStop === true) engineOpts.verifyOnStop = true
-  return { engine: createSessionEngine(engineOpts), mcpCloser, askQuestions, mcpErrors }
+  const log = openRavenclawLog(opts.config.home)
+  for (const err of mcpErrors) {
+    log.write({
+      type: 'mcp_load_error',
+      sessionId: session.id,
+      error: `${err.name}: ${err.message}`,
+    })
+  }
+  return {
+    engine: attachRavenclawLog(createSessionEngine(engineOpts), log),
+    mcpCloser,
+    askQuestions,
+    mcpErrors,
+  }
   } catch (error) {
     if (mcpCloser) {
       try {
@@ -678,6 +695,7 @@ export async function bootCli(
   opts: BootCliOpts & { createSession?: boolean },
 ): Promise<CliRuntime | CliRuntimeBase> {
   const home = await ensureHomeDir()
+  openRavenclawLog(home)
   const config = loadConfig({ home, flags: opts.flags })
   const store = createSqliteStore(join(home, 'state.db'))
   const createSession = opts.createSession !== false
@@ -941,4 +959,74 @@ export function parsePermissionMode(raw: string): PermissionMode | undefined {
   if (key === 'dontask') return 'dontAsk'
   if (key === 'default' || key === 'plan') return key
   return undefined
+}
+
+function attachRavenclawLog(engine: SessionEngine, log: RavenclawLog): SessionEngine {
+  return {
+    get session() {
+      return engine.session
+    },
+    get tasks() {
+      return engine.tasks
+    },
+    get fileHistory() {
+      return engine.fileHistory
+    },
+    submitMessage(input) {
+      return logSubmit(engine.submitMessage(input), engine.session.id, log)
+    },
+    enqueueSteer(text) {
+      engine.enqueueSteer(text)
+    },
+    drainSteering() {
+      return engine.drainSteering()
+    },
+    rewindLast() {
+      return engine.rewindLast()
+    },
+    compactNow() {
+      return engine.compactNow()
+    },
+    setPermissionMode(mode) {
+      return engine.setPermissionMode(mode)
+    },
+    reloadSystem(system) {
+      engine.reloadSystem(system)
+    },
+    abort() {
+      engine.abort()
+    },
+    async close(closeOpts) {
+      try {
+        await engine.close(closeOpts)
+      } finally {
+        log.close()
+      }
+    },
+  }
+}
+
+async function* logSubmit(
+  gen: AsyncGenerator<StreamEvent, RoundEnd>,
+  sessionId: string,
+  log: RavenclawLog,
+): AsyncGenerator<StreamEvent, RoundEnd> {
+  const end = yield* gen
+  log.write({ type: 'round_end', sessionId, reason: end.reason })
+  if (end.reason === 'persist_failed' || end.reason === 'results_persist_failed') {
+    const error = stringifyLogError('error' in end ? end.error : undefined)
+    log.write({
+      type: end.reason,
+      sessionId,
+      ...(error !== undefined ? { error } : {}),
+    })
+  }
+  return end
+}
+
+function stringifyLogError(error: unknown): string | undefined {
+  if (error === undefined || error === null) return undefined
+  if (typeof error === 'string') return error
+  if (error instanceof Error) return error.message
+  return 'error'
 }
