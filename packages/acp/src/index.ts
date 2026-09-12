@@ -9,8 +9,10 @@ export {
   PERMISSION_OPTIONS,
   PERMISSION_TIMEOUT_MS,
   PROTOCOL_VERSION,
+  editProposalFromInput,
   extractPromptImages,
   extractPromptText,
+  isSensitiveEditPath,
   isJsonRpcRequest,
   isJsonRpcResponse,
   isRoundEnd,
@@ -24,6 +26,7 @@ export {
 } from './protocol'
 export type {
   AcpPermissionAnswer,
+  EditProposal,
   AgentCapabilities,
   ImageContentBlock,
   ImplementationInfo,

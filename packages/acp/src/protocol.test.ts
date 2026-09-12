@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import {
   ACP_METHODS,
+  editProposalFromInput,
+  isSensitiveEditPath,
   AGENT_INFO,
   JSON_RPC_METHOD_NOT_FOUND,
   PROTOCOL_VERSION,
@@ -218,5 +220,30 @@ describe('JSON-RPC helpers', () => {
     expect(parseIncoming({})).toBeUndefined()
     expect(isJsonRpcResponse({ jsonrpc: '2.0', id: 4, result: { ok: true } })).toBe(true)
     expect(isJsonRpcResponse({ jsonrpc: '2.0', id: 4, method: 'initialize' })).toBe(false)
+  })
+})
+
+describe('editProposalFromInput', () => {
+  test('maps Edit, Write, and ApplyPatch; ignores other tools', () => {
+    expect(
+      editProposalFromInput('Edit', { path: 'a.ts', old_string: 'old', new_string: 'new' }),
+    ).toEqual({ path: 'a.ts', oldText: 'old', newText: 'new' })
+    expect(editProposalFromInput('Write', { path: 'a.ts', content: 'hello' })).toEqual({
+      path: 'a.ts',
+      newText: 'hello',
+    })
+    expect(
+      editProposalFromInput('ApplyPatch', {
+        operations: [{ type: 'update_file', path: 'b.ts', diff: '+x' }],
+      }),
+    ).toEqual({ path: 'b.ts', newText: '+x' })
+    expect(editProposalFromInput('Bash', { command: 'ls', path: 'a.ts' })).toBeUndefined()
+  })
+
+  test('treats .env and id_rsa basenames as sensitive', () => {
+    expect(isSensitiveEditPath('.env')).toBe(true)
+    expect(isSensitiveEditPath('/tmp/.env')).toBe(true)
+    expect(isSensitiveEditPath('~/.ssh/id_rsa')).toBe(true)
+    expect(isSensitiveEditPath('src/a.ts')).toBe(false)
   })
 })

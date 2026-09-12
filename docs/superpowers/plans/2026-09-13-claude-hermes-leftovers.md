@@ -110,6 +110,8 @@ Discord rewrite, `execute_code`, Electron, `bypass` / yolo, streaming tool execu
 
 ### L12. ACP edit proposal (old/new text)
 
+**Status.** Done.
+
 **Why.** Hermes `acp_adapter/edit_approval.py` sends `EditProposal { path, old_text, new_text }` so the editor can render a diff. RavenClaw ACP `session/request_permission` only forwards `tool` + raw `input` (`packages/acp/src/server.ts`). Editors cannot show a patch.
 
 **Contract.** For `Edit` / `Write` / `ApplyPatch` `permission_ask`, include `path`, `oldText?`, `newText` on the ACP permission params. Timeout still deny. Sensitive names (`.env`, `id_rsa`) never auto-approve. Other tools stay name+input.

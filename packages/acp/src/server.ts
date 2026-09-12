@@ -17,6 +17,8 @@ import {
   promptToSubmit,
   roundEndToStopReason,
   toSessionUpdate,
+  editProposalFromInput,
+  isSensitiveEditPath,
   type AcpPermissionAnswer,
   type AgentCapabilities,
   type InitializeResult,
@@ -109,6 +111,8 @@ export function createAcpServer(opts: AcpServerOptions): AcpServer {
       return 'deny'
     }
 
+    const proposal = editProposalFromInput(event.tool, event.input)
+    const sensitive = proposal !== undefined && isSensitiveEditPath(proposal.path)
     const params: SessionRequestPermissionParams = {
       sessionId,
       title: `Allow ${event.tool}?`,
@@ -119,9 +123,16 @@ export function createAcpServer(opts: AcpServerOptions): AcpServer {
         status: 'pending',
         rawInput: event.input,
       },
-      options: PERMISSION_OPTIONS,
+      options: sensitive
+        ? PERMISSION_OPTIONS.filter((option) => option.optionId !== 'allow_always')
+        : PERMISSION_OPTIONS,
     }
     if (event.message !== '') params.description = event.message
+    if (proposal) {
+      params.path = proposal.path
+      params.newText = proposal.newText
+      if (proposal.oldText !== undefined) params.oldText = proposal.oldText
+    }
 
     const req: JsonRpcRequest = {
       jsonrpc: '2.0',
@@ -133,8 +144,9 @@ export function createAcpServer(opts: AcpServerOptions): AcpServer {
     const timeoutMs = opts.permissionTimeoutMs ?? PERMISSION_TIMEOUT_MS
     const wait = opts.wait ?? defaultWait
     const answer = await racePermission(opts.request(req), wait(timeoutMs), signal)
-    answered.set(event.id, answer)
-    return answer
+    const resolved = sensitive && answer === 'allow_always' ? 'allow' : answer
+    answered.set(event.id, resolved)
+    return resolved
   }
 
   async function handleInitialize(id: JsonRpcId | null): Promise<JsonRpcResponse> {

@@ -119,6 +119,9 @@ export interface SessionRequestPermissionParams {
   sessionId: string
   title: string
   description?: string
+  path?: string
+  oldText?: string
+  newText?: string
   toolCall: {
     toolCallId: string
     title: string
@@ -127,6 +130,51 @@ export interface SessionRequestPermissionParams {
     rawInput?: unknown
   }
   options: PermissionOption[]
+}
+
+const EDIT_PROPOSAL_TOOLS = new Set(['Edit', 'Write', 'ApplyPatch'])
+
+export type EditProposal = {
+  path: string
+  oldText?: string
+  newText: string
+}
+
+export function editProposalFromInput(tool: string, input: unknown): EditProposal | undefined {
+  if (!EDIT_PROPOSAL_TOOLS.has(tool)) return undefined
+  if (!input || typeof input !== 'object') return undefined
+  const rec = input as Record<string, unknown>
+  if (typeof rec.path === 'string' && rec.path.length > 0) {
+    const proposal: EditProposal = { path: rec.path, newText: proposalNewText(rec) }
+    const oldText = proposalOldText(rec)
+    if (oldText !== undefined) proposal.oldText = oldText
+    return proposal
+  }
+  if (!Array.isArray(rec.operations)) return undefined
+  const first = rec.operations[0]
+  if (!first || typeof first !== 'object') return undefined
+  const op = first as Record<string, unknown>
+  if (typeof op.path !== 'string' || op.path.length === 0) return undefined
+  return { path: op.path, newText: typeof op.diff === 'string' ? op.diff : '' }
+}
+
+export function isSensitiveEditPath(path: string): boolean {
+  const base = path.replace(/\\/g, '/').split('/').pop() ?? path
+  return base === '.env' || base === 'id_rsa'
+}
+
+function proposalNewText(rec: Record<string, unknown>): string {
+  if (typeof rec.new_string === 'string') return rec.new_string
+  if (typeof rec.newText === 'string') return rec.newText
+  if (typeof rec.content === 'string') return rec.content
+  if (typeof rec.diff === 'string') return rec.diff
+  return ''
+}
+
+function proposalOldText(rec: Record<string, unknown>): string | undefined {
+  if (typeof rec.old_string === 'string') return rec.old_string
+  if (typeof rec.oldText === 'string') return rec.oldText
+  return undefined
 }
 
 export type SessionRequestPermissionResult =

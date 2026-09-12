@@ -460,6 +460,180 @@ describe('createAcpServer', () => {
     expect(requests[0]?.method).toBe('session/request_permission')
   })
 
+  test('Edit permission_ask includes path, oldText, and newText', async () => {
+    const requests: JsonRpcRequest[] = []
+    const server = createAcpServer({
+      engineFactory: (_sessionId, opts) => ({
+        async *submitMessage() {
+          await opts?.requestPermission?.({
+            id: 'e1',
+            tool: 'Edit',
+            input: { path: 'src/a.ts', old_string: 'foo', new_string: 'bar' },
+            message: 'edit a.ts',
+          })
+          return { reason: 'completed' }
+        },
+        abort() {},
+      }),
+      request: async (req) => {
+        requests.push(req)
+        return { outcome: { outcome: 'selected', optionId: 'allow' } }
+      },
+    })
+    const sessionId = resultOf(
+      await server.handle({
+        jsonrpc: '2.0',
+        id: 1,
+        method: ACP_METHODS.sessionNew,
+        params: {},
+      }),
+    ).sessionId
+    await server.handle({
+      jsonrpc: '2.0',
+      id: 2,
+      method: ACP_METHODS.sessionPrompt,
+      params: { sessionId, prompt: 'edit' },
+    })
+    expect(requests[0]?.params).toMatchObject({
+      path: 'src/a.ts',
+      oldText: 'foo',
+      newText: 'bar',
+      toolCall: {
+        title: 'Edit',
+        rawInput: { path: 'src/a.ts', old_string: 'foo', new_string: 'bar' },
+      },
+    })
+  })
+
+  test('Write and ApplyPatch permission_ask include path and newText', async () => {
+    const requests: JsonRpcRequest[] = []
+    const server = createAcpServer({
+      engineFactory: (_sessionId, opts) => ({
+        async *submitMessage() {
+          await opts?.requestPermission?.({
+            id: 'w1',
+            tool: 'Write',
+            input: { path: 'note.md', content: 'hi' },
+            message: 'write',
+          })
+          await opts?.requestPermission?.({
+            id: 'p1',
+            tool: 'ApplyPatch',
+            input: { operations: [{ type: 'update_file', path: 'c.ts', diff: '+y' }] },
+            message: 'patch',
+          })
+          return { reason: 'completed' }
+        },
+        abort() {},
+      }),
+      request: async (req) => {
+        requests.push(req)
+        return { outcome: { outcome: 'selected', optionId: 'allow' } }
+      },
+    })
+    const sessionId = resultOf(
+      await server.handle({
+        jsonrpc: '2.0',
+        id: 1,
+        method: ACP_METHODS.sessionNew,
+        params: {},
+      }),
+    ).sessionId
+    await server.handle({
+      jsonrpc: '2.0',
+      id: 2,
+      method: ACP_METHODS.sessionPrompt,
+      params: { sessionId, prompt: 'write' },
+    })
+    expect(requests[0]?.params).toMatchObject({ path: 'note.md', newText: 'hi' })
+    expect((requests[0]?.params as { oldText?: unknown }).oldText).toBeUndefined()
+    expect(requests[1]?.params).toMatchObject({ path: 'c.ts', newText: '+y' })
+  })
+
+  test('sensitive .env / id_rsa never auto-approve', async () => {
+    const requests: JsonRpcRequest[] = []
+    let decided: string | undefined
+    const server = createAcpServer({
+      engineFactory: (_sessionId, opts) => ({
+        async *submitMessage() {
+          decided = await opts?.requestPermission?.({
+            id: 's1',
+            tool: 'Write',
+            input: { path: '.env', content: 'SECRET=1' },
+            message: 'write env',
+          })
+          return { reason: 'completed' }
+        },
+        abort() {},
+      }),
+      request: async (req) => {
+        requests.push(req)
+        return { outcome: { outcome: 'selected', optionId: 'allow_always' } }
+      },
+    })
+    const sessionId = resultOf(
+      await server.handle({
+        jsonrpc: '2.0',
+        id: 1,
+        method: ACP_METHODS.sessionNew,
+        params: {},
+      }),
+    ).sessionId
+    await server.handle({
+      jsonrpc: '2.0',
+      id: 2,
+      method: ACP_METHODS.sessionPrompt,
+      params: { sessionId, prompt: 'env' },
+    })
+    const options = (requests[0]?.params as { options?: Array<{ optionId: string }> }).options
+    expect(options?.some((option) => option.optionId === 'allow_always')).toBe(false)
+    expect(decided).toBe('allow')
+  })
+
+  test('Bash permission_ask stays name+input without an edit proposal', async () => {
+    const requests: JsonRpcRequest[] = []
+    const server = createAcpServer({
+      engineFactory: (_sessionId, opts) => ({
+        async *submitMessage() {
+          await opts?.requestPermission?.({
+            id: 'b1',
+            tool: 'Bash',
+            input: { command: 'ls', path: 'ignored.ts' },
+            message: 'run',
+          })
+          return { reason: 'completed' }
+        },
+        abort() {},
+      }),
+      request: async (req) => {
+        requests.push(req)
+        return { outcome: { outcome: 'selected', optionId: 'allow' } }
+      },
+    })
+    const sessionId = resultOf(
+      await server.handle({
+        jsonrpc: '2.0',
+        id: 1,
+        method: ACP_METHODS.sessionNew,
+        params: {},
+      }),
+    ).sessionId
+    await server.handle({
+      jsonrpc: '2.0',
+      id: 2,
+      method: ACP_METHODS.sessionPrompt,
+      params: { sessionId, prompt: 'ls' },
+    })
+    const params = requests[0]?.params as Record<string, unknown>
+    expect(params.path).toBeUndefined()
+    expect(params.oldText).toBeUndefined()
+    expect(params.newText).toBeUndefined()
+    expect(params.toolCall).toMatchObject({
+      title: 'Bash',
+      rawInput: { command: 'ls', path: 'ignored.ts' },
+    })
+  })
+
   test('timeout with no editor answer denies and the tool does not execute', async () => {
     let executed = false
     let decided: string | undefined

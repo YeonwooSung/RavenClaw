@@ -351,6 +351,65 @@ describe('runAcpStdio', () => {
     expect(JSON.stringify(messages)).toContain('end_turn')
   })
 
+  test('Edit permission_ask includes path, oldText, and newText on the wire', async () => {
+    const input = new PassThrough()
+    const output = new PassThrough()
+    const { messages, waitFor } = jsonLines(output)
+
+    const running = runAcpStdio({
+      input,
+      output,
+      boot: async () => ({
+        create: async (_sessionId, opts) => ({
+          async *submitMessage() {
+            await opts?.requestPermission?.({
+              id: 'e1',
+              tool: 'Edit',
+              input: { path: 'a.ts', old_string: 'old', new_string: 'new' },
+              message: 'edit',
+            })
+            return { reason: 'completed' }
+          },
+          abort() {},
+        }),
+      }),
+    })
+
+    writeJson(input, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'session/new',
+      params: { cwd: '/tmp' },
+    })
+    const afterNew = await waitFor(1)
+    const sessionId = (afterNew[0] as { result?: { sessionId?: string } }).result?.sessionId
+
+    writeJson(input, {
+      jsonrpc: '2.0',
+      id: 2,
+      method: 'session/prompt',
+      params: { sessionId, prompt: 'edit' },
+    })
+    const afterAsk = await waitFor(2)
+    const perm = afterAsk.find(
+      (msg) =>
+        typeof msg === 'object' &&
+        msg !== null &&
+        (msg as { method?: string }).method === 'session/request_permission',
+    ) as { params?: { path?: string; oldText?: string; newText?: string } } | undefined
+    expect(perm?.params).toMatchObject({ path: 'a.ts', oldText: 'old', newText: 'new' })
+
+    writeJson(input, {
+      jsonrpc: '2.0',
+      id: (perm as { id?: string | number } | undefined)?.id,
+      result: { outcome: { outcome: 'selected', optionId: 'allow' } },
+    })
+    await waitFor(4)
+    input.end()
+    await running
+    expect(JSON.stringify(messages)).toContain('end_turn')
+  })
+
   test('applyAcpSessionNew overlays cwd, model, and ACP MCP servers', () => {
     const runtime = {
       cwd: '/old',
