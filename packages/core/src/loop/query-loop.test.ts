@@ -800,7 +800,7 @@ describe('queryLoop via SessionEngine', () => {
     expect(provider.streamCount).toBe(0)
   })
 
-  test('truncated no-tool stop suffixes the assistant and streams again without persistToolCalls', async () => {
+  test('truncated no-tool stop escalates maxTokens and retries the same assemble', async () => {
     const store = createMemoryStore()
     const session = makeSession({ id: 'sess_truncate' })
     await store.createSession(session)
@@ -813,14 +813,105 @@ describe('queryLoop via SessionEngine', () => {
       textThenStop('rest'),
     ])
     const engine = createSessionEngine(engineOpts({ provider, store, session }))
-    const { result } = await collect(engine.submitMessage('hi'))
+    const { result, events } = await collect(engine.submitMessage('hi'))
     expect(result).toEqual({ reason: 'completed' })
     expect(provider.streamCount).toBe(2)
-    expect(order.filter((step) => step === 'persistAssistant').length).toBe(2)
+    expect(provider.requests[0]?.maxTokens).toBe(3_200)
+    expect(provider.requests[1]?.maxTokens).toBe(Math.min(64_000, 32_000 - 1_000))
+    expect(provider.requests[1]?.messages).toEqual(provider.requests[0]?.messages)
+    expect(
+      events.filter((event) => event.type === 'status' && event.message === 'output truncated; escalating'),
+    ).toHaveLength(1)
+    expect(
+      events.filter((event) => event.type === 'status' && event.message === 'output truncated; continuing'),
+    ).toHaveLength(0)
+    expect(order.filter((step) => step === 'persistAssistant').length).toBe(1)
     expect(order.filter((step) => step === 'persistUser')).toEqual(['persistUser'])
     expect(order).not.toContain('persistToolCalls')
     const loaded = await store.loadSession(session.id)
     expect(loaded.messages.filter((msg) => msg.role === 'user')).toHaveLength(1)
+    expect(
+      loaded.messages.some(
+        (msg) =>
+          msg.role === 'assistant' &&
+          msg.blocks.some((block) => block.type === 'text' && block.text.includes('Continue from where you left off')),
+      ),
+    ).toBe(false)
+    const firstAsst = loaded.messages.find((msg) => msg.role === 'assistant')
+    expect(firstAsst?.blocks[0]?.type === 'text' ? firstAsst.blocks[0].text : '').toBe('rest')
+  })
+
+  test('second truncated stop after escalate uses the resume nudge ladder', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_truncate_nudge' })
+    await store.createSession(session)
+    const { order } = spyPersist(store)
+    const provider = createFakeProvider([
+      [
+        { type: 'text_delta', text: 'cut' },
+        { type: 'stop', reason: 'max_tokens' },
+      ],
+      [
+        { type: 'text_delta', text: 'still cut' },
+        { type: 'stop', reason: 'max_output_tokens' },
+      ],
+      textThenStop('rest'),
+    ])
+    const engine = createSessionEngine(engineOpts({ provider, store, session }))
+    const { result, events } = await collect(engine.submitMessage('hi'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(provider.streamCount).toBe(3)
+    expect(provider.requests[0]?.maxTokens).toBe(3_200)
+    expect(provider.requests[1]?.maxTokens).toBe(Math.min(64_000, 32_000 - 1_000))
+    expect(provider.requests[1]?.messages).toEqual(provider.requests[0]?.messages)
+    expect(provider.requests[2]?.maxTokens).toBe(Math.min(64_000, 32_000 - 1_000))
+    expect(
+      events.filter((event) => event.type === 'status' && event.message === 'output truncated; escalating'),
+    ).toHaveLength(1)
+    expect(
+      events.filter((event) => event.type === 'status' && event.message === 'output truncated; continuing'),
+    ).toHaveLength(1)
+    expect(order.filter((step) => step === 'persistAssistant').length).toBe(2)
+    expect(order.filter((step) => step === 'persistUser')).toEqual(['persistUser'])
+    const loaded = await store.loadSession(session.id)
+    expect(loaded.messages.filter((msg) => msg.role === 'user')).toHaveLength(1)
+    const firstAsst = loaded.messages.find((msg) => msg.role === 'assistant')
+    expect(firstAsst?.blocks[0]?.type === 'text' ? firstAsst.blocks[0].text : '').toContain(
+      'Continue from where you left off',
+    )
+  })
+
+  test('truncated stop nudges immediately when reserve already covers escalate', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_truncate_no_escalate' })
+    await store.createSession(session)
+    const provider = createFakeProvider([
+      [
+        { type: 'text_delta', text: 'cut' },
+        { type: 'stop', reason: 'max_tokens' },
+      ],
+      textThenStop('rest'),
+    ])
+    const engine = createSessionEngine(
+      engineOpts({
+        provider,
+        store,
+        session,
+        model: { ...defaultModel(), contextWindow: 5_000, reserveOutputTokens: 4_000 },
+      }),
+    )
+    const { result, events } = await collect(engine.submitMessage('hi'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(provider.streamCount).toBe(2)
+    expect(provider.requests[0]?.maxTokens).toBe(4_000)
+    expect(provider.requests[1]?.maxTokens).toBe(4_000)
+    expect(
+      events.filter((event) => event.type === 'status' && event.message === 'output truncated; escalating'),
+    ).toHaveLength(0)
+    expect(
+      events.filter((event) => event.type === 'status' && event.message === 'output truncated; continuing'),
+    ).toHaveLength(1)
+    const loaded = await store.loadSession(session.id)
     const firstAsst = loaded.messages.find((msg) => msg.role === 'assistant')
     expect(firstAsst?.blocks[0]?.type === 'text' ? firstAsst.blocks[0].text : '').toContain(
       'Continue from where you left off',

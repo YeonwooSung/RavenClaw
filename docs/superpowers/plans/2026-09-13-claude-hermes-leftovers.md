@@ -34,6 +34,8 @@ Discord rewrite, `execute_code`, Electron, `bypass` / yolo, streaming tool execu
 
 ### L3. `max_output_tokens` escalate then resume
 
+**Status.** Done.
+
 **Why.** Claude withholds the error, retries the *same* request at 64k once, then ≤3 resume nudges. RavenClaw `assembleRequest` always uses `model.reserveOutputTokens` and only mid-turn-nudges on a truncated `stop_reason`. Long answers die at the profile cap.
 
 **Contract.** On truncated stop (already `isTruncatedStop`): if `maxTokens` is still the profile reserve, retry the same assemble with `maxTokens = min(64_000, model.contextWindow - 1k)` and no new user row. If that also truncates, keep the existing `outputNudges` ladder (cap 3). Do not invent a second user message.

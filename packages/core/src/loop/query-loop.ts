@@ -28,6 +28,7 @@ export async function* queryLoop(
     overflowCompacted: false,
     lastStopReason: null,
     fallbackUsed: false,
+    outputEscalated: false,
     outputNudges: 0,
     schemaNudges: 0,
     emptyNudges: 0,

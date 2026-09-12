@@ -124,6 +124,7 @@ function state(over: Partial<LoopState> = {}): LoopState {
     overflowCompacted: false,
     lastStopReason: null,
     fallbackUsed: false,
+    outputEscalated: false,
     outputNudges: 0,
     schemaNudges: 0,
     emptyNudges: 0,
@@ -184,6 +185,21 @@ describe('assembleRequest', () => {
   test('grace round sends no tools', () => {
     const req = assembleRequest(state({ turn: turn({ graceUsed: true }) }))
     expect(req.tools).toEqual([])
+  })
+
+  test('uses reserve maxTokens until output is escalated', () => {
+    const current = state()
+    expect(assembleRequest(current).maxTokens).toBe(128)
+    current.outputEscalated = true
+    expect(assembleRequest(current).maxTokens).toBe(Math.min(64_000, 32_000 - 1_000))
+  })
+
+  test('keeps reserve when escalate would not grow maxTokens', () => {
+    const current = state({
+      model: model({ contextWindow: 2_000, reserveOutputTokens: 1_500 }),
+      outputEscalated: true,
+    })
+    expect(assembleRequest(current).maxTokens).toBe(1_500)
   })
 
   test('freezes the isEnabled snapshot and ignores a later skill jail', () => {

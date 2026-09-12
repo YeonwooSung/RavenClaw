@@ -51,6 +51,7 @@ export interface LoopState extends QueryLoopOptions {
   overflowCompacted: boolean
   lastStopReason: string | null
   fallbackUsed: boolean
+  outputEscalated: boolean
   outputNudges: number
   schemaNudges: number
   emptyNudges: number
@@ -127,6 +128,20 @@ function isTruncatedStop(reason: string | null): boolean {
   if (reason === null || reason === '') return false
   const n = reason.toLowerCase()
   return n.includes('max_token') || n.includes('length') || n === 'max_output_tokens'
+}
+
+const ESCALATED_OUTPUT_TOKENS = 64_000
+const ESCALATE_CONTEXT_GUARD = 1_000
+
+export function escalatedOutputTokens(model: { contextWindow: number; reserveOutputTokens: number }): number | null {
+  const next = Math.min(ESCALATED_OUTPUT_TOKENS, model.contextWindow - ESCALATE_CONTEXT_GUARD)
+  if (!Number.isFinite(next) || next <= model.reserveOutputTokens) return null
+  return next
+}
+
+function requestMaxTokens(state: LoopState): number {
+  if (!state.outputEscalated) return state.model.reserveOutputTokens
+  return escalatedOutputTokens(state.model) ?? state.model.reserveOutputTokens
 }
 
 function isRetryable(error: unknown): boolean {
@@ -356,7 +371,7 @@ export function assembleRequest(state: LoopState): ProviderRequest {
     system: state.system ?? [],
     messages,
     tools,
-    maxTokens: state.model.reserveOutputTokens,
+    maxTokens: requestMaxTokens(state),
   }
 }
 
@@ -537,6 +552,19 @@ export async function* streamModel(
             state.lastStopReason = chunk.reason
             break
         }
+      }
+      const bumped = escalatedOutputTokens(state.model)
+      if (
+        bumped !== null &&
+        !state.outputEscalated &&
+        current.maxTokens < bumped &&
+        state.pendingToolCalls.length === 0 &&
+        isTruncatedStop(state.lastStopReason)
+      ) {
+        state.outputEscalated = true
+        current = { ...current, maxTokens: bumped }
+        yield { type: 'status', message: 'output truncated; escalating' }
+        continue
       }
       return { action: 'continue' }
     } catch (error) {
