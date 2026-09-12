@@ -1,7 +1,5 @@
 export * from './types'
 export { readPackageVersion } from './package-version'
-export { createSessionEngine } from './loop/session-engine'
-export { queryLoop } from './loop/query-loop'
 export { sessionKey } from './gateway/types'
 export type { InboundEvent, ChatType } from './gateway/types'
 export { loadSessionMap, saveSessionMap, resolveSessionId } from './gateway/session-map'
@@ -251,4 +249,6 @@ export {
   resolveChildModel,
   CHILD_RESULT_CHAR_BOUND,
 } from './agent/definition'
+export { queryLoop } from './loop/query-loop'
+export { createSessionEngine } from './loop/session-engine'
 

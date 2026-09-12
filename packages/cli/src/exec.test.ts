@@ -146,7 +146,7 @@ describe('createRootTools', () => {
       expect(filtered).not.toContain('AskUser')
       expect(filtered).not.toContain('Fetch')
       expect(filtered).not.toContain('WebSearch')
-      expect(filtered).not.toContain('SessionSearch')
+      expect(filtered).toContain('SessionSearch')
       expect(filtered).not.toContain('ToolSearch')
       expect(filtered).not.toContain('ToolCall')
     } finally {
@@ -223,7 +223,7 @@ describe('createRootTools', () => {
     expect(filtered).not.toContain('Fetch')
     expect(filtered).not.toContain('WebSearch')
     expect(filtered).not.toContain('AskUser')
-    expect(filtered).not.toContain('SessionSearch')
+    expect(filtered).toContain('SessionSearch')
   })
 
   test('createSessionTools with network:true puts Fetch/WebSearch on the wire', () => {

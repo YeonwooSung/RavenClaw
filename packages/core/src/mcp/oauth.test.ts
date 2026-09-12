@@ -145,6 +145,25 @@ describe('ensureMcpOAuthAccess', () => {
     ).rejects.toMatchObject({ message: MCP_AUTH_REQUIRED })
   })
 
+  test('loopback error callback fails closed without hanging', async () => {
+    const home = tempHome()
+    await expect(
+      authorizeMcpOAuth({
+        serverName: 'docs',
+        home,
+        oauth: {
+          clientId: 'cli-1',
+          authorizationUrl: 'https://auth.example/authorize',
+          tokenUrl: 'https://auth.example/token',
+        },
+        async listenOnce() {
+          throw new Error(MCP_AUTH_REQUIRED)
+        },
+        async openBrowser() {},
+      }),
+    ).rejects.toMatchObject({ message: MCP_AUTH_REQUIRED })
+  })
+
   test('refresh fails closed on a 401 token endpoint', async () => {
     const home = tempHome()
     await expect(
