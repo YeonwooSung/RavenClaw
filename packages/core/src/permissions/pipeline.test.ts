@@ -535,6 +535,110 @@ describe('decidePermission', () => {
     if (danger.behavior === 'deny') expect(danger.reason).toBe('mode')
   })
 
+  test('dontAsk denies leftover-ask Fetch with reason mode', async () => {
+    const tool = mockTool({
+      name: 'Fetch',
+      readOnly: true,
+      check: { behavior: 'ask', message: 'Fetch https://example.com' },
+    })
+    const decision = await decide({
+      tool,
+      name: 'Fetch',
+      input: { url: 'https://example.com' },
+      mode: 'dontAsk',
+    })
+    expect(decision).toEqual({
+      behavior: 'deny',
+      reason: 'mode',
+      message: 'Fetch https://example.com',
+    })
+  })
+
+  test('dontAsk denies leftover-ask AskUser with reason mode', async () => {
+    const tool = mockTool({
+      name: 'AskUser',
+      readOnly: true,
+      check: { behavior: 'ask', message: 'Ask the user a question?' },
+    })
+    const decision = await decide({
+      tool,
+      name: 'AskUser',
+      input: {
+        questions: [
+          {
+            question: 'Continue?',
+            options: [{ label: 'yes' }, { label: 'no' }],
+          },
+        ],
+      },
+      mode: 'dontAsk',
+    })
+    expect(decision).toEqual({
+      behavior: 'deny',
+      reason: 'mode',
+      message: 'Ask the user a question?',
+    })
+  })
+
+  test('dontAsk still allows leftover-ask read-only tools that are not Fetch or AskUser', async () => {
+    const tool = mockTool({
+      name: 'Read',
+      readOnly: true,
+      check: { behavior: 'ask', message: 'read?' },
+    })
+    const decision = await decide({
+      tool,
+      name: 'Read',
+      input: { path: 'a.txt' },
+      mode: 'dontAsk',
+    })
+    expect(decision).toEqual({ behavior: 'allow', reason: 'mode' })
+  })
+
+  test('default leftover Fetch/AskUser stays ask; acceptEdits does not promote Fetch', async () => {
+    const fetch = mockTool({
+      name: 'Fetch',
+      readOnly: true,
+      check: { behavior: 'ask', message: 'Fetch https://example.com' },
+    })
+    const askUser = mockTool({
+      name: 'AskUser',
+      readOnly: true,
+      check: { behavior: 'ask', message: 'Ask the user a question?' },
+    })
+    expect(
+      await decide({
+        tool: fetch,
+        name: 'Fetch',
+        input: { url: 'https://example.com' },
+        mode: 'default',
+      }),
+    ).toEqual({ behavior: 'ask', message: 'Fetch https://example.com' })
+    expect(
+      await decide({
+        tool: askUser,
+        name: 'AskUser',
+        input: {
+          questions: [
+            {
+              question: 'Continue?',
+              options: [{ label: 'yes' }, { label: 'no' }],
+            },
+          ],
+        },
+        mode: 'default',
+      }),
+    ).toEqual({ behavior: 'ask', message: 'Ask the user a question?' })
+    expect(
+      await decide({
+        tool: fetch,
+        name: 'Fetch',
+        input: { url: 'https://example.com' },
+        mode: 'acceptEdits',
+      }),
+    ).toEqual({ behavior: 'ask', message: 'Fetch https://example.com' })
+  })
+
   test('default leftover ask stays ask', async () => {
     const tool = mockTool({
       name: 'Bash',
