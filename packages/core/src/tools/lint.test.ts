@@ -37,6 +37,7 @@ describe('lintWrittenFile', () => {
     writeFileSync(file, 'x = 1\n')
     lintWrittenFile(file, root)
     expect(existsSync(join(root, '__pycache__'))).toBe(false)
+    expect(existsSync(join(root, 'a.pyc'))).toBe(false)
   })
 
   test('skips files outside the cwd tree', () => {

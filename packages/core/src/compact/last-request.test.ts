@@ -1,5 +1,9 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import { clearLastRequestAt, getLastRequestAt, markLastRequestAt } from './last-request'
+
+beforeEach(() => {
+  clearLastRequestAt()
+})
 
 afterEach(() => {
   clearLastRequestAt()
@@ -7,10 +11,10 @@ afterEach(() => {
 
 describe('last request clock', () => {
   test('marks and reads a session timestamp', () => {
-    expect(getLastRequestAt('s1')).toBeUndefined()
-    markLastRequestAt('s1', 42)
-    expect(getLastRequestAt('s1')).toBe(42)
-    expect(getLastRequestAt('s2')).toBeUndefined()
+    expect(getLastRequestAt('last-request-s1')).toBeUndefined()
+    markLastRequestAt('last-request-s1', 42)
+    expect(getLastRequestAt('last-request-s1')).toBe(42)
+    expect(getLastRequestAt('last-request-s2')).toBeUndefined()
   })
 
   test('clearLastRequestAt deletes one session or all', () => {

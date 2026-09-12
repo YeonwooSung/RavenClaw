@@ -46,7 +46,17 @@ function checkerFor(ext: string, absPath: string): Checker | undefined {
   if (ext === '.js' || ext === '.mjs' || ext === '.cjs') {
     return { command: 'node', args: ['--check', absPath] }
   }
-  if (ext === '.py') return { command: 'python3', args: ['-m', 'py_compile', absPath] }
+  if (ext === '.py') {
+    return {
+      command: 'python3',
+      args: [
+        '-B',
+        '-c',
+        'import pathlib,sys; compile(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"), sys.argv[1], "exec")',
+        absPath,
+      ],
+    }
+  }
   if (ext === '.rb') return { command: 'ruby', args: ['-c', absPath] }
   if (ext === '.sh') return { command: 'bash', args: ['-n', absPath] }
   return undefined
