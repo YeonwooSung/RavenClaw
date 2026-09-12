@@ -26,7 +26,7 @@ The step fails if that file is missing or empty. Do not add a `*` / empty-spec B
 
 ```yaml
 # .ravenclaw/permissions.json must exist in the repo (see above).
-- uses: actions/checkout@v4
+- uses: actions/checkout@v7
 - uses: YeonwooSung/RavenClaw/.github/actions/raven-exec@v0.1.33
   with:
     prompt: run bun test
