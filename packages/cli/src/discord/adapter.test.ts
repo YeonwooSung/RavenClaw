@@ -114,6 +114,20 @@ function dmMessage(over: {
   }
 }
 
+function dmPayload(over: {
+  id?: string
+  content?: string
+  authorId?: string
+  channelId?: string
+} = {}): Record<string, unknown> {
+  return {
+    id: over.id ?? 'm-dm',
+    channel_id: over.channelId ?? 'D1',
+    author: { id: over.authorId ?? 'U1', bot: false },
+    content: over.content ?? 'please',
+  }
+}
+
 async function runOnce(opts: {
   config?: DiscordConfig
   gateway: FakeDiscordGateway
@@ -246,5 +260,72 @@ describe('runDiscordAdapter', () => {
     const texts = [...api.posts.map((p) => p.content), ...api.edits.map((e) => e.content)]
     expect(texts.some((t) => t === 'turn failed')).toBe(true)
     expect(texts.some((t) => t.includes('boom'))).toBe(false)
+  })
+
+  test('turnFlights serializes two messages on the same session', async () => {
+    const gateway = new FakeDiscordGateway()
+    const order: string[] = []
+    let started = 0
+    let releaseFirst!: () => void
+    const firstHold = new Promise<void>((resolve) => {
+      releaseFirst = resolve
+    })
+    let firstStarted!: () => void
+    const firstStartedP = new Promise<void>((resolve) => {
+      firstStarted = resolve
+    })
+    const running = runOnce({
+      gateway,
+      openSession: async () => ({
+        sessionId: 'sess-shared',
+        async *submitMessage() {
+          started += 1
+          const n = started
+          order.push(`start:${n}`)
+          if (n === 1) {
+            firstStarted()
+            await firstHold
+          }
+          order.push(`end:${n}`)
+        },
+      }),
+    })
+    gateway.push(guildMention({ id: 'm1', content: '<@BOT> first' }))
+    gateway.push(guildMention({ id: 'm2', content: '<@BOT> second' }))
+    await firstStartedP
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(order).toEqual(['start:1'])
+    releaseFirst()
+    gateway.end()
+    await running
+    expect(order).toEqual(['start:1', 'end:1', 'start:2', 'end:2'])
+  })
+
+  test('DM leftover-ask times out to deny', async () => {
+    let answer: string | undefined
+    const gateway = new FakeDiscordGateway()
+    const running = runDiscordAdapter({
+      config: cfg({ allowFrom: ['U1'] }),
+      pairingHome: home(),
+      ledger: createMemoryDeliveries(),
+      permissionTimeoutMs: 20,
+      openSession: async (req) => {
+        expect(req.permissionMode).toBe('default')
+        return {
+          sessionId: 'sess_dm',
+          async *submitMessage() {
+            const ac = new AbortController()
+            const result = await req.askUser({ id: 'p1', tool: 'Bash', message: 'run?' }, ac.signal)
+            answer = result
+          },
+        }
+      },
+      gateway,
+      api: new FakeDiscordApi(),
+    })
+    gateway.push(dmPayload({ id: 'm-dm', authorId: 'U1', content: 'please' }))
+    gateway.end()
+    await running
+    expect(answer).toBe('deny')
   })
 })
