@@ -72,6 +72,7 @@ export interface ConfigFlags {
   addDir?: string[]
   cwd?: string
   effort?: string
+  listen?: string
 }
 
 export interface ResolvedEnv {

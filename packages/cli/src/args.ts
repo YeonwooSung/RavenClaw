@@ -27,6 +27,7 @@ export interface ParsedArgv {
     | 'mcp'
     | 'skills'
     | 'cron'
+    | 'serve'
   prompt?: string
   json?: boolean
   all?: boolean
@@ -112,7 +113,8 @@ export function parseArgv(argv: string[]): ParsedArgv {
       arg === '--agent' ||
       arg === '--add-dir' ||
       arg === '--cwd' ||
-      arg === '--effort'
+      arg === '--effort' ||
+      arg === '--listen'
     ) {
       const value = argv[i + 1]
       if (value === undefined || value.startsWith('-')) {
@@ -154,7 +156,8 @@ export function parseArgv(argv: string[]): ParsedArgv {
         arg === 'completions' ||
         arg === 'mcp' ||
         arg === 'skills' ||
-        arg === 'cron') &&
+        arg === 'cron' ||
+        arg === 'serve') &&
       cmd === 'interactive' &&
       positional.length === 0
     ) {
@@ -164,7 +167,7 @@ export function parseArgv(argv: string[]): ParsedArgv {
     positional.push(arg)
   }
 
-  if (cmd === 'exec' || cmd === 'acp' || cmd === 'smoke') flags.dontAsk = true
+  if (cmd === 'exec' || cmd === 'acp' || cmd === 'smoke' || cmd === 'serve') flags.dontAsk = true
 
   const out: ParsedArgv = { cmd, flags }
   if (json) out.json = true
@@ -236,6 +239,10 @@ function applyFlag(flags: ConfigFlags, key: string, value: string): void {
   }
   if (key === 'effort') {
     flags.effort = value
+    return
+  }
+  if (key === 'listen') {
+    flags.listen = value
     return
   }
   throw new Error(`unknown flag: --${key}`)

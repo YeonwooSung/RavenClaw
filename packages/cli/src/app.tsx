@@ -11,6 +11,7 @@ import {
   startLoop,
   takeLoopTurn,
   formatLoopStatus,
+  shouldAdvanceLoop,
   type LoopState,
   discoverSkills,
   setSkillDisabled,
@@ -22,6 +23,7 @@ import {
   type StreamEvent,
   type TokenUsage,
   buildSystemParts,
+  drainAgentMail,
 } from '@ravenclaw/core'
 import { AdDock } from './ad-dock'
 import {
@@ -205,6 +207,7 @@ export function App(props: AppProps) {
       historyRef.current = loadPrompts(runtimeRef.current.config.home)
       historyIndexRef.current = null
       setRows((prev) => [...prev, { kind: 'user', text }])
+      let advanceLoop = false
       try {
         const payload = collectUserImages(
           prompt,
@@ -214,7 +217,10 @@ export function App(props: AppProps) {
         const gen = runtimeRef.current.engine.submitMessage(payload)
         while (true) {
           const next = await gen.next()
-          if (next.done) break
+          if (next.done) {
+            advanceLoop = shouldAdvanceLoop(next.value.reason)
+            break
+          }
           const event: StreamEvent = next.value
           if (event.type === 'usage') {
             setUsage((prev) => ({
@@ -229,6 +235,7 @@ export function App(props: AppProps) {
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         setRows((prev) => [...prev, { kind: 'error', message }])
+        loopRef.current = null
       } finally {
         syncSession()
         busyRef.current = false
@@ -238,10 +245,14 @@ export function App(props: AppProps) {
         else {
           const queued = dequeue(queueRef.current)
           if (queued !== undefined) void runTurn(queued)
-          else {
+          else if (advanceLoop) {
             const looped = takeLoopTurn(loopRef.current)
             loopRef.current = looped.next
             if (looped.prompt !== undefined) void runTurn(looped.prompt)
+          } else {
+            loopRef.current = null
+            const mail = drainAgentMail(runtimeRef.current.engine.session.id)
+            if (mail.length > 0) void runTurn(`[mailbox]\n${mail.join('\n\n')}`)
           }
         }
       }
@@ -436,6 +447,12 @@ export function App(props: AppProps) {
             return
           }
           setSkillDisabled(parsedSkills.name, parsedSkills.action === 'disable', home)
+          runtimeRef.current.engine.reloadSystem(
+            buildSystemParts({
+              cwd: runtimeRef.current.cwd,
+              permissionMode: runtimeRef.current.engine.session.permissionMode,
+            }),
+          )
           setNotice(`${parsedSkills.action}d ${parsedSkills.name}`)
           return
         }
@@ -659,6 +676,10 @@ export function App(props: AppProps) {
       inflight = true
       void (async () => {
         try {
+          if (!busyRef.current) {
+            const mail = drainAgentMail(runtimeRef.current.engine.session.id)
+            if (mail.length > 0) void runTurn(`[mailbox]\n${mail.join('\n\n')}`)
+          }
           const home = runtimeRef.current.config.home
           const fired = await fireDueJobs({
             store: createJsonCronStore(home !== undefined ? { home } : undefined),

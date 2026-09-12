@@ -3,6 +3,7 @@ import {
   LOOP_MAX_TIMES,
   formatLoopStatus,
   parseLoopArg,
+  shouldAdvanceLoop,
   startLoop,
   takeLoopTurn,
 } from './slash'
@@ -52,5 +53,12 @@ describe('takeLoopTurn', () => {
   test('formatLoopStatus', () => {
     expect(formatLoopStatus(null)).toBe('loop idle')
     expect(formatLoopStatus(startLoop(3, 'x'))).toBe('loop 0/3 remaining 3')
+  })
+
+  test('shouldAdvanceLoop only after completed', () => {
+    expect(shouldAdvanceLoop('completed')).toBe(true)
+    expect(shouldAdvanceLoop('aborted')).toBe(false)
+    expect(shouldAdvanceLoop('persist_failed')).toBe(false)
+    expect(shouldAdvanceLoop(undefined)).toBe(false)
   })
 })

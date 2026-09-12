@@ -11,7 +11,7 @@ export interface PromptBuildInput {
   cwd: string
   permissionMode: PermissionMode
   locale?: string
-  skills?: Array<{ name: string; description: string }>
+  skills?: Array<{ name: string; description: string; disabled?: boolean }>
   git?: { branch: string; head: string; dirty: boolean } | null
   /** Optional preloaded project text (tests). If omitted, load from cwd walk. */
   projectFilesText?: string
@@ -90,7 +90,9 @@ function buildVolatilePrompt(input: PromptBuildInput): string {
     lines.push(`thinking effort: ${input.effort}`)
   }
   lines.push('')
-  const skills = input.skills !== undefined ? input.skills : discoverSkills(input.cwd)
+  const skills = (input.skills !== undefined ? input.skills : discoverSkills(input.cwd)).filter(
+    (skill) => skill.disabled !== true,
+  )
   if (skills.length === 0) {
     lines.push('Skills: none')
   } else {

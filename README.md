@@ -123,6 +123,7 @@ After setup, `bun run smoke` does one live text-only turn and expects `pong`. CI
 | `skills [new\|rm <name>]` | no | List / create / delete skills (`--project` = cwd) |
 | `cron list\|add\|rm\|on\|off` | no | Local scheduled jobs |
 | `cron tick\|watch` | if a job fires | Run due jobs once, or poll |
+| `serve` | yes | Loopback HTTP turn + HMAC webhook (`dontAsk`) |
 
 Prefix session ids are ok.
 
@@ -144,6 +145,7 @@ Prefix session ids are ok.
 | `--cwd <dir>` | Working directory |
 | `--effort <level>` | Thinking-effort hint in the system prompt |
 | `--bare` | Skip file hooks, lifecycle hooks, and MEMORY/USER load |
+| `--listen host:port` | `raven serve` bind (loopback only, default `127.0.0.1:8787`) |
 
 ```bash
 # bash
@@ -281,6 +283,21 @@ bun run raven skills new my-flow --project
 ```
 
 `/learn` asks the model to write a new skill from this session.
+
+## Local gateway (`raven serve`)
+
+Long-lived **loopback** host. Same `queryLoop` as `exec`. Requires `GATEWAY_SECRET` or `RAVEN_SERVE_SECRET`.
+
+```bash
+export GATEWAY_SECRET=dev-secret
+bun run raven serve --listen 127.0.0.1:8787
+# POST /v1/turn  Authorization: Bearer dev-secret
+#   { "text": "list files", "sessionKey": "cli:dm:local" }
+# POST /webhooks/<route>  X-Raven-Signature: t=<unix>,v1=<hmac-sha256 of t.body>
+#   each delivery is a new session; tools are Read/Grep/Glob/Fetch/WebSearch only
+```
+
+Non-loopback binds are rejected. Discord/Slack adapters are not in this tree yet.
 
 ## Loop
 

@@ -30,7 +30,9 @@ import { editTool } from './edit'
 import { readTool } from './read'
 import { setChildOutput } from './set-output'
 import { skillTool } from './skill'
-import { createAgentTool } from './agent'
+import { createAgentTool, MAX_PARALLEL_CHILDREN } from './agent'
+import { createTaskRegistry } from '../tasks/registry'
+import { drainAgentMail } from '../tasks/mailbox'
 
 const RESULT_BOUND = 32_000
 const tempDirs: string[] = []
@@ -1443,6 +1445,113 @@ describe('createAgentTool', () => {
       'WebSearch',
       'Fetch',
     ])
+  })
+
+  test('agents[] longer than MAX_PARALLEL_CHILDREN is rejected without spawning', async () => {
+    const store = createMemoryStore()
+    const session = makeSession()
+    await store.createSession(session)
+    const provider = createFakeProvider([textThenStop('should-not')])
+    const { tool } = createTestAgent({ store, provider })
+    const agents = Array.from({ length: MAX_PARALLEL_CHILDREN + 1 }, (_, i) => ({
+      prompt: `child-${i}`,
+    }))
+    const result = await tool.execute({ prompt: 'ignored', agents }, makeCtx(makeTurn(session)))
+    expect(result).toBe('Agent failed: at most 6 parallel children')
+    expect(provider.streamCount).toBe(0)
+    expect(await store.listSessions({ parentSessionId: session.id })).toHaveLength(0)
+  })
+
+  test('run_in_background rejects when live agent slots are full', async () => {
+    const store = createMemoryStore()
+    const session = makeSession()
+    await store.createSession(session)
+    const provider = createFakeProvider([textThenStop('should-not')])
+    const { tool } = createTestAgent({ store, provider })
+    const tasks = createTaskRegistry()
+    const ctx = { ...makeCtx(makeTurn(session)), tasks }
+    for (let i = 0; i < 6; i++) {
+      tasks.register({
+        type: 'agent',
+        command: `hold-${i}`,
+        outputFile: '/tmp/hold',
+        kill: () => {},
+      })
+    }
+    const result = await tool.execute({ prompt: 'one more', run_in_background: true }, ctx)
+    expect(result).toBe('Agent failed: at most 6 background agents')
+    expect(provider.streamCount).toBe(0)
+  })
+
+  test('run_in_background with agents[] is rejected', async () => {
+    const store = createMemoryStore()
+    const session = makeSession()
+    await store.createSession(session)
+    const provider = createFakeProvider([textThenStop('should-not')])
+    const { tool } = createTestAgent({ store, provider })
+    const tasks = createTaskRegistry()
+    const ctx = { ...makeCtx(makeTurn(session)), tasks }
+    const result = await tool.execute(
+      {
+        prompt: 'ignored',
+        run_in_background: true,
+        agents: [{ prompt: 'one' }, { prompt: 'two' }],
+      },
+      ctx,
+    )
+    expect(result).toBe('Agent failed: agents[] cannot run in the background')
+    expect(provider.streamCount).toBe(0)
+    expect(tasks.list()).toHaveLength(0)
+  })
+
+  test('run_in_background returns dispatched JSON and enqueues mailbox on complete', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'ravenclaw-agent-bg-'))
+    tempDirs.push(home)
+    const savedHome = process.env.RAVENCLAW_HOME
+    process.env.RAVENCLAW_HOME = home
+    const session = makeSession()
+    try {
+      const store = createMemoryStore()
+      await store.createSession(session)
+      const provider = createFakeProvider([textThenStop('bg-done')])
+      const { tool } = createTestAgent({ store, provider })
+      const tasks = createTaskRegistry()
+      const turn = makeTurn(session)
+      const ctx = { ...makeCtx(turn), tasks }
+      const result = await tool.execute({ prompt: 'bg work', run_in_background: true }, ctx)
+      const parsed = JSON.parse(result) as {
+        status: string
+        taskId: string
+        childSessionId: string
+      }
+      expect(parsed).toEqual({
+        status: 'dispatched',
+        taskId: parsed.taskId,
+        childSessionId: parsed.childSessionId,
+      })
+      expect(parsed.taskId.length).toBeGreaterThan(0)
+      expect(parsed.childSessionId.length).toBeGreaterThan(0)
+      expect(result).not.toContain('\n')
+
+      const deadline = Date.now() + 3000
+      while (Date.now() < deadline) {
+        const task = tasks.get(parsed.taskId)
+        if (task && task.status !== 'running') break
+        await Bun.sleep(10)
+      }
+      expect(tasks.get(parsed.taskId)?.status).toBe('completed')
+      const children = await store.listSessions({ parentSessionId: session.id })
+      expect(children).toHaveLength(1)
+      expect(children[0]?.id).toBe(parsed.childSessionId)
+
+      const notices = drainAgentMail(session.id)
+      expect(notices).toHaveLength(1)
+      expect(notices[0]).toBe(`subagent finished (${parsed.taskId}):\nbg-done`)
+    } finally {
+      drainAgentMail(session.id)
+      if (savedHome === undefined) delete process.env.RAVENCLAW_HOME
+      else process.env.RAVENCLAW_HOME = savedHome
+    }
   })
 
   test('isolation worktree falls back to parent cwd when not a git repo', async () => {

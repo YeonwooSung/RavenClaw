@@ -88,6 +88,20 @@ describe('buildSystemParts', () => {
     expect(volatile).toContain('long-skill')
   })
 
+  test('disabled skills are omitted from the volatile list', () => {
+    const parts = buildSystemParts(
+      input({
+        skills: [
+          { name: 'keep', description: 'still on' },
+          { name: 'review', description: 'off', disabled: true },
+        ],
+      }),
+    )
+    const volatile = parts[2]?.text ?? ''
+    expect(volatile).toContain('keep:')
+    expect(volatile).not.toContain('review:')
+  })
+
   test('effort is written into the volatile prompt', () => {
     const parts = buildSystemParts(input({ effort: 'high' }))
     expect(parts[2]?.text).toContain('thinking effort: high')
@@ -158,7 +172,7 @@ describe('buildSystemParts', () => {
     expect(explicit[2]?.text).not.toContain('disk-skill')
   })
 
-  test('omitted skills with no skill dirs stay Skills: none', () => {
+  test('omitted skills with no skill dirs still list builtins; empty list is none', () => {
     const home = tempDir('ravenclaw-builder-home-')
     const cwd = tempDir('ravenclaw-builder-cwd-')
     process.env[ENV_KEY] = home
@@ -170,9 +184,8 @@ describe('buildSystemParts', () => {
     }
     const omitted = buildSystemParts(base)
     const empty = buildSystemParts({ ...base, skills: [] })
-    expect(omitted[2]?.text).toContain('Skills: none')
-    expect(omitted[2]?.text).toBe(empty[2]?.text)
-    expect(hashSystemParts(omitted)).toBe(hashSystemParts(empty))
+    expect(omitted[2]?.text).toContain('review:')
+    expect(empty[2]?.text).toContain('Skills: none')
   })
 
   test('missing memory files leave the context hash unchanged', () => {

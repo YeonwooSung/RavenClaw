@@ -10,6 +10,7 @@ import type {
   SessionRecord,
 } from '../types'
 import { createSessionEngine } from './session-engine'
+import { drainAgentMail, enqueueAgentMail } from '../tasks/mailbox'
 
 function defaultModel(id = 'dummy'): ModelProfile {
   return {
@@ -335,5 +336,43 @@ describe('steering and image submit', () => {
         { type: 'image', mediaType: 'image/png', data: 'abc' },
       ])
     }
+  })
+})
+
+describe('agent mailbox drain', () => {
+  test('submitMessage prepends drained mailbox notices to the user text', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_mailbox' })
+    await store.createSession(sess)
+    enqueueAgentMail(sess.id, 'subagent finished (b_abc):\ndone-a')
+    enqueueAgentMail(sess.id, 'subagent finished (b_def):\ndone-b')
+    const engine = createSessionEngine({
+      session: sess,
+      provider: createFakeProvider([
+        [{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: 'end' }],
+      ]),
+      store,
+      tools: [],
+      compact: defaultCompact({ enabled: false }),
+      model: defaultModel(),
+      maxRounds: 4,
+      async askUser() {
+        return 'deny'
+      },
+    })
+    const gen = engine.submitMessage('hello')
+    while (!(await gen.next()).done) {
+      // drain
+    }
+    const loaded = await store.loadSession(sess.id)
+    const first = loaded.messages[0]
+    expect(first?.role).toBe('user')
+    if (first?.role === 'user') {
+      const text = first.blocks[0] && first.blocks[0].type === 'text' ? first.blocks[0].text : ''
+      expect(text).toBe(
+        '[mailbox]\nsubagent finished (b_abc):\ndone-a\n\nsubagent finished (b_def):\ndone-b\n\nhello',
+      )
+    }
+    expect(drainAgentMail(sess.id)).toEqual([])
   })
 })

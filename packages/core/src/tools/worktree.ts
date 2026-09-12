@@ -35,9 +35,19 @@ export function prepareChildWorktree(
   return {
     cwd: worktreePath,
     cleanup: () => {
-      runGit(toplevel, ['worktree', 'remove', '--force', worktreePath])
+      if (isWorktreeDirty(worktreePath)) return
+      const removed = runGit(toplevel, ['worktree', 'remove', worktreePath])
+      if (!removed.ok && !isWorktreeDirty(worktreePath)) {
+        runGit(toplevel, ['worktree', 'remove', '--force', worktreePath])
+      }
     },
   }
+}
+
+export function isWorktreeDirty(cwd: string): boolean {
+  const result = runGit(cwd, ['status', '--porcelain'])
+  if (!result.ok) return true
+  return result.stdout.length > 0
 }
 
 function gitToplevel(cwd: string): string | undefined {

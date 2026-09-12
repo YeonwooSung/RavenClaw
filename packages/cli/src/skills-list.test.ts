@@ -1,8 +1,8 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { formatSkillLine, formatSkillsList } from './skills-list'
+import { formatSkillLine, formatSkillShow, formatSkillsList } from './skills-list'
 
 describe('formatSkillsList', () => {
   test('empty dirs is no skills', () => {
@@ -45,5 +45,14 @@ describe('formatSkillsList', () => {
       source: 'user',
     })
     expect(line).toBe(`long  user  ${'x'.repeat(60)}`)
+  })
+
+  test('formatSkillShow refuses a SKILL.md symlink that leaves the skill dir', () => {
+    const root = join(tmpdir(), `raven-skill-show-${Date.now()}`)
+    const skillDir = join(root, 'skill')
+    mkdirSync(skillDir, { recursive: true })
+    writeFileSync(join(root, 'secret.env'), 'API_KEY=secret\n')
+    symlinkSync(join(root, 'secret.env'), join(skillDir, 'SKILL.md'))
+    expect(formatSkillShow(skillDir)).toBe('could not read SKILL.md')
   })
 })

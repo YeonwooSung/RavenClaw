@@ -32,6 +32,7 @@ import { searchCliSessions } from './search'
 import { SMOKE_PROMPT, evaluateSmoke } from './smoke'
 import { handleCronCli, runCronTick } from './cron-cmd'
 import { fireCronJob } from './cron-fire'
+import { runServe } from './serve'
 
 export { parseArgv } from './args'
 export { CLI_VERSION, HELP_TEXT, formatVersion } from './help'
@@ -247,7 +248,8 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     parsed.cmd === 'acp' ||
     parsed.cmd === 'exec' ||
     parsed.cmd === 'smoke' ||
-    parsed.cmd === 'cron'
+    parsed.cmd === 'cron' ||
+    parsed.cmd === 'serve'
   ) {
     const home = await ensureHomeDir()
     if (!providerConfigured(home, parsed.flags)) {
@@ -338,6 +340,15 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       if (parsed.json) execOpts.json = true
       const result = await runExec(execOpts)
       return result.end.reason === 'completed' ? 0 : 1
+    } catch (error) {
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
+      return 1
+    }
+  }
+
+  if (parsed.cmd === 'serve') {
+    try {
+      return await runServe({ flags: parsed.flags })
     } catch (error) {
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
       return 1

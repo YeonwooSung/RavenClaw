@@ -2,11 +2,18 @@ export * from './types'
 export { readPackageVersion } from './package-version'
 export { createSessionEngine } from './loop/session-engine'
 export { queryLoop } from './loop/query-loop'
+export { sessionKey } from './gateway/types'
+export type { InboundEvent, ChatType } from './gateway/types'
+export { loadSessionMap, saveSessionMap, resolveSessionId } from './gateway/session-map'
+export { isUserAllowed } from './gateway/authz'
+export { parseTurnRequest, checkBearer, webhookSafeTools } from './gateway/http'
+export { verifyWebhookSignature, safeWebhookToolNames } from './gateway/webhook'
 export {
   parseLoopArg,
   startLoop,
   takeLoopTurn,
   formatLoopStatus,
+  shouldAdvanceLoop,
   LOOP_MAX_TIMES,
 } from './loop/slash'
 export type { LoopState, LoopAction } from './loop/slash'
@@ -110,6 +117,7 @@ export { parseCronSlashArg, CRON_USAGE } from './schedule/slash'
 export type { CronJob, CronStore, JobSchedule, CronFireStatus } from './schedule/types'
 export { createTaskRegistry, formatTasksNotice, parseTasksArg } from './tasks/registry'
 export type { TaskRegistry, TaskSnapshot } from './tasks/registry'
+export { enqueueAgentMail, drainAgentMail, MAX_PARALLEL_CHILDREN } from './tasks/mailbox'
 export { createFileHistory, formatUndoNotice } from './session/file-history'
 export type { FileHistory, UndoResult } from './session/file-history'
 export {
@@ -136,6 +144,7 @@ export {
   skillTool,
   createSkillTool,
   builtinSkillsRoot,
+  readConfinedSkillMd,
 } from './tools/skill'
 export type { DiscoveredSkill, SkillInput, SkillSource } from './tools/skill'
 export { createMcpToolBridge, createStdioMcpTransport } from './mcp/client'

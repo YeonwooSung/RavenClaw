@@ -34,7 +34,7 @@ const stopSchema = {
 export const taskOutputTool: Tool<TaskOutputInput, string> = {
   name: 'TaskOutput',
   description:
-    'Read the output of a background Bash task started with run_in_background. Optional block waits until the task finishes or timeout milliseconds elapse (default 30000).',
+    'Read the output of a background Bash or Agent task started with run_in_background. Optional block waits until the task finishes or timeout milliseconds elapse (default 30000).',
   inputSchema: outputSchema,
   parse(input: unknown) {
     return parseWithSchema<TaskOutputInput>(outputSchema, input)
@@ -74,7 +74,7 @@ export const taskOutputTool: Tool<TaskOutputInput, string> = {
 
 export const taskStopTool: Tool<TaskStopInput, string> = {
   name: 'TaskStop',
-  description: 'Stop a running background Bash task by id from TaskOutput or /tasks.',
+  description: 'Stop a running background Bash or Agent task by id from TaskOutput or /tasks.',
   inputSchema: stopSchema,
   parse(input: unknown) {
     return parseWithSchema<TaskStopInput>(stopSchema, input)

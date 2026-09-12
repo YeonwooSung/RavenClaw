@@ -8,10 +8,12 @@ import {
   buildSystemParts,
   createJsonCronStore,
   fireDueJobs,
+  drainAgentMail,
   parseLoopArg,
   startLoop,
   takeLoopTurn,
   formatLoopStatus,
+  shouldAdvanceLoop,
   discoverSkills,
   setSkillDisabled,
   formatTasksNotice,
@@ -120,6 +122,7 @@ export async function runOpenTuiApp(
     appendPrompt(text, current.config.home)
     view.append(`you  ${text}`)
     flush()
+    let advanceLoop = false
     try {
       const payload = collectUserImages(expanded.text, current.cwd, readClipboardImage)
       const gen = current.engine.submitMessage(payload)
@@ -128,6 +131,7 @@ export async function runOpenTuiApp(
         if (next.done) {
           view.apply({ type: 'round_end', end: next.value })
           flush()
+          advanceLoop = shouldAdvanceLoop(next.value.reason)
           break
         }
         const event: StreamEvent = next.value
@@ -138,17 +142,22 @@ export async function runOpenTuiApp(
       const message = error instanceof Error ? error.message : String(error)
       view.append(`error  ${message}`)
       flush()
+      loopState = null
     } finally {
       turnBusy = false
       const leftover = current.engine.drainSteering()
-      if (leftover.length > 0) await runTurn(leftover.join('\n'))
+      if (leftover.length > 0) void runTurn(leftover.join('\n'))
       else {
         const queued = dequeue(queue)
-        if (queued !== undefined) await runTurn(queued)
-        else {
+        if (queued !== undefined) void runTurn(queued)
+        else if (advanceLoop) {
           const looped = takeLoopTurn(loopState)
           loopState = looped.next
-          if (looped.prompt !== undefined) await runTurn(looped.prompt)
+          if (looped.prompt !== undefined) void runTurn(looped.prompt)
+        } else {
+          loopState = null
+          const mail = drainAgentMail(current.engine.session.id)
+          if (mail.length > 0) void runTurn(`[mailbox]\n${mail.join('\n\n')}`)
         }
       }
     }
@@ -174,6 +183,10 @@ export async function runOpenTuiApp(
     cronInflight = true
     void (async () => {
       try {
+        if (!turnBusy) {
+          const mail = drainAgentMail(current.engine.session.id)
+          if (mail.length > 0) void runTurn(`[mailbox]\n${mail.join('\n\n')}`)
+        }
         const home = current.config.home
         const fired = await fireDueJobs({
           store: createJsonCronStore(home !== undefined ? { home } : undefined),
@@ -372,7 +385,7 @@ export async function runOpenTuiApp(
           loopState = startLoop(action.times, action.prompt)
           const first = takeLoopTurn(loopState)
           loopState = first.next
-          if (first.prompt !== undefined) await runTurn(first.prompt)
+          if (first.prompt !== undefined) void runTurn(first.prompt)
           continue
         }
         case 'rewind':

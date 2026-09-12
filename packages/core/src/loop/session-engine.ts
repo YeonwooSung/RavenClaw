@@ -20,6 +20,7 @@ import { abortTurn } from './abort'
 import { queryLoop } from './query-loop'
 import { selectProtectedTail } from './repair'
 import { rewindLastTurn } from '../session/rewind'
+import { drainAgentMail, enqueueAgentMail } from '../tasks/mailbox'
 import { getSessionWorktree } from '../tools/session-worktree'
 
 const TITLE_MAX = 50
@@ -125,9 +126,18 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       if (session.prePlanMode !== undefined) turn.prePlanMode = session.prePlanMode
       liveTurn = turn
 
+      const notices = drainAgentMail(session.id)
+      if (notices.length > 0) {
+        const mailboxText = `[mailbox]\n${notices.join('\n\n')}\n\n${text}`
+        const first = userMsg.blocks[0]
+        if (first && first.type === 'text') first.text = mailboxText
+        else userMsg.blocks.unshift({ type: 'text', text: mailboxText })
+      }
+
       try {
         await opts.store.persistUser(session.id, userMsg)
       } catch (error) {
+        for (const notice of notices) enqueueAgentMail(session.id, notice)
         messages = messages.slice(0, -1)
         liveTurn = null
         fileHistory.endTurn()

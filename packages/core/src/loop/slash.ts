@@ -50,6 +50,10 @@ export function takeLoopTurn(state: LoopState | null): { next: LoopState | null;
   }
 }
 
+export function shouldAdvanceLoop(reason: string | undefined): boolean {
+  return reason === 'completed'
+}
+
 export function formatLoopStatus(state: LoopState | null): string {
   if (!state || state.remaining <= 0) return 'loop idle'
   return `loop ${state.total - state.remaining}/${state.total} remaining ${state.remaining}`

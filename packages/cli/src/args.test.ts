@@ -65,6 +65,10 @@ describe('parseArgv', () => {
       cmd: 'interactive',
       flags: { bare: true, agent: 'general', effort: 'high' },
     })
+    expect(parseArgv(['serve', '--listen', '127.0.0.1:8787'])).toEqual({
+      cmd: 'serve',
+      flags: { dontAsk: true, listen: '127.0.0.1:8787' },
+    })
   })
 
   test('supports --provider= and --model= forms', () => {

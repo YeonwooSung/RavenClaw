@@ -38,9 +38,12 @@ import { takeChildOutput } from './set-output'
 import { filterToolsForTurn } from './skill'
 import { prepareChildWorktree, type IsolationMode } from './worktree'
 import { createFileHistory } from '../session/file-history'
+import { enqueueAgentMail, MAX_PARALLEL_CHILDREN } from '../tasks/mailbox'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ravenclawHome } from '../home'
+
+export { MAX_PARALLEL_CHILDREN }
 
 export interface AgentChildInput {
   prompt: string
@@ -120,12 +123,27 @@ export function createAgentTool(opts: {
     async execute(input: AgentInput, ctx: ToolContext) {
       if (ctx.signal.aborted) return ABORTED_TEXT
 
-      const runOne = (childInput: AgentChildInput) => spawnChild(childInput, ctx, opts)
-      if (input.agents !== undefined && input.agents.length > 0) {
-        const settled = await Promise.allSettled(input.agents.map((child) => runOne(child)))
-        return formatParallelResults(input.agents, settled)
+      const batch = input.agents
+      const background = input.run_in_background === true
+      if (background && batch !== undefined && batch.length > 0) {
+        return 'Agent failed: agents[] cannot run in the background'
       }
-      if (input.run_in_background === true && ctx.tasks) {
+      if (batch !== undefined && batch.length > MAX_PARALLEL_CHILDREN) {
+        return `Agent failed: at most ${MAX_PARALLEL_CHILDREN} parallel children`
+      }
+
+      const runOne = (childInput: AgentChildInput) => spawnChild(childInput, ctx, opts)
+      if (batch !== undefined && batch.length > 0) {
+        const settled = await Promise.allSettled(batch.map((child) => runOne(child)))
+        return formatParallelResults(batch, settled)
+      }
+      if (background && ctx.tasks) {
+        const running = ctx.tasks
+          .list()
+          .filter((task) => task.type === 'agent' && task.status === 'running').length
+        if (running >= MAX_PARALLEL_CHILDREN) {
+          return `Agent failed: at most ${MAX_PARALLEL_CHILDREN} background agents`
+        }
         return startBackgroundAgent(input, ctx, opts)
       }
       return runOne(input)
@@ -139,6 +157,7 @@ async function spawnChild(
   input: AgentChildInput,
   ctx: ToolContext,
   opts: AgentToolOpts,
+  childSessionId?: string,
 ): Promise<string> {
   const projectCwd = ctx.turn.projectCwd ?? ctx.turn.cwd
   const spawnable = new Set([
@@ -155,7 +174,13 @@ async function spawnChild(
   const maxRounds = opts.childMaxRounds ?? definition.maxRounds
   const now = Date.now()
   const childModel = resolveChildModel(ctx.turn, definition)
-  const childSession = buildChildSession(ctx.turn, childModel, now, input.description)
+  const childSession = buildChildSession(
+    ctx.turn,
+    childModel,
+    now,
+    input.description,
+    childSessionId,
+  )
   const isolated = prepareChildWorktree(ctx.turn.cwd, childSession.id, input.isolation ?? 'none')
   const userMessage = buildChildUserMessage(input, definition, now)
   const childMessages = buildChildMessages(definition, ctx.turn.messages, userMessage)
@@ -231,10 +256,11 @@ function startBackgroundAgent(
       if (!abort.signal.aborted) abort.abort()
     },
   })
+  const childSessionId = crypto.randomUUID()
   const childHistory = createFileHistory(`bg_${task.id}`)
   childHistory.beginTurn()
   const bgCtx: ToolContext = { ...ctx, signal: abort.signal, fileHistory: childHistory }
-  void spawnChild({ ...input, run_in_background: false }, bgCtx, opts).then(
+  void spawnChild({ ...input, run_in_background: false }, bgCtx, opts, childSessionId).then(
     (text) => {
       try {
         writeFileSync(outputFile, text, 'utf8')
@@ -242,6 +268,10 @@ function startBackgroundAgent(
         // keep empty log if the final write fails
       }
       tasks.complete(task.id, 0)
+      enqueueAgentMail(
+        ctx.turn.sessionId,
+        `subagent finished (${task.id}):\n` + text.slice(0, 4000),
+      )
     },
     () => {
       tasks.complete(task.id, 1)
@@ -249,7 +279,7 @@ function startBackgroundAgent(
   ).finally(() => {
     childHistory.endTurn()
   })
-  return `background agent started: ${task.id}`
+  return JSON.stringify({ status: 'dispatched', taskId: task.id, childSessionId })
 }
 
 function formatParallelResults(
@@ -275,9 +305,10 @@ function buildChildSession(
   model: string,
   now: number,
   title?: string,
+  id?: string,
 ): SessionRecord {
   const session: SessionRecord = {
-    id: crypto.randomUUID(),
+    id: id ?? crypto.randomUUID(),
     createdAt: now,
     updatedAt: now,
     cwd: parent.cwd,

@@ -184,6 +184,12 @@ function readSkillBody(skillDir: string): string {
   return capBody(parts.join('\n\n'))
 }
 
+export function readConfinedSkillMd(skillDir: string): { ok: true; text: string } | { ok: false; message: string } {
+  const loaded = confinedRead(skillDir, 'SKILL.md')
+  if (!loaded.ok) return loaded
+  return { ok: true, text: loaded.buf.toString('utf8') }
+}
+
 function readSkillFile(skillDir: string, userPath: string): string {
   const loaded = confinedRead(skillDir, userPath)
   if (!loaded.ok) return loaded.message

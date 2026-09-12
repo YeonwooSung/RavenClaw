@@ -1,6 +1,4 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
-import { discoverSkills, ravenclawHome, type DiscoveredSkill } from '@ravenclaw/core'
+import { discoverSkills, ravenclawHome, readConfinedSkillMd, type DiscoveredSkill } from '@ravenclaw/core'
 
 export function formatSkillLine(skill: DiscoveredSkill): string {
   const desc = skill.description.replace(/\s+/g, ' ').trim().slice(0, 60)
@@ -44,9 +42,7 @@ export function parseSkillsSlashArg(arg?: string): SkillsSlash {
 }
 
 export function formatSkillShow(dir: string): string {
-  try {
-    return readFileSync(join(dir, 'SKILL.md'), 'utf8').slice(0, 4000)
-  } catch {
-    return 'could not read SKILL.md'
-  }
+  const loaded = readConfinedSkillMd(dir)
+  if (!loaded.ok) return 'could not read SKILL.md'
+  return loaded.text.slice(0, 4000)
 }
