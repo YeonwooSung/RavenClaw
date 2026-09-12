@@ -15,6 +15,8 @@ import {
   shouldAdvanceLoop,
   discoverSkills,
   setSkillDisabled,
+  createSecondAbortGate,
+  formatKilledBackgroundNotice,
   formatTasksNotice,
   formatUndoNotice,
   parseTasksArg,
@@ -88,6 +90,7 @@ export async function runOpenTuiApp(
   const readLine = lineReader(input)
   const view = createOpenTuiView()
   let current = runtime
+  const abortGate = createSecondAbortGate()
 
   const writeDiffPanel = () => {
     const next = readDiff(current.cwd)
@@ -263,7 +266,12 @@ export async function runOpenTuiApp(
           return 0
         case 'stop':
           current.engine.abort()
-          write(turnBusy ? 'stopped\n' : 'nothing to stop\n')
+          if (abortGate.press() === 'kill_all') {
+            const killed = current.engine.tasks.killAll()
+            write(`${formatKilledBackgroundNotice(killed.length)}\n`)
+          } else {
+            write(turnBusy ? 'stopped\n' : 'nothing to stop\n')
+          }
           continue
         case 'learn':
           await runTurn(LEARN_PROMPT)

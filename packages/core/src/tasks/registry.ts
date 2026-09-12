@@ -139,6 +139,33 @@ export function createTaskRegistry(): TaskRegistry {
   }
 }
 
+export const SECOND_ABORT_WINDOW_MS = 3_000
+
+export function createSecondAbortGate(opts?: {
+  now?: () => number
+  windowMs?: number
+}): { press(): 'abort' | 'kill_all' } {
+  const now = opts?.now ?? Date.now
+  const windowMs = opts?.windowMs ?? SECOND_ABORT_WINDOW_MS
+  let lastAbortAt = 0
+  return {
+    press() {
+      const at = now()
+      if (lastAbortAt > 0 && at - lastAbortAt <= windowMs) {
+        lastAbortAt = 0
+        return 'kill_all'
+      }
+      lastAbortAt = at
+      return 'abort'
+    },
+  }
+}
+
+export function formatKilledBackgroundNotice(killed: number): string {
+  if (killed <= 0) return 'no background tasks to kill'
+  return killed === 1 ? 'killed 1 background task' : `killed ${killed} background tasks`
+}
+
 export function formatTasksNotice(tasks: TaskSnapshot[]): string {
   if (tasks.length === 0) return 'no background tasks'
   return tasks

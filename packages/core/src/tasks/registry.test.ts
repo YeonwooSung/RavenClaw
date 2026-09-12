@@ -2,7 +2,13 @@ import { describe, expect, test } from 'bun:test'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createTaskRegistry, formatTasksNotice, parseTasksArg } from './registry'
+import {
+  createSecondAbortGate,
+  createTaskRegistry,
+  formatKilledBackgroundNotice,
+  formatTasksNotice,
+  parseTasksArg,
+} from './registry'
 
 describe('createTaskRegistry', () => {
   test('register, complete, kill, and format', () => {
@@ -41,6 +47,52 @@ describe('createTaskRegistry', () => {
     expect(killed).toBe(true)
     expect(stopped?.status).toBe('killed')
     expect(formatTasksNotice([])).toBe('no background tasks')
+  })
+
+  test('killAll stops every running task', () => {
+    const dir = join(tmpdir(), `raven-tasks-all-${Date.now()}`)
+    mkdirSync(dir, { recursive: true })
+    const outputFile = join(dir, 'out.log')
+    writeFileSync(outputFile, '')
+    const killed: string[] = []
+    const tasks = createTaskRegistry()
+    const first = tasks.register({
+      command: 'sleep 1',
+      outputFile,
+      kill: () => {
+        killed.push('a')
+      },
+    })
+    const second = tasks.register({
+      command: 'sleep 2',
+      outputFile,
+      kill: () => {
+        killed.push('b')
+      },
+    })
+    tasks.complete(first.id, 0)
+    const stopped = tasks.killAll()
+    expect(killed).toEqual(['b'])
+    expect(stopped.map((task) => task.id)).toEqual([second.id])
+    expect(tasks.get(second.id)?.status).toBe('killed')
+    expect(tasks.get(first.id)?.status).toBe('completed')
+  })
+})
+
+describe('createSecondAbortGate', () => {
+  test('second press within 3s is kill_all; later press is abort again', () => {
+    let now = 1_000
+    const gate = createSecondAbortGate({ now: () => now, windowMs: 3_000 })
+    expect(gate.press()).toBe('abort')
+    now = 3_500
+    expect(gate.press()).toBe('kill_all')
+    now = 3_600
+    expect(gate.press()).toBe('abort')
+    now = 7_000
+    expect(gate.press()).toBe('abort')
+    expect(formatKilledBackgroundNotice(0)).toBe('no background tasks to kill')
+    expect(formatKilledBackgroundNotice(1)).toBe('killed 1 background task')
+    expect(formatKilledBackgroundNotice(3)).toBe('killed 3 background tasks')
   })
 })
 

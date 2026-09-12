@@ -120,6 +120,8 @@ Discord rewrite, `execute_code`, Electron, `bypass` / yolo, streaming tool execu
 
 ### L13. Second Escape kills background tasks
 
+**Status.** Done.
+
 **Why.** Claude abort: first Escape cancels the live turn; second within 3s kills background agents. RavenClaw `packages/cli/src/app.tsx` Escape always `engine.abort()` only. `/tasks` children keep running.
 
 **Contract.** First Escape: reject in-flight ask + `engine.abort()` (unchanged). Second Escape within 3s: `engine.tasks.killAll()`. Status line says so. OpenTUI same. Headless unchanged.

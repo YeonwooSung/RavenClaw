@@ -4,6 +4,8 @@ import {
   createJsonCronStore,
   cyclePermissionMode,
   fireDueJobs,
+  createSecondAbortGate,
+  formatKilledBackgroundNotice,
   formatTasksNotice,
   formatUndoNotice,
   parseTasksArg,
@@ -123,6 +125,7 @@ export function App(props: AppProps) {
   const [diffView, setDiffView] = useState<GitDiffView | undefined>()
   const [diffSelected, setDiffSelected] = useState(0)
   const diffOpenRef = useRef(false)
+  const abortGateRef = useRef(createSecondAbortGate())
   const [usage, setUsage] = useState<TokenUsage>(props.runtime.engine.session.usage)
   const [sessionId, setSessionId] = useState(props.runtime.engine.session.id)
   const [model, setModel] = useState(props.runtime.engine.session.model)
@@ -857,6 +860,10 @@ export function App(props: AppProps) {
       const pending = askRef.current
       if (pending) pending.reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
       runtimeRef.current.engine.abort()
+      if (abortGateRef.current.press() === 'kill_all') {
+        const killed = runtimeRef.current.engine.tasks.killAll()
+        setNotice(formatKilledBackgroundNotice(killed.length))
+      }
       if (picker) setPicker(undefined)
       else if (!busy && !pending) setDraft('')
       return

@@ -344,6 +344,29 @@ describe('runOpenTuiApp', () => {
     expect(written.join('')).not.toContain('unknown command')
   })
 
+  test('second /stop within 3s kills background tasks', async () => {
+    const engine = fakeEngine(makeSession(), emptyTurn)
+    let killed = 0
+    engine.tasks.register({
+      command: 'sleep 30',
+      outputFile: '/tmp/raven-bg.log',
+      kill: () => {
+        killed += 1
+      },
+    })
+    const written: string[] = []
+    const code = await runOpenTuiApp(fakeRuntime(engine, { store: fakeStore() }), {
+      input: asyncLines('/stop', '/stop', '/quit'),
+      write: (chunk) => {
+        written.push(chunk)
+      },
+    })
+    expect(code).toBe(0)
+    expect(killed).toBe(1)
+    expect(written.join('')).toContain('killed 1 background task')
+    expect(engine.tasks.list().some((task) => task.status === 'killed')).toBe(true)
+  })
+
   test('/diff opens a pinned file panel and /diff again closes it', async () => {
     const written: string[] = []
     const views: string[] = []

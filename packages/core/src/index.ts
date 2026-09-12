@@ -125,7 +125,14 @@ export { createJsonCronStore, cronJobsPath, newCronId } from './schedule/store'
 export { fireDueJobs, formatCronList, formatCronLine } from './schedule/runner'
 export { parseCronSlashArg, CRON_USAGE } from './schedule/slash'
 export type { CronJob, CronStore, JobSchedule, CronFireStatus } from './schedule/types'
-export { createTaskRegistry, formatTasksNotice, parseTasksArg } from './tasks/registry'
+export {
+  createTaskRegistry,
+  createSecondAbortGate,
+  formatKilledBackgroundNotice,
+  formatTasksNotice,
+  parseTasksArg,
+  SECOND_ABORT_WINDOW_MS,
+} from './tasks/registry'
 export type { TaskRegistry, TaskSnapshot } from './tasks/registry'
 export {
   enqueueAgentMail,
