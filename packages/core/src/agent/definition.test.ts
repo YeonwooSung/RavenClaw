@@ -214,6 +214,39 @@ describe('resolveChildModel', () => {
       'parent-model',
     )
   })
+
+  test('BYOK specialistModel wins when definition omits model', () => {
+    expect(
+      resolveChildModel(
+        { model: 'parent-model', funding: 'byok', specialistModel: 'ollama/qwen' },
+        generalAgent,
+      ),
+    ).toBe('ollama/qwen')
+    expect(
+      resolveChildModel(
+        { model: 'parent-model', funding: 'byok', specialistModel: 'ollama/qwen' },
+        fileFinderAgent,
+      ),
+    ).toBe('ollama/qwen')
+  })
+
+  test('included ignores specialistModel and definition.model', () => {
+    expect(
+      resolveChildModel(
+        { model: 'parent-model', funding: 'included', specialistModel: 'ollama/qwen' },
+        named,
+      ),
+    ).toBe('parent-model')
+  })
+
+  test('definition.model still wins over specialistModel on BYOK', () => {
+    expect(
+      resolveChildModel(
+        { model: 'parent-model', funding: 'byok', specialistModel: 'ollama/qwen' },
+        named,
+      ),
+    ).toBe('helper-small')
+  })
 })
 
 describe('child tools', () => {

@@ -116,6 +116,8 @@ export interface Turn {
   /** Extra working roots for path checks (AddDir). Unset means cwd only. */
   additionalDirectories?: string[]
   model: string
+  /** BYOK-only pin for child specialists. Included children ignore this. */
+  specialistModel?: string
   readFiles: Set<string>
   skillAllowedTools?: string[]
   /** Realpaths of subdirectory AGENTS.md files already injected this session. */
@@ -227,6 +229,13 @@ export interface CompactPolicy {
   llmSummarize: boolean
   cacheExpiryMs?: number
   cacheExpiryMinTokens?: number
+  /** When set, compact LLM uses this instead of the live session provider. */
+  auxProvider?: Provider
+  auxModel?: ModelProfile
+  /** True when `auxiliary.compact` was set. Missing provider then means mechanical. */
+  auxConfigured?: boolean
+  /** BYOK pin for child specialists; Agent reads this when the turn omits it. */
+  specialistModel?: string
 }
 
 export interface AgentDefinition {

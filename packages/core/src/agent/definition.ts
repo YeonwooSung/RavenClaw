@@ -19,11 +19,11 @@ const NESTING_DENIED = new Set([
 ])
 
 export function resolveChildModel(
-  parent: { model: string; funding: Funding },
+  parent: { model: string; funding: Funding; specialistModel?: string },
   definition: AgentDefinition,
 ): string {
   if (parent.funding === 'included') return parent.model
-  return definition.model ?? parent.model
+  return definition.model ?? parent.specialistModel ?? parent.model
 }
 
 export function childToolNames(definition: AgentDefinition): string[] {

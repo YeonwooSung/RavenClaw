@@ -166,6 +166,14 @@ describe('handleSlashCommand', () => {
     expect(LEARN_PROMPT.toLowerCase()).toContain('write a new skill')
     expect(handleSlashCommand('/learn')).toEqual({ type: 'command', name: 'learn' })
   })
+
+  test('learn prompt encodes authoring rules for the skill index', () => {
+    expect(LEARN_PROMPT).toContain('60')
+    expect(LEARN_PROMPT).toContain('references/')
+    expect(LEARN_PROMPT.toLowerCase()).toContain('do not retype')
+    expect(LEARN_PROMPT).toContain('.ravenclaw/skills/<name>/')
+    expect(LEARN_PROMPT).toContain('~/.ravenclaw/skills/<name>/')
+  })
 })
 
 describe('slash status helpers', () => {

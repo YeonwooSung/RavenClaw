@@ -64,6 +64,9 @@ describe('defaultConfig', () => {
     expect(cfg.included).toEqual({ gatewayUrl: '', enabled: false, sessionCapPerDay: 4 })
     expect(cfg.terminal).toBeUndefined()
     expect(cfg.mcp).toEqual({ servers: [] })
+    expect(cfg.auxiliary).toBeUndefined()
+    expect(cfg.specialistModel).toBeUndefined()
+    expect(cfg.tools).toBeUndefined()
   })
 })
 
@@ -325,6 +328,32 @@ describe('loadConfig', () => {
     expect(cfg.terminal).toEqual({ backend: 'docker', image: 'bash:5' })
   })
 
+  test('yaml auxiliary, specialistModel, and tools.network flow into resolved config', () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test'
+    const home = tempHome()
+    writeFileSync(
+      join(home, 'config.yaml'),
+      [
+        'provider: anthropic',
+        'model: anthropic/claude-sonnet-4',
+        'auxiliary:',
+        '  compact: anthropic/claude-haiku-4.5',
+        '  title: anthropic/claude-haiku-4.5',
+        'specialistModel: ollama/qwen',
+        'tools:',
+        '  network: true',
+        '',
+      ].join('\n'),
+    )
+    const cfg = loadConfig({ home })
+    expect(cfg.auxiliary).toEqual({
+      compact: 'anthropic/claude-haiku-4.5',
+      title: 'anthropic/claude-haiku-4.5',
+    })
+    expect(cfg.specialistModel).toBe('ollama/qwen')
+    expect(cfg.tools).toEqual({ network: true })
+  })
+
   test('yaml mcp.servers flows into resolved config', () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-test'
     const home = tempHome()
@@ -550,6 +579,33 @@ describe('parseConfigYaml', () => {
         excludeTools: ['git_push'],
       },
     ])
+  })
+
+  test('parses auxiliary compact/title, specialistModel, and tools.network', () => {
+    const parsed = parseConfigYaml(
+      [
+        'auxiliary:',
+        '  compact: anthropic/claude-haiku-4.5',
+        '  title: anthropic/claude-haiku-4.5',
+        'specialistModel: ollama/qwen',
+        'tools:',
+        '  network: true',
+        '',
+      ].join('\n'),
+    )
+    expect(parsed.auxiliary).toEqual({
+      compact: 'anthropic/claude-haiku-4.5',
+      title: 'anthropic/claude-haiku-4.5',
+    })
+    expect(parsed.specialistModel).toBe('ollama/qwen')
+    expect(parsed.tools).toEqual({ network: true })
+  })
+
+  test('absent auxiliary, specialistModel, and tools stay unset', () => {
+    const parsed = parseConfigYaml('model: anthropic/claude-sonnet-4\n')
+    expect(parsed.auxiliary).toBeUndefined()
+    expect(parsed.specialistModel).toBeUndefined()
+    expect(parsed.tools).toBeUndefined()
   })
 
   test('skips mcp servers that lack name or command', () => {

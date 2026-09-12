@@ -111,4 +111,66 @@ describe('summarizeSpan / compactSummary', () => {
     expect(text).toContain('what files exist?')
     expect(text).toContain('*')
   })
+
+  test('aux throw → mechanical; live provider must not be called', async () => {
+    const live = fakeProvider(async function* () {
+      yield { type: 'text_delta', text: 'live should not run' }
+    })
+    const aux = fakeProvider(async function* () {
+      throw new Error('aux 404')
+    })
+    const text = await compactSummary(
+      span,
+      { ...defaultCompactPolicy(), llmSummarize: true, auxProvider: aux, auxConfigured: true },
+      live,
+      model(),
+      new AbortController().signal,
+    )
+    expect(aux.streamCount).toBe(1)
+    expect(live.streamCount).toBe(0)
+    expect(text).toContain('what files exist?')
+    expect(text).not.toContain('live should not run')
+  })
+
+  test('aux configured but missing provider (build fail / included mismatch) → mechanical', async () => {
+    const live = fakeProvider(async function* () {
+      yield { type: 'text_delta', text: 'live should not run' }
+    })
+    const text = await compactSummary(
+      span,
+      { ...defaultCompactPolicy(), llmSummarize: true, auxConfigured: true },
+      live,
+      model(),
+      new AbortController().signal,
+    )
+    expect(live.streamCount).toBe(0)
+    expect(text).toContain('what files exist?')
+    expect(text).not.toContain('live should not run')
+  })
+
+  test('aux success uses aux, not the live provider', async () => {
+    const live = fakeProvider(async function* () {
+      yield { type: 'text_delta', text: 'live should not run' }
+    })
+    const aux = fakeProvider(async function* () {
+      yield { type: 'text_delta', text: 'cheap summary' }
+      yield { type: 'stop', reason: 'end' }
+    })
+    const text = await compactSummary(
+      span,
+      {
+        ...defaultCompactPolicy(),
+        llmSummarize: true,
+        auxProvider: aux,
+        auxModel: { ...model(), id: 'anthropic/claude-haiku-4.5' },
+        auxConfigured: true,
+      },
+      live,
+      model(),
+      new AbortController().signal,
+    )
+    expect(aux.streamCount).toBe(1)
+    expect(live.streamCount).toBe(0)
+    expect(text).toBe('cheap summary')
+  })
 })

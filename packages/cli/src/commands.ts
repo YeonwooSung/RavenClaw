@@ -59,8 +59,14 @@ export const SLASH_HELP = formatSlashHelp(SLASH_COMMANDS)
 export const REVIEW_PROMPT =
   'Summarize durable lessons from this session as short bullets. No tools. No secrets.'
 
-export const LEARN_PROMPT =
-  'Write a new skill that captures the reusable procedure we just figured out. Create a SKILL.md with a name, a short description, and a step-by-step body under this project\'s .ravenclaw/skills directory or the user skills directory. Do not add a new built-in tool — just write the skill files.'
+export const LEARN_PROMPT = [
+  'Write a new skill that captures the reusable procedure we just figured out.',
+  'Create SKILL.md under .ravenclaw/skills/<name>/ (this project) or ~/.ravenclaw/skills/<name>/ (user).',
+  'Front matter must include a name and a description of at most 60 characters (the skill index clips at 60).',
+  'The body is steps plus pointers. Put long scripts and templates in references/ next to SKILL.md.',
+  'Do not retype a script that already exists in the repo; link it.',
+  'Do not add a core tool — just write the skill files.',
+].join(' ')
 
 export const INTERVIEW_PROMPT =
   'Interview me before writing code. Use AskUser for multiple-choice questions (at least two options each). Ask only what you need to pin down the spec, then summarize the spec and wait.'

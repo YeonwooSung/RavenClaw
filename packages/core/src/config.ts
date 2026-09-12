@@ -40,6 +40,15 @@ export interface McpConfig {
   servers: McpServerConfig[]
 }
 
+export interface AuxiliaryConfig {
+  compact?: string
+  title?: string
+}
+
+export interface ToolsConfig {
+  network?: boolean
+}
+
 export interface RavenClawConfig {
   model: string
   provider: ProviderKind
@@ -53,6 +62,9 @@ export interface RavenClawConfig {
   prices?: Record<string, ModelPriceFields>
   terminal?: TerminalConfig
   mcp: McpConfig
+  auxiliary?: AuxiliaryConfig
+  specialistModel?: string
+  tools?: ToolsConfig
 }
 
 export interface ModelPriceFields {
@@ -234,6 +246,27 @@ export function parseConfigYaml(text: string): Partial<RavenClawConfig> {
     out.prices = prices
   }
 
+  const auxiliaryRaw = asMap(raw.auxiliary)
+  if (auxiliaryRaw) {
+    const auxiliary: AuxiliaryConfig = {}
+    const compactModel = asString(auxiliaryRaw.compact)
+    if (compactModel !== undefined) auxiliary.compact = compactModel
+    const titleModel = asString(auxiliaryRaw.title)
+    if (titleModel !== undefined) auxiliary.title = titleModel
+    out.auxiliary = auxiliary
+  }
+
+  const specialistModel = asString(raw.specialistModel)
+  if (specialistModel !== undefined) out.specialistModel = specialistModel
+
+  const toolsRaw = asMap(raw.tools)
+  if (toolsRaw) {
+    const tools: ToolsConfig = {}
+    const network = asBoolean(toolsRaw.network)
+    if (network !== undefined) tools.network = network
+    out.tools = tools
+  }
+
   return out
 }
 
@@ -322,6 +355,9 @@ export function loadConfig(opts?: { home?: string; flags?: ConfigFlags }): Resol
   if (parsed.contextWindow !== undefined) resolved.contextWindow = parsed.contextWindow
   if (parsed.prices !== undefined) resolved.prices = parsed.prices
   if (parsed.terminal !== undefined) resolved.terminal = parsed.terminal
+  if (parsed.auxiliary !== undefined) resolved.auxiliary = parsed.auxiliary
+  if (parsed.specialistModel !== undefined) resolved.specialistModel = parsed.specialistModel
+  if (parsed.tools !== undefined) resolved.tools = parsed.tools
   if (flags?.fallbackModel !== undefined) resolved.fallbackModel = flags.fallbackModel
   if (flags?.allowedTools !== undefined && flags.allowedTools.length > 0) {
     resolved.allowedTools = flags.allowedTools

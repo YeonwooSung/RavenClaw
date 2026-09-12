@@ -110,6 +110,22 @@ export async function compactSummary(
   signal: AbortSignal,
 ): Promise<string> {
   if (!compact.llmSummarize) return mechanicalSummary(messages)
+  const auxConfigured = compact.auxConfigured === true || compact.auxProvider !== undefined
+  if (auxConfigured) {
+    if (!compact.auxProvider) return mechanicalSummary(messages)
+    try {
+      const text = await summarizeSpan(
+        messages,
+        compact.auxProvider,
+        compact.auxModel ?? compact.auxProvider.profile(model.id),
+        signal,
+      )
+      if (text) return text
+    } catch {
+      // Aux was set: never fall back to the live coding model.
+    }
+    return mechanicalSummary(messages)
+  }
   try {
     const text = await summarizeSpan(messages, provider, model, signal)
     if (text) return text

@@ -173,7 +173,14 @@ async function spawnChild(
 
   const maxRounds = opts.childMaxRounds ?? definition.maxRounds
   const now = Date.now()
-  const childModel = resolveChildModel(ctx.turn, definition)
+  const childModel = resolveChildModel(
+    {
+      model: ctx.turn.model,
+      funding: ctx.turn.funding,
+      specialistModel: ctx.turn.specialistModel ?? opts.compact.specialistModel,
+    },
+    definition,
+  )
   const childSession = buildChildSession(
     ctx.turn,
     childModel,
@@ -412,6 +419,7 @@ function buildChildTurn(
     readFiles: new Set(),
   }
   if (session.prePlanMode !== undefined) turn.prePlanMode = session.prePlanMode
+  if (parent.specialistModel !== undefined) turn.specialistModel = parent.specialistModel
   if (parent.skillAllowedTools !== undefined) {
     turn.skillAllowedTools = [...parent.skillAllowedTools]
   }

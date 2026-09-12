@@ -75,6 +75,7 @@ import { createProvider } from '@ravenclaw/providers'
 import { probeEntitlement, type Entitlement } from '@ravenclaw/ads'
 import { includedCapReached, tryRecordIncludedSession } from './included-usage'
 import { loadConfiguredMcpTools, type McpSpawnFn } from './mcp'
+import { applyAuxCompactPolicy } from './aux'
 
 export type IncludedAccess =
   | {
@@ -436,6 +437,15 @@ async function finishOpenEngine(
 }> {
   const { session, lockHolderId, askQuestions } = ready
   const compact = compactPolicyFromConfig(opts.config.compact)
+  applyAuxCompactPolicy(compact, {
+    config: opts.config,
+    funding: session.funding,
+    sessionModel: session.model,
+    liveProvider: opts.provider,
+  })
+  if (opts.config.specialistModel !== undefined && opts.config.specialistModel !== '') {
+    compact.specialistModel = opts.config.specialistModel
+  }
   const system = buildSystemParts({
     cwd: session.cwd,
     permissionMode: session.permissionMode,

@@ -229,15 +229,18 @@ function createTestAgent(
     model?: ModelProfile
     childMaxRounds?: number
     system?: SystemPart[]
+    specialistModel?: string
   } = {},
 ) {
   const store = over.store ?? createMemoryStore()
   const provider = over.provider ?? createFakeProvider([textThenStop('child done')])
+  const compact = defaultCompact()
+  if (over.specialistModel !== undefined) compact.specialistModel = over.specialistModel
   const opts: Parameters<typeof createAgentTool>[0] = {
     store,
     provider,
     tools: over.tools ?? parentPool(),
-    compact: defaultCompact(),
+    compact,
     model: over.model ?? defaultModel(),
     askUser,
   }
@@ -796,6 +799,32 @@ describe('createAgentTool', () => {
     expect(children).toHaveLength(0)
   })
 
+  test('BYOK specialistModel pins file-finder request model', async () => {
+    const provider = createFakeProvider([textThenStop('found')])
+    const store = createMemoryStore()
+    const session = makeSession({
+      id: 'sess_specialist_byok',
+      model: 'parent-model',
+      funding: 'byok',
+    })
+    await store.createSession(session)
+    const { tool } = createTestAgent({
+      store,
+      provider,
+      model: defaultModel('parent-model'),
+      specialistModel: 'ollama/qwen',
+    })
+    await tool.execute(
+      { prompt: 'find', subagent: 'file-finder' },
+      makeCtx(makeTurn(session, { model: 'parent-model', funding: 'byok' })),
+    )
+
+    expect(provider.requests[0]?.model).toBe('ollama/qwen')
+    const child = (await store.listSessions({ parentSessionId: session.id }))[0]
+    expect(child?.model).toBe('ollama/qwen')
+    expect(child?.funding).toBe('byok')
+  })
+
   test('included funding pins specialist child.model to parent.model', async () => {
     const provider = createFakeProvider([textThenStop('included')])
     const store = createMemoryStore()
@@ -809,10 +838,17 @@ describe('createAgentTool', () => {
       store,
       provider,
       model: defaultModel('parent-model'),
+      specialistModel: 'ollama/qwen',
     })
     await tool.execute(
       { prompt: 'find', subagent: 'file-finder' },
-      makeCtx(makeTurn(session, { model: 'parent-model', funding: 'included' })),
+      makeCtx(
+        makeTurn(session, {
+          model: 'parent-model',
+          funding: 'included',
+          specialistModel: 'ollama/qwen',
+        }),
+      ),
     )
 
     expect(provider.requests[0]?.model).toBe('parent-model')
