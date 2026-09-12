@@ -469,6 +469,7 @@ describe('createAgentTool', () => {
     expect(names).not.toContain('Agent')
     expect(names).not.toContain('EnterPlanMode')
     expect(names).not.toContain('ExitPlanMode')
+    expect(names).not.toContain('TaskSteer')
     expect(names).toEqual(['Read', 'Grep', 'Glob', 'Edit', 'Write', 'Bash', 'Skill'])
   })
 

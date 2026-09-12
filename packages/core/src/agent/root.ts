@@ -20,6 +20,7 @@ export const rootAgent: AgentDefinition = {
     'TodoWrite',
     'TaskOutput',
     'TaskStop',
+    'TaskSteer',
     'AskUser',
     'SessionSearch',
     'Memory',

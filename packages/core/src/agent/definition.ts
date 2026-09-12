@@ -16,6 +16,7 @@ const NESTING_DENIED = new Set([
   'EnterWorktree',
   'ExitWorktree',
   'AddDir',
+  'TaskSteer',
 ])
 
 export function resolveChildModel(

@@ -60,6 +60,7 @@ describe('rootAgent', () => {
       'TodoWrite',
       'TaskOutput',
       'TaskStop',
+      'TaskSteer',
       'AskUser',
       'SessionSearch',
       'Memory',

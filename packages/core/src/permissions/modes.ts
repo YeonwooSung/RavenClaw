@@ -17,6 +17,7 @@ const READ_ONLY_NAMES = new Set([
   'EnterPlanMode',
   'ExitPlanMode',
   'TaskOutput',
+  'TaskSteer',
   'ListMcpResources',
   'ReadMcpResource',
   'CronList',
