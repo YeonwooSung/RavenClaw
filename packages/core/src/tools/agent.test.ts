@@ -911,7 +911,14 @@ describe('createAgentTool', () => {
       makeCtx(makeTurn(session, { cwd })),
     )
 
-    expect(result).toBe('isolated-ok')
+    expect(result.startsWith('isolated-ok')).toBe(true)
+    const last = result.trim().split('\n').at(-1)
+    const parsed = JSON.parse(last ?? '') as {
+      worktree: { path: string; dirty: boolean; pruned: boolean }
+    }
+    expect(parsed.worktree.dirty).toBe(false)
+    expect(parsed.worktree.pruned).toBe(true)
+    expect(existsSync(parsed.worktree.path)).toBe(false)
     expect(liveCwd?.startsWith(join(cwd, '.ravenclaw', 'worktrees') + '/')).toBe(true)
     expect(existedDuring).toBe(true)
     expect(liveCwd && existsSync(liveCwd)).toBe(false)
@@ -995,7 +1002,7 @@ describe('createAgentTool', () => {
         makeCtx(makeTurn(session, { cwd })),
       )
 
-      expect(result).toBe('isolated-ok')
+      expect(result.startsWith('isolated-ok')).toBe(true)
       expect(liveCwd?.startsWith(join(cwd, '.ravenclaw', 'worktrees') + '/')).toBe(true)
       expect(childProjectCwd).toBe(cwd)
       expect(writeCount).toBe(0)
@@ -1895,6 +1902,54 @@ describe('createAgentTool', () => {
     expect(result).toBe('fallback')
     const child = (await store.listSessions({ parentSessionId: session.id }))[0]
     expect(child?.cwd).toBe(cwd)
+  })
+
+  test('isolation worktree dirty reports path and keeps the tree', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-agent-wt-dirty-'))
+    tempDirs.push(cwd)
+    initGitRepo(cwd)
+    const store = createMemoryStore()
+    const session = makeSession({ cwd })
+    await store.createSession(session)
+    const writer: Tool = {
+      ...stubTool('Write'),
+      async execute(_input, ctx) {
+        writeFileSync(join(ctx.turn.cwd, 'scratch.txt'), 'keep\n')
+        return 'wrote'
+      },
+    }
+    const provider = createFakeProvider([
+      toolThenStop('w1', 'Write', { path: 'scratch.txt', content: 'keep' }),
+      textThenStop('dirty-ok'),
+    ])
+    const { tool } = createTestAgent({
+      store,
+      provider,
+      tools: parentPool().map((item) => (item.name === 'Write' ? writer : item)),
+    })
+    const result = await tool.execute(
+      { prompt: 'dirty', isolation: 'worktree' },
+      makeCtx(makeTurn(session, { cwd })),
+    )
+    const last = result.trim().split('\n').at(-1)
+    const parsed = JSON.parse(last ?? '') as {
+      worktree: { path: string; dirty: boolean; pruned: boolean }
+    }
+    expect(parsed.worktree.dirty).toBe(true)
+    expect(parsed.worktree.pruned).toBe(false)
+    expect(existsSync(parsed.worktree.path)).toBe(true)
+    expect(existsSync(join(parsed.worktree.path, 'scratch.txt'))).toBe(true)
+  })
+
+  test('isolation none does not append a worktree line', async () => {
+    const store = createMemoryStore()
+    const session = makeSession()
+    await store.createSession(session)
+    const provider = createFakeProvider([textThenStop('plain')])
+    const { tool } = createTestAgent({ store, provider })
+    const result = await tool.execute({ prompt: 'no wt' }, makeCtx(makeTurn(session)))
+    expect(result).toBe('plain')
+    expect(result).not.toContain('{"worktree"')
   })
 })
 

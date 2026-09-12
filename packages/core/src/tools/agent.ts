@@ -11,6 +11,7 @@ import {
   addTokenUsage,
   boundChildResult,
   buildChildPreamble,
+  CHILD_RESULT_CHAR_BOUND,
   childSystemParts,
   filterChildTools,
   lastAssistantText,
@@ -37,7 +38,7 @@ import type { PermissionHook } from '../permissions/hooks'
 import { parseWithSchema } from './parse'
 import { takeChildOutput } from './set-output'
 import { isTurnAlwaysTool } from './skill'
-import { prepareChildWorktree, type IsolationMode } from './worktree'
+import { prepareChildWorktree, type IsolationMode, type WorktreeCleanupReport } from './worktree'
 import { createFileHistory } from '../session/file-history'
 import { MAX_PARALLEL_CHILDREN } from '../tasks/mailbox'
 import { mkdirSync, writeFileSync } from 'node:fs'
@@ -218,50 +219,55 @@ async function spawnChild(
     },
   )
   let engine: SessionEngine | undefined
+  let result = INCOMPLETE_TEXT
+  let report: WorktreeCleanupReport | undefined
 
   try {
     await opts.store.createSession(childSession)
 
     const oneShot = await maybeRunCommandRunner(input, definition, childTools, childTurn, ctx, opts)
-    if (oneShot?.done) return oneShot.text
-    if (oneShot && !oneShot.done) appendCommandOutput(userMessage, oneShot.text)
+    if (oneShot?.done) {
+      result = oneShot.text
+    } else {
+      if (oneShot && !oneShot.done) appendCommandOutput(userMessage, oneShot.text)
 
-    const userPayload = userText(userMessage)
+      const userPayload = userText(userMessage)
 
-    const engineOpts: SessionEngineOptions = {
-      session: childSession,
-      messages: preambleMessages,
-      provider: opts.provider,
-      store: opts.store,
-      tools: childTools,
-      compact: opts.compact,
-      model: opts.model,
-      maxRounds,
-      askUser: opts.askUser,
-      bare: true,
-    }
-    const system = childSystemParts(definition, opts.system)
-    if (system !== undefined) engineOpts.system = system
-    if (opts.hooks !== undefined) engineOpts.hooks = opts.hooks
-    if (ctx.fileHistory && isolated.cwd === parentCwd) {
-      engineOpts.fileHistory = ctx.fileHistory
-      engineOpts.fileHistoryOwnsTurn = false
-    }
-    engine = wrapSessionEngineLog(createSessionEngine(engineOpts), openRavenclawLog(), {
-      closeLog: false,
-    })
-    if (taskId !== undefined) ctx.tasks?.attachEngine(taskId, engine)
-    const unlinkEngine = linkEngineAbort(ctx.signal, engine)
-    try {
-      const end = await drainLoop(engine.submitMessage(userPayload))
-      syncChildFromEngine(childSession, childTurn, engine, parentCwd)
-      const loaded = await opts.store.loadSession(childSession.id).catch(() => undefined)
-      if (loaded) childTurn.messages = loaded.messages
-      await persistChildSession(opts.store, childSession, childTurn)
-      return childResult(end, childTurn.messages, ctx.signal, childSession.id)
-    } finally {
-      unlinkEngine()
-      await engine.close({ releaseLock: false }).catch(() => undefined)
+      const engineOpts: SessionEngineOptions = {
+        session: childSession,
+        messages: preambleMessages,
+        provider: opts.provider,
+        store: opts.store,
+        tools: childTools,
+        compact: opts.compact,
+        model: opts.model,
+        maxRounds,
+        askUser: opts.askUser,
+        bare: true,
+      }
+      const system = childSystemParts(definition, opts.system)
+      if (system !== undefined) engineOpts.system = system
+      if (opts.hooks !== undefined) engineOpts.hooks = opts.hooks
+      if (ctx.fileHistory && isolated.cwd === parentCwd) {
+        engineOpts.fileHistory = ctx.fileHistory
+        engineOpts.fileHistoryOwnsTurn = false
+      }
+      engine = wrapSessionEngineLog(createSessionEngine(engineOpts), openRavenclawLog(), {
+        closeLog: false,
+      })
+      if (taskId !== undefined) ctx.tasks?.attachEngine(taskId, engine)
+      const unlinkEngine = linkEngineAbort(ctx.signal, engine)
+      try {
+        const end = await drainLoop(engine.submitMessage(userPayload))
+        syncChildFromEngine(childSession, childTurn, engine, parentCwd)
+        const loaded = await opts.store.loadSession(childSession.id).catch(() => undefined)
+        if (loaded) childTurn.messages = loaded.messages
+        await persistChildSession(opts.store, childSession, childTurn)
+        result = childResult(end, childTurn.messages, ctx.signal, childSession.id)
+      } finally {
+        unlinkEngine()
+        await engine.close({ releaseLock: false }).catch(() => undefined)
+      }
     }
   } catch (error) {
     if (engine) syncChildFromEngine(childSession, childTurn, engine, parentCwd)
@@ -269,21 +275,36 @@ async function spawnChild(
     await persistChildSession(opts.store, childSession, childTurn).catch(() => undefined)
     if (error instanceof PersistError) throw error
     if (isAbortError(error) || ctx.signal.aborted || childAbort.signal.aborted) {
-      return ABORTED_TEXT
+      result = ABORTED_TEXT
+    } else {
+      const structured = takeChildOutput(childSession.id)
+      if (structured !== undefined) result = boundChildResult(structured)
+      else {
+        const loaded = await opts.store.loadSession(childSession.id).catch(() => undefined)
+        const text = lastAssistantText(loaded?.messages ?? childTurn.messages)
+        result = text ? boundChildResult(text) : INCOMPLETE_TEXT
+      }
     }
-    const structured = takeChildOutput(childSession.id)
-    if (structured !== undefined) return boundChildResult(structured)
-    const loaded = await opts.store.loadSession(childSession.id).catch(() => undefined)
-    const text = lastAssistantText(loaded?.messages ?? childTurn.messages)
-    return text ? boundChildResult(text) : INCOMPLETE_TEXT
   } finally {
     ctx.turn.usage = addTokenUsage(
       ctx.turn.usage,
       engine ? engine.session.usage : childTurn.usage,
     )
     unlink()
-    isolated.cleanup()
+    report = isolated.cleanup()
   }
+  if (isolated.created && report) result = appendWorktreeLine(result, report)
+  return result
+}
+
+function appendWorktreeLine(body: string, report: WorktreeCleanupReport): string {
+  const line = JSON.stringify({ worktree: report })
+  const bound = boundChildResult(body)
+  if (bound.length + 1 + line.length <= CHILD_RESULT_CHAR_BOUND) {
+    return `${bound}\n${line}`
+  }
+  const room = Math.max(0, CHILD_RESULT_CHAR_BOUND - line.length - 1)
+  return `${bound.slice(0, room)}\n${line}`
 }
 
 function startBackgroundAgent(
