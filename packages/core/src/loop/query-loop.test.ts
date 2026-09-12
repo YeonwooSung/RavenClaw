@@ -1509,6 +1509,69 @@ describe('queryLoop via SessionEngine', () => {
     }
   })
 
+  test('ToolCall still unwraps an allow-listed deferred tool after a Skill jail', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-toolcall-skill-allow-'))
+    mkdirSync(join(cwd, '.ravenclaw', 'skills', 'narrow'), { recursive: true })
+    writeFileSync(
+      join(cwd, '.ravenclaw', 'skills', 'narrow', 'SKILL.md'),
+      [
+        '---',
+        'name: narrow',
+        'description: read and ping',
+        'allowed-tools: [Read, mcp_ping]',
+        '---',
+        '',
+        'Use Read and mcp_ping.',
+      ].join('\n'),
+    )
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_toolcall_skill_allow', cwd })
+    await store.createSession(session)
+    let pingCount = 0
+    const mcp: Tool<Record<string, unknown>, string> = {
+      name: 'mcp_ping',
+      description: 'ping',
+      inputSchema: { type: 'object' },
+      isEnabled() {
+        return false
+      },
+      parse(input: unknown) {
+        return { ok: true as const, value: (input ?? {}) as Record<string, unknown> }
+      },
+      isConcurrencySafe: () => false,
+      isReadOnly: () => false,
+      async checkPermissions() {
+        return { behavior: 'allow', reason: 'mode' }
+      },
+      async execute() {
+        pingCount += 1
+        return 'pong'
+      },
+    }
+    const provider = createFakeProvider([
+      toolThenStop('sk1', 'Skill', { name: 'narrow' }),
+      toolThenStop('tc1', 'ToolCall', { name: 'mcp_ping', arguments: {} }),
+      textThenStop('done'),
+    ])
+    try {
+      const engine = createSessionEngine(
+        engineOpts({
+          provider,
+          store,
+          session,
+          tools: [skillTool, toolCallTool, mcp],
+        }),
+      )
+      const { result } = await collect(engine.submitMessage('narrow then mcp'))
+      expect(result).toEqual({ reason: 'completed' })
+      expect(pingCount).toBe(1)
+      expect(provider.requests[1]?.tools.map((tool) => tool.name)).toContain('ToolCall')
+      expect(provider.requests[1]?.tools.map((tool) => tool.name)).not.toContain('mcp_ping')
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
+  })
+
   test('stall guard blocks the same tool+args+result after 3 successes', async () => {
     const store = createMemoryStore()
     const session = makeSession({ id: 'sess_stall' })

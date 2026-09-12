@@ -462,7 +462,7 @@ describe('filterToolsForTurn', () => {
     expect(filterToolsForTurn(pool, turn)).toBe(pool)
   })
 
-  test('keeps listed builtins plus Skill, plan tools, and Agent', () => {
+  test('keeps listed builtins plus Skill, plan tools, Agent, and ToolCall/ToolSearch', () => {
     const turn = makeTurn('/tmp')
     turn.skillAllowedTools = ['Read', 'Grep']
     expect(filterToolsForTurn(pool, turn).map((tool) => tool.name)).toEqual([
@@ -472,6 +472,17 @@ describe('filterToolsForTurn', () => {
       'Agent',
       'EnterPlanMode',
       'ExitPlanMode',
+    ])
+    const withBridge = [...pool, namedTool('ToolCall'), namedTool('ToolSearch')]
+    expect(filterToolsForTurn(withBridge, turn).map((tool) => tool.name)).toEqual([
+      'Read',
+      'Grep',
+      'Skill',
+      'Agent',
+      'EnterPlanMode',
+      'ExitPlanMode',
+      'ToolCall',
+      'ToolSearch',
     ])
   })
 

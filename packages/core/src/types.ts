@@ -359,6 +359,13 @@ export interface SessionEngineOptions {
   }
   /** When true, nudge if the turn mutated files without a test/lint command. Default off. */
   verifyOnStop?: boolean
+  /** Reuse a parent FileHistory. Unset creates one for this engine. */
+  fileHistory?: import('./session/file-history').FileHistory
+  /**
+   * When false and `fileHistory` is shared, do not begin/end a generation.
+   * Child isolation=none writes stay on the parent's open turn.
+   */
+  fileHistoryOwnsTurn?: boolean
   askUser: (
     e: Extract<StreamEvent, { type: 'permission_ask' }>,
     signal: AbortSignal,

@@ -33,6 +33,8 @@ import { skillTool } from './skill'
 import { createAgentTool, MAX_PARALLEL_CHILDREN } from './agent'
 import { createTaskRegistry } from '../tasks/registry'
 import { drainAgentMail } from '../tasks/mailbox'
+import { createFileHistory } from '../session/file-history'
+import { writeTool } from './write'
 
 const RESULT_BOUND = 32_000
 const tempDirs: string[] = []
@@ -116,8 +118,8 @@ function makeTurn(session: SessionRecord, over: Partial<Turn> = {}): Turn {
   return { ...turn, ...over }
 }
 
-function makeCtx(turn: Turn): ToolContext {
-  return { turn, signal: turn.abort.signal, onProgress() {} }
+function makeCtx(turn: Turn, extra?: Partial<ToolContext>): ToolContext {
+  return { turn, signal: turn.abort.signal, onProgress() {}, ...extra }
 }
 
 type StreamScript =
@@ -422,6 +424,34 @@ describe('createAgentTool', () => {
     )
     expect(editResult?.ok).toBe(true)
     expect(editResult?.blocks[0]?.text).toContain('must be Read first')
+  })
+
+  test('isolation=none child Write snapshots land on the parent fileHistory', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-agent-hist-'))
+    tempDirs.push(cwd)
+    const store = createMemoryStore()
+    const session = makeSession({ cwd, permissionMode: 'acceptEdits' })
+    await store.createSession(session)
+    const provider = createFakeProvider([
+      toolThenStop('w1', 'Write', { path: 'out.txt', content: 'from-child' }),
+      textThenStop('wrote'),
+    ])
+    const { tool } = createTestAgent({
+      store,
+      provider,
+      tools: [writeTool, stubTool('Read'), stubTool('Skill')],
+    })
+    const history = createFileHistory(session.id, cwd)
+    history.beginTurn()
+    const turn = makeTurn(session, { cwd })
+    const result = await tool.execute(
+      { prompt: 'write the file' },
+      makeCtx(turn, { fileHistory: history }),
+    )
+    expect(result).toBe('wrote')
+    expect(readFileSync(join(cwd, 'out.txt'), 'utf8')).toBe('from-child')
+    expect(history.turnWriteCount()).toBe(1)
+    history.endTurn()
   })
 
   test('child tools list has no Agent or plan tools', async () => {

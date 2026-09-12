@@ -148,6 +148,7 @@ export { planFilePath, isPlanFilePath } from './tools/plan-file'
 export {
   discoverSkills,
   filterToolsForTurn,
+  isTurnAlwaysTool,
   parseSkillFrontmatter,
   skillTool,
   createSkillTool,

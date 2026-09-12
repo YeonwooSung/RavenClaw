@@ -41,7 +41,8 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
   let liveTurn: Turn | null = null
   let system = opts.system
   const tasks = createTaskRegistry()
-  const fileHistory = createFileHistory(session.id)
+  const fileHistory = opts.fileHistory ?? createFileHistory(session.id)
+  const ownsHistoryTurn = opts.fileHistory === undefined || opts.fileHistoryOwnsTurn === true
   const steering: string[] = []
   const injectedAgentsDirs = new Set<string>()
   let closed = false
@@ -115,7 +116,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         createdAt: Date.now(),
       }
       messages = [...messages, userMsg]
-      fileHistory.beginTurn()
+      if (ownsHistoryTurn) fileHistory.beginTurn()
 
       const turn: Turn = {
         id: crypto.randomUUID(),
@@ -210,7 +211,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         }
         return end
       } finally {
-        fileHistory.endTurn()
+        if (ownsHistoryTurn) fileHistory.endTurn()
         liveTurn = null
       }
       } finally {

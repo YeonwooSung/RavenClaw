@@ -64,7 +64,18 @@ export const skillTool: Tool<SkillInput, string> = {
   },
 }
 
-const TURN_ALWAYS_TOOLS = new Set(['Skill', 'EnterPlanMode', 'ExitPlanMode', 'Agent'])
+const TURN_ALWAYS_TOOLS = new Set([
+  'Skill',
+  'EnterPlanMode',
+  'ExitPlanMode',
+  'Agent',
+  'ToolCall',
+  'ToolSearch',
+])
+
+export function isTurnAlwaysTool(name: string): boolean {
+  return TURN_ALWAYS_TOOLS.has(name)
+}
 
 export function filterToolsForTurn(tools: Tool[], turn: Turn): Tool[] {
   let out = tools

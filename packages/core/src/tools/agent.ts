@@ -35,7 +35,7 @@ import type {
 import type { PermissionHook } from '../permissions/hooks'
 import { parseWithSchema } from './parse'
 import { takeChildOutput } from './set-output'
-import { filterToolsForTurn } from './skill'
+import { isTurnAlwaysTool } from './skill'
 import { prepareChildWorktree, type IsolationMode } from './worktree'
 import { createFileHistory } from '../session/file-history'
 import { MAX_PARALLEL_CHILDREN } from '../tasks/mailbox'
@@ -200,7 +200,7 @@ async function spawnChild(
   childTurn.cwd = isolated.cwd
   childTurn.projectCwd = projectCwd
   const childTools = bindChildTurnFields(
-    filterToolsForTurn(filterChildTools(opts.tools, definition), childTurn),
+    filterChildPool(filterChildTools(opts.tools, definition), childTurn),
     {
       cwd: isolated.cwd,
       projectCwd,
@@ -234,6 +234,10 @@ async function spawnChild(
     const system = childSystemParts(definition, opts.system)
     if (system !== undefined) engineOpts.system = system
     if (opts.hooks !== undefined) engineOpts.hooks = opts.hooks
+    if (ctx.fileHistory && isolated.cwd === parentCwd) {
+      engineOpts.fileHistory = ctx.fileHistory
+      engineOpts.fileHistoryOwnsTurn = false
+    }
     engine = createSessionEngine(engineOpts)
     const unlinkEngine = linkEngineAbort(ctx.signal, engine)
     try {
@@ -415,6 +419,13 @@ function buildChildTurn(
     turn.unlockedToolNames = [...parent.unlockedToolNames]
   }
   return turn
+}
+
+/** Skill jail only. Keep isEnabled-false deferred tools so ToolCall can unwrap them. */
+function filterChildPool(pool: Tool[], turn: Turn): Tool[] {
+  if (turn.skillAllowedTools === undefined) return pool
+  const allow = new Set(turn.skillAllowedTools)
+  return pool.filter((tool) => allow.has(tool.name) || isTurnAlwaysTool(tool.name))
 }
 
 function linkAbort(parent: AbortSignal, child: AbortController): () => void {
