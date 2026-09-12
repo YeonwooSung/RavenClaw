@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { fetchAds } from './client'
+import { acknowledgeFirstPartyView, fetchAds } from './client'
 import { houseAds } from './house'
 
 const originalFetch = globalThis.fetch
@@ -93,5 +93,78 @@ describe('fetchAds', () => {
     ])
     expect(placement.creative.provider).toBe('first_party')
     expect(placement.creative.title).toBe('Feed title')
+  })
+})
+
+describe('acknowledgeFirstPartyView', () => {
+  test('POSTs to the provided url and ignores the body', async () => {
+    const { calls } = spyFetch()
+    const result = await acknowledgeFirstPartyView('https://ads.example.com/ack')
+    expect(result).toEqual({ ok: true })
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.url).toBe('https://ads.example.com/ack')
+    expect(calls[0]?.init?.method).toBe('POST')
+    expect(calls[0]?.init?.body).toBeUndefined()
+  })
+
+  test('includes accidental flag when passed', async () => {
+    const { calls } = spyFetch()
+    const result = await acknowledgeFirstPartyView('https://ads.example.com/ack', {
+      accidental: true,
+    })
+    expect(result).toEqual({ ok: true })
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.init?.method).toBe('POST')
+    expect(calls[0]?.init?.body).toBe(JSON.stringify({ accidental: true }))
+  })
+
+  test('retries non-OK then succeeds', async () => {
+    let n = 0
+    globalThis.fetch = (async () => {
+      n += 1
+      return new Response('', { status: n < 3 ? 500 : 200 })
+    }) as typeof fetch
+    const result = await acknowledgeFirstPartyView('https://ads.example.com/ack')
+    expect(result).toEqual({ ok: true })
+    expect(n).toBe(3)
+  })
+
+  test('never throws on network error', async () => {
+    globalThis.fetch = (() => Promise.reject(new Error('offline'))) as typeof fetch
+    let result: { ok: boolean } | undefined
+    let threw = false
+    try {
+      result = await acknowledgeFirstPartyView('https://ads.example.com/ack')
+    } catch {
+      threw = true
+    }
+    expect(threw).toBe(false)
+    expect(result).toEqual({ ok: false })
+  })
+
+  test('does not throw on 500 and reports failure after retries', async () => {
+    let n = 0
+    globalThis.fetch = (async () => {
+      n += 1
+      return new Response('nope', { status: 500 })
+    }) as typeof fetch
+    let result: { ok: boolean } | undefined
+    let threw = false
+    try {
+      result = await acknowledgeFirstPartyView('https://ads.example.com/ack')
+    } catch {
+      threw = true
+    }
+    expect(threw).toBe(false)
+    expect(result).toEqual({ ok: false })
+    expect(n).toBe(3)
+  })
+
+  test('rejects empty or non-https urls without fetching', async () => {
+    const { calls } = spyFetch()
+    expect(await acknowledgeFirstPartyView('')).toEqual({ ok: false })
+    expect(await acknowledgeFirstPartyView('http://ads.example.com/ack')).toEqual({ ok: false })
+    expect(await acknowledgeFirstPartyView('javascript:alert(1)')).toEqual({ ok: false })
+    expect(calls).toHaveLength(0)
   })
 })

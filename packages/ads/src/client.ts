@@ -3,8 +3,54 @@ import { sanitizeAdText, sanitizeAdUrl } from './sanitize'
 import type { AdCreative, AdMessage, AdPlacement, AdSlot, FetchAdsOptions } from './types'
 
 const FETCH_TIMEOUT_MS = 2_000
+const ACK_ATTEMPTS = 3
+const ACK_TIMEOUT_MS = 2_000
 const MESSAGE_CAP = 8
 const DEFAULT_SLOT: AdSlot = 'raven-dock-1'
+
+export interface AcknowledgeViewOptions {
+  attempts?: number
+  timeoutMs?: number
+  accidental?: boolean
+}
+
+export interface AcknowledgeViewResult {
+  ok: boolean
+}
+
+/** POST view/click ack. Ignores the response body and never throws into the TUI. */
+export async function acknowledgeFirstPartyView(
+  url: string,
+  opts?: AcknowledgeViewOptions,
+): Promise<AcknowledgeViewResult> {
+  const target = sanitizeAdUrl(url)
+  if (!target) return { ok: false }
+
+  const attempts = opts?.attempts ?? ACK_ATTEMPTS
+  const timeoutMs = opts?.timeoutMs ?? ACK_TIMEOUT_MS
+  const headers: Record<string, string> = { accept: 'application/json' }
+  let body: string | undefined
+  if (opts?.accidental !== undefined) {
+    headers['content-type'] = 'application/json'
+    body = JSON.stringify({ accidental: opts.accidental })
+  }
+
+  for (let i = 0; i < attempts; i++) {
+    try {
+      const init: RequestInit = {
+        method: 'POST',
+        headers,
+        signal: AbortSignal.timeout(timeoutMs),
+      }
+      if (body !== undefined) init.body = body
+      const response = await fetch(target, init)
+      if (response.ok) return { ok: true }
+    } catch {
+      // retry, then report failure — never throw
+    }
+  }
+  return { ok: false }
+}
 
 export async function fetchAds(opts: FetchAdsOptions): Promise<AdPlacement> {
   const paid = opts.hasPaidCapacityPlan === true

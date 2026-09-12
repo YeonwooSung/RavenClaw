@@ -8,7 +8,8 @@ export type {
   FetchAdsOptions,
   HouseContext,
 } from './types'
-export { fetchAds } from './client'
+export { acknowledgeFirstPartyView, fetchAds } from './client'
+export type { AcknowledgeViewOptions, AcknowledgeViewResult } from './client'
 export { houseAds } from './house'
 export { layoutAdCard, layoutDock } from './layout'
 export {

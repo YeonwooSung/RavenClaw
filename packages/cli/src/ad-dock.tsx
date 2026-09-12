@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Box, Text, useInput, useStdout } from 'ink'
 import {
+  acknowledgeFirstPartyView,
+  classifyClick,
   createRotationState,
   fetchAds,
   layoutDock,
@@ -52,6 +54,41 @@ function defaultSpawn(cmd: string[]): void {
   }
 }
 
+const ackedCreativeIds = new Set<string>()
+
+export function resetDockViewAcks(): void {
+  ackedCreativeIds.clear()
+}
+
+export function shouldAckCreative(
+  creative: Pick<AdCreative, 'provider'> | undefined,
+): boolean {
+  return creative?.provider === 'first_party'
+}
+
+export function claimDockViewAck(creativeId: string): boolean {
+  if (creativeId === '' || ackedCreativeIds.has(creativeId)) return false
+  ackedCreativeIds.add(creativeId)
+  return true
+}
+
+export function maybeAckDockView(creative: AdCreative | undefined, opened: boolean): void {
+  if (!opened || !creative || !shouldAckCreative(creative)) return
+  if (!claimDockViewAck(creative.id)) return
+  void acknowledgeFirstPartyView(creative.url)
+}
+
+/** Classify a dock click and POST `{ accidental }` if a click/ack endpoint exists. Never throws. */
+export function ackDockClick(url: string | undefined, downAt: number, upAt: number): void {
+  if (url === undefined || url.trim() === '') return
+  try {
+    const accidental = classifyClick(downAt, upAt) === 'accidental'
+    void acknowledgeFirstPartyView(url, { accidental })
+  } catch {
+    // click ack must never crash the TUI
+  }
+}
+
 export function AdDock(props: {
   enabled: boolean
   feedUrl: string
@@ -96,9 +133,14 @@ export function AdDock(props: {
     markActivity(rotation.current, Date.now())
   })
 
-  if (!creative) return null
-  const dock = layoutDock(width, termHeight, creative, reserved)
-  if (!dock.opened) return null
+  const dock = creative ? layoutDock(width, termHeight, creative, reserved) : null
+  const opened = dock?.opened === true
+
+  useEffect(() => {
+    maybeAckDockView(creative, opened)
+  }, [creative, opened])
+
+  if (!creative || !opened || !dock) return null
 
   return (
     <Box flexDirection="column">
