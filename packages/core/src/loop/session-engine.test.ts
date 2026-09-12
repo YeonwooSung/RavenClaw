@@ -249,7 +249,7 @@ describe('compactNow', () => {
 })
 
 describe('steering and image submit', () => {
-  test('enqueueSteer injects a user row after a tool round', async () => {
+  test('enqueueSteer suffixes the last tool row after a tool round', async () => {
     const store = createMemoryStore()
     const sess = makeSession({ id: 'sess_steer' })
     await store.createSession(sess)
@@ -305,8 +305,13 @@ describe('steering and image submit', () => {
     const users = loaded.messages.filter((msg) => msg.role === 'user')
     expect(users.map((msg) => msg.blocks[0] && 'text' in msg.blocks[0] ? msg.blocks[0].text : '')).toEqual([
       'hi',
-      'keep going',
     ])
+    const toolRow = loaded.messages.find(
+      (msg): msg is Extract<Message, { role: 'tool' }> =>
+        msg.role === 'tool' && msg.toolUseId === 'c1',
+    )
+    expect(toolRow?.blocks[0]?.text).toContain('pong')
+    expect(toolRow?.blocks[0]?.text).toContain('keep going')
     expect(engine.drainSteering()).toEqual([])
   })
 

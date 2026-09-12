@@ -231,6 +231,7 @@ function engineOpts(over: {
   messages?: Message[]
   maxRounds?: number
   verifyOnStop?: boolean
+  model?: ModelProfile
 }) {
   const session = over.session ?? makeSession()
   const opts: Parameters<typeof createSessionEngine>[0] = {
@@ -239,7 +240,7 @@ function engineOpts(over: {
     store: over.store,
     tools: over.tools ?? [],
     compact: defaultCompact(),
-    model: defaultModel(),
+    model: over.model ?? defaultModel(),
     maxRounds: over.maxRounds ?? 8,
     async askUser() {
       return 'deny'
@@ -717,7 +718,7 @@ describe('queryLoop via SessionEngine', () => {
     expect(provider.streamCount).toBe(0)
   })
 
-  test('truncated no-tool stop persists assistant+user and streams again without persistToolCalls', async () => {
+  test('truncated no-tool stop suffixes the assistant and streams again without persistToolCalls', async () => {
     const store = createMemoryStore()
     const session = makeSession({ id: 'sess_truncate' })
     await store.createSession(session)
@@ -734,8 +735,14 @@ describe('queryLoop via SessionEngine', () => {
     expect(result).toEqual({ reason: 'completed' })
     expect(provider.streamCount).toBe(2)
     expect(order.filter((step) => step === 'persistAssistant').length).toBe(2)
-    expect(order).toContain('persistUser')
+    expect(order.filter((step) => step === 'persistUser')).toEqual(['persistUser'])
     expect(order).not.toContain('persistToolCalls')
+    const loaded = await store.loadSession(session.id)
+    expect(loaded.messages.filter((msg) => msg.role === 'user')).toHaveLength(1)
+    const firstAsst = loaded.messages.find((msg) => msg.role === 'assistant')
+    expect(firstAsst?.blocks[0]?.type === 'text' ? firstAsst.blocks[0].text : '').toContain(
+      'Continue from where you left off',
+    )
   })
 
   test('fallback-model is the model id on the next provider request', async () => {
@@ -1250,18 +1257,41 @@ describe('queryLoop via SessionEngine', () => {
       events.filter((event) => event.type === 'status' && event.message === 'empty completion; retrying'),
     ).toHaveLength(2)
     const loaded = await store.loadSession(session.id)
-    const nudges = loaded.messages.filter(
-      (msg) =>
-        msg.role === 'user' &&
-        msg.blocks[0]?.type === 'text' &&
-        msg.blocks[0].text.includes('Your previous reply was empty'),
+    const hintText = (msg: Message): string =>
+      msg.blocks[0]?.type === 'text' ? msg.blocks[0].text : ''
+    const userNudges = loaded.messages.filter(
+      (msg) => msg.role === 'user' && hintText(msg).includes('Your previous reply was empty'),
     )
-    expect(nudges).toHaveLength(2)
+    const assistantNudges = loaded.messages.filter(
+      (msg) => msg.role === 'assistant' && hintText(msg).includes('Your previous reply was empty'),
+    )
+    expect(userNudges).toHaveLength(1)
+    expect(assistantNudges).toHaveLength(1)
   })
 
-  test('three empty completions complete after two nudges', async () => {
+  test('empty ladder allows three nudges when consecutive empties differ', async () => {
     const store = createMemoryStore()
-    const session = makeSession({ id: 'sess_empty_three' })
+    const session = makeSession({ id: 'sess_empty_three_diff' })
+    await store.createSession(session)
+    const provider = createFakeProvider([
+      [{ type: 'stop', reason: 'end' }],
+      [{ type: 'stop', reason: 'stop' }],
+      [{ type: 'stop', reason: 'other' }],
+      [{ type: 'stop', reason: 'done' }],
+      textThenStop('should not run'),
+    ])
+    const engine = createSessionEngine(engineOpts({ provider, store, session }))
+    const { result, events } = await collect(engine.submitMessage('hi'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(provider.streamCount).toBe(4)
+    expect(
+      events.filter((event) => event.type === 'status' && event.message === 'empty completion; retrying'),
+    ).toHaveLength(3)
+  })
+
+  test('two identical empties stop without a third nudge', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_empty_identical' })
     await store.createSession(session)
     const provider = createFakeProvider([
       [{ type: 'stop', reason: 'end' }],
@@ -1272,13 +1302,75 @@ describe('queryLoop via SessionEngine', () => {
     const engine = createSessionEngine(engineOpts({ provider, store, session }))
     const { result, events } = await collect(engine.submitMessage('hi'))
     expect(result).toEqual({ reason: 'completed' })
+    expect(provider.streamCount).toBe(2)
+    expect(
+      events.filter((event) => event.type === 'status' && event.message === 'empty completion; retrying'),
+    ).toHaveLength(1)
+  })
+
+  test('expensive input (> $0.25) caps empty nudges at 1', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_empty_expensive' })
+    await store.createSession(session)
+    const provider = createFakeProvider([
+      [{ type: 'stop', reason: 'end' }],
+      [{ type: 'stop', reason: 'stop' }],
+      [{ type: 'stop', reason: 'other' }],
+      textThenStop('should not run'),
+    ])
+    const engine = createSessionEngine(
+      engineOpts({
+        provider,
+        store,
+        session,
+        model: { ...defaultModel(), inputUsdPerMTok: 1_000_000 },
+      }),
+    )
+    const { result, events } = await collect(engine.submitMessage('hi'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(provider.streamCount).toBe(2)
+    expect(
+      events.filter((event) => event.type === 'status' && event.message === 'empty completion; retrying'),
+    ).toHaveLength(1)
+  })
+
+  test('tools then empty completion suffixes the last tool and keeps 1:1 pairing', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_empty_after_tool' })
+    await store.createSession(session)
+    const echo = createEcho()
+    const provider = createFakeProvider([
+      toolThenStop('call_1', 'Echo', { text: 'pong' }),
+      [{ type: 'stop', reason: 'end' }],
+      textThenStop('hello'),
+    ])
+    const engine = createSessionEngine(engineOpts({ provider, store, session, tools: [echo] }))
+    const { result, events } = await collect(engine.submitMessage('echo'))
+    expect(result).toEqual({ reason: 'completed' })
     expect(provider.streamCount).toBe(3)
     expect(
       events.filter((event) => event.type === 'status' && event.message === 'empty completion; retrying'),
-    ).toHaveLength(2)
+    ).toHaveLength(1)
+    const loaded = await store.loadSession(session.id)
+    expect(pairingHolds(loaded.messages)).toBe(true)
+    expect(loaded.messages.filter((msg) => msg.role === 'user')).toHaveLength(1)
+    const toolRow = loaded.messages.find(
+      (msg): msg is Extract<Message, { role: 'tool' }> =>
+        msg.role === 'tool' && msg.toolUseId === 'call_1',
+    )
+    expect(toolRow?.blocks[0]?.text).toContain('pong')
+    expect(toolRow?.blocks[0]?.text).toContain('Your previous reply was empty')
+    expect(
+      loaded.messages.some(
+        (msg) =>
+          msg.role === 'user' &&
+          msg.blocks[0]?.type === 'text' &&
+          msg.blocks[0].text.includes('Your previous reply was empty'),
+      ),
+    ).toBe(false)
   })
 
-  test('edit then complete without tests nudges verify-on-stop', async () => {
+  test('edit then complete without tests suffixes verify-on-stop onto the last tool', async () => {
     const store = createMemoryStore()
     const session = makeSession({ id: 'sess_verify_edit' })
     await store.createSession(session)
@@ -1299,6 +1391,8 @@ describe('queryLoop via SessionEngine', () => {
       events.filter((event) => event.type === 'status' && event.message === 'verify on stop; retrying'),
     ).toHaveLength(2)
     const loaded = await store.loadSession(session.id)
+    expect(pairingHolds(loaded.messages)).toBe(true)
+    expect(loaded.messages.filter((msg) => msg.role === 'user')).toHaveLength(1)
     expect(
       loaded.messages.some(
         (msg) =>
@@ -1306,7 +1400,12 @@ describe('queryLoop via SessionEngine', () => {
           msg.blocks[0]?.type === 'text' &&
           msg.blocks[0].text.includes('Code changed this turn but no test or lint command ran'),
       ),
-    ).toBe(true)
+    ).toBe(false)
+    const toolRow = loaded.messages.find(
+      (msg): msg is Extract<Message, { role: 'tool' }> =>
+        msg.role === 'tool' && msg.toolUseId === 'e1',
+    )
+    expect(toolRow?.blocks[0]?.text).toContain('Code changed this turn but no test or lint command ran')
   })
 
   test('edit plus bun test bash does not verify-nudge', async () => {

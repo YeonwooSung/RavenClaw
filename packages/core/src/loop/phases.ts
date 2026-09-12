@@ -36,6 +36,7 @@ import {
 } from './pairing'
 import { repairRoleAlternation, selectProtectedTail } from './repair'
 import { loadNearestSubdirAgents } from '../prompt/subdir-agents'
+import { injectMidTurnHint } from '../prompt/cache'
 
 export interface LoopState extends QueryLoopOptions {
   lastHadToolUse: boolean
@@ -56,13 +57,24 @@ export interface LoopState extends QueryLoopOptions {
   verifyNudges: number
   mutatedThisTurn: boolean
   sawVerifyCommand: boolean
+  lastEmptyFingerprint?: string
 }
 
 const EMPTY_COMPLETION_NUDGE =
   'Your previous reply was empty. Continue the task. Use tools if you need information. Do not apologize.'
 
+const TRUNCATION_NUDGE =
+  'Your previous reply was cut off. Continue from where you left off. Do not recap.'
+
+const STRUCTURED_OUTPUT_NUDGE =
+  'Call StructuredOutput now with the final object that matches the required JSON schema. Do not answer in prose.'
+
 const VERIFY_ON_STOP_NUDGE =
   'Code changed this turn but no test or lint command ran. Run the project\'s test or lint command now, or say you are skipping verification.'
+
+const EMPTY_NUDGE_DEFAULT_CAP = 3
+const EMPTY_NUDGE_EXPENSIVE_CAP = 1
+const EMPTY_NUDGE_COST_USD = 0.25
 
 const VERIFY_COMMAND =
   /\b(test|lint|typecheck|tsc|vitest|jest|bun test|npm test|pytest|cargo test|go test)\b/i
@@ -655,98 +667,50 @@ export async function* normalizeResponse(
   if (!hasTools) {
     if (isTruncatedStop(state.lastStopReason) && state.outputNudges < 3) {
       state.outputNudges += 1
-      state.turn.messages.push(asst)
-      try {
-        await state.store.persistAssistant(state.turn.sessionId, asst)
-      } catch (error) {
-        return { action: 'return', end: { reason: 'persist_failed', error } }
-      }
-      const nudge: Extract<Message, { role: 'user' }> = {
-        id: crypto.randomUUID(),
-        role: 'user',
-        blocks: [{ type: 'text', text: 'Your previous reply was cut off. Continue from where you left off. Do not recap.' }],
-        createdAt: Date.now(),
-      }
-      state.turn.messages.push(nudge)
-      try {
-        await state.store.persistUser(state.turn.sessionId, nudge)
-      } catch (error) {
-        return { action: 'return', end: { reason: 'persist_failed', error } }
-      }
+      const fail = await applyMidTurnHint(state, asst, TRUNCATION_NUDGE)
+      if (fail) return { action: 'return', end: fail }
       yield { type: 'status', message: 'output truncated; continuing' }
       return { action: 'continue' }
     }
-    if (isEmptyCompletion(state) && state.emptyNudges < 2) {
-      state.emptyNudges += 1
-      state.turn.messages.push(asst)
-      try {
-        await state.store.persistAssistant(state.turn.sessionId, asst)
-      } catch (error) {
-        return { action: 'return', end: { reason: 'persist_failed', error } }
+    if (isEmptyCompletion(state)) {
+      const fp = emptyFingerprint(state)
+      const identical =
+        state.lastEmptyFingerprint !== undefined && state.lastEmptyFingerprint === fp
+      const cap = emptyNudgeCap(state)
+      state.lastEmptyFingerprint = fp
+      if (!identical && state.emptyNudges < cap) {
+        state.emptyNudges += 1
+        const fail = await applyMidTurnHint(state, asst, EMPTY_COMPLETION_NUDGE)
+        if (fail) return { action: 'return', end: fail }
+        yield { type: 'status', message: 'empty completion; retrying' }
+        return { action: 'continue' }
       }
-      const nudge: Extract<Message, { role: 'user' }> = {
-        id: crypto.randomUUID(),
-        role: 'user',
-        blocks: [{ type: 'text', text: EMPTY_COMPLETION_NUDGE }],
-        createdAt: Date.now(),
-      }
-      state.turn.messages.push(nudge)
-      try {
-        await state.store.persistUser(state.turn.sessionId, nudge)
-      } catch (error) {
-        return { action: 'return', end: { reason: 'persist_failed', error } }
-      }
-      yield { type: 'status', message: 'empty completion; retrying' }
-      return { action: 'continue' }
-    }
-    state.turn.messages.push(asst)
-    try {
-      await state.store.persistAssistant(state.turn.sessionId, asst)
-    } catch (error) {
-      return { action: 'return', end: { reason: 'persist_failed', error } }
     }
     if (state.turn.graceUsed) {
+      const fail = await persistAssistantOnce(state, asst)
+      if (fail) return { action: 'return', end: fail }
       return { action: 'return', end: { reason: 'max_rounds', round: state.turn.round } }
     }
-    if (state.jsonSchema !== undefined && takeChildOutput(state.turn.sessionId) === undefined && state.schemaNudges < 2) {
+    if (
+      state.jsonSchema !== undefined &&
+      takeChildOutput(state.turn.sessionId) === undefined &&
+      state.schemaNudges < 2
+    ) {
       state.schemaNudges += 1
-      const nudge: Extract<Message, { role: 'user' }> = {
-        id: crypto.randomUUID(),
-        role: 'user',
-        blocks: [
-          {
-            type: 'text',
-            text: 'Call StructuredOutput now with the final object that matches the required JSON schema. Do not answer in prose.',
-          },
-        ],
-        createdAt: Date.now(),
-      }
-      state.turn.messages.push(nudge)
-      try {
-        await state.store.persistUser(state.turn.sessionId, nudge)
-      } catch (error) {
-        return { action: 'return', end: { reason: 'persist_failed', error } }
-      }
+      const fail = await applyMidTurnHint(state, asst, STRUCTURED_OUTPUT_NUDGE)
+      if (fail) return { action: 'return', end: fail }
       yield { type: 'status', message: 'structured output required' }
       return { action: 'continue' }
     }
     if (shouldVerifyOnStop(state)) {
       state.verifyNudges += 1
-      const nudge: Extract<Message, { role: 'user' }> = {
-        id: crypto.randomUUID(),
-        role: 'user',
-        blocks: [{ type: 'text', text: VERIFY_ON_STOP_NUDGE }],
-        createdAt: Date.now(),
-      }
-      state.turn.messages.push(nudge)
-      try {
-        await state.store.persistUser(state.turn.sessionId, nudge)
-      } catch (error) {
-        return { action: 'return', end: { reason: 'persist_failed', error } }
-      }
+      const fail = await applyMidTurnHint(state, asst, VERIFY_ON_STOP_NUDGE)
+      if (fail) return { action: 'return', end: fail }
       yield { type: 'status', message: 'verify on stop; retrying' }
       return { action: 'continue' }
     }
+    const fail = await persistAssistantOnce(state, asst)
+    if (fail) return { action: 'return', end: fail }
     return { action: 'return', end: { reason: 'completed' } }
   }
 
@@ -873,21 +837,127 @@ async function injectSteering(state: LoopState): Promise<string[]> {
   if (texts.length === 0) return []
   const injected: string[] = []
   for (const text of texts) {
-    const userMsg: Extract<Message, { role: 'user' }> = {
-      id: crypto.randomUUID(),
-      role: 'user',
-      blocks: [{ type: 'text', text }],
-      createdAt: Date.now(),
-    }
+    const before = state.turn.messages
+    let after = injectMidTurnHint(before, text)
+    let mutation = hintMutation(before, after)
     try {
-      await state.store.persistUser(state.turn.sessionId, userMsg)
+      await persistHintMutation(state, mutation)
     } catch {
-      continue
+      if (mutation.kind !== 'assistant') continue
+      after = appendHintUser(before, text)
+      mutation = hintMutation(before, after)
+      try {
+        await persistHintMutation(state, mutation)
+      } catch {
+        continue
+      }
     }
-    state.turn.messages.push(userMsg)
+    state.turn.messages = after
     injected.push(text)
   }
   return injected
+}
+
+function emptyNudgeCap(state: LoopState): number {
+  const tokens = estimateTokens(state.turn.messages)
+  const costUsd = (tokens * state.model.inputUsdPerMTok) / 1e6
+  return costUsd > EMPTY_NUDGE_COST_USD ? EMPTY_NUDGE_EXPENSIVE_CAP : EMPTY_NUDGE_DEFAULT_CAP
+}
+
+function emptyFingerprint(state: LoopState): string {
+  return `${state.pendingText}|${state.pendingThinking}|${state.lastStopReason}`
+}
+
+function pushAssistantIfNeeded(
+  state: LoopState,
+  asst: Extract<Message, { role: 'assistant' }>,
+): void {
+  if (!state.turn.messages.some((msg) => msg.id === asst.id)) {
+    state.turn.messages.push(asst)
+  }
+}
+
+async function persistAssistantOnce(
+  state: LoopState,
+  asst: Extract<Message, { role: 'assistant' }>,
+): Promise<RoundEnd | undefined> {
+  pushAssistantIfNeeded(state, asst)
+  try {
+    await state.store.persistAssistant(state.turn.sessionId, asst)
+    return undefined
+  } catch (error) {
+    return { reason: 'persist_failed', error }
+  }
+}
+
+async function applyMidTurnHint(
+  state: LoopState,
+  asst: Extract<Message, { role: 'assistant' }>,
+  hint: string,
+): Promise<RoundEnd | undefined> {
+  pushAssistantIfNeeded(state, asst)
+  const before = state.turn.messages
+  const after = injectMidTurnHint(before, hint)
+  const mutation = hintMutation(before, after)
+  try {
+    if (mutation.kind === 'assistant' && mutation.row?.role === 'assistant') {
+      await state.store.persistAssistant(state.turn.sessionId, mutation.row)
+      state.turn.messages = after
+      return undefined
+    }
+    await state.store.persistAssistant(state.turn.sessionId, asst)
+    await persistHintMutation(state, mutation)
+    state.turn.messages = after
+    return undefined
+  } catch (error) {
+    return { reason: 'persist_failed', error }
+  }
+}
+
+function hintMutation(
+  before: Message[],
+  after: Message[],
+): { kind: 'tool' | 'assistant' | 'user' | 'none'; row: Message | null } {
+  if (after.length === before.length) {
+    for (let i = after.length - 1; i >= 0; i--) {
+      const row = after[i]
+      if (!row || row === before[i]) continue
+      if (row.role === 'tool' || row.role === 'assistant' || row.role === 'user') {
+        return { kind: row.role, row }
+      }
+    }
+    return { kind: 'none', row: null }
+  }
+  const row = after[after.length - 1]
+  if (row?.role === 'user') return { kind: 'user', row }
+  return { kind: 'none', row: null }
+}
+
+function appendHintUser(messages: Message[], text: string): Message[] {
+  const user: Extract<Message, { role: 'user' }> = {
+    id: crypto.randomUUID(),
+    role: 'user',
+    blocks: [{ type: 'text', text }],
+    createdAt: Date.now(),
+  }
+  return [...messages, user]
+}
+
+async function persistHintMutation(
+  state: LoopState,
+  mutation: { kind: 'tool' | 'assistant' | 'user' | 'none'; row: Message | null },
+): Promise<void> {
+  if (mutation.kind === 'tool' && mutation.row?.role === 'tool') {
+    await state.store.persistToolResults(state.turn.sessionId, [mutation.row])
+    return
+  }
+  if (mutation.kind === 'assistant' && mutation.row?.role === 'assistant') {
+    await state.store.persistAssistant(state.turn.sessionId, mutation.row)
+    return
+  }
+  if (mutation.kind === 'user' && mutation.row?.role === 'user') {
+    await state.store.persistUser(state.turn.sessionId, mutation.row)
+  }
 }
 
 function steerPreview(text: string): string {

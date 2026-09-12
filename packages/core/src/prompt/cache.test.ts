@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import type { Message } from '../types'
-import { hashSystemParts, injectMidTurn } from './cache'
+import { hashSystemParts, injectMidTurn, injectMidTurnHint } from './cache'
 import { buildSystemParts } from './builder'
 
 function user(id: string, text: string, createdAt: number): Message {
@@ -111,5 +111,83 @@ describe('injectMidTurn', () => {
     expect(out).toEqual(messages)
     expect(out.filter((m) => m.role === 'user')).toHaveLength(1)
     expect(out.some((m) => m.role === 'user' && m.blocks[0]?.text === 'hint')).toBe(false)
+  })
+})
+
+describe('injectMidTurnHint', () => {
+  test('suffixes the last tool text and does not add a user row', () => {
+    const messages: Message[] = [
+      user('u1', 'list files', 1),
+      assistant('a1', 'calling glob', 2),
+      tool('t1', 'call_1', 'old-tool', 3),
+      assistant('a2', 'calling again', 4),
+      tool('t2', 'call_2', 'newest-tool', 5),
+    ]
+    const snapshot = structuredClone(messages)
+    const out = injectMidTurnHint(messages, 'hint')
+
+    expect(out.filter((m) => m.role === 'user')).toHaveLength(1)
+    expect(out).toHaveLength(messages.length)
+    expect(out[4]).toMatchObject({
+      role: 'tool',
+      toolUseId: 'call_2',
+      blocks: [{ type: 'text', text: 'newest-tool\nhint' }],
+    })
+    expect(out[2]).toMatchObject({
+      role: 'tool',
+      blocks: [{ type: 'text', text: 'old-tool' }],
+    })
+    expect(messages).toEqual(snapshot)
+    expect(out).not.toBe(messages)
+  })
+
+  test('suffixes the last assistant text when there is no tool row', () => {
+    const messages: Message[] = [
+      user('u1', 'hello', 1),
+      assistant('a1', 'first', 2),
+      assistant('a2', 'second', 3),
+    ]
+    const out = injectMidTurnHint(messages, 'hint')
+    expect(out.filter((m) => m.role === 'user')).toHaveLength(1)
+    expect(out).toHaveLength(messages.length)
+    expect(out[2]).toMatchObject({
+      role: 'assistant',
+      blocks: [{ type: 'text', text: 'second\nhint' }],
+    })
+    expect(out[1]).toMatchObject({
+      role: 'assistant',
+      blocks: [{ type: 'text', text: 'first' }],
+    })
+  })
+
+  test('appends a user row only when neither tool nor assistant text exists', () => {
+    const messages: Message[] = [user('u1', 'hello', 1)]
+    const snapshot = structuredClone(messages)
+    const out = injectMidTurnHint(messages, 'hint')
+    expect(out).toHaveLength(2)
+    expect(out[0]).toEqual(messages[0])
+    expect(out[1]).toMatchObject({
+      role: 'user',
+      blocks: [{ type: 'text', text: 'hint' }],
+    })
+    expect(out[1]?.id).not.toBe('u1')
+    expect(messages).toEqual(snapshot)
+  })
+
+  test('does not suffix an assistant without a text block; appends a user row', () => {
+    const thinkingOnly: Message = {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'thinking', text: 'hmm' }],
+      createdAt: 2,
+    }
+    const messages: Message[] = [user('u1', 'hello', 1), thinkingOnly]
+    const out = injectMidTurnHint(messages, 'hint')
+    expect(out).toHaveLength(3)
+    expect(out[1]).toEqual(thinkingOnly)
+    expect(out[2]).toMatchObject({
+      role: 'user',
+      blocks: [{ type: 'text', text: 'hint' }],
+    })
   })
 })

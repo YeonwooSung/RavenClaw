@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import type { ContentBlock, Message, SystemPart } from '../types'
+import type { Message, SystemPart } from '../types'
 
 /**
  * sha256 hex of each part as `tier\0text\0{1|0}` records joined by `\0`.
@@ -20,21 +20,40 @@ export function hashSystemParts(parts: SystemPart[]): string {
 
 export function injectMidTurn(messages: Message[], text: string): Message[] {
   if (text.length === 0) return messages.slice()
+  return trySuffixLast(messages, 'tool', text)
+    ?? trySuffixLast(messages, 'assistant', text)
+    ?? messages.slice()
+}
 
-  const toolIdx = lastIndex(messages, (m) => m.role === 'tool')
-  if (toolIdx >= 0) {
-    return suffixTextBlock(messages, toolIdx, text)
+/**
+ * Only writer of mid-turn hints. Prefers last tool text, then last assistant
+ * text. Appends a user row only when neither exists.
+ */
+export function injectMidTurnHint(messages: Message[], text: string): Message[] {
+  if (text.length === 0) return messages.slice()
+  const suffix = text.startsWith('\n') ? text : `\n${text}`
+  const suffixed = trySuffixLast(messages, 'tool', suffix)
+    ?? trySuffixLast(messages, 'assistant', suffix)
+  if (suffixed) return suffixed
+  const user: Extract<Message, { role: 'user' }> = {
+    id: crypto.randomUUID(),
+    role: 'user',
+    blocks: [{ type: 'text', text }],
+    createdAt: Date.now(),
   }
+  return [...messages, user]
+}
 
-  const assistantIdx = lastIndex(messages, (m) => m.role === 'assistant')
-  if (assistantIdx >= 0) {
-    const msg = messages[assistantIdx]
-    if (msg && msg.role === 'assistant' && hasTextBlock(msg.blocks)) {
-      return suffixTextBlock(messages, assistantIdx, text)
-    }
-  }
-
-  return messages.slice()
+function trySuffixLast(
+  messages: Message[],
+  role: 'tool' | 'assistant',
+  text: string,
+): Message[] | null {
+  const idx = lastIndex(messages, (m) => m.role === role)
+  if (idx < 0) return null
+  const msg = messages[idx]
+  if (!msg || !hasTextBlock(msg.blocks)) return null
+  return suffixTextBlock(messages, idx, text)
 }
 
 function suffixTextBlock(messages: Message[], index: number, text: string): Message[] {
@@ -51,7 +70,7 @@ function suffixTextBlock(messages: Message[], index: number, text: string): Mess
   return next
 }
 
-function hasTextBlock(blocks: ContentBlock[]): boolean {
+function hasTextBlock(blocks: ReadonlyArray<{ type: string }>): boolean {
   return blocks.some((b) => b.type === 'text')
 }
 
