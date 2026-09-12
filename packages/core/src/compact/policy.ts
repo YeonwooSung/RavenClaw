@@ -67,3 +67,25 @@ export function shouldAutocompact(opts: {
   }
   return 'skip'
 }
+
+const NEAR_COMPACT_TOKENS = 2000
+const NEAR_COMPACT_USAGE_RATIO = 0.8
+
+export function nearCompact(opts: {
+  estimatedTokens: number
+  model: ModelProfile
+  compact: CompactPolicy
+  usage?: { input: number }
+}): boolean {
+  if (
+    opts.compact.enabled &&
+    opts.estimatedTokens >= compactThreshold(opts.model, opts.compact) - NEAR_COMPACT_TOKENS
+  ) {
+    return true
+  }
+  if (opts.usage !== undefined) {
+    const usable = opts.model.contextWindow - opts.model.reserveOutputTokens
+    if (opts.usage.input >= NEAR_COMPACT_USAGE_RATIO * usable) return true
+  }
+  return false
+}

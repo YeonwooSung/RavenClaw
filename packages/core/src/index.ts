@@ -100,6 +100,7 @@ export {
   compactThreshold,
   defaultCompactPolicy,
   hardLimit,
+  nearCompact,
   shouldAutocompact,
 } from './compact/policy'
 export {

@@ -74,4 +74,16 @@ describe('formatStatusLine', () => {
     expect(line).toContain('sess s1')
     expect(line).toContain('plan')
   })
+
+  test('includes compact soon iff flag set', () => {
+    const base = {
+      model: 'dummy',
+      mode: 'default',
+      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+      sessionId: 's1',
+    }
+    expect(formatStatusLine(base)).not.toContain('compact soon')
+    expect(formatStatusLine({ ...base, compactSoon: false })).not.toContain('compact soon')
+    expect(formatStatusLine({ ...base, compactSoon: true })).toContain('compact soon')
+  })
 })

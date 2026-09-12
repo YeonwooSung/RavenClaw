@@ -27,6 +27,7 @@ export function formatStatusLine(opts: {
   usd?: string
   funding?: Funding
   profile?: ModelProfile
+  compactSoon?: boolean
 }): string {
   const cache = opts.usage.cacheRead + opts.usage.cacheWrite
   const parts = [
@@ -39,6 +40,7 @@ export function formatStatusLine(opts: {
   const usd = resolveUsd(opts)
   if (usd !== undefined) parts.push(usd)
   parts.push(`sess ${shortSessionId(opts.sessionId)}`)
+  if (opts.compactSoon) parts.push('compact soon')
   return parts.join('  ')
 }
 
@@ -67,6 +69,7 @@ export function StatusLine(props: {
   usd?: string
   funding?: Funding
   profile?: ModelProfile
+  compactSoon?: boolean
 }) {
   return <Text dimColor>{formatStatusLine(props)}</Text>
 }

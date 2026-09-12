@@ -4,6 +4,7 @@ import {
   compactThreshold,
   defaultCompactPolicy,
   hardLimit,
+  nearCompact,
   shouldAutocompact,
 } from './policy'
 
@@ -252,5 +253,40 @@ describe('shouldAutocompact', () => {
         now: 3_600_000,
       }),
     ).toBe('compact')
+  })
+})
+
+describe('nearCompact', () => {
+  test('false when far from threshold', () => {
+    expect(
+      nearCompact({
+        estimatedTokens: 100_000,
+        model: model(),
+        compact: compact(),
+      }),
+    ).toBe(false)
+  })
+
+  test('true within 2k of threshold', () => {
+    // threshold 167_000 → warn at 165_000
+    expect(
+      nearCompact({
+        estimatedTokens: 165_000,
+        model: model(),
+        compact: compact(),
+      }),
+    ).toBe(true)
+  })
+
+  test('true at 80% of window−reserve', () => {
+    // (200_000 - 20_000) * 0.8 = 144_000
+    expect(
+      nearCompact({
+        estimatedTokens: 10,
+        model: model(),
+        compact: compact(),
+        usage: { input: 144_000 },
+      }),
+    ).toBe(true)
   })
 })
