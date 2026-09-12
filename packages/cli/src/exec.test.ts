@@ -3,6 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  createAskUserTool,
   createMemoryStore,
   createMcpToolBridge,
   createSessionEngine,
@@ -304,6 +305,38 @@ describe('createRootTools', () => {
     const unlocked = filterToolsForTurn(sessionTools, turn).map((tool) => tool.name)
     expect(unlocked).not.toContain('mcp_ping')
   })
+
+  test('AskUser stays off the wire unless a host askTool is bound', () => {
+    const store = createMemoryStore()
+    const provider = createFakeProvider([])
+    const base = {
+      store,
+      provider,
+      compact: defaultCompactPolicy(),
+      model: defaultModel(),
+      childMaxRounds: 30,
+      async askUser() {
+        return 'deny' as const
+      },
+    }
+    const unhosted = createSessionTools(base)
+    const unhostedAsk = unhosted.find((tool) => tool.name === 'AskUser')
+    expect(unhostedAsk).toBeDefined()
+    expect(unhostedAsk?.isEnabled?.()).toBe(false)
+    expect(filterToolsForTurn(unhosted, makeFilterTurn('/tmp')).map((tool) => tool.name)).not.toContain(
+      'AskUser',
+    )
+
+    const hosted = createSessionTools({
+      ...base,
+      askTool: createAskUserTool(async () => 'ok'),
+    })
+    const hostedAsk = hosted.find((tool) => tool.name === 'AskUser')
+    expect(hostedAsk?.isEnabled?.()).toBe(true)
+    expect(filterToolsForTurn(hosted, makeFilterTurn('/tmp')).map((tool) => tool.name)).toContain(
+      'AskUser',
+    )
+  })
 })
 
 const tempDirs: string[] = []
@@ -519,5 +552,62 @@ describe('openEngine', () => {
     }
     expect(spawned).toBe(0)
     expect(provider.requests[0]?.tools).toEqual([])
+  })
+
+  test('verifyOnStop does not enable AskUser on the wire', async () => {
+    const store = createMemoryStore()
+    const provider = createFakeProvider([
+      [
+        { type: 'text_delta', text: 'ok' },
+        { type: 'stop', reason: 'end' },
+      ],
+    ])
+    const { engine } = await openEngine({
+      provider,
+      store,
+      config: testResolvedConfig(),
+      cwd: '/tmp',
+      verifyOnStop: true,
+      maxRounds: 1,
+      async askUser() {
+        return 'deny'
+      },
+    })
+    const gen = engine.submitMessage('hi')
+    while (true) {
+      const next = await gen.next()
+      if (next.done) break
+    }
+    const names = (provider.requests[0]?.tools ?? []).map((tool) => tool.name)
+    expect(names).toContain('Read')
+    expect(names).not.toContain('AskUser')
+  })
+
+  test('askUserHost enables AskUser on the wire', async () => {
+    const store = createMemoryStore()
+    const provider = createFakeProvider([
+      [
+        { type: 'text_delta', text: 'ok' },
+        { type: 'stop', reason: 'end' },
+      ],
+    ])
+    const { engine } = await openEngine({
+      provider,
+      store,
+      config: testResolvedConfig(),
+      cwd: '/tmp',
+      askUserHost: true,
+      maxRounds: 1,
+      async askUser() {
+        return 'deny'
+      },
+    })
+    const gen = engine.submitMessage('hi')
+    while (true) {
+      const next = await gen.next()
+      if (next.done) break
+    }
+    const names = (provider.requests[0]?.tools ?? []).map((tool) => tool.name)
+    expect(names).toContain('AskUser')
   })
 })

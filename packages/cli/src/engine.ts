@@ -362,6 +362,7 @@ export interface CliRuntimeBase {
   lockHolderId: string
   lockHolderName: SessionLockHolderName
   verifyOnStop?: boolean
+  askUserHost?: boolean
 }
 
 export type CliRuntime = CliRuntimeBase & { engine: SessionEngine }
@@ -382,6 +383,7 @@ export async function openEngine(opts: {
   lockHolderName?: SessionLockHolderName
   skipLock?: boolean
   verifyOnStop?: boolean
+  askUserHost?: boolean
 }): Promise<{
   engine: SessionEngine
   mcpCloser?: () => Promise<void>
@@ -495,7 +497,7 @@ async function finishOpenEngine(
       mcpTools,
       hooks,
       askTool:
-        opts.verifyOnStop === true
+        opts.askUserHost === true
           ? createAskUserTool((input, signal) => askQuestions.ask(input, signal))
           : askUserTool,
       network: (opts.config as { tools?: { network?: boolean } }).tools?.network === true,
@@ -727,6 +729,7 @@ export async function bootCli(
     | 'surface'
     | 'remainingSessions'
     | 'verifyOnStop'
+    | 'askUserHost'
   > = {
     hasPaidCapacityPlan: paid,
   }
@@ -735,6 +738,7 @@ export async function bootCli(
   if (opts.flags.provider !== undefined) extras.preferByok = true
   if (opts.surface !== undefined) extras.surface = opts.surface
   if (opts.flags.verifyOnStop === true) extras.verifyOnStop = true
+  if ((opts.surface ?? 'interactive') !== 'headless') extras.askUserHost = true
   if (access.admitted && access.remainingSessions !== undefined) {
     extras.remainingSessions = access.remainingSessions
   }
@@ -756,6 +760,7 @@ export async function bootCli(
   if ((opts.surface ?? 'interactive') !== 'headless' || opts.flags.verifyOnStop === true) {
     engineOpts.verifyOnStop = true
   }
+  if ((opts.surface ?? 'interactive') !== 'headless') engineOpts.askUserHost = true
   const { engine, mcpCloser, askQuestions, mcpErrors } = await openEngine(engineOpts)
   const mcpStatus = mcpErrors.length > 0 ? formatMcpLoadErrors(mcpErrors) : undefined
   const wt = opts.flags.worktree
@@ -838,6 +843,9 @@ export async function resumeRuntime(
     ...((runtime.surface ?? 'interactive') !== 'headless' || runtime.verifyOnStop === true
       ? { verifyOnStop: true }
       : {}),
+    ...((runtime.surface ?? 'interactive') !== 'headless' || runtime.askUserHost === true
+      ? { askUserHost: true }
+      : {}),
   })
   if (prevEngine) {
     await prevEngine.close({ releaseLock: prevEngine.session.id !== engine.session.id })
@@ -902,6 +910,9 @@ export async function openNewSession(
     lockHolderName,
     ...((runtime.surface ?? 'interactive') !== 'headless' || runtime.verifyOnStop === true
       ? { verifyOnStop: true }
+      : {}),
+    ...((runtime.surface ?? 'interactive') !== 'headless' || runtime.askUserHost === true
+      ? { askUserHost: true }
       : {}),
   })
   if (prevEngine && prevEngine.session.id !== engine.session.id) {

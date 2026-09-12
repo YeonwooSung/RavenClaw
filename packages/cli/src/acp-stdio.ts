@@ -143,11 +143,11 @@ async function defaultBoot(flags: ConfigFlags): Promise<{
   })
   return {
     create: async (sessionId, opts) => {
-      const next = withAcpAsk(applyAcpSessionNew(runtime, opts), opts)
+      const next = applyAcpAskUserHost(withAcpAsk(applyAcpSessionNew(runtime, opts), opts), flags)
       return (await openNewSession(next, { sessionId })).engine
     },
     load: async (sessionId, opts) => {
-      const next = withAcpAsk(runtime, opts)
+      const next = applyAcpAskUserHost(withAcpAsk(runtime, opts), flags)
       return (await resumeRuntime(next, sessionId)).engine
     },
   }
@@ -159,6 +159,10 @@ function withAcpAsk(runtime: CliRuntimeBase, opts?: AcpEngineFactoryOpts): CliRu
     ask.bind((event, signal) => opts.requestPermission!(event, signal))
   }
   return { ...runtime, ask }
+}
+
+export function applyAcpAskUserHost(runtime: CliRuntimeBase, flags: ConfigFlags): CliRuntimeBase {
+  return flags.dontAsk === true ? runtime : { ...runtime, askUserHost: true }
 }
 
 export function applyAcpSessionNew(

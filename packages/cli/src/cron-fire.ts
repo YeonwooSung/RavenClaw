@@ -27,6 +27,7 @@ export function cronFireSessionRuntime(runtime: CliRuntimeBase, job: CronJob): C
   }
   if (job.verifyOnStop === true) next.verifyOnStop = true
   else delete next.verifyOnStop
+  delete next.askUserHost
   return next
 }
 

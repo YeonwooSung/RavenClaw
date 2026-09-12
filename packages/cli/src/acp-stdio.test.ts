@@ -2,7 +2,13 @@ import { describe, expect, test } from 'bun:test'
 import { PassThrough } from 'node:stream'
 import type { UserSubmitInput } from '@ravenclaw/core'
 import { PROTOCOL_VERSION, type AcpEngine, type AcpEngineFactoryOpts } from '@ravenclaw/acp'
-import { applyAcpSessionNew, overlayMcpServers, parseAcpMcpServers, runAcpStdio } from './acp-stdio'
+import {
+  applyAcpAskUserHost,
+  applyAcpSessionNew,
+  overlayMcpServers,
+  parseAcpMcpServers,
+  runAcpStdio,
+} from './acp-stdio'
 import type { CliRuntimeBase } from './engine'
 
 function fakeEngine(opts: {
@@ -384,5 +390,11 @@ describe('runAcpStdio', () => {
     expect(overlayMcpServers([{ name: 'a', command: 'a' }], [])).toEqual([
       { name: 'a', command: 'a' },
     ])
+  })
+
+  test('applyAcpAskUserHost binds AskUser unless --dont-ask', () => {
+    const runtime = { cwd: '/tmp' } as unknown as CliRuntimeBase
+    expect(applyAcpAskUserHost(runtime, {}).askUserHost).toBe(true)
+    expect(applyAcpAskUserHost(runtime, { dontAsk: true }).askUserHost).toBeUndefined()
   })
 })

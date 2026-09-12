@@ -131,6 +131,24 @@ describe('cronFireSessionRuntime', () => {
     expect(plain.config.bare).toBeUndefined()
     expect(plain.verifyOnStop).toBeUndefined()
   })
+
+  test('parent askUserHost does not leak into the fire session', () => {
+    const runtime = {
+      store: createMemoryStore(),
+      provider: { id: 'fake' } as Provider,
+      config: config(),
+      cwd: '/parent',
+      ask: createAskBridge(),
+      surface: 'interactive' as const,
+      askUserHost: true,
+      lockHolderId: 'holder-parent',
+      lockHolderName: 'tui' as const,
+    }
+    const next = cronFireSessionRuntime(runtime, { ...job(), verifyOnStop: true })
+    expect(next.askUserHost).toBeUndefined()
+    expect(next.verifyOnStop).toBe(true)
+    expect(next.surface).toBe('headless')
+  })
 })
 
 function hungEngine(): SessionEngine {
