@@ -29,6 +29,8 @@ Usage:
   raven cron [list|add|rm|on|off|tick|watch]
   raven serve [--listen host:port]
   raven slack
+  raven discord
+  raven pairing [list|approve <code>|revoke discord <userId>]
   raven --help
   raven --version
 
@@ -54,6 +56,8 @@ Commands:
   cron          List/add/remove local jobs; tick/watch fire due ones
   serve         Local HTTP turn + HMAC webhook (dontAsk, loopback default)
   slack         Slack Socket Mode bot (allowlist; no public URL)
+  discord       Discord Gateway bot (allowlist + DM pairing)
+  pairing       Approve or revoke Discord DM pairing (no API key)
 
 Options:
   --provider <anthropic|openai_compat|ollama|vllm>

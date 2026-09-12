@@ -35,6 +35,8 @@ import { handleCronCli, runCronTick } from './cron-cmd'
 import { fireCronJob } from './cron-fire'
 import { runServe } from './serve'
 import { runSlack } from './slack'
+import { runDiscord } from './discord/run'
+import { handlePairingCli } from './pairing'
 
 export { parseArgv } from './args'
 export { CLI_VERSION, HELP_TEXT, formatVersion } from './help'
@@ -250,13 +252,18 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     return (await promptFirstRun(home)) ? 0 : 1
   }
 
+  if (parsed.cmd === 'pairing') {
+    return handlePairingCli((parsed.prompt ?? '').split(/\s+/).filter(Boolean))
+  }
+
   if (
     parsed.cmd === 'acp' ||
     parsed.cmd === 'exec' ||
     parsed.cmd === 'smoke' ||
     parsed.cmd === 'cron' ||
     parsed.cmd === 'serve' ||
-    parsed.cmd === 'slack'
+    parsed.cmd === 'slack' ||
+    parsed.cmd === 'discord'
   ) {
     const home = await ensureHomeDir()
     if (!providerConfigured(home, parsed.flags)) {
@@ -363,6 +370,15 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
   if (parsed.cmd === 'slack') {
     try {
       return await runSlack({ flags: parsed.flags })
+    } catch (error) {
+      process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
+      return 1
+    }
+  }
+
+  if (parsed.cmd === 'discord') {
+    try {
+      return await runDiscord({ flags: parsed.flags })
     } catch (error) {
       process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`)
       return 1

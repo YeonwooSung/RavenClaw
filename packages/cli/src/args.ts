@@ -34,6 +34,8 @@ export interface ParsedArgv {
     | 'cron'
     | 'serve'
     | 'slack'
+    | 'discord'
+    | 'pairing'
   prompt?: string
   json?: boolean
   all?: boolean
@@ -182,7 +184,9 @@ export function parseArgv(argv: string[]): ParsedArgv {
         arg === 'skills' ||
         arg === 'cron' ||
         arg === 'serve' ||
-        arg === 'slack') &&
+        arg === 'slack' ||
+        arg === 'discord' ||
+        arg === 'pairing') &&
       cmd === 'interactive' &&
       positional.length === 0
     ) {

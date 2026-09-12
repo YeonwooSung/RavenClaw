@@ -310,6 +310,11 @@ describe('parseArgv', () => {
     })
   })
 
+  test('discord and pairing are top-level commands', () => {
+    expect(parseArgv(['discord'])).toEqual({ cmd: 'discord', flags: {} })
+    expect(parseArgv(['pairing', 'list'])).toEqual({ cmd: 'pairing', prompt: 'list', flags: {} })
+  })
+
   test('--help and -h select the help command', () => {
     expect(parseArgv(['--help'])).toEqual({ cmd: 'help', flags: {} })
     expect(parseArgv(['-h'])).toEqual({ cmd: 'help', flags: {} })
