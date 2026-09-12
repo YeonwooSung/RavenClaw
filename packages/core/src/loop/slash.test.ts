@@ -57,6 +57,7 @@ describe('takeLoopTurn', () => {
 
   test('shouldAdvanceLoop only after completed', () => {
     expect(shouldAdvanceLoop('completed')).toBe(true)
+    expect(shouldAdvanceLoop('hook_stopped')).toBe(false)
     expect(shouldAdvanceLoop('aborted')).toBe(false)
     expect(shouldAdvanceLoop('persist_failed')).toBe(false)
     expect(shouldAdvanceLoop(undefined)).toBe(false)

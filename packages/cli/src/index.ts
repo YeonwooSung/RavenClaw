@@ -348,7 +348,7 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
         }
         if (parsed.json) execOpts.json = true
         const result = await runExec(execOpts)
-        return result.end.reason === 'completed' ? 0 : 1
+        return result.end.reason === 'completed' || result.end.reason === 'hook_stopped' ? 0 : 1
       } finally {
         await runtime.engine.close?.()
       }

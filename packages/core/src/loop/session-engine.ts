@@ -206,10 +206,6 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         await opts.store.upsertSession(session)
         if (end.reason === 'context_full') {
           const stop = await lifecycle.run('Stop', { sessionId: session.id, reason: end.reason })
-          if (stop?.preventContinuation === true) {
-            if (stop.message) yield { type: 'status', message: stop.message }
-            return { reason: 'hook_stopped' }
-          }
           if (stop?.message) yield { type: 'status', message: stop.message }
         }
         return end

@@ -101,7 +101,7 @@ export async function fireCronJob(
     try {
       const result = await exec({ prompt: job.prompt, engine: child.engine, write: () => {} })
       if (timedOut) return { ok: false, sessionId, error: 'timeout' }
-      const ok = result.end.reason === 'completed'
+      const ok = result.end.reason === 'completed' || result.end.reason === 'hook_stopped'
       return {
         ok,
         sessionId,

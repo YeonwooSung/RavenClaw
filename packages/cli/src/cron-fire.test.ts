@@ -235,6 +235,18 @@ describe('fireCronJob', () => {
     expect(opened?.config.bare).toBeUndefined()
   })
 
+  test('hook_stopped is a successful fire', async () => {
+    const result = await fireCronJob(baseRuntime(), job(), {
+      openNewSession: async () => fakeChild(hungEngine()),
+      runExec: async () => ({
+        text: 'ok',
+        events: [],
+        end: { reason: 'hook_stopped' },
+      }),
+    })
+    expect(result).toEqual({ ok: true, sessionId: 'sess_timeout' })
+  })
+
   test('preScript non-zero skips the agent', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-cron-pre-'))
     let opened = false
