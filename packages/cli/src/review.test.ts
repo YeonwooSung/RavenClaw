@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, mock, test } from 'bun:test'
+import { runSessionReview } from './review'
 
 const fork = mock(
   async (opts: { text: string }): Promise<{ ok: boolean; text: string; path?: string }> => {
@@ -7,12 +8,6 @@ const fork = mock(
     return { ok: true, text: 'ok', path: '/tmp/.ravenclaw/MEMORY.md' }
   },
 )
-
-mock.module('@ravenclaw/core', () => ({
-  forkMemoryReview: fork,
-}))
-
-const { runSessionReview } = await import('./review')
 
 afterEach(() => {
   fork.mockClear()
@@ -29,15 +24,15 @@ describe('runSessionReview', () => {
   }
 
   test('returns the written path when the fork succeeds', async () => {
-    expect(await runSessionReview(runtime(), 'summarize')).toBe('wrote /tmp/.ravenclaw/MEMORY.md')
+    expect(await runSessionReview(runtime(), 'summarize', fork)).toBe('wrote /tmp/.ravenclaw/MEMORY.md')
     expect(fork).toHaveBeenCalledTimes(1)
   })
 
   test('surfaces a fork failure', async () => {
-    expect(await runSessionReview(runtime(), 'fail')).toBe('review failed: provider down')
+    expect(await runSessionReview(runtime(), 'fail', fork)).toBe('review failed: provider down')
   })
 
   test('reports when no memory file was written', async () => {
-    expect(await runSessionReview(runtime(), 'empty')).toBe('review produced no memory to write')
+    expect(await runSessionReview(runtime(), 'empty', fork)).toBe('review produced no memory to write')
   })
 })

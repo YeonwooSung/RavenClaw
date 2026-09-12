@@ -1,8 +1,12 @@
 import { forkMemoryReview } from '@ravenclaw/core'
 import { compactPolicyFromConfig, type CliRuntime } from './engine'
 
-export async function runSessionReview(runtime: CliRuntime, prompt: string): Promise<string> {
-  const result = await forkMemoryReview({
+export async function runSessionReview(
+  runtime: CliRuntime,
+  prompt: string,
+  fork: typeof forkMemoryReview = forkMemoryReview,
+): Promise<string> {
+  const result = await fork({
     provider: runtime.provider,
     store: runtime.store,
     session: runtime.engine.session,
