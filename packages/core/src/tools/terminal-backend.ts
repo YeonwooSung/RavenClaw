@@ -207,12 +207,21 @@ function startDocker(opts: TerminalExecOpts, docker: DockerTerminalBackendOpts):
     marker,
     name,
   )
-  const wait = runDockerJob(req, docker, marker, opts.cwd, controller.signal)
+  const sweep = () => {
+    if (docker.killCommand) return
+    try {
+      const child = spawn('docker', ['rm', '-f', name], { stdio: 'ignore', detached: true })
+      child.unref()
+    } catch {
+      // already gone
+    }
+  }
+  const wait = runDockerJob(req, docker, marker, opts.cwd, controller.signal, sweep)
   return {
     kill() {
       try {
         if (docker.killCommand) docker.killCommand(name)
-        else spawnSync('docker', ['kill', name], { stdio: 'ignore' })
+        else sweep()
       } catch {
         // already gone
       }
@@ -230,11 +239,12 @@ async function runDockerJob(
   marker: string,
   fallbackCwd: string,
   signal: AbortSignal,
+  sweep: () => void,
 ): Promise<TerminalExecResult> {
   try {
     if (docker.runCommand) {
       const ran = await docker.runCommand(req)
-      if (signal.aborted) return Promise.reject(abortError())
+      if (signal.aborted) throw abortError()
       const parsed = splitCwdMarker(ran.stdout, marker, fallbackCwd)
       return {
         stdout: parsed.stdout,
@@ -245,13 +255,15 @@ async function runDockerJob(
     }
     return await runSpawned(req, { spawnError: 'result', marker, fallbackCwd })
   } catch (error) {
-    if (signal.aborted || isAbortError(error)) return Promise.reject(abortError())
+    if (signal.aborted || isAbortError(error)) throw abortError()
     return {
       stdout: '',
       stderr: errorMessage(error),
       exitCode: 1,
       cwd: fallbackCwd,
     }
+  } finally {
+    if (signal.aborted) sweep()
   }
 }
 
