@@ -456,6 +456,33 @@ describe('loadConfig', () => {
     expect(cfg.slack?.botToken).toBe('xoxb-file')
     expect(cfg.slack?.enabled).toBe(true)
   })
+
+  test('yaml discord block defaults mentionOnly true and resolves DISCORD_BOT_TOKEN from .env', () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test'
+    const home = tempHome()
+    writeFileSync(
+      join(home, 'config.yaml'),
+      [
+        'provider: anthropic',
+        'discord:',
+        '  enabled: true',
+        '  allowFrom:',
+        '    - U1',
+        '  channels:',
+        '    - C1',
+        '',
+      ].join('\n'),
+    )
+    writeFileSync(join(home, '.env'), 'DISCORD_BOT_TOKEN=tok\n')
+    const cfg = loadConfig({ home })
+    expect(cfg.discord).toEqual({
+      enabled: true,
+      token: 'tok',
+      allowFrom: ['U1'],
+      channels: ['C1'],
+      mentionOnly: true,
+    })
+  })
 })
 
 describe('resolveProviderModel', () => {

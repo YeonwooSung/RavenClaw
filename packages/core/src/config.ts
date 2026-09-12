@@ -58,6 +58,14 @@ export interface SlackConfig {
   mentionOnly: boolean
 }
 
+export interface DiscordConfig {
+  enabled: boolean
+  token: string
+  allowFrom: string[]
+  channels: string[]
+  mentionOnly: boolean
+}
+
 export interface RavenClawConfig {
   model: string
   provider: ProviderKind
@@ -75,6 +83,7 @@ export interface RavenClawConfig {
   specialistModel?: string
   tools?: ToolsConfig
   slack?: SlackConfig
+  discord?: DiscordConfig
 }
 
 export interface ModelPriceFields {
@@ -281,6 +290,9 @@ export function parseConfigYaml(text: string): Partial<RavenClawConfig> {
   const slackRaw = asMap(raw.slack)
   if (slackRaw) out.slack = parseSlackConfig(slackRaw)
 
+  const discordRaw = asMap(raw.discord)
+  if (discordRaw) out.discord = parseDiscordConfig(discordRaw)
+
   return out
 }
 
@@ -373,6 +385,7 @@ export function loadConfig(opts?: { home?: string; flags?: ConfigFlags }): Resol
   if (parsed.specialistModel !== undefined) resolved.specialistModel = parsed.specialistModel
   if (parsed.tools !== undefined) resolved.tools = parsed.tools
   if (parsed.slack !== undefined) resolved.slack = resolveSlackConfig(parsed.slack, fileEnv)
+  if (parsed.discord !== undefined) resolved.discord = resolveDiscordConfig(parsed.discord, fileEnv)
   if (flags?.fallbackModel !== undefined) resolved.fallbackModel = flags.fallbackModel
   if (flags?.allowedTools !== undefined && flags.allowedTools.length > 0) {
     resolved.allowedTools = flags.allowedTools
@@ -509,6 +522,23 @@ function resolveSlackConfig(slack: SlackConfig, fileEnv: Record<string, string>)
     ...slack,
     appToken: resolveSecretRef(slack.appToken, 'SLACK_APP_TOKEN', fileEnv),
     botToken: resolveSecretRef(slack.botToken, 'SLACK_BOT_TOKEN', fileEnv),
+  }
+}
+
+function parseDiscordConfig(raw: Record<string, unknown>): DiscordConfig {
+  return {
+    enabled: asBoolean(raw.enabled) ?? false,
+    token: asString(raw.token) ?? '',
+    allowFrom: asStringList(raw.allowFrom) ?? [],
+    channels: asStringList(raw.channels) ?? [],
+    mentionOnly: asBoolean(raw.mentionOnly) ?? true,
+  }
+}
+
+function resolveDiscordConfig(discord: DiscordConfig, fileEnv: Record<string, string>): DiscordConfig {
+  return {
+    ...discord,
+    token: resolveSecretRef(discord.token, 'DISCORD_BOT_TOKEN', fileEnv),
   }
 }
 
