@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { mergeToolPool } from '../mcp/tools'
 import type { Tool, ToolContext, Turn } from '../types'
+import { loadSkillUsage, saveSkillUsage } from '../skills/usage'
 import {
   discoverSkills,
   filterToolsForTurn,
@@ -110,6 +111,14 @@ describe('parseSkillFrontmatter', () => {
     expect('description' in empty).toBe(false)
     expect('version' in empty).toBe(false)
     expect('allowedTools' in empty).toBe(false)
+    expect('createdBy' in empty).toBe(false)
+  })
+
+  test('parses created_by', () => {
+    const fm = parseSkillFrontmatter(
+      ['---', 'name: demo', 'created_by: agent', '---', '', 'body'].join('\n'),
+    )
+    expect(fm.createdBy).toBe('agent')
   })
 
   test('empty allowed-tools is omitted so it cannot deny every tool', () => {
@@ -192,6 +201,27 @@ describe('discoverSkills', () => {
       source: 'project',
     })
     expect(found).toHaveLength(3)
+  })
+
+  test('skips .archive and marks stale from the usage sidecar', () => {
+    const home = tempDir('ravenclaw-skill-archive-')
+    const cwd = tempDir('ravenclaw-skill-archive-cwd-')
+    process.env[ENV_KEY] = home
+    writeSkill(
+      join(home, 'skills'),
+      'live',
+      ['---', 'name: live', 'description: Still live', '---', '', 'live'].join('\n'),
+    )
+    writeSkill(
+      join(home, 'skills', '.archive'),
+      'buried',
+      ['---', 'name: buried', 'description: Archived', '---', '', 'old'].join('\n'),
+    )
+    saveSkillUsage({ live: { useCount: 1, state: 'stale' } }, home)
+
+    const found = discoverSkills(cwd, home, { includeBuiltin: false })
+    expect(found.map((skill) => skill.name)).toEqual(['live'])
+    expect(found[0]?.stale).toBe(true)
   })
 })
 
@@ -418,6 +448,24 @@ describe('Skill', () => {
     expect(typeof out).toBe('string')
     expect(out.toLowerCase()).toContain('unknown')
     expect(out).toContain('missing')
+  })
+
+  test('successful execute bumps the usage sidecar', async () => {
+    const home = tempDir('ravenclaw-skill-use-')
+    const cwd = tempDir('ravenclaw-skill-use-cwd-')
+    process.env[ENV_KEY] = home
+    writeSkill(
+      join(cwd, '.ravenclaw', 'skills'),
+      'demo',
+      ['---', 'name: demo', 'description: Demo skill', '---', '', 'body'].join('\n'),
+    )
+    await skillTool.execute({ name: 'demo' }, makeCtx(cwd))
+    const rec = loadSkillUsage(home).demo
+    expect(rec?.useCount).toBe(1)
+    expect(rec?.lastUsedAt).toEqual(expect.any(String))
+    await skillTool.execute({ name: 'missing' }, makeCtx(cwd))
+    expect(loadSkillUsage(home).missing).toBeUndefined()
+    expect(loadSkillUsage(home).demo?.useCount).toBe(1)
   })
 })
 

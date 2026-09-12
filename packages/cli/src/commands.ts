@@ -36,7 +36,7 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
   { name: 'hooks', usage: '/hooks', summary: 'list lifecycle hook events from hooks.json' },
   { name: 'reload', usage: '/reload', summary: 'reload skills on the next turn' },
   { name: 'mcp', usage: '/mcp', summary: 'show configured MCP servers' },
-  { name: 'skills', usage: '/skills [show|disable|enable <name>]', summary: 'list, show, or disable skills' },
+  { name: 'skills', usage: '/skills [show|disable|enable <name>|prune]', summary: 'list, show, disable, or prune skills' },
   { name: 'loop', usage: '/loop [stop|<n> <prompt>]', summary: 'repeat a prompt n times (max 20)' },
   { name: 'cron', usage: '/cron [add|rm|on|off]', summary: 'list or edit local scheduled jobs' },
   { name: 'queue', usage: '/queue [drop n|clear]', summary: 'list or edit the next-turn message queue' },

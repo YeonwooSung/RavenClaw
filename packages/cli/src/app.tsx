@@ -16,6 +16,7 @@ import {
   shouldAdvanceLoop,
   type LoopState,
   discoverSkills,
+  maybePruneSkillsOnIdle,
   setSkillDisabled,
   agentCatalog,
   LIFECYCLE_EVENTS,
@@ -49,7 +50,7 @@ import { formatMcpList } from './mcp-list'
 import { runSessionReview } from './review'
 import { searchNotice } from './search'
 import { collectUserImages, readClipboardImage } from './image-paste'
-import { formatSkillShow, formatSkillsList, parseSkillsSlashArg } from './skills-list'
+import { formatSkillPruneResult, formatSkillShow, formatSkillsList, parseSkillsSlashArg, runSkillsPrune } from './skills-list'
 import { Composer } from './composer'
 import { applySessionTitle } from './resume'
 import { applyCronMutate } from './cron-cmd'
@@ -106,6 +107,7 @@ export function App(props: AppProps) {
   const runtimeRef = useRef(props.runtime)
   const queueRef = useRef(createMessageQueue())
   const busyRef = useRef(false)
+  const lastActivityAtRef = useRef(Date.now())
   const askRef = useRef<PendingAsk | null>(null)
   const historyRef = useRef<string[]>(loadPrompts(props.runtime.config.home))
   const historyIndexRef = useRef<number | null>(null)
@@ -523,6 +525,10 @@ export function App(props: AppProps) {
             setNotice(formatSkillsList({ cwd: runtimeRef.current.cwd, ...(home !== undefined ? { home } : {}) }))
             return
           }
+          if (parsedSkills.action === 'prune') {
+            setNotice(runSkillsPrune({ cwd: runtimeRef.current.cwd, ...(home !== undefined ? { home } : {}) }))
+            return
+          }
           const skills = discoverSkills(runtimeRef.current.cwd, home)
           const skill = skills.find((row) => row.name === parsedSkills.name)
           if (parsedSkills.action === 'show') {
@@ -788,6 +794,7 @@ export function App(props: AppProps) {
       inflight = true
       void (async () => {
         try {
+          const home = runtimeRef.current.config.home
           if (!busyRef.current) {
             const mail = await runtimeRef.current.store.peekAgentMail(
               runtimeRef.current.engine.session.id,
@@ -801,8 +808,23 @@ export function App(props: AppProps) {
             } catch {
               // idle renew is best-effort
             }
+            try {
+              const idle = maybePruneSkillsOnIdle({
+                cwd: runtimeRef.current.cwd,
+                ...(home !== undefined ? { home } : {}),
+                lastActivityAt: lastActivityAtRef.current,
+              })
+              if (
+                !cancelled &&
+                idle.ran &&
+                (idle.result.stale.length > 0 || idle.result.archived.length > 0)
+              ) {
+                setNotice(formatSkillPruneResult(idle.result))
+              }
+            } catch {
+              // prune is best-effort
+            }
           }
-          const home = runtimeRef.current.config.home
           const fired = await fireDueJobs({
             store: createJsonCronStore(home !== undefined ? { home } : undefined),
             run: (job) => fireCronJob(runtimeRef.current, job),
@@ -825,6 +847,7 @@ export function App(props: AppProps) {
   }, [])
 
   useInput((input, key) => {
+    lastActivityAtRef.current = Date.now()
     if (key.ctrl && input === 'c') {
       exit()
       return

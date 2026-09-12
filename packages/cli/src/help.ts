@@ -25,7 +25,7 @@ Usage:
   raven init
   raven completions bash|zsh
   raven mcp [list|tools]
-  raven skills [new|rm <name>] [--project]
+  raven skills [new|rm <name>|prune] [--project]
   raven cron [list|add|rm|on|off|tick|watch]
   raven serve [--listen host:port]
   raven slack
@@ -52,7 +52,7 @@ Commands:
   init          Write AGENTS.md in this directory if missing
   completions   Print bash or zsh completion script to stdout
   mcp           List configured MCP servers (list) or spawn and list tool names (tools)
-  skills        List skills; new writes SKILL.md, rm deletes it (--project = cwd)
+  skills        List skills; new writes SKILL.md, rm deletes, prune archives unused
   cron          List/add/remove local jobs; tick/watch fire due ones
   serve         Local HTTP turn + HMAC webhook (dontAsk, loopback default)
   slack         Slack Socket Mode bot (allowlist; no public URL)

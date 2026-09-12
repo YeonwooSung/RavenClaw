@@ -2,7 +2,13 @@ import { describe, expect, test } from 'bun:test'
 import { mkdirSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { formatSkillLine, formatSkillShow, formatSkillsList } from './skills-list'
+import {
+  formatSkillLine,
+  formatSkillPruneResult,
+  formatSkillShow,
+  formatSkillsList,
+  parseSkillsSlashArg,
+} from './skills-list'
 
 describe('formatSkillsList', () => {
   test('empty dirs is no skills', () => {
@@ -45,6 +51,47 @@ describe('formatSkillsList', () => {
       source: 'user',
     })
     expect(line).toBe(`long  user  ${'x'.repeat(60)}`)
+  })
+
+  test('formatSkillLine marks stale skills', () => {
+    expect(
+      formatSkillLine({
+        name: 'old',
+        description: 'unused',
+        dir: '/tmp/.ravenclaw/skills/old',
+        source: 'user',
+        stale: true,
+      }),
+    ).toBe('old  user  stale  unused')
+  })
+
+  test('parseSkillsSlashArg accepts prune', () => {
+    expect(parseSkillsSlashArg('prune')).toEqual({ action: 'prune' })
+    expect(parseSkillsSlashArg('show')).toEqual({
+      action: 'error',
+      message: 'usage: /skills show <name>',
+    })
+  })
+
+  test('formatSkillPruneResult summarizes stale and archived names', () => {
+    expect(
+      formatSkillPruneResult({
+        checked: 2,
+        stale: ['idle-demo'],
+        archived: ['old-flow'],
+        skipped: [],
+        reactivated: [],
+      }),
+    ).toBe('stale idle-demo\narchived old-flow')
+    expect(
+      formatSkillPruneResult({
+        checked: 0,
+        stale: [],
+        archived: [],
+        skipped: [],
+        reactivated: [],
+      }),
+    ).toBe('no skills to prune')
   })
 
   test('formatSkillShow refuses a SKILL.md symlink that leaves the skill dir', () => {

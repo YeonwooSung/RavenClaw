@@ -14,6 +14,7 @@ import {
   formatLoopStatus,
   shouldAdvanceLoop,
   discoverSkills,
+  maybePruneSkillsOnIdle,
   setSkillDisabled,
   createSecondAbortGate,
   formatKilledBackgroundNotice,
@@ -40,7 +41,7 @@ import { runSessionReview } from './review'
 import { searchNotice } from './search'
 import { applyCronMutate } from './cron-cmd'
 import { fireCronJob } from './cron-fire'
-import { formatSkillShow, formatSkillsList, parseSkillsSlashArg } from './skills-list'
+import { formatSkillPruneResult, formatSkillShow, formatSkillsList, parseSkillsSlashArg, runSkillsPrune } from './skills-list'
 import { openNewSession, parsePermissionMode, resumeRuntime, type CliRuntime } from './engine'
 import { collectUserImages, readClipboardImage } from './image-paste'
 import { parseBangLine, runBangCommand } from './bash-line'
@@ -200,12 +201,14 @@ export async function runOpenTuiApp(
     if (lines.length > 0) write(`${lines.join('\n')}\n`)
   }
 
+  let lastActivityAt = Date.now()
   let cronInflight = false
   const cronTimer = setInterval(() => {
     if (cronInflight) return
     cronInflight = true
     void (async () => {
       try {
+        const home = current.config.home
         if (!turnBusy) {
           const mail = await current.store.peekAgentMail(current.engine.session.id)
           if (mail.length > 0) void runTurn('[mailbox]')
@@ -214,8 +217,19 @@ export async function runOpenTuiApp(
           } catch {
             // idle renew is best-effort
           }
+          try {
+            const idle = maybePruneSkillsOnIdle({
+              cwd: current.cwd,
+              ...(home !== undefined ? { home } : {}),
+              lastActivityAt,
+            })
+            if (idle.ran && (idle.result.stale.length > 0 || idle.result.archived.length > 0)) {
+              write(`${formatSkillPruneResult(idle.result)}\n`)
+            }
+          } catch {
+            // prune is best-effort
+          }
         }
-        const home = current.config.home
         const fired = await fireDueJobs({
           store: createJsonCronStore(home !== undefined ? { home } : undefined),
           run: (job) => fireCronJob(current, job),
@@ -239,6 +253,7 @@ export async function runOpenTuiApp(
       write(`${composerLine()}\n`)
       const line = await readLine()
       if (line === undefined) return 0
+      lastActivityAt = Date.now()
 
       const parsed = handleSlashCommand(line)
       if (parsed.type === 'prompt') {
@@ -395,6 +410,10 @@ export async function runOpenTuiApp(
           }
           if (parsedSkills.action === 'list') {
             write(`${formatSkillsList({ cwd: current.cwd, ...(home !== undefined ? { home } : {}) })}\n`)
+            continue
+          }
+          if (parsedSkills.action === 'prune') {
+            write(`${runSkillsPrune({ cwd: current.cwd, ...(home !== undefined ? { home } : {}) })}\n`)
             continue
           }
           const skills = discoverSkills(current.cwd, home)

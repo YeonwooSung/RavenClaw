@@ -3,6 +3,7 @@ import { dirname, join, sep } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ravenclawHome } from '../home'
 import { isSkillDisabled } from '../skills/disable'
+import { loadSkillUsage, recordSkillUse } from '../skills/usage'
 import type { Tool, ToolContext, Turn } from '../types'
 import { parseWithSchema } from './parse'
 
@@ -19,6 +20,8 @@ export interface DiscoveredSkill {
   dir: string
   source: SkillSource
   disabled?: boolean
+  stale?: boolean
+  createdBy?: string
 }
 
 const BINARY_SCAN = 8192
@@ -58,6 +61,7 @@ export const skillTool: Tool<SkillInput, string> = {
       (skill) => skill.name === input.name && !skill.disabled,
     )
     if (!found) return `Skill failed: unknown skill: ${input.name}`
+    recordSkillUse(found.name)
     applySkillAllowedTools(found.dir, ctx.turn)
     if (input.path !== undefined) return readSkillFile(found.dir, input.path)
     return readSkillBody(found.dir)
@@ -112,8 +116,14 @@ export function discoverSkills(
   const disabled = new Set(
     [...byName.keys()].filter((name) => isSkillDisabled(name, userHome)),
   )
+  const usage = loadSkillUsage(userHome)
   return [...byName.values()]
-    .map((skill) => (disabled.has(skill.name) ? { ...skill, disabled: true } : skill))
+    .map((skill) => {
+      const next = { ...skill }
+      if (disabled.has(skill.name)) next.disabled = true
+      if (usage[skill.name]?.state === 'stale') next.stale = true
+      return next
+    })
     .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0))
 }
 
@@ -133,6 +143,7 @@ export function parseSkillFrontmatter(markdown: string): {
   description?: string
   version?: string
   allowedTools?: string[]
+  createdBy?: string
 } {
   const block = extractFrontmatter(markdown)
   if (block === undefined) return {}
@@ -142,6 +153,7 @@ export function parseSkillFrontmatter(markdown: string): {
     description?: string
     version?: string
     allowedTools?: string[]
+    createdBy?: string
   } = {}
   const name = asString(fields.name)
   if (name !== undefined) out.name = name
@@ -149,6 +161,8 @@ export function parseSkillFrontmatter(markdown: string): {
   if (description !== undefined) out.description = description
   const version = asString(fields.version)
   if (version !== undefined) out.version = version
+  const createdBy = asString(fields.created_by)
+  if (createdBy !== undefined) out.createdBy = createdBy
   const allowedTools = parseAllowedTools(fields['allowed-tools'])
   if (allowedTools !== undefined) out.allowedTools = allowedTools
   return out
@@ -180,14 +194,16 @@ function loadSkillRoot(
     return
   }
   for (const ent of entries) {
-    if (ent.name === '.' || ent.name === '..') continue
+    if (ent.name === '.' || ent.name === '..' || ent.name.startsWith('.')) continue
     const dir = join(root, ent.name)
     const markdown = readUtf8File(join(dir, 'SKILL.md'))
     if (markdown === undefined) continue
     const fm = parseSkillFrontmatter(markdown)
     const name = fm.name ?? ent.name
     const description = fm.description ?? ''
-    into.set(name, { name, description, dir, source })
+    const skill: DiscoveredSkill = { name, description, dir, source }
+    if (fm.createdBy !== undefined) skill.createdBy = fm.createdBy
+    into.set(name, skill)
   }
 }
 

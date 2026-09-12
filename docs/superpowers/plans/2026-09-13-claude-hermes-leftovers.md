@@ -92,6 +92,8 @@ Discord rewrite, `execute_code`, Electron, `bypass` / yolo, streaming tool execu
 
 ### L9. Skill curator prune-only
 
+**Status.** Done.
+
 **Why.** Hermes `agent/curator.py` + `tools/skill_usage.py`: idle 7d / 2h idle → unused 30d stale, 90d archive under `skills/.archive/` (never delete). Pinned and builtin skills skipped. LLM consolidation off. RavenClaw has `/skills disable` only; the volatile skill index grows forever.
 
 **Contract.** Sidecar `~/.ravenclaw/skills/.usage.json` (name → lastUsedAt / useCount), bumped on `Skill` execute. On CLI idle (or `raven skills prune`): user/project skills unused 30d → mark stale (keep in index), 90d → move dir to `.archive/`. Never touch builtins or `created_by` ≠ agent. No LLM fork.

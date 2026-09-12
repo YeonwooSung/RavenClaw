@@ -26,7 +26,7 @@ import { completionsScript } from './completions'
 import { formatMcpList, loadMcpServers } from './mcp-list'
 import { formatMcpToolsReport } from './mcp-probe'
 import { createSkill, deleteSkill } from './skill-new'
-import { formatSkillsList } from './skills-list'
+import { formatSkillsList, runSkillsPrune } from './skills-list'
 import { initProject } from './init'
 import { doctorFailed, formatDoctorReport, probeLocalLlm, runDoctor } from './doctor'
 import { searchCliSessions } from './search'
@@ -156,8 +156,12 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
       process.stdout.write(`deleted ${deleted.path}\n`)
       return 0
     }
+    if (parts[0] === 'prune') {
+      process.stdout.write(`${runSkillsPrune()}\n`)
+      return 0
+    }
     if (parts.length > 0) {
-      process.stderr.write('usage: raven skills [new|rm <name>] [--project]\n')
+      process.stderr.write('usage: raven skills [new|rm <name>|prune] [--project]\n')
       return 2
     }
     process.stdout.write(`${formatSkillsList()}\n`)

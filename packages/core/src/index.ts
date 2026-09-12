@@ -18,6 +18,19 @@ export {
 } from './loop/slash'
 export type { LoopState, LoopAction } from './loop/slash'
 export { loadDisabledSkills, setSkillDisabled, isSkillDisabled } from './skills/disable'
+export { loadSkillUsage, recordSkillUse, skillUsagePath } from './skills/usage'
+export type { SkillUsageMap, SkillUsageRecord, SkillUsageState } from './skills/usage'
+export {
+  pruneSkills,
+  maybePruneSkillsOnIdle,
+  isSkillPruneProtected,
+  SKILL_STALE_AFTER_MS,
+  SKILL_ARCHIVE_AFTER_MS,
+  SKILL_PRUNE_INTERVAL_MS,
+  SKILL_PRUNE_IDLE_MS,
+  SKILL_ARCHIVE_DIR,
+} from './skills/prune'
+export type { SkillPruneResult, IdlePruneResult } from './skills/prune'
 export {
   buildPostCompactMessages,
   repairRoleAlternation,
