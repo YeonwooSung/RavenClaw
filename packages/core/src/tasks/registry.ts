@@ -24,6 +24,9 @@ export interface RegisterTaskInput {
   description?: string
 }
 
+export type SteerHandle = { enqueueSteer(text: string): void }
+export type SteerResult = { ok: true } | { ok: false; error: string }
+
 export interface TaskRegistry {
   register(input: RegisterTaskInput): TaskSnapshot
   get(id: string): TaskSnapshot | undefined
@@ -32,10 +35,13 @@ export interface TaskRegistry {
   complete(id: string, exitCode: number): TaskSnapshot | undefined
   kill(id: string): TaskSnapshot | undefined
   killAll(): TaskSnapshot[]
+  attachEngine(id: string, engine: SteerHandle): void
+  steer(id: string, text: string): SteerResult
 }
 
 interface LiveTask extends TaskSnapshot {
   killProcess: () => void
+  engine?: SteerHandle
 }
 
 export function createTaskRegistry(): TaskRegistry {
@@ -83,6 +89,7 @@ export function createTaskRegistry(): TaskRegistry {
       task.status = exitCode === 0 ? 'completed' : 'failed'
       task.exitCode = exitCode
       task.endedAt = Date.now()
+      task.engine = undefined
       return snapshotOf(task)
     },
 
@@ -97,6 +104,7 @@ export function createTaskRegistry(): TaskRegistry {
         }
         task.status = 'killed'
         task.endedAt = Date.now()
+        task.engine = undefined
       }
       return snapshotOf(task)
     },
@@ -109,6 +117,24 @@ export function createTaskRegistry(): TaskRegistry {
         if (killed) out.push(killed)
       }
       return out
+    },
+
+    attachEngine(id, engine) {
+      const task = tasks.get(id)
+      if (!task || task.status !== 'running' || task.type !== 'agent') return
+      task.engine = engine
+    },
+
+    steer(id, text) {
+      const task = tasks.get(id)
+      if (!task || task.type !== 'agent' || task.status !== 'running') {
+        return { ok: false, error: 'not a live agent task' }
+      }
+      if (task.engine === undefined) return { ok: false, error: 'agent not started' }
+      const trimmed = text.trim()
+      if (trimmed === '') return { ok: false, error: 'empty text' }
+      task.engine.enqueueSteer(text)
+      return { ok: true }
     },
   }
 }

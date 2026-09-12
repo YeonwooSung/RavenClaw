@@ -52,3 +52,54 @@ describe('parseTasksArg', () => {
     expect(parseTasksArg('KILL  b_xyz')).toEqual({ action: 'kill', id: 'b_xyz' })
   })
 })
+
+describe('attachEngine and steer', () => {
+  test('live agent only; empty text and missing engine fail', () => {
+    const dir = join(tmpdir(), `raven-tasks-steer-${Date.now()}`)
+    mkdirSync(dir, { recursive: true })
+    const outputFile = join(dir, 'out.log')
+    writeFileSync(outputFile, '')
+    const tasks = createTaskRegistry()
+    const calls: string[] = []
+    const agent = tasks.register({
+      type: 'agent',
+      command: 'child',
+      outputFile,
+      kill() {},
+    })
+    expect(tasks.steer(agent.id, 'hello')).toEqual({
+      ok: false,
+      error: 'agent not started',
+    })
+    tasks.attachEngine(agent.id, {
+      enqueueSteer(text) {
+        calls.push(text)
+      },
+    })
+    expect(tasks.steer(agent.id, '  ')).toEqual({ ok: false, error: 'empty text' })
+    expect(tasks.steer(agent.id, 'hello')).toEqual({ ok: true })
+    expect(calls).toEqual(['hello'])
+
+    const bash = tasks.register({
+      type: 'bash',
+      command: 'sleep 1',
+      outputFile,
+      kill() {},
+    })
+    expect(tasks.steer(bash.id, 'nope')).toEqual({
+      ok: false,
+      error: 'not a live agent task',
+    })
+    expect(tasks.steer('missing', 'nope')).toEqual({
+      ok: false,
+      error: 'not a live agent task',
+    })
+
+    tasks.complete(agent.id, 0)
+    expect(tasks.steer(agent.id, 'later')).toEqual({
+      ok: false,
+      error: 'not a live agent task',
+    })
+    expect(calls).toEqual(['hello'])
+  })
+})
