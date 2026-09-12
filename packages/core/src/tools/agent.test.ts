@@ -31,6 +31,7 @@ import { readTool } from './read'
 import { setChildOutput } from './set-output'
 import { skillTool } from './skill'
 import { createAgentTool, MAX_PARALLEL_CHILDREN } from './agent'
+import { taskSteerTool } from './task'
 import { createTaskRegistry } from '../tasks/registry'
 import { drainAgentMail } from '../tasks/mailbox'
 import { createFileHistory } from '../session/file-history'
@@ -1689,6 +1690,63 @@ describe('createAgentTool', () => {
       }
       expect(started).toBe(true)
       tasks.kill(dispatched.taskId)
+    } finally {
+      if (savedHome === undefined) delete process.env.RAVENCLAW_HOME
+      else process.env.RAVENCLAW_HOME = savedHome
+    }
+  })
+
+  test('TaskSteer suffixes the next child tool result and does not re-execute', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'ravenclaw-agent-steer-inject-'))
+    tempDirs.push(home)
+    const savedHome = process.env.RAVENCLAW_HOME
+    process.env.RAVENCLAW_HOME = home
+    const session = makeSession()
+    const store = createMemoryStore()
+    try {
+      await store.createSession(session)
+      let executes = 0
+      let release!: () => void
+      const started = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      const slow: Tool = {
+        ...stubTool('Read'),
+        async execute() {
+          executes += 1
+          release()
+          await Bun.sleep(80)
+          return 'tool-body'
+        },
+      }
+      const provider = createFakeProvider([
+        toolThenStop('r1', 'Read', { path: 'x' }),
+        textThenStop('final'),
+      ])
+      const { tool } = createTestAgent({
+        store,
+        provider,
+        tools: parentPool().map((item) => (item.name === 'Read' ? slow : item)),
+      })
+      const tasks = createTaskRegistry()
+      const ctx = { ...makeCtx(makeTurn(session)), tasks }
+      const dispatched = JSON.parse(
+        await tool.execute({ prompt: 'bg', run_in_background: true }, ctx),
+      ) as { taskId: string }
+      await started
+      const steered = await taskSteerTool.execute(
+        { taskId: dispatched.taskId, text: 'prefer grep' },
+        { ...ctx, tasks },
+      )
+      expect(steered.startsWith(`steered ${dispatched.taskId}`)).toBe(true)
+      const deadline = Date.now() + 3000
+      while (Date.now() < deadline) {
+        if (tasks.get(dispatched.taskId)?.status !== 'running') break
+        await Bun.sleep(10)
+      }
+      expect(executes).toBe(1)
+      const output = tasks.readOutput(dispatched.taskId) ?? ''
+      expect(output).toContain('final')
     } finally {
       if (savedHome === undefined) delete process.env.RAVENCLAW_HOME
       else process.env.RAVENCLAW_HOME = savedHome
