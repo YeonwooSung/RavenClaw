@@ -590,6 +590,57 @@ describe('createAcpServer', () => {
     expect(decided).toBe('allow')
   })
 
+  test('ApplyPatch with a later .env op never auto-approves', async () => {
+    const requests: JsonRpcRequest[] = []
+    let decided: string | undefined
+    const server = createAcpServer({
+      engineFactory: (_sessionId, opts) => ({
+        async *submitMessage() {
+          decided = await opts?.requestPermission?.({
+            id: 'p2',
+            tool: 'ApplyPatch',
+            input: {
+              operations: [
+                { type: 'update_file', path: 'a.ts', diff: '+a' },
+                { type: 'create_file', path: '.env', diff: 'SECRET=1' },
+              ],
+            },
+            message: 'patch',
+          })
+          return { reason: 'completed' }
+        },
+        abort() {},
+      }),
+      request: async (req) => {
+        requests.push(req)
+        return { outcome: { outcome: 'selected', optionId: 'allow_always' } }
+      },
+    })
+    const sessionId = resultOf(
+      await server.handle({
+        jsonrpc: '2.0',
+        id: 1,
+        method: ACP_METHODS.sessionNew,
+        params: {},
+      }),
+    ).sessionId
+    await server.handle({
+      jsonrpc: '2.0',
+      id: 2,
+      method: ACP_METHODS.sessionPrompt,
+      params: { sessionId, prompt: 'patch' },
+    })
+    const params = requests[0]?.params as {
+      path?: string
+      newText?: string
+      options?: Array<{ optionId: string }>
+    }
+    expect(params.path).toBe('a.ts')
+    expect(params.newText).toContain('.env')
+    expect(params.options?.some((option) => option.optionId === 'allow_always')).toBe(false)
+    expect(decided).toBe('allow')
+  })
+
   test('Bash permission_ask stays name+input without an edit proposal', async () => {
     const requests: JsonRpcRequest[] = []
     const server = createAcpServer({

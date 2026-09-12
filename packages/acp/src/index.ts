@@ -12,6 +12,7 @@ export {
   editProposalFromInput,
   extractPromptImages,
   extractPromptText,
+  isSensitiveEditInput,
   isSensitiveEditPath,
   isJsonRpcRequest,
   isJsonRpcResponse,

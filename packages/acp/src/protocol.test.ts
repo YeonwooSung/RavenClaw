@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import {
   ACP_METHODS,
   editProposalFromInput,
+  isSensitiveEditInput,
   isSensitiveEditPath,
   AGENT_INFO,
   JSON_RPC_METHOD_NOT_FOUND,
@@ -240,10 +241,37 @@ describe('editProposalFromInput', () => {
     expect(editProposalFromInput('Bash', { command: 'ls', path: 'a.ts' })).toBeUndefined()
   })
 
+  test('includes every ApplyPatch operation in newText', () => {
+    expect(
+      editProposalFromInput('ApplyPatch', {
+        operations: [
+          { type: 'update_file', path: 'a.ts', diff: '+a' },
+          { type: 'create_file', path: '.env', diff: 'SECRET=1' },
+        ],
+      }),
+    ).toEqual({
+      path: 'a.ts',
+      newText: '*** a.ts\n+a\n*** .env\nSECRET=1',
+    })
+  })
+
   test('treats .env and id_rsa basenames as sensitive', () => {
     expect(isSensitiveEditPath('.env')).toBe(true)
     expect(isSensitiveEditPath('/tmp/.env')).toBe(true)
+    expect(isSensitiveEditPath('.env/')).toBe(true)
+    expect(isSensitiveEditPath('/tmp/.env/.')).toBe(true)
     expect(isSensitiveEditPath('~/.ssh/id_rsa')).toBe(true)
     expect(isSensitiveEditPath('src/a.ts')).toBe(false)
+    expect(
+      isSensitiveEditInput('ApplyPatch', {
+        operations: [
+          { type: 'update_file', path: 'a.ts', diff: '+a' },
+          { type: 'create_file', path: '.env', diff: 'SECRET=1' },
+        ],
+      }),
+    ).toBe(true)
+    expect(isSensitiveEditInput('Edit', { path: 'a.ts', old_string: 'a', new_string: 'b' })).toBe(
+      false,
+    )
   })
 })

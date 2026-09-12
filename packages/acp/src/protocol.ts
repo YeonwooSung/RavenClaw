@@ -151,16 +151,47 @@ export function editProposalFromInput(tool: string, input: unknown): EditProposa
     return proposal
   }
   if (!Array.isArray(rec.operations)) return undefined
-  const first = rec.operations[0]
-  if (!first || typeof first !== 'object') return undefined
-  const op = first as Record<string, unknown>
-  if (typeof op.path !== 'string' || op.path.length === 0) return undefined
-  return { path: op.path, newText: typeof op.diff === 'string' ? op.diff : '' }
+  const ops = rec.operations.flatMap((item) => {
+    if (!item || typeof item !== 'object') return []
+    const op = item as Record<string, unknown>
+    if (typeof op.path !== 'string' || op.path.length === 0) return []
+    return [{ path: op.path, diff: typeof op.diff === 'string' ? op.diff : '' }]
+  })
+  const first = ops[0]
+  if (!first) return undefined
+  const newText =
+    ops.length === 1 ? first.diff : ops.map((op) => `*** ${op.path}\n${op.diff}`).join('\n')
+  return { path: first.path, newText }
 }
 
 export function isSensitiveEditPath(path: string): boolean {
-  const base = path.replace(/\\/g, '/').split('/').pop() ?? path
+  const base = pathBasename(path)
   return base === '.env' || base === 'id_rsa'
+}
+
+export function isSensitiveEditInput(tool: string, input: unknown): boolean {
+  return editProposalPaths(tool, input).some(isSensitiveEditPath)
+}
+
+function pathBasename(path: string): string {
+  const parts = path.replace(/\\/g, '/').split('/').filter((part) => part !== '' && part !== '.')
+  return parts[parts.length - 1] ?? path
+}
+
+function editProposalPaths(tool: string, input: unknown): string[] {
+  if (!EDIT_PROPOSAL_TOOLS.has(tool)) return []
+  if (!input || typeof input !== 'object') return []
+  const rec = input as Record<string, unknown>
+  const paths: string[] = []
+  if (typeof rec.path === 'string' && rec.path.length > 0) paths.push(rec.path)
+  if (Array.isArray(rec.operations)) {
+    for (const item of rec.operations) {
+      if (!item || typeof item !== 'object') continue
+      const op = item as Record<string, unknown>
+      if (typeof op.path === 'string' && op.path.length > 0) paths.push(op.path)
+    }
+  }
+  return paths
 }
 
 function proposalNewText(rec: Record<string, unknown>): string {

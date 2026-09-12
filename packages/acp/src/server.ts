@@ -18,7 +18,7 @@ import {
   roundEndToStopReason,
   toSessionUpdate,
   editProposalFromInput,
-  isSensitiveEditPath,
+  isSensitiveEditInput,
   type AcpPermissionAnswer,
   type AgentCapabilities,
   type InitializeResult,
@@ -112,7 +112,7 @@ export function createAcpServer(opts: AcpServerOptions): AcpServer {
     }
 
     const proposal = editProposalFromInput(event.tool, event.input)
-    const sensitive = proposal !== undefined && isSensitiveEditPath(proposal.path)
+    const sensitive = isSensitiveEditInput(event.tool, event.input)
     const params: SessionRequestPermissionParams = {
       sessionId,
       title: `Allow ${event.tool}?`,
