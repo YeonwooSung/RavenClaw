@@ -1,6 +1,7 @@
 import { appendFileSync, mkdirSync, renameSync, statSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
 import { ravenclawHome } from './home'
+import type { RoundEnd, SessionEngine, StreamEvent } from './types'
 
 const LOG_NAME = 'ravenclaw.log'
 const ROTATE_COUNT = 2
@@ -18,6 +19,11 @@ export type RavenclawLogEvent = {
 export interface RavenclawLog {
   write(event: RavenclawLogEvent): void
   close(): void
+}
+
+export type WrapSessionEngineLogOpts = {
+  /** When true, engine.close() also closes the log. Leave false for a shared process log. */
+  closeLog?: boolean
 }
 
 export function openRavenclawLog(
@@ -44,6 +50,81 @@ export function openRavenclawLog(
       closed = true
     },
   }
+}
+
+export function wrapSessionEngineLog(
+  engine: SessionEngine,
+  log: RavenclawLog,
+  opts?: WrapSessionEngineLogOpts,
+): SessionEngine {
+  const closeLog = opts?.closeLog === true
+  return {
+    get session() {
+      return engine.session
+    },
+    get tasks() {
+      return engine.tasks
+    },
+    get fileHistory() {
+      return engine.fileHistory
+    },
+    submitMessage(input) {
+      return logSubmit(engine.submitMessage(input), engine.session.id, log)
+    },
+    enqueueSteer(text) {
+      engine.enqueueSteer(text)
+    },
+    drainSteering() {
+      return engine.drainSteering()
+    },
+    rewindLast() {
+      return engine.rewindLast()
+    },
+    compactNow() {
+      return engine.compactNow()
+    },
+    setPermissionMode(mode) {
+      return engine.setPermissionMode(mode)
+    },
+    reloadSystem(system) {
+      engine.reloadSystem(system)
+    },
+    abort() {
+      engine.abort()
+    },
+    async close(closeOpts) {
+      try {
+        await engine.close(closeOpts)
+      } finally {
+        if (closeLog) log.close()
+      }
+    },
+  }
+}
+
+async function* logSubmit(
+  gen: AsyncGenerator<StreamEvent, RoundEnd>,
+  sessionId: string,
+  log: RavenclawLog,
+): AsyncGenerator<StreamEvent, RoundEnd> {
+  const end = yield* gen
+  log.write({ type: 'round_end', sessionId, reason: end.reason })
+  if (end.reason === 'persist_failed' || end.reason === 'results_persist_failed') {
+    const error = stringifyLogError('error' in end ? end.error : undefined)
+    log.write({
+      type: end.reason,
+      sessionId,
+      ...(error !== undefined ? { error } : {}),
+    })
+  }
+  return end
+}
+
+function stringifyLogError(error: unknown): string | undefined {
+  if (error === undefined || error === null) return undefined
+  if (typeof error === 'string') return error
+  if (error instanceof Error) return error.message
+  return 'error'
 }
 
 function sanitize(event: RavenclawLogEvent): RavenclawLogEvent {

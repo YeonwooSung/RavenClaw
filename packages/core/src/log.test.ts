@@ -2,7 +2,8 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { openRavenclawLog } from './log'
+import { openRavenclawLog, wrapSessionEngineLog, type RavenclawLogEvent } from './log'
+import type { RoundEnd, SessionEngine, SessionRecord, StreamEvent } from './types'
 
 const tempDirs: string[] = []
 
@@ -110,5 +111,99 @@ describe('openRavenclawLog', () => {
       sessionId: 'sess_2',
       reason: 'completed',
     })
+  })
+})
+
+function stubEngine(sessionId: string, end: RoundEnd, events: StreamEvent[] = []): SessionEngine {
+  const session = { id: sessionId } as SessionRecord
+  return {
+    get session() {
+      return session
+    },
+    get tasks() {
+      return { list: () => [] } as SessionEngine['tasks']
+    },
+    get fileHistory() {
+      return {} as SessionEngine['fileHistory']
+    },
+    async *submitMessage() {
+      for (const event of events) yield event
+      return end
+    },
+    enqueueSteer() {},
+    drainSteering() {
+      return []
+    },
+    async rewindLast() {
+      return { ok: true, notice: '' }
+    },
+    async compactNow() {},
+    async setPermissionMode() {},
+    reloadSystem() {},
+    abort() {},
+    async close() {},
+  }
+}
+
+async function drain(engine: SessionEngine, prompt: string): Promise<RoundEnd> {
+  const gen = engine.submitMessage(prompt)
+  while (true) {
+    const next = await gen.next()
+    if (next.done) return next.value
+  }
+}
+
+describe('wrapSessionEngineLog', () => {
+  test('child submitMessage writes round_end with the child session id', async () => {
+    const home = tempHome()
+    const log = openRavenclawLog(home)
+    const engine = wrapSessionEngineLog(stubEngine('child_sess', { reason: 'completed' }), log, {
+      closeLog: false,
+    })
+    const end = await drain(engine, 'SECRET_PROMPT_BODY')
+    expect(end).toEqual({ reason: 'completed' })
+    const raw = readFileSync(logPath(home), 'utf8')
+    expect(raw).not.toContain('SECRET_PROMPT_BODY')
+    expect(JSON.parse(readLines(home)[0] ?? '')).toEqual({
+      type: 'round_end',
+      sessionId: 'child_sess',
+      reason: 'completed',
+    })
+  })
+
+  test('persist_failed writes type persist_failed without prompt text', async () => {
+    const home = tempHome()
+    const log = openRavenclawLog(home)
+    const engine = wrapSessionEngineLog(
+      stubEngine('child_persist', {
+        reason: 'persist_failed',
+        error: new Error('disk locked'),
+      }),
+      log,
+      { closeLog: false },
+    )
+    const end = await drain(engine, 'SECRET_PROMPT_BODY')
+    expect(end.reason).toBe('persist_failed')
+    const raw = readFileSync(logPath(home), 'utf8')
+    expect(raw).not.toContain('SECRET_PROMPT_BODY')
+    expect(raw).not.toContain('"prompt"')
+    const events = readLines(home).map((line) => JSON.parse(line) as RavenclawLogEvent)
+    expect(events).toEqual([
+      { type: 'round_end', sessionId: 'child_persist', reason: 'persist_failed' },
+      { type: 'persist_failed', sessionId: 'child_persist', error: 'disk locked' },
+    ])
+  })
+
+  test('closing the child does not prevent a subsequent write on the same log object', async () => {
+    const home = tempHome()
+    const log = openRavenclawLog(home)
+    const engine = wrapSessionEngineLog(stubEngine('child_close', { reason: 'completed' }), log, {
+      closeLog: false,
+    })
+    await drain(engine, 'hi')
+    await engine.close()
+    log.write({ type: 'after_child_close', sessionId: 'parent_sess', reason: 'completed' })
+    const types = readLines(home).map((line) => (JSON.parse(line) as { type: string }).type)
+    expect(types).toEqual(['round_end', 'after_child_close'])
   })
 })

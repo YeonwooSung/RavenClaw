@@ -1,4 +1,5 @@
 import { createSessionEngine } from '../loop/session-engine'
+import { openRavenclawLog, wrapSessionEngineLog } from '../log'
 import { ABORTED_TEXT, INCOMPLETE_TEXT, PERSIST_FAILED_TEXT, makeToolMessage } from '../loop/pairing'
 import { isAbortError } from '../loop/abort'
 import { getAgentDefinition } from '../agent/catalog'
@@ -245,7 +246,9 @@ async function spawnChild(
       engineOpts.fileHistory = ctx.fileHistory
       engineOpts.fileHistoryOwnsTurn = false
     }
-    engine = createSessionEngine(engineOpts)
+    engine = wrapSessionEngineLog(createSessionEngine(engineOpts), openRavenclawLog(), {
+      closeLog: false,
+    })
     const unlinkEngine = linkEngineAbort(ctx.signal, engine)
     try {
       const end = await drainLoop(engine.submitMessage(userPayload))

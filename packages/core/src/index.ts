@@ -29,8 +29,8 @@ export { resumeSession } from './session/resume'
 export { rebuildMessagesFts, searchMessages } from './session/search'
 export type { MessageSearchHit } from './session/search'
 export { ensureHomeDir, ravenclawHome } from './home'
-export { openRavenclawLog, RAVENCLAW_LOG_MAX_BYTES } from './log'
-export type { RavenclawLog, RavenclawLogEvent } from './log'
+export { openRavenclawLog, wrapSessionEngineLog, RAVENCLAW_LOG_MAX_BYTES } from './log'
+export type { RavenclawLog, RavenclawLogEvent, WrapSessionEngineLogOpts } from './log'
 export {
   defaultConfig,
   defaultModelForProvider,

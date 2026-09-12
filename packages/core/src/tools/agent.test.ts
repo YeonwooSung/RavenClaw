@@ -1729,6 +1729,89 @@ describe('createAgentTool', () => {
     expect(text).toContain('single user row')
   })
 
+  test('child SessionEngine writes round_end with the child session id', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'ravenclaw-agent-log-'))
+    tempDirs.push(home)
+    const savedHome = process.env.RAVENCLAW_HOME
+    process.env.RAVENCLAW_HOME = home
+    try {
+      const store = createMemoryStore()
+      const session = makeSession()
+      await store.createSession(session)
+      const provider = createFakeProvider([textThenStop('child done')])
+      const { tool } = createTestAgent({ store, provider })
+      const result = await tool.execute(
+        { prompt: 'SECRET_PROMPT_BODY' },
+        makeCtx(makeTurn(session)),
+      )
+      expect(result).toBe('child done')
+
+      const child = (await store.listSessions({ parentSessionId: session.id }))[0]
+      expect(child).toBeDefined()
+      const raw = readFileSync(join(home, 'logs', 'ravenclaw.log'), 'utf8')
+      expect(raw).not.toContain('SECRET_PROMPT_BODY')
+      const events = raw
+        .split('\n')
+        .filter((line) => line !== '')
+        .map((line) => JSON.parse(line) as { type: string; sessionId?: string; reason?: string })
+      expect(events).toContainEqual({
+        type: 'round_end',
+        sessionId: child!.id,
+        reason: 'completed',
+      })
+      expect(events.every((event) => event.sessionId !== session.id)).toBe(true)
+    } finally {
+      if (savedHome === undefined) delete process.env.RAVENCLAW_HOME
+      else process.env.RAVENCLAW_HOME = savedHome
+    }
+  })
+
+  test('child persist_failed writes type persist_failed without prompt text', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'ravenclaw-agent-log-fail-'))
+    tempDirs.push(home)
+    const savedHome = process.env.RAVENCLAW_HOME
+    process.env.RAVENCLAW_HOME = home
+    try {
+      const store = createMemoryStore()
+      const session = makeSession()
+      await store.createSession(session)
+      store.persistAssistant = async () => {
+        throw new PersistError('locked', 'cannot persist')
+      }
+      const provider = createFakeProvider([textThenStop('should not leak')])
+      const { tool } = createTestAgent({ store, provider })
+      await tool.execute({ prompt: 'SECRET_PROMPT_BODY' }, makeCtx(makeTurn(session)))
+
+      const child = (await store.listSessions({ parentSessionId: session.id }))[0]
+      expect(child).toBeDefined()
+      const raw = readFileSync(join(home, 'logs', 'ravenclaw.log'), 'utf8')
+      expect(raw).not.toContain('SECRET_PROMPT_BODY')
+      expect(raw).not.toContain('should not leak')
+      expect(raw).not.toContain('"prompt"')
+      const events = raw
+        .split('\n')
+        .filter((line) => line !== '')
+        .map(
+          (line) =>
+            JSON.parse(line) as { type: string; sessionId?: string; reason?: string; error?: string },
+        )
+      expect(
+        events.some(
+          (event) =>
+            event.type === 'round_end' &&
+            event.sessionId === child!.id &&
+            event.reason === 'persist_failed',
+        ),
+      ).toBe(true)
+      const failed = events.find((event) => event.type === 'persist_failed')
+      expect(failed).toMatchObject({ type: 'persist_failed', sessionId: child!.id })
+      expect(failed?.error).toBe('cannot persist')
+    } finally {
+      if (savedHome === undefined) delete process.env.RAVENCLAW_HOME
+      else process.env.RAVENCLAW_HOME = savedHome
+    }
+  })
+
   test('isolation worktree falls back to parent cwd when not a git repo', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-agent-nowt-'))
     tempDirs.push(cwd)
