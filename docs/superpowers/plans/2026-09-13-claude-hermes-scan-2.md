@@ -78,6 +78,8 @@ Discord rewrite, `execute_code`, Electron, `bypass` / yolo, streaming tool execu
 
 ### L20. MCP orphan reaper
 
+**Status.** Done.
+
 **Why.** Hermes `tools/mcp_death_supervisor.py`: one supervisor holds a pipe write-end; parent death including SIGKILL closes the pipe → SIGTERM then SIGKILL of registered stdio MCP process groups. RavenClaw `packages/cli/src/engine.ts` `mcpCloser` runs only on clean shutdown. Hard-killed CLI leaks MCP children (macOS has no `PR_SET_PDEATHSIG`).
 
 **Contract.** Spawn one tiny supervisor per CLI process (or a detached `setsid` helper). Register each stdio MCP pgid. Clean `close()` unregisters. On EOF, TERM + 3s + KILL. HTTP/SSE servers are not spawned — skip. Do not wrap each server in its own Node.

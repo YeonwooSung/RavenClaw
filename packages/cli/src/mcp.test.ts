@@ -68,6 +68,7 @@ function fakeTransportListing(tools: Array<{ name: string; description?: string 
 function fakeMcpChild(tools: Array<{ name: string }>): McpChild & {
   writes: string[]
   killed: boolean
+  pid?: number
 } {
   const stdout = new EventEmitter()
   const writes: string[] = []
@@ -144,7 +145,7 @@ describe('spawnMcpServer', () => {
     const calls: Array<{
       command: string
       args: readonly string[]
-      options: { stdio: ['pipe', 'pipe', 'ignore']; env: NodeJS.ProcessEnv }
+      options: { stdio: ['pipe', 'pipe', 'ignore']; env: NodeJS.ProcessEnv; detached?: boolean }
     }> = []
     const child = fakeMcpChild([])
     const spawnFn: McpSpawnFn = (command, args, options) => {
@@ -166,6 +167,7 @@ describe('spawnMcpServer', () => {
     expect(calls[0]?.command).toBe('npx')
     expect(calls[0]?.args).toEqual(['-y', '@modelcontextprotocol/server-filesystem', '.'])
     expect(calls[0]?.options.stdio).toEqual(['pipe', 'pipe', 'ignore'])
+    expect(calls[0]?.options.detached).toBe(true)
     expect(calls[0]?.options.env.FOO).toBe('bar')
     expect(calls[0]?.options.env.PATH).toBe(process.env.PATH)
   })
@@ -357,6 +359,31 @@ describe('loadConfiguredMcpTools', () => {
     expect(Date.now() - started).toBeLessThan(4_000)
     expect(loaded.slots()).toEqual([{ name: 'late', state: 'connecting' }])
     await loaded.close()
+  })
+
+  test('registers stdio pgid and unregisters on close', async () => {
+    const ops: string[] = []
+    const child = fakeMcpChild([{ name: 'mcp_ping' }])
+    child.pid = 4242
+    const loaded = await loadConfiguredMcpTools([{ name: 'stdio', command: 'fake-mcp' }], {
+      spawn: () => child,
+      reaper: {
+        register(pgid) {
+          ops.push(`add:${pgid}`)
+        },
+        unregister(pgid) {
+          ops.push(`del:${pgid}`)
+        },
+        close() {
+          ops.push('close')
+        },
+      },
+    })
+    expect(ops).toEqual(['add:4242'])
+    expect(loaded.tools.map((tool) => tool.name)).toContain('mcp_ping')
+    await loaded.close()
+    expect(ops).toEqual(['add:4242', 'del:4242', 'close'])
+    expect(child.killed).toBe(true)
   })
 })
 

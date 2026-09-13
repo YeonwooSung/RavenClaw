@@ -14,6 +14,7 @@ import {
   type McpToolBridge,
   type Tool,
 } from '@ravenclaw/core'
+import { createMcpReaper, type McpReaper } from './mcp-reaper'
 
 export interface McpChild {
   stdin: {
@@ -25,6 +26,7 @@ export interface McpChild {
     off?(event: 'data', listener: (chunk: Buffer | string) => void): unknown
   } | null
   kill?: (signal?: NodeJS.Signals) => boolean
+  pid?: number
   on?(event: 'error' | 'exit', listener: (...args: unknown[]) => void): unknown
   off?(event: 'error' | 'exit', listener: (...args: unknown[]) => void): unknown
 }
@@ -32,7 +34,7 @@ export interface McpChild {
 export type McpSpawnFn = (
   command: string,
   args: readonly string[],
-  options: { stdio: ['pipe', 'pipe', 'ignore']; env: NodeJS.ProcessEnv },
+  options: { stdio: ['pipe', 'pipe', 'ignore']; env: NodeJS.ProcessEnv; detached?: boolean },
 ) => McpChild
 
 export interface McpLoadError {
@@ -73,6 +75,7 @@ export function spawnMcpServer(
   if (!server.command) throw new Error('mcp stdio missing command')
   return spawnFn(server.command, server.args ?? [], {
     stdio: ['pipe', 'pipe', 'ignore'],
+    detached: true,
     env: { ...process.env, ...server.env },
   })
 }
@@ -98,16 +101,17 @@ function boundConnect(work: Promise<void>, ms: number): Promise<void> {
 
 export async function loadConfiguredMcpTools(
   servers: McpServerConfig[],
-  opts?: { spawn?: McpSpawnFn; elicit?: McpElicitFn },
+  opts?: { spawn?: McpSpawnFn; elicit?: McpElicitFn; reaper?: McpReaper },
 ): Promise<LoadedMcpTools> {
   const spawnFn = opts?.spawn ?? (spawn as unknown as McpSpawnFn)
   const elicit = opts?.elicit
+  const reaper = opts?.reaper ?? createMcpReaper()
   const slots: InternalMcpSlot[] = servers.map((server) => ({
     server,
     state: 'connecting',
     tools: [],
   }))
-  await Promise.all(slots.map((slot) => connectSlot(slot, spawnFn, elicit)))
+  await Promise.all(slots.map((slot) => connectSlot(slot, spawnFn, elicit, reaper)))
   const snapshot = collectMcpSnapshot(slots)
   const pool: LoadedMcpTools = {
     tools: snapshot.tools,
@@ -122,7 +126,9 @@ export async function loadConfiguredMcpTools(
       if (retry.length > 0) {
         try {
           await Promise.all(
-            retry.map((slot) => boundConnect(connectSlot(slot, spawnFn, elicit), MCP_REFRESH_WAIT_MS)),
+            retry.map((slot) =>
+              boundConnect(connectSlot(slot, spawnFn, elicit, reaper), MCP_REFRESH_WAIT_MS),
+            ),
           )
         } catch {
           // one dead server must not abort the session
@@ -135,23 +141,27 @@ export async function loadConfiguredMcpTools(
       return next.tools.filter((tool) => !before.has(tool.name))
     },
     async close() {
-      await Promise.all(
-        slots.map(async (slot) => {
-          if (slot.inflight) {
-            try {
-              await boundConnect(slot.inflight, MCP_CLOSE_WAIT_MS)
-            } catch {
-              // still connecting
+      try {
+        await Promise.all(
+          slots.map(async (slot) => {
+            if (slot.inflight) {
+              try {
+                await boundConnect(slot.inflight, MCP_CLOSE_WAIT_MS)
+              } catch {
+                // still connecting
+              }
             }
-          }
-          if (!slot.close) return
-          try {
-            await slot.close()
-          } catch {
-            // fail-open
-          }
-        }),
-      )
+            if (!slot.close) return
+            try {
+              await slot.close()
+            } catch {
+              // fail-open
+            }
+          }),
+        )
+      } finally {
+        reaper.close()
+      }
     },
   }
   return pool
@@ -160,14 +170,15 @@ export async function loadConfiguredMcpTools(
 async function connectSlot(
   slot: InternalMcpSlot,
   spawnFn: McpSpawnFn,
-  elicit?: McpElicitFn,
+  elicit: McpElicitFn | undefined,
+  reaper: McpReaper,
 ): Promise<void> {
   if (slot.inflight) return slot.inflight
   slot.state = 'connecting'
   slot.inflight = (async () => {
     const previousClose = slot.close
     try {
-      const loaded = await loadOneMcpServer(slot.server, spawnFn, elicit)
+      const loaded = await loadOneMcpServer(slot.server, spawnFn, elicit, reaper)
       if (previousClose) {
         try {
           await previousClose()
@@ -226,12 +237,13 @@ interface ConnectedMcpServer {
 async function loadOneMcpServer(
   server: McpServerConfig,
   spawnFn: McpSpawnFn,
-  elicit?: McpElicitFn,
+  elicit: McpElicitFn | undefined,
+  reaper: McpReaper,
 ): Promise<ConnectedMcpServer> {
   if (server.type === 'http' || server.type === 'sse' || (server.url && !server.command)) {
     return loadHttpMcpServer(server, elicit)
   }
-  return loadStdioMcpServer(server, spawnFn, elicit)
+  return loadStdioMcpServer(server, spawnFn, elicit, reaper)
 }
 
 async function loadHttpMcpServer(
@@ -291,7 +303,8 @@ async function loadHttpMcpServer(
 async function loadStdioMcpServer(
   server: McpServerConfig,
   spawnFn: McpSpawnFn,
-  elicit?: McpElicitFn,
+  elicit: McpElicitFn | undefined,
+  reaper: McpReaper,
 ): Promise<ConnectedMcpServer> {
   const child = spawnMcpServer(server, spawnFn)
   if (!child.stdin || !child.stdout) {
@@ -308,7 +321,10 @@ async function loadStdioMcpServer(
     stdout: child.stdout,
   })
   const bridge = createMcpToolBridge(transport, elicit !== undefined ? { elicit } : undefined)
+  const pgid = typeof child.pid === 'number' && child.pid > 0 ? child.pid : undefined
+  if (pgid !== undefined) reaper.register(pgid)
   const close = async () => {
+    if (pgid !== undefined) reaper.unregister(pgid)
     try {
       await bridge.close()
     } catch {
