@@ -30,4 +30,9 @@ describe('htmlToMarkdown', () => {
     expect(md).not.toContain('color:red')
     expect(md).not.toMatch(/<script|<style|<h1/i)
   })
+
+  test('drops out-of-range numeric entities instead of throwing', () => {
+    expect(htmlToMarkdown('<p>ok&#1114112;still</p>')).toBe('okstill')
+    expect(htmlToMarkdown('<p>A&#65;Z</p>')).toBe('AAZ')
+  })
 })
