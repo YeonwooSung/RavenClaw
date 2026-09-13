@@ -80,6 +80,8 @@ Discord rewrite, `execute_code`, Electron, `bypass` / yolo, streaming tool execu
 
 ### L21. macOS prevent-sleep during a live turn
 
+**Status.** Done.
+
 **Why.** Claude `src/services/preventSleep.ts`: refcounted `caffeinate -t 300`, restart before expiry, so a laptop does not sleep mid-Bash / mid-stream. RavenClaw has none. Overnight TUI / `exec` / cron on a closed Mac dies.
 
 **Contract.** On `queryLoop` start (or first `submitMessage` of a live turn), `startPreventSleep()`. On round end / abort / process exit, `stopPreventSleep()`. macOS only; no-op elsewhere. Timeout self-heals if the CLI is SIGKILL’d. No Windows / systemd inhibit.

@@ -77,6 +77,7 @@ import {
   type Tool,
 } from '@ravenclaw/core'
 import { createProvider } from '@ravenclaw/providers'
+import { startPreventSleep, stopPreventSleep } from './prevent-sleep'
 import { probeEntitlement, type Entitlement } from '@ravenclaw/ads'
 import { includedCapReached, tryRecordIncludedSession } from './included-usage'
 import { loadConfiguredMcpTools, type McpSpawnFn } from './mcp'
@@ -1034,7 +1035,7 @@ function attachRavenclawLog(engine: SessionEngine, log: RavenclawLog): SessionEn
       return engine.fileHistory
     },
     submitMessage(input) {
-      return logSubmit(engine.submitMessage(input), engine.session.id, log)
+      return withPreventSleep(logSubmit(engine.submitMessage(input), engine.session.id, log))
     },
     enqueueSteer(text) {
       engine.enqueueSteer(text)
@@ -1064,6 +1065,17 @@ function attachRavenclawLog(engine: SessionEngine, log: RavenclawLog): SessionEn
         log.close()
       }
     },
+  }
+}
+
+async function* withPreventSleep(
+  gen: AsyncGenerator<StreamEvent, RoundEnd>,
+): AsyncGenerator<StreamEvent, RoundEnd> {
+  startPreventSleep()
+  try {
+    return yield* gen
+  } finally {
+    stopPreventSleep()
   }
 }
 
