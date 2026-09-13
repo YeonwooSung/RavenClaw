@@ -83,6 +83,24 @@ describe('Fetch', () => {
     expect(capped.startsWith('x'.repeat(1000))).toBe(true)
   })
 
+  test('converts HTML to markdown before the 100k cap and leaves non-HTML unchanged', async () => {
+    globalThis.fetch = (async () =>
+      new Response('<html><h1>Hello</h1><script>alert(1)</script><p>See <a href="https://ex.test">link</a></p></html>', {
+        status: 200,
+        headers: { 'Content-Type': 'text/html; charset=utf-8' },
+      })) as typeof fetch
+    const html = await fetchTool.execute({ url: 'https://example.com/doc' }, makeCtx())
+    expect(html).toContain('# Hello')
+    expect(html).toContain('[link](https://ex.test)')
+    expect(html).not.toContain('alert(1)')
+    expect(html).not.toContain('<h1>')
+
+    globalThis.fetch = (async () =>
+      new Response('{"ok":true}', { status: 200, headers: { 'Content-Type': 'application/json' } })) as typeof fetch
+    const json = await fetchTool.execute({ url: 'https://example.com/api' }, makeCtx())
+    expect(json).toBe('{"ok":true}')
+  })
+
   test('execute reports blocked and failed URLs without calling fetch for local hosts', async () => {
     let calls = 0
     globalThis.fetch = (async () => {

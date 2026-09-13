@@ -1,5 +1,6 @@
 import { lookup } from 'node:dns/promises'
 import type { Tool, ToolContext } from '../types'
+import { htmlToMarkdown, isHtmlPayload } from './html-to-md'
 import { parseWithSchema } from './parse'
 
 export interface FetchInput {
@@ -52,7 +53,10 @@ export const fetchTool: Tool<FetchInput, string> = {
     try {
       const response = await fetchValidated(input.url, signal)
       if (response === undefined) return 'Fetch failed: redirected to a blocked URL'
-      const text = await response.text()
+      const raw = await response.text()
+      const text = isHtmlPayload(response.headers.get('content-type'), raw)
+        ? htmlToMarkdown(raw)
+        : raw
       if (text.length > FETCH_CHAR_CAP) return text.slice(0, FETCH_CHAR_CAP) + TRUNCATION_NOTE
       return text
     } catch (error) {

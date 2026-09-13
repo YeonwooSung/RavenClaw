@@ -54,6 +54,8 @@ Discord rewrite, `execute_code`, Electron, `bypass` / yolo, streaming tool execu
 
 ### L18. Fetch HTML → markdown (no second LLM)
 
+**Status.** Done.
+
 **Why.** Claude WebFetch converts HTML to markdown before the cap. RavenClaw `packages/core/src/tools/fetch.ts` returns raw `response.text()`. Doc pages burn the 100k cap on chrome. Do **not** steal Claude’s extra `prompt` field (a second model call).
 
 **Contract.** If `Content-Type` is HTML (or the body starts with `<!doctype html` / `<html`), convert to markdown locally (headings, links, code, lists; strip script/style). Then apply the existing 100k cap. Non-HTML unchanged. Still https-only / SSRF-closed. Still deferred unless `tools.network`.
