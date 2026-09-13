@@ -262,6 +262,21 @@ describe('Edit', () => {
     expect(readFileSync(join(root, 'note.txt'), 'utf8')).toBe('say "goodbye"\n')
   })
 
+  test('matches an ellipsis after a leading period', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'note.txt'), 'see.\u2026end\n')
+    const ctx = makeCtx(root)
+    ctx.turn.readFiles.add(resolvedOf(root, 'note.txt'))
+
+    const out = await editTool.execute(
+      { path: 'note.txt', old_string: '...', new_string: '---' },
+      ctx,
+    )
+    expect(typeof out).toBe('string')
+    expect(out.toLowerCase()).not.toMatch(/fail|error|deny/)
+    expect(readFileSync(join(root, 'note.txt'), 'utf8')).toBe('see.---end\n')
+  })
+
   test('still fails when fold-equivalent old_string is not unique', async () => {
     const root = fixtureRoot()
     writeFileSync(join(root, 'note.txt'), 'say \u201Chello\u201D and say \u201Chello\u201D\n')

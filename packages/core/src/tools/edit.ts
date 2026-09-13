@@ -209,7 +209,7 @@ function foldFlex(
     if (idx === -1) break
     const end = idx + foldedOld.length
     if (isFoldAligned(map, idx, end)) starts.push(idx)
-    from = idx + foldedOld.length
+    from = idx + 1
   }
   if (starts.length !== 1) {
     return { matches: starts.length, oldString, newString }
