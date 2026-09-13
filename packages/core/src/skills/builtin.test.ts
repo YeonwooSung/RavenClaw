@@ -3,7 +3,7 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { builtinSkillsRoot, parseSkillFrontmatter } from '../tools/skill'
 
-const REQUIRED = ['review', 'test', 'commit', 'debug', 'tdd', 'plan', 'frontend-design']
+const REQUIRED = ['review', 'test', 'commit', 'debug', 'tdd', 'plan', 'frontend-design', 'mcp-builder']
 
 describe('builtin skills', () => {
   test('each bundled skill has name, description, and a body', () => {
