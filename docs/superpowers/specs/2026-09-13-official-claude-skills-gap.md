@@ -1,14 +1,14 @@
 # Official Claude skills vs RavenClaw builtins
 
 Date: 2026-09-13
-Status: approved for spec (not implemented)
+Status: implemented (optionals added)
 Source: https://github.com/anthropics/skills (`main` @ `34040c9`, 2026-09-10)
 
 ## Finding
 
 **None of the 19 official `anthropics/skills` names are RavenClaw builtins.** Name overlap is 0/19.
 
-RavenClaw ships a different set: coding-loop skills, not Claude.ai document/example plugins.
+RavenClaw ships a different set: coding-loop skills, not Claude.ai document/example plugins. Two optional clean-room skills share names with the official example set (`frontend-design`, `mcp-builder`) but are original RavenClaw prose.
 
 ## Official inventory (19)
 
@@ -30,12 +30,14 @@ Path: `packages/core/src/skills/builtin/<name>/SKILL.md`
 |---|---|
 | `commit` | Draft a conventional commit; do not push |
 | `debug` | Diagnose before editing |
+| `frontend-design` | Ask for one aesthetic before building or reshaping UI |
+| `mcp-builder` | Write a local MCP server this CLI can load |
 | `plan` | Short plan before edits |
 | `review` | Read-only review of recent edits |
 | `tdd` | Red-green-refactor |
 | `test` | Smallest tests for the change |
 
-`packages/core/src/skills/builtin.test.ts` requires exactly these six names and forbids the strings `Claude` and `Anthropic` in every builtin `SKILL.md`.
+`packages/core/src/skills/builtin.test.ts` pins exactly these eight names and forbids the strings `Claude` and `Anthropic` in every builtin `SKILL.md`.
 
 Related, not builtins: `/learn` already writes a project/user skill from the session (skill-creator contract). `/interview` already interviews before implementing (part of doc-coauthoring). `Read` already extracts text from `.docx` / `.xlsx` (not a full office suite).
 
@@ -62,17 +64,17 @@ Related, not builtins: `/learn` already writes a project/user skill from the ses
 - `skill-creator` → `/learn` + existing skill frontmatter rules.
 - `doc-coauthoring` → `/interview` + builtin `plan`.
 
-### Optional later (clean-room only, user must pick)
+### Optionals added (clean-room, user-picked)
 
-Short RavenClaw-authored skills (no copied prose), same shape as current builtins:
+Short RavenClaw-authored skills (no copied prose), same shape as the coding-loop builtins:
 
 1. `frontend-design` — distinctive UI direction when building or reshaping UI.
-2. `mcp-builder` — how to write an MCP server this repo can load (stdio, name-only config, no secrets in scan).
+2. `mcp-builder` — how to write an MCP server this repo can load (stdio with `command`/`args`, name+transport only in onboarding scans, no secrets in scan).
 
-Default recommendation: **do not add them**. The official set is not a checklist for RavenClaw builtins.
+These were optional follow-ups; the user explicitly chose to add both. The official set is still not a checklist for further builtins.
 
 ## Success
 
 - This spec names every official skill and a disposition.
-- Builtin count stays 6 unless the user explicitly chooses an optional skill.
+- Builtin count is 8 after the user-picked optionals (`frontend-design`, `mcp-builder`).
 - No official skill file is copied into the tree.

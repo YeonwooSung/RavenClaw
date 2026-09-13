@@ -4,7 +4,7 @@
 
 **Goal:** Record the official-vs-builtin audit and keep RavenClaw from copying or kitchen-sinking `anthropics/skills`.
 
-**Architecture:** The official repo is a Claude.ai plugin marketplace (document + example + product skills). RavenClaw builtins are six short coding-loop skills under `packages/core/src/skills/builtin/`. This plan does not port the 19 official folders. It locks the gap, the non-goals, and the only optional follow-ups.
+**Architecture:** The official repo is a Claude.ai plugin marketplace (document + example + product skills). RavenClaw builtins are eight short skills under `packages/core/src/skills/builtin/` (six coding-loop plus user-picked `frontend-design` and `mcp-builder`). This plan does not port the 19 official folders. It locks the gap, the non-goals, and the optional follow-ups that were added.
 
 **Tech Stack:** Existing skill loader (`discoverSkills`, `builtinSkillsRoot`), `builtin.test.ts`, Apache-2.0 tree.
 
