@@ -84,6 +84,8 @@ Discord rewrite, `execute_code`, Electron, `bypass` / yolo, streaming tool execu
 
 ### L22. Destructive-git note on Bash ask
 
+**Status.** Done.
+
 **Why.** Claude `src/tools/BashTool/destructiveCommandWarning.ts` adds a one-line note (`git push --force`, `git reset --hard`, `git clean -f`, `--no-verify`) on the permission prompt. It does not change allow/deny. RavenClaw `matchesDangerousPattern` is only `rm -rf /`, `curl|sh`, `dd`, `mkfs`, fork bomb — and `permission-dialog.tsx` prints only `event.message`. Design spec PR 5 already named this as unwired.
 
 **Contract.** If the command matches a destructive-git pattern, `checkPermissions` ask message includes the one-line note. Still leftover-ask (not a new deny). Dialog / ACP / Slack already render `message`. Do not expand `matchesDangerousPattern` into a yolo classifier.

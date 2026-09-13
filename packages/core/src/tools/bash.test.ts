@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ToolContext, Turn } from '../types'
 import { decidePermission } from '../permissions/pipeline'
-import { bashTool, createBashTool, matchesDangerousPattern } from './bash'
+import { bashTool, createBashTool, matchesDangerousPattern, matchesDestructiveGit } from './bash'
 
 const emptyRules = { session: [], user: [], project: [] }
 import type { TerminalBackend } from './terminal-backend'
@@ -69,6 +69,19 @@ describe('matchesDangerousPattern', () => {
   })
 })
 
+describe('matchesDestructiveGit', () => {
+  test('is true for force-push, hard reset, clean -f, and --no-verify', () => {
+    expect(matchesDestructiveGit('git push --force origin main')).toBe(true)
+    expect(matchesDestructiveGit('git push -f')).toBe(true)
+    expect(matchesDestructiveGit('git reset --hard HEAD')).toBe(true)
+    expect(matchesDestructiveGit('git clean -fd')).toBe(true)
+    expect(matchesDestructiveGit('git commit --no-verify -m skip')).toBe(true)
+    expect(matchesDestructiveGit('git status')).toBe(false)
+    expect(matchesDestructiveGit('git push origin main')).toBe(false)
+    expect(matchesDestructiveGit('ls -la')).toBe(false)
+  })
+})
+
 describe('Bash', () => {
   test('is an unsafe mutating tool that cancels on interrupt', async () => {
     expect(bashTool.name).toBe('Bash')
@@ -85,6 +98,20 @@ describe('Bash', () => {
     if (decision.behavior === 'ask') {
       expect(decision.message).toBe('Command matches a dangerous pattern')
     }
+  })
+
+  test('checkPermissions leftover-asks destructive git with a one-line note', async () => {
+    const decision = await bashTool.checkPermissions(
+      { command: 'git push --force origin main' },
+      makeCtx('/tmp'),
+    )
+    expect(decision.behavior).toBe('ask')
+    if (decision.behavior === 'ask') {
+      expect(decision.message).toContain('Run this command?')
+      expect(decision.message).toMatch(/force-push|hard-reset|clean -f|--no-verify/)
+      expect(decision.saveAs).toBe('session')
+    }
+    expect(matchesDangerousPattern('git push --force origin main')).toBe(false)
   })
 
   test('default mode leftover-allows clearly read-only echo', async () => {

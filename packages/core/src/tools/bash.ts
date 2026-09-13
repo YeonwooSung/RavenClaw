@@ -50,6 +50,21 @@ export function matchesDangerousPattern(command: string): boolean {
   return false
 }
 
+const DESTRUCTIVE_GIT_NOTE =
+  'Destructive git: this can force-push, hard-reset, clean -f, or skip hooks (--no-verify).'
+
+export function matchesDestructiveGit(command: string): boolean {
+  if (/\bgit\s+push\b[\s\S]*(?:--force\b|\s-f(?:\s|$))/.test(command)) return true
+  if (/\bgit\s+reset\b[\s\S]*--hard\b/.test(command)) return true
+  if (/\bgit\s+clean\b[\s\S]*-[a-zA-Z]*f/.test(command)) return true
+  if (/(?:^|\s)--no-verify\b/.test(command)) return true
+  return false
+}
+
+function askMessage(command: string, base: string): string {
+  return matchesDestructiveGit(command) ? `${base} ${DESTRUCTIVE_GIT_NOTE}` : base
+}
+
 export function createBashTool(backend: TerminalBackend): Tool<BashInput, BashResult> {
   return {
     name: 'Bash',
@@ -70,12 +85,20 @@ export function createBashTool(backend: TerminalBackend): Tool<BashInput, BashRe
     },
     async checkPermissions(input: BashInput) {
       if (matchesDangerousPattern(input.command)) {
-        return { behavior: 'ask', message: 'Command matches a dangerous pattern', saveAs: 'session' }
+        return {
+          behavior: 'ask',
+          message: askMessage(input.command, 'Command matches a dangerous pattern'),
+          saveAs: 'session',
+        }
       }
       if (isReadOnlyBashCommand(input.command)) {
         return { behavior: 'allow', reason: 'mode' }
       }
-      return { behavior: 'ask', message: 'Run this command?', saveAs: 'session' }
+      return {
+        behavior: 'ask',
+        message: askMessage(input.command, 'Run this command?'),
+        saveAs: 'session',
+      }
     },
     async execute(input: BashInput, ctx: ToolContext) {
       if (ctx.signal.aborted) throw abortError()
