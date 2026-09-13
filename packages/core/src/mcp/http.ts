@@ -75,14 +75,18 @@ export function createHttpMcpTransport(opts: HttpMcpTransportOpts): McpTransport
     return sseReady
   }
 
-  function dispatchSseMessage(parsed: JsonRpcMessage): void {
-    if (
+  function isServerRequest(parsed: JsonRpcMessage): boolean {
+    return (
       typeof parsed.method === 'string' &&
       parsed.id !== undefined &&
       parsed.result === undefined &&
       parsed.error === undefined
-    ) {
-      void answerServerRequest(parsed.method, parsed.params, parsed.id)
+    )
+  }
+
+  function dispatchSseMessage(parsed: JsonRpcMessage): void {
+    if (isServerRequest(parsed)) {
+      void answerServerRequest(parsed.method as string, parsed.params, parsed.id)
       return
     }
     if (parsed.id === undefined) return
@@ -213,7 +217,7 @@ export function createHttpMcpTransport(opts: HttpMcpTransportOpts): McpTransport
     }
     const ctype = res.headers.get('content-type') ?? ''
     if (ctype.includes('text/event-stream')) {
-      return readSseResult(res, body.id)
+      return readSseResult(res, body.id, dispatchSseMessage)
     }
     if (sseMode) {
       const text = await res.text()
@@ -322,25 +326,46 @@ function parseSseBlock(block: string): JsonRpcMessage | undefined {
   }
 }
 
-async function readSseResult(res: Response, id: unknown): Promise<unknown> {
-  const text = await res.text()
-  for (const block of text.split(/\n\n/)) {
-    const dataLines = block
-      .split('\n')
-      .filter((line) => line.startsWith('data:'))
-      .map((line) => line.slice(5).trim())
-    if (dataLines.length === 0) continue
-    try {
-      const parsed = JSON.parse(dataLines.join('\n')) as JsonRpcMessage
-      if (parsed.id !== id && parsed.id !== undefined) continue
-      if (parsed.error) throw new Error(parsed.error.message || 'MCP JSON-RPC error')
-      return parsed.result
-    } catch (error) {
-      if (error instanceof Error && error.message !== 'MCP JSON-RPC error') continue
-      throw error
+async function readSseResult(
+  res: Response,
+  id: unknown,
+  onMessage?: (message: JsonRpcMessage) => void,
+): Promise<unknown> {
+  return await new Promise<unknown>((resolve, reject) => {
+    const ac = new AbortController()
+    let settled = false
+    const finish = (fn: () => void): void => {
+      if (settled) return
+      settled = true
+      ac.abort()
+      fn()
     }
-  }
-  throw new Error('MCP SSE response missing result')
+    void consumeSseStream(
+      res,
+      (parsed) => {
+        if (
+          typeof parsed.method === 'string' &&
+          parsed.id !== undefined &&
+          parsed.result === undefined &&
+          parsed.error === undefined
+        ) {
+          onMessage?.(parsed)
+          return
+        }
+        if (parsed.id !== id && parsed.id !== undefined) return
+        if (parsed.error) {
+          finish(() => reject(new Error(parsed.error?.message || 'MCP JSON-RPC error')))
+          return
+        }
+        finish(() => resolve(parsed.result))
+      },
+      ac.signal,
+    ).then(() => {
+      finish(() => reject(new Error('MCP SSE response missing result')))
+    }).catch((error) => {
+      finish(() => reject(error instanceof Error ? error : new Error('MCP SSE response failed')))
+    })
+  })
 }
 
 function isAbortError(error: unknown): boolean {

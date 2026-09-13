@@ -30,6 +30,51 @@ describe('createHttpMcpTransport', () => {
     expect(calls[1]?.headers['mcp-session-id']).toBe('sess-1')
   })
 
+  test('POST SSE answers elicitation/create before the request result', async () => {
+    let elicitPosted: unknown
+    const enc = new TextEncoder()
+    const fetchImpl: typeof fetch = async (_input, init) => {
+      const raw = init?.body === undefined ? undefined : JSON.parse(String(init.body))
+      if (raw && typeof raw === 'object' && 'result' in raw) {
+        elicitPosted = raw
+        return new Response(null, { status: 202 })
+      }
+      const stream = new ReadableStream<Uint8Array>({
+        async start(controller) {
+          controller.enqueue(
+            enc.encode(
+              'data: {"jsonrpc":"2.0","id":99,"method":"elicitation/create","params":{"requestedSchema":{"type":"object","properties":{"ok":{"type":"boolean"}}}}}\n\n',
+            ),
+          )
+          const deadline = Date.now() + 500
+          while (elicitPosted === undefined && Date.now() < deadline) {
+            await new Promise((resolve) => setTimeout(resolve, 5))
+          }
+          controller.enqueue(enc.encode('data: {"jsonrpc":"2.0","id":1,"result":{"ok":true}}\n\n'))
+          controller.close()
+        },
+      })
+      return new Response(stream, {
+        status: 200,
+        headers: { 'content-type': 'text/event-stream' },
+      })
+    }
+    const transport = createHttpMcpTransport({ url: 'https://example.com/mcp', fetchImpl })
+    transport.setRequestHandler?.(async (method) => {
+      if (method !== 'elicitation/create') throw new Error('Method not found')
+      return { action: 'accept', content: { ok: true } }
+    })
+    await expect(transport.request('tools/call', { name: 'needs_confirm' })).resolves.toEqual({
+      ok: true,
+    })
+    expect(elicitPosted).toEqual({
+      jsonrpc: '2.0',
+      id: 99,
+      result: { action: 'accept', content: { ok: true } },
+    })
+    await transport.close()
+  })
+
   test('parses an SSE data frame', async () => {
     const fetchImpl: typeof fetch = async () =>
       new Response('event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"tools":[]}}\n\n', {
