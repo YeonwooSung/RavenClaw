@@ -143,6 +143,24 @@ describe('Edit', () => {
     expect(readFileSync(join(root, 'note.txt'), 'utf8')).toBe('changed\n')
   })
 
+  test('second Edit after a successful Edit is not treated as stale', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'note.txt'), 'alpha\nbeta\n')
+    const ctx = makeCtx(root)
+    await readTool.execute({ path: 'note.txt' }, ctx)
+    const first = await editTool.execute(
+      { path: 'note.txt', old_string: 'alpha', new_string: 'ALPHA' },
+      ctx,
+    )
+    expect(first.toLowerCase()).not.toMatch(/fail|error|deny|changed/)
+    const second = await editTool.execute(
+      { path: 'note.txt', old_string: 'beta', new_string: 'BETA' },
+      ctx,
+    )
+    expect(second.toLowerCase()).not.toMatch(/fail|error|deny|changed/)
+    expect(readFileSync(join(root, 'note.txt'), 'utf8')).toBe('ALPHA\nBETA\n')
+  })
+
   test('succeeds after readFiles.add(resolved) with a unique replace', async () => {
     const root = fixtureRoot()
     mkdirSync(join(root, 'src'))

@@ -193,6 +193,40 @@ describe('ApplyPatch', () => {
     expect(readFileSync(join(root, 'note.txt'), 'utf8')).toBe('mutated\nkeep\n')
   })
 
+  test('second update_file after a successful update is not treated as stale', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'note.txt'), 'hello world\nkeep\n')
+    const ctx = makeCtx(root)
+    await readTool.execute({ path: 'note.txt' }, ctx)
+    const first = await applyPatchTool.execute(
+      {
+        operations: [
+          {
+            type: 'update_file',
+            path: 'note.txt',
+            diff: ['@@ -1,2 +1,2 @@', '-hello world', '+hello raven', ' keep', ''].join('\n'),
+          },
+        ],
+      },
+      ctx,
+    )
+    expect(first).toBe('updated note.txt')
+    const second = await applyPatchTool.execute(
+      {
+        operations: [
+          {
+            type: 'update_file',
+            path: 'note.txt',
+            diff: ['@@ -1,2 +1,2 @@', '-hello raven', '+hello claw', ' keep', ''].join('\n'),
+          },
+        ],
+      },
+      ctx,
+    )
+    expect(second).toBe('updated note.txt')
+    expect(readFileSync(join(root, 'note.txt'), 'utf8')).toBe('hello claw\nkeep\n')
+  })
+
   test('update_file applies a single unified hunk after Read', async () => {
     const root = fixtureRoot()
     writeFileSync(join(root, 'note.txt'), 'hello world\nkeep\n')

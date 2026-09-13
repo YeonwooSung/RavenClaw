@@ -4,7 +4,7 @@ import type { Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
 import { appendLintBlock, lintWrittenFile } from './lint'
 import { isHardDeniedWritePath, resolveWritePath } from './write'
-import { isStaleSinceRead } from './read-files'
+import { isStaleSinceRead, markReadPath } from './read-files'
 
 export interface EditInput {
   path: string
@@ -89,6 +89,7 @@ export const editTool: Tool<EditInput, string> = {
       const message = error instanceof Error ? error.message : String(error)
       return `Edit failed: ${message}`
     }
+    markReadPath(ctx.turn, resolved)
     return appendLintBlock(`Updated ${input.path}`, [lintWrittenFile(resolved, ctx.turn.cwd)])
   },
 }

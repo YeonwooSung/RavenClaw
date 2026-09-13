@@ -4,7 +4,7 @@ import type { Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
 import { appendLintBlock, lintWrittenFile } from './lint'
 import { isHardDeniedWritePath, resolveWritePath } from './write'
-import { isStaleSinceRead } from './read-files'
+import { isStaleSinceRead, markReadPath } from './read-files'
 
 export type ApplyPatchOp =
   | { type: 'create_file'; path: string; diff: string }
@@ -151,6 +151,7 @@ function updateFile(
   } catch (error) {
     return { ok: false, message: errorMessage(error) }
   }
+  markReadPath(ctx.turn, resolved)
   return { ok: true, action: `updated ${inputPath}` }
 }
 
