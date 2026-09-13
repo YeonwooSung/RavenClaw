@@ -275,7 +275,6 @@ export function createSessionTools(opts: {
     always.push(
       createToolSearchTool({
         deferred,
-        unlock() {},
       }),
       toolCallTool,
     )

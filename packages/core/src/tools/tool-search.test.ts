@@ -62,8 +62,8 @@ const pool = [
   stubTool('Glob', 'Find files by glob pattern'),
 ]
 
-function searchTool(pool: Tool[], unlock: (names: string[]) => void = () => {}) {
-  return createToolSearchTool({ deferred: pool, unlock })
+function searchTool(pool: Tool[]) {
+  return createToolSearchTool({ deferred: pool })
 }
 
 describe('ToolSearch', () => {
@@ -87,18 +87,14 @@ describe('ToolSearch', () => {
   })
 
   test('select: returns existing names from the pool', async () => {
-    const unlocked: string[] = []
     const ctx = makeCtx()
-    const selecting = searchTool(pool, (names) => {
-      unlocked.push(...names)
-    })
+    const selecting = searchTool(pool)
     const out = await selecting.execute({ query: 'select:Edit,Missing,bash' }, ctx)
     const lines = out.split('\n')
     expect(lines[0]?.startsWith('Edit — ')).toBe(true)
     expect(lines[1]?.startsWith('Bash — ')).toBe(true)
     expect(out).not.toContain('Missing')
     expect(lines[lines.length - 1]).toBe('total 4 deferred')
-    expect(unlocked).toEqual([])
     expect(ctx.turn.unlockedToolNames).toBeUndefined()
   })
 
@@ -106,9 +102,7 @@ describe('ToolSearch', () => {
     const mcp = stubTool('mcp_ping', 'Ping a deferred MCP server')
     mcp.isEnabled = (ctx) => ctx.turn.unlockedToolNames?.includes('mcp_ping') === true
     const ctx = makeCtx()
-    const search = searchTool([mcp], (names) => {
-      throw new Error(`unlock should not run: ${names.join(',')}`)
-    })
+    const search = searchTool([mcp])
     const catalog = [search, mcp]
     expect(filterToolsForTurn(catalog, ctx.turn).map((tool) => tool.name)).toEqual(['ToolSearch'])
     const out = await search.execute({ query: 'select:mcp_ping' }, ctx)

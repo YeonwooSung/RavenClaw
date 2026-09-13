@@ -8,7 +8,6 @@ export interface ToolSearchInput {
 
 export interface ToolSearchOpts {
   deferred: Tool[]
-  unlock(names: string[]): void
 }
 
 const DEFAULT_MAX = 5
