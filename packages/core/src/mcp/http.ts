@@ -1,4 +1,4 @@
-import type { McpTransport, McpTransportHealth } from './types'
+import type { McpRequestHandler, McpTransport, McpTransportHealth } from './types'
 import { MCP_AUTH_REQUIRED } from './oauth'
 
 export interface HttpMcpTransportOpts {
@@ -21,8 +21,10 @@ type PendingWaiter = {
 
 type JsonRpcMessage = {
   id?: unknown
+  method?: string
+  params?: unknown
   result?: unknown
-  error?: { message?: string }
+  error?: { code?: number; message?: string }
 }
 
 export function createHttpMcpTransport(opts: HttpMcpTransportOpts): McpTransport {
@@ -34,6 +36,7 @@ export function createHttpMcpTransport(opts: HttpMcpTransportOpts): McpTransport
   let health: McpTransportHealth = 'connecting'
   const pending = new Map<unknown, PendingWaiter>()
   const buffered = new Map<unknown, { result?: unknown; error?: Error }>()
+  let onRequest: McpRequestHandler | undefined
   let sseAbort: AbortController | undefined
   let sseReady: Promise<void> | undefined
 
@@ -73,6 +76,15 @@ export function createHttpMcpTransport(opts: HttpMcpTransportOpts): McpTransport
   }
 
   function dispatchSseMessage(parsed: JsonRpcMessage): void {
+    if (
+      typeof parsed.method === 'string' &&
+      parsed.id !== undefined &&
+      parsed.result === undefined &&
+      parsed.error === undefined
+    ) {
+      void answerServerRequest(parsed.method, parsed.params, parsed.id)
+      return
+    }
     if (parsed.id === undefined) return
     const error =
       parsed.error !== undefined
@@ -120,6 +132,29 @@ export function createHttpMcpTransport(opts: HttpMcpTransportOpts): McpTransport
         },
       })
     })
+  }
+
+  async function answerServerRequest(
+    method: string,
+    params: unknown,
+    id: unknown,
+  ): Promise<void> {
+    const payload: Record<string, unknown> = { jsonrpc: '2.0', id }
+    if (!onRequest) {
+      payload.error = { code: -32601, message: 'Method not found' }
+      await send(payload, false).catch(() => undefined)
+      return
+    }
+    try {
+      payload.result = await onRequest(method, params)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Internal error'
+      payload.error = {
+        code: /not found/i.test(message) ? -32601 : -32603,
+        message,
+      }
+    }
+    await send(payload, false).catch(() => undefined)
   }
 
   function rejectAllPending(error: Error): void {
@@ -194,6 +229,9 @@ export function createHttpMcpTransport(opts: HttpMcpTransportOpts): McpTransport
   }
 
   return {
+    setRequestHandler(handler) {
+      onRequest = handler
+    },
     request(method, params, reqOpts) {
       const id = nextId++
       const payload: Record<string, unknown> = { jsonrpc: '2.0', id, method }

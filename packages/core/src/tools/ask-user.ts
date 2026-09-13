@@ -11,6 +11,8 @@ export interface AskUserQuestion {
   header?: string
   options: AskUserOption[]
   multiSelect?: boolean
+  /** Host-only free text (MCP elicitation). The AskUser tool schema still requires options. */
+  freeText?: boolean
 }
 
 export interface AskUserInput {
@@ -60,6 +62,7 @@ export function formatAskUserPrompt(input: AskUserInput): string {
       const title = q.header !== undefined && q.header !== '' ? `${q.header}: ${q.question}` : q.question
       const multi = q.multiSelect === true ? ' (multi-select)' : ''
       const head = `${index + 1}. ${title}${multi}`
+      if (q.freeText === true) return [head, '   (type your answer)'].join('\n')
       const opts = q.options.map((opt, optIndex) => {
         const marker = `${String.fromCharCode(97 + optIndex)})`
         if (opt.description !== undefined && opt.description !== '') {

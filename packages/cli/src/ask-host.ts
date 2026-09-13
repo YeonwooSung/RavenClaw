@@ -1,4 +1,12 @@
-import { formatAskUserPrompt, type AskUserFn, type AskUserInput } from '@ravenclaw/core'
+import {
+  askUserTextToElicitContent,
+  formatAskUserPrompt,
+  mcpElicitToAskUser,
+  type AskUserFn,
+  type AskUserInput,
+  type McpElicitParams,
+  type McpElicitResult,
+} from '@ravenclaw/core'
 
 const INVALID = 'AskUser: invalid choice'
 const REPLY_HINT = 'reply with a/b or 1/2'
@@ -6,6 +14,7 @@ const REPLY_HINT = 'reply with a/b or 1/2'
 export interface AskUserBridge {
   ask(input: AskUserInput, signal: AbortSignal): Promise<string>
   bind(fn: AskUserFn): void
+  bound(): boolean
 }
 
 export function parseAskUserAnswer(input: AskUserInput, line: string): string {
@@ -43,6 +52,23 @@ export function createAskUserBridge(): AskUserBridge {
     bind(fn) {
       impl = fn
     },
+    bound() {
+      return impl !== undefined
+    },
+  }
+}
+
+export async function elicitViaAskUser(
+  host: AskUserBridge,
+  params: McpElicitParams,
+  signal: AbortSignal,
+): Promise<McpElicitResult> {
+  if (!host.bound()) return { action: 'cancel' }
+  try {
+    const text = await host.ask(mcpElicitToAskUser(params), signal)
+    return askUserTextToElicitContent(params, text)
+  } catch {
+    return { action: 'cancel' }
   }
 }
 
@@ -61,6 +87,10 @@ function splitAnswerSegments(questions: AskQuestion[], line: string): string[] |
 }
 
 function resolveQuestion(question: AskQuestion, segment: string): string[] | undefined {
+  if (question.freeText === true) {
+    const text = segment.trim()
+    return text === '' ? undefined : [text]
+  }
   const tokens =
     question.multiSelect === true
       ? segment

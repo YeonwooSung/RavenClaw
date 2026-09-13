@@ -6,11 +6,42 @@ export interface McpRequestOpts {
 
 export type McpTransportHealth = 'connecting' | 'ready' | 'dead'
 
+export type McpRequestHandler = (method: string, params: unknown) => Promise<unknown>
+
+export type McpElicitAction = 'accept' | 'decline' | 'cancel'
+
+export interface McpElicitField {
+  type: 'string' | 'number' | 'integer' | 'boolean'
+  title?: string
+  description?: string
+  enum?: Array<string | number>
+}
+
+export interface McpElicitSchema {
+  type: 'object'
+  properties: Record<string, McpElicitField>
+  required?: string[]
+}
+
+export interface McpElicitParams {
+  message: string
+  requestedSchema: McpElicitSchema
+}
+
+export interface McpElicitResult {
+  action: McpElicitAction
+  content?: Record<string, string | number | boolean>
+}
+
+export type McpElicitFn = (params: McpElicitParams, signal: AbortSignal) => Promise<McpElicitResult>
+
 export interface McpTransport {
   request(method: string, params?: unknown, opts?: McpRequestOpts): Promise<unknown>
   notify?(method: string, params?: unknown): Promise<void>
   close(): Promise<void>
   health?(): McpTransportHealth
+  /** Server-initiated JSON-RPC (elicitation/create). Unset methods fail closed. */
+  setRequestHandler?(handler: McpRequestHandler | undefined): void
 }
 
 export interface McpToolDescriptor {

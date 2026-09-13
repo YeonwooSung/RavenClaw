@@ -9,6 +9,7 @@ import {
   loadMcpTools,
   ravenclawHome,
   refreshMcpOAuth,
+  type McpElicitFn,
   type McpServerConfig,
   type McpToolBridge,
   type Tool,
@@ -97,15 +98,16 @@ function boundConnect(work: Promise<void>, ms: number): Promise<void> {
 
 export async function loadConfiguredMcpTools(
   servers: McpServerConfig[],
-  opts?: { spawn?: McpSpawnFn },
+  opts?: { spawn?: McpSpawnFn; elicit?: McpElicitFn },
 ): Promise<LoadedMcpTools> {
   const spawnFn = opts?.spawn ?? (spawn as unknown as McpSpawnFn)
+  const elicit = opts?.elicit
   const slots: InternalMcpSlot[] = servers.map((server) => ({
     server,
     state: 'connecting',
     tools: [],
   }))
-  await Promise.all(slots.map((slot) => connectSlot(slot, spawnFn)))
+  await Promise.all(slots.map((slot) => connectSlot(slot, spawnFn, elicit)))
   const snapshot = collectMcpSnapshot(slots)
   const pool: LoadedMcpTools = {
     tools: snapshot.tools,
@@ -120,7 +122,7 @@ export async function loadConfiguredMcpTools(
       if (retry.length > 0) {
         try {
           await Promise.all(
-            retry.map((slot) => boundConnect(connectSlot(slot, spawnFn), MCP_REFRESH_WAIT_MS)),
+            retry.map((slot) => boundConnect(connectSlot(slot, spawnFn, elicit), MCP_REFRESH_WAIT_MS)),
           )
         } catch {
           // one dead server must not abort the session
@@ -155,13 +157,17 @@ export async function loadConfiguredMcpTools(
   return pool
 }
 
-async function connectSlot(slot: InternalMcpSlot, spawnFn: McpSpawnFn): Promise<void> {
+async function connectSlot(
+  slot: InternalMcpSlot,
+  spawnFn: McpSpawnFn,
+  elicit?: McpElicitFn,
+): Promise<void> {
   if (slot.inflight) return slot.inflight
   slot.state = 'connecting'
   slot.inflight = (async () => {
     const previousClose = slot.close
     try {
-      const loaded = await loadOneMcpServer(slot.server, spawnFn)
+      const loaded = await loadOneMcpServer(slot.server, spawnFn, elicit)
       if (previousClose) {
         try {
           await previousClose()
@@ -220,14 +226,18 @@ interface ConnectedMcpServer {
 async function loadOneMcpServer(
   server: McpServerConfig,
   spawnFn: McpSpawnFn,
+  elicit?: McpElicitFn,
 ): Promise<ConnectedMcpServer> {
   if (server.type === 'http' || server.type === 'sse' || (server.url && !server.command)) {
-    return loadHttpMcpServer(server)
+    return loadHttpMcpServer(server, elicit)
   }
-  return loadStdioMcpServer(server, spawnFn)
+  return loadStdioMcpServer(server, spawnFn, elicit)
 }
 
-async function loadHttpMcpServer(server: McpServerConfig): Promise<ConnectedMcpServer> {
+async function loadHttpMcpServer(
+  server: McpServerConfig,
+  elicit?: McpElicitFn,
+): Promise<ConnectedMcpServer> {
   if (!server.url) throw new Error('mcp http missing url')
   const transport = createHttpMcpTransport({
     url: server.url,
@@ -261,7 +271,7 @@ async function loadHttpMcpServer(server: McpServerConfig): Promise<ConnectedMcpS
         }
       : {}),
   })
-  const bridge = createMcpToolBridge(transport)
+  const bridge = createMcpToolBridge(transport, elicit !== undefined ? { elicit } : undefined)
   const close = async () => {
     try {
       await bridge.close()
@@ -281,6 +291,7 @@ async function loadHttpMcpServer(server: McpServerConfig): Promise<ConnectedMcpS
 async function loadStdioMcpServer(
   server: McpServerConfig,
   spawnFn: McpSpawnFn,
+  elicit?: McpElicitFn,
 ): Promise<ConnectedMcpServer> {
   const child = spawnMcpServer(server, spawnFn)
   if (!child.stdin || !child.stdout) {
@@ -296,7 +307,7 @@ async function loadStdioMcpServer(
     stdin: child.stdin,
     stdout: child.stdout,
   })
-  const bridge = createMcpToolBridge(transport)
+  const bridge = createMcpToolBridge(transport, elicit !== undefined ? { elicit } : undefined)
   const close = async () => {
     try {
       await bridge.close()

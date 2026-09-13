@@ -1,6 +1,6 @@
 import { join } from 'node:path'
 import { filterToolsByAllowList } from './allowed-tools'
-import { createAskUserBridge, type AskUserBridge } from './ask-host'
+import { createAskUserBridge, elicitViaAskUser, type AskUserBridge } from './ask-host'
 import {
   bashTool,
   buildSystemParts,
@@ -481,6 +481,11 @@ async function finishOpenEngine(
   if (servers.length > 0) {
     const loaded = await loadConfiguredMcpTools(servers, {
       ...(opts.spawnMcp ? { spawn: opts.spawnMcp } : {}),
+      elicit: async (params, signal) => {
+        if (opts.askUserHost !== true) return { action: 'cancel' }
+        if (session.permissionMode === 'dontAsk') return { action: 'cancel' }
+        return elicitViaAskUser(askQuestions, params, signal)
+      },
     })
     mcpTools = loaded.tools
     mcpCloser = loaded.close

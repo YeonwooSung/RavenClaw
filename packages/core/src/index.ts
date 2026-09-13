@@ -186,6 +186,14 @@ export {
 } from './tools/skill'
 export type { DiscoveredSkill, SkillInput, SkillSource } from './tools/skill'
 export { createMcpToolBridge, createStdioMcpTransport } from './mcp/client'
+export type { McpToolBridgeOpts } from './mcp/client'
+export {
+  askUserTextToElicitContent,
+  mcpElicitToAskUser,
+  parseMcpElicitParams,
+  runMcpElicit,
+  MCP_ELICIT_TIMEOUT_MS,
+} from './mcp/elicitation'
 export { createHttpMcpTransport } from './mcp/http'
 export {
   ensureMcpOAuthAccess,
@@ -204,7 +212,15 @@ export {
   mergeToolPool,
   wrapMcpTools,
 } from './mcp/tools'
-export type { McpResource, McpToolBridge, McpToolDescriptor, McpTransport } from './mcp/types'
+export type {
+  McpElicitFn,
+  McpElicitParams,
+  McpElicitResult,
+  McpResource,
+  McpToolBridge,
+  McpToolDescriptor,
+  McpTransport,
+} from './mcp/types'
 export { getAgentDefinition, agentCatalog } from './agent/catalog'
 export { addDirectory } from './permissions/directories'
 export { loadDiskAgents } from './agent/load'

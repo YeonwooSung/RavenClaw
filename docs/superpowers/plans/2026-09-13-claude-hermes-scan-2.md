@@ -68,6 +68,8 @@ Discord rewrite, `execute_code`, Electron, `bypass` / yolo, streaming tool execu
 
 ### L19. MCP elicitation (form only)
 
+**Status.** Done.
+
 **Why.** Claude `src/services/mcp/elicitationHandler.ts` and Hermes `tools/mcp_tool_sampling.py` implement MCP `elicitation/create` so a server can ask the human. RavenClaw `packages/core/src/mcp/client.ts` advertises `capabilities: {}` and has no request handler. Interactive MCP that needs a confirm cannot connect.
 
 **Contract.** Declare elicitation on initialize. Form mode only: forward the schema to the existing AskUser host (TUI / ACP-ask). Timeout / no host → `cancel` (fail closed). No URL-mode browser dance. No sampling. Headless `dontAsk` → cancel.

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { formatAskUserPrompt, type AskUserInput } from '@ravenclaw/core'
-import { createAskUserBridge, formatAskUserDialog, parseAskUserAnswer } from './ask-host'
+import { createAskUserBridge, elicitViaAskUser, formatAskUserDialog, parseAskUserAnswer } from './ask-host'
 
 const single: AskUserInput = {
   questions: [
@@ -73,6 +73,14 @@ describe('parseAskUserAnswer', () => {
     expect(parseAskUserAnswer(two, 'prettier\nyes')).toBe('Q1: prettier\nQ2: yes')
     expect(parseAskUserAnswer(two, 'a')).toBe('AskUser: invalid choice')
   })
+
+  test('freeText questions accept the typed segment', () => {
+    const free: AskUserInput = {
+      questions: [{ question: 'Name', options: [], freeText: true }],
+    }
+    expect(parseAskUserAnswer(free, 'Ada')).toBe('Q1: Ada')
+    expect(parseAskUserAnswer(free, '')).toBe('AskUser: invalid choice')
+  })
 })
 
 describe('formatAskUserDialog', () => {
@@ -110,5 +118,27 @@ describe('createAskUserBridge', () => {
     const ac = new AbortController()
     ac.abort()
     await expect(bridge.ask(single, ac.signal)).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  test('bound is false until bind, and elicitViaAskUser cancels without a host', async () => {
+    const bridge = createAskUserBridge()
+    expect(bridge.bound()).toBe(false)
+    const params = {
+      message: 'Continue?',
+      requestedSchema: {
+        type: 'object' as const,
+        properties: { ok: { type: 'boolean' as const } },
+        required: ['ok'],
+      },
+    }
+    expect(await elicitViaAskUser(bridge, params, new AbortController().signal)).toEqual({
+      action: 'cancel',
+    })
+    bridge.bind(async (input) => parseAskUserAnswer(input, 'a'))
+    expect(bridge.bound()).toBe(true)
+    expect(await elicitViaAskUser(bridge, params, new AbortController().signal)).toEqual({
+      action: 'accept',
+      content: { ok: true },
+    })
   })
 })

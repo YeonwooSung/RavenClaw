@@ -1,6 +1,9 @@
+import { MCP_ELICIT_TIMEOUT_MS, runMcpElicit } from './elicitation'
 import {
   MCP_CLIENT_INFO,
   MCP_PROTOCOL_VERSION,
+  type McpElicitFn,
+  type McpRequestHandler,
   type McpStdioStreams,
   type McpToolBridge,
   type McpToolDescriptor,
@@ -8,16 +11,25 @@ import {
   type McpTransportHealth,
 } from './types'
 
-export function createMcpToolBridge(transport: McpTransport): McpToolBridge {
+export interface McpToolBridgeOpts {
+  elicit?: McpElicitFn
+  elicitTimeoutMs?: number
+}
+
+export function createMcpToolBridge(
+  transport: McpTransport,
+  opts?: McpToolBridgeOpts,
+): McpToolBridge {
   let initialized = false
   let closed = false
+  installElicitHandler(transport, opts)
 
   async function ensureReady(): Promise<void> {
     if (closed) throw new Error('MCP client is closed')
     if (initialized) return
     await transport.request('initialize', {
       protocolVersion: MCP_PROTOCOL_VERSION,
-      capabilities: {},
+      capabilities: { elicitation: {} },
       clientInfo: {
         name: MCP_CLIENT_INFO.name,
         version: MCP_CLIENT_INFO.version,
@@ -82,6 +94,7 @@ export function createStdioMcpTransport(streams: McpStdioStreams): McpTransport 
   let buffer = Buffer.alloc(0)
   let closed = false
   let health: McpTransportHealth = 'connecting'
+  let onRequest: McpRequestHandler | undefined
   const pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>()
 
   const onData = (chunk: Buffer | string): void => {
@@ -90,13 +103,22 @@ export function createStdioMcpTransport(streams: McpStdioStreams): McpTransport 
     const parsed = consumeJsonRpcFrames(buffer)
     buffer = parsed.rest
     for (const message of parsed.messages) {
-      dispatchJsonRpcMessage(pending, message)
+      dispatchJsonRpcMessage(pending, message, (id, result, error) => {
+        if (closed) return
+        const payload: Record<string, unknown> = { jsonrpc: '2.0', id }
+        if (error) payload.error = error
+        else payload.result = result
+        streams.stdin.write(encodeJsonRpcFrame(payload))
+      }, () => onRequest)
     }
   }
 
   streams.stdout.on('data', onData)
 
   return {
+    setRequestHandler(handler) {
+      onRequest = handler
+    },
     request(method, params, opts) {
       if (closed) return Promise.reject(new Error('MCP transport is closed'))
       const signal = opts?.signal
@@ -183,12 +205,31 @@ function findHeaderSeparator(
   return undefined
 }
 
+type JsonRpcErrorBody = { code: number; message: string }
+
 function dispatchJsonRpcMessage(
   pending: Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void }>,
   message: unknown,
+  reply?: (id: unknown, result: unknown, error?: JsonRpcErrorBody) => void,
+  handlerOf?: () => McpRequestHandler | undefined,
 ): void {
   if (!message || typeof message !== 'object') return
-  const rec = message as { id?: unknown; result?: unknown; error?: unknown }
+  const rec = message as {
+    id?: unknown
+    method?: unknown
+    params?: unknown
+    result?: unknown
+    error?: unknown
+  }
+  if (
+    typeof rec.method === 'string' &&
+    isJsonRpcId(rec.id) &&
+    rec.result === undefined &&
+    rec.error === undefined
+  ) {
+    void answerServerRequest(rec.method, rec.params, rec.id, reply, handlerOf)
+    return
+  }
   if (typeof rec.id !== 'number') return
   const waiter = pending.get(rec.id)
   if (!waiter) return
@@ -198,6 +239,41 @@ function dispatchJsonRpcMessage(
     return
   }
   waiter.resolve(rec.result)
+}
+
+async function answerServerRequest(
+  method: string,
+  params: unknown,
+  id: unknown,
+  reply?: (id: unknown, result: unknown, error?: JsonRpcErrorBody) => void,
+  handlerOf?: () => McpRequestHandler | undefined,
+): Promise<void> {
+  const handler = handlerOf?.()
+  if (!handler || !reply) {
+    reply?.(id, undefined, { code: -32601, message: 'Method not found' })
+    return
+  }
+  try {
+    reply(id, await handler(method, params))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Internal error'
+    const code = /not found/i.test(message) ? -32601 : -32603
+    reply(id, undefined, { code, message })
+  }
+}
+
+function isJsonRpcId(id: unknown): id is number | string {
+  return typeof id === 'number' || (typeof id === 'string' && id.length > 0)
+}
+
+function installElicitHandler(transport: McpTransport, opts?: McpToolBridgeOpts): void {
+  if (!transport.setRequestHandler) return
+  transport.setRequestHandler(async (method, params) => {
+    if (method !== 'elicitation/create') {
+      throw Object.assign(new Error('Method not found'), { code: -32601 })
+    }
+    return runMcpElicit(params, opts?.elicit, opts?.elicitTimeoutMs ?? MCP_ELICIT_TIMEOUT_MS)
+  })
 }
 
 function jsonRpcError(error: unknown): Error {

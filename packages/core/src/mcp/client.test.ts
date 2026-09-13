@@ -72,7 +72,7 @@ describe('createMcpToolBridge', () => {
     expect(transport.calls.map((call) => call.method)).toEqual(['initialize', 'tools/list'])
     expect(transport.calls[0]?.params).toEqual({
       protocolVersion: MCP_PROTOCOL_VERSION,
-      capabilities: {},
+      capabilities: { elicitation: {} },
       clientInfo: MCP_CLIENT_INFO,
     })
     expect(tools).toEqual([
@@ -330,4 +330,76 @@ describe('createStdioMcpTransport', () => {
     ).rejects.toMatchObject({ name: 'AbortError' })
     await transport.close()
   })
+
+  test('elicitation/create form accept writes a JSON-RPC result', async () => {
+    const child = mockChild()
+    const transport = createStdioMcpTransport(child)
+    createMcpToolBridge(transport, {
+      elicit: async () => ({ action: 'accept', content: { ok: true } }),
+    })
+    child.emit(
+      encodeJsonRpcFrame({
+        jsonrpc: '2.0',
+        id: 99,
+        method: 'elicitation/create',
+        params: {
+          message: 'Continue?',
+          requestedSchema: {
+            type: 'object',
+            properties: { ok: { type: 'boolean' } },
+            required: ['ok'],
+          },
+        },
+      }),
+    )
+    const reply = await waitForReply(child, 99)
+    expect(reply).toEqual({
+      jsonrpc: '2.0',
+      id: 99,
+      result: { action: 'accept', content: { ok: true } },
+    })
+    await transport.close()
+  })
+
+  test('elicitation/create without a host cancels', async () => {
+    const child = mockChild()
+    const transport = createStdioMcpTransport(child)
+    createMcpToolBridge(transport)
+    child.emit(
+      encodeJsonRpcFrame({
+        jsonrpc: '2.0',
+        id: 'e1',
+        method: 'elicitation/create',
+        params: {
+          requestedSchema: {
+            type: 'object',
+            properties: { ok: { type: 'boolean' } },
+          },
+        },
+      }),
+    )
+    const reply = await waitForReply(child, 'e1')
+    expect(reply).toEqual({ jsonrpc: '2.0', id: 'e1', result: { action: 'cancel' } })
+    await transport.close()
+  })
 })
+
+async function waitForReply(
+  child: ReturnType<typeof mockChild>,
+  id: number | string,
+): Promise<unknown> {
+  const deadline = Date.now() + 500
+  while (Date.now() < deadline) {
+    const reply = decodeFrames(child.writes.join('')).find(
+      (message) =>
+        message !== null &&
+        typeof message === 'object' &&
+        'id' in message &&
+        (message as { id?: unknown }).id === id &&
+        ('result' in message || 'error' in message),
+    )
+    if (reply) return reply
+    await new Promise((resolve) => setTimeout(resolve, 5))
+  }
+  throw new Error(`no JSON-RPC reply for ${id}`)
+}
