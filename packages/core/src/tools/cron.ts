@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs'
 import { formatSchedule, nextFireAt as computeNextFireAt, parseJobSpec } from '../schedule/cron'
+import { scanCronPrompt } from '../schedule/prompt-scan'
 import { cronJobsPath, newCronId } from '../schedule/store'
 import type { CronJob, CronStore } from '../schedule/types'
 import type { Tool, ToolContext } from '../types'
@@ -89,6 +90,8 @@ export function createCronTools(store: CronStore): {
     },
     async execute(input: CronCreateInput, ctx: ToolContext) {
       if (ctx.signal.aborted) throw abortError()
+      const threat = scanCronPrompt(input.prompt)
+      if (!threat.ok) return `CronCreate failed: ${threat.message}`
       const parsed = parseJobSpec(input.spec)
       if (!parsed.ok) return `CronCreate failed: ${parsed.message}`
 

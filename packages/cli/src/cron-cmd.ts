@@ -6,6 +6,7 @@ import {
   newCronId,
   nextFireAt,
   parseCronSlashArg,
+  scanCronPrompt,
   type CronJob,
 } from '@ravenclaw/core'
 
@@ -44,6 +45,8 @@ export function applyCronMutate(
     }
     const extras = parseCronAddExtras(parsed.prompt)
     if ('error' in extras) return { text: extras.error, code: 2 }
+    const threat = scanCronPrompt(extras.prompt)
+    if (!threat.ok) return { text: threat.message, code: 2 }
     const job: CronJob = {
       id: newCronId(),
       name: extras.prompt.slice(0, 40),

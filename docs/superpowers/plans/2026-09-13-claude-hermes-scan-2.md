@@ -94,6 +94,8 @@ Discord rewrite, `execute_code`, Electron, `bypass` / yolo, streaming tool execu
 
 ### L23. CronCreate prompt threat scan
 
+**Status.** Done.
+
 **Why.** Hermes `tools/cronjob_prompt_scan.py` refuses create/update when the user-authored prompt matches injection / secret-read / exfil shapes. RavenClaw `packages/core/src/tools/cron.ts` `CronCreate` stores `prompt` verbatim. Cron fires are `dontAsk` new sessions.
 
 **Contract.** Scan the **user** `prompt` only (not assembled skill bodies) at `CronCreate` and slash `/cron add`. Invisible unicode, “ignore previous instructions”, `cat ~/.*/.env` / `id_rsa`, `curl` of `$TOKEN`/`$SECRET` → tool error, do not persist. Slash path same. No LLM. Existing jobs are not retro-scanned.

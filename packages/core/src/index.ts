@@ -137,6 +137,7 @@ export { parseJobSpec, nextFireAt, formatSchedule } from './schedule/cron'
 export { createJsonCronStore, cronJobsPath, newCronId } from './schedule/store'
 export { fireDueJobs, formatCronList, formatCronLine } from './schedule/runner'
 export { parseCronSlashArg, CRON_USAGE } from './schedule/slash'
+export { scanCronPrompt } from './schedule/prompt-scan'
 export type { CronJob, CronStore, JobSchedule, CronFireStatus } from './schedule/types'
 export {
   createTaskRegistry,
