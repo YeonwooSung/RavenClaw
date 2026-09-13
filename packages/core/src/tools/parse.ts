@@ -1,6 +1,14 @@
-import Ajv from 'ajv'
+import Ajv, { type ValidateFunction } from 'ajv'
 
 const ajv = new Ajv({ allErrors: true, strict: false, coerceTypes: false })
+const compiledSchemas = new WeakMap<object, ValidateFunction>()
+
+let compileCount = 0
+
+/** Test hook: number of times `ajv.compile` has actually run. */
+export function schemaCompileCount(): number {
+  return compileCount
+}
 
 export function parseWithSchema<T>(
   schema: unknown,
@@ -10,12 +18,16 @@ export function parseWithSchema<T>(
     return { ok: false, message: 'invalid schema' }
   }
 
-  let validate
-  try {
-    validate = ajv.compile(schema)
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'invalid schema'
-    return { ok: false, message }
+  let validate = compiledSchemas.get(schema)
+  if (!validate) {
+    try {
+      compileCount += 1
+      validate = ajv.compile(schema)
+      compiledSchemas.set(schema, validate)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'invalid schema'
+      return { ok: false, message }
+    }
   }
 
   if (validate(input)) {
