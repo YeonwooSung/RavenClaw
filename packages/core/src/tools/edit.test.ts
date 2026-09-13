@@ -1,10 +1,11 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { ToolContext, Turn } from '../types'
 import { decidePermission } from '../permissions/pipeline'
 import { editTool } from './edit'
+import { readTool } from './read'
 
 const emptyRules = { session: [], user: [], project: [] }
 
@@ -124,6 +125,22 @@ describe('Edit', () => {
     expect(typeof out).toBe('string')
     expect(out.toLowerCase()).toMatch(/read/)
     expect(readFileSync(join(root, 'note.txt'), 'utf8')).toBe('alpha\n')
+  })
+
+  test('refuses Edit when the file changed since last Read', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'note.txt'), 'alpha\n')
+    const ctx = makeCtx(root)
+    const readOut = await readTool.execute({ path: 'note.txt' }, ctx)
+    expect(readOut).toContain('alpha')
+    writeFileSync(join(root, 'note.txt'), 'changed\n')
+    utimesSync(join(root, 'note.txt'), Date.now() / 1000 + 5, Date.now() / 1000 + 5)
+    const out = await editTool.execute(
+      { path: 'note.txt', old_string: 'alpha', new_string: 'beta' },
+      ctx,
+    )
+    expect(out).toMatch(/file changed since last Read/)
+    expect(readFileSync(join(root, 'note.txt'), 'utf8')).toBe('changed\n')
   })
 
   test('succeeds after readFiles.add(resolved) with a unique replace', async () => {

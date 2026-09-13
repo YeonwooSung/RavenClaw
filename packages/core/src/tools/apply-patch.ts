@@ -4,6 +4,7 @@ import type { Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
 import { appendLintBlock, lintWrittenFile } from './lint'
 import { isHardDeniedWritePath, resolveWritePath } from './write'
+import { isStaleSinceRead } from './read-files'
 
 export type ApplyPatchOp =
   | { type: 'create_file'; path: string; diff: string }
@@ -129,8 +130,12 @@ function updateFile(
   diff: string,
   ctx: ToolContext,
 ): { ok: true; action: string } | { ok: false; message: string } {
-  if (!wasRead(ctx.turn.readFiles, resolved, resolve(ctx.turn.cwd, inputPath))) {
+  const candidate = resolve(ctx.turn.cwd, inputPath)
+  if (!wasRead(ctx.turn.readFiles, resolved, candidate)) {
     return { ok: false, message: `path must be Read first: ${inputPath}` }
+  }
+  if (isStaleSinceRead(ctx.turn, resolved, candidate)) {
+    return { ok: false, message: 'file changed since last Read' }
   }
   let text: string
   try {

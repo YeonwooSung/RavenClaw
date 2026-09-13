@@ -449,6 +449,7 @@ function buildChildTurn(
     cwd: session.cwd,
     model: session.model,
     readFiles: new Set(),
+    readFileMtimes: new Map(),
   }
   if (session.prePlanMode !== undefined) turn.prePlanMode = session.prePlanMode
   if (parent.specialistModel !== undefined) turn.specialistModel = parent.specialistModel

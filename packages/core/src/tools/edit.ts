@@ -4,6 +4,7 @@ import type { Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
 import { appendLintBlock, lintWrittenFile } from './lint'
 import { isHardDeniedWritePath, resolveWritePath } from './write'
+import { isStaleSinceRead } from './read-files'
 
 export interface EditInput {
   path: string
@@ -48,8 +49,12 @@ export const editTool: Tool<EditInput, string> = {
     if (isHardDeniedWritePath(resolved)) {
       return `Edit failed: write denied to protected path: ${input.path}`
     }
-    if (!wasRead(ctx.turn.readFiles, resolved, resolve(ctx.turn.cwd, input.path))) {
+    const candidate = resolve(ctx.turn.cwd, input.path)
+    if (!wasRead(ctx.turn.readFiles, resolved, candidate)) {
       return `Edit failed: path must be Read first: ${input.path}`
+    }
+    if (isStaleSinceRead(ctx.turn, resolved, candidate)) {
+      return `Edit failed: file changed since last Read`
     }
     if (input.old_string.length === 0) {
       return 'Edit failed: old_string is empty; provide more context to make it unique'

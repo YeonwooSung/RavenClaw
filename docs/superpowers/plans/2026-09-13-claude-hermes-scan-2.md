@@ -28,6 +28,8 @@ Discord rewrite, `execute_code`, Electron, `bypass` / yolo, streaming tool execu
 
 ### L15. Stale-read refuses Edit / ApplyPatch
 
+**Status.** Done.
+
 **Why.** Claude FileEdit `FILE_UNEXPECTEDLY_MODIFIED_ERROR` compares mtime against the last Read. RavenClaw `turn.readFiles` is a `Set<string>` of paths (`packages/core/src/types.ts`). A sibling Bash or an editor write between Read and Edit is a silent clobber.
 
 **Contract.** On successful Read, record `{ path, mtimeMs }` (or a short content hash). Edit / ApplyPatch `update_file` fail closed if the on-disk mtime/hash differs: `file changed since last Read`. Write overwrite stays allowed (destructive by contract). No watcher, no FileChanged hook.

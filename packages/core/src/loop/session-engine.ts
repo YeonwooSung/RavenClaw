@@ -148,6 +148,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         cwd: session.cwd,
         model: session.model,
         readFiles: new Set(),
+        readFileMtimes: new Map(),
         injectedAgentsDirs,
       }
       const extras = opts.additionalDirectories

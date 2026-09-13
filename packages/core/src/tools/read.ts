@@ -4,6 +4,7 @@ import type { Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
 import { formatNotebookRead, parseNotebook } from './notebook-format'
 import { extractOfficeText, type OfficeExt } from './read-extract'
+import { markReadPath } from './read-files'
 
 export interface ReadInput {
   path: string
@@ -81,7 +82,7 @@ export const readTool: Tool<ReadInput, string> = {
       if (buf.length > IMAGE_BYTE_CAP) {
         return `Read failed: image too large (${buf.length} bytes)`
       }
-      ctx.turn.readFiles.add(resolved)
+      markReadPath(ctx.turn, resolved)
       return `IMAGE::${mediaType}::${buf.toString('base64')}`
     }
 
@@ -89,7 +90,7 @@ export const readTool: Tool<ReadInput, string> = {
     if (officeExt) {
       const extracted = extractOfficeText(buf, officeExt)
       if (!extracted.ok) return 'Read failed: cannot extract'
-      ctx.turn.readFiles.add(resolved)
+      markReadPath(ctx.turn, resolved)
       return extracted.text.length > READ_CHAR_CAP
         ? extracted.text.slice(0, READ_CHAR_CAP) + TRUNCATION_NOTE
         : extracted.text
@@ -102,7 +103,7 @@ export const readTool: Tool<ReadInput, string> = {
     if (extname(resolved).toLowerCase() === '.ipynb') {
       const parsed = parseNotebook(buf.toString('utf8'))
       if (parsed.ok) {
-        ctx.turn.readFiles.add(resolved)
+        markReadPath(ctx.turn, resolved)
         const formatted = formatNotebookRead(parsed.value)
         return formatted.length > READ_CHAR_CAP
           ? formatted.slice(0, READ_CHAR_CAP) + TRUNCATION_NOTE
@@ -119,7 +120,7 @@ export const readTool: Tool<ReadInput, string> = {
       text = text.slice(0, READ_CHAR_CAP) + TRUNCATION_NOTE
     }
 
-    ctx.turn.readFiles.add(resolved)
+    markReadPath(ctx.turn, resolved)
     return text
   },
 }

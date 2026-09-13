@@ -1,11 +1,12 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { FileHistory } from '../session/file-history'
 import type { ToolContext, Turn } from '../types'
 import { decidePermission } from '../permissions/pipeline'
 import { applyPatchTool, applyUnifiedDiff, contentFromCreateDiff } from './apply-patch'
+import { readTool } from './read'
 
 const emptyRules = { session: [], user: [], project: [] }
 const HOME_ENV = 'RAVENCLAW_HOME'
@@ -167,6 +168,29 @@ describe('ApplyPatch', () => {
     )
     expect(out.startsWith('ApplyPatch failed:')).toBe(true)
     expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('old\n')
+  })
+
+  test('update_file refuses when the file changed since last Read', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'note.txt'), 'hello world\nkeep\n')
+    const ctx = makeCtx(root)
+    await readTool.execute({ path: 'note.txt' }, ctx)
+    writeFileSync(join(root, 'note.txt'), 'mutated\nkeep\n')
+    utimesSync(join(root, 'note.txt'), Date.now() / 1000 + 5, Date.now() / 1000 + 5)
+    const out = await applyPatchTool.execute(
+      {
+        operations: [
+          {
+            type: 'update_file',
+            path: 'note.txt',
+            diff: ['@@ -1,2 +1,2 @@', '-hello world', '+hello raven', ' keep', ''].join('\n'),
+          },
+        ],
+      },
+      ctx,
+    )
+    expect(out).toMatch(/file changed since last Read/)
+    expect(readFileSync(join(root, 'note.txt'), 'utf8')).toBe('mutated\nkeep\n')
   })
 
   test('update_file applies a single unified hunk after Read', async () => {

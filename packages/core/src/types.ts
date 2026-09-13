@@ -119,6 +119,8 @@ export interface Turn {
   /** BYOK-only pin for child specialists. Included children ignore this. */
   specialistModel?: string
   readFiles: Set<string>
+  /** mtimeMs at last successful Read, keyed by path. */
+  readFileMtimes?: Map<string, number>
   skillAllowedTools?: string[]
   /** Realpaths of subdirectory AGENTS.md files already injected this session. */
   injectedAgentsDirs?: Set<string>
