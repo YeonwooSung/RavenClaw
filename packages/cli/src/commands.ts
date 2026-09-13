@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs'
 import { join } from 'node:path'
+import type { OnboardingScan } from '@ravenclaw/core'
 
 export interface SlashCommandSpec {
   name: string
@@ -42,6 +43,12 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
   { name: 'queue', usage: '/queue [drop n|clear]', summary: 'list or edit queued prompts (mid-turn or next turn)' },
   { name: 'copy', usage: '/copy', summary: 'copy this conversation as markdown' },
   { name: 'interview', usage: '/interview', summary: 'ask clarifying questions before implementing' },
+  {
+    name: 'team-onboarding',
+    aliases: ['onboard'],
+    usage: '/team-onboarding',
+    summary: 'walk a new teammate through this workspace',
+  },
   { name: 'bash', usage: '/bash <cmd>', summary: 'run a local shell command (also !cmd)' },
   { name: 'skill', usage: '/skill:<name>', summary: 'invoke a skill by name' },
   { name: 'config', usage: '/config', summary: 'show resolved config' },
@@ -74,6 +81,20 @@ export const LEARN_PROMPT = [
 
 export const INTERVIEW_PROMPT =
   'Interview me before writing code. Use AskUser for multiple-choice questions (at least two options each). Ask only what you need to pin down the spec, then summarize the spec and wait.'
+
+export const ONBOARDING_PROMPT = [
+  'Walk this human through onboarding for this RavenClaw workspace.',
+  'Use only the JSON facts in the following scan. Do not invent rules, skills, MCP servers, or git remotes.',
+  'Structure the reply as: (1) usage context using the scan.usage.label, (2) setup checklist with done/missing from the scan, (3) team information quoted only from projectFiles — if those files were not read, say so and do not fabricate tips.',
+  'Greet using scan.teamName.',
+  'If askUserHost is true, use AskUser for at most one missing item at a time. If they decline, skip it.',
+  'If askUserHost is false, print the guide and stop. Do not run install commands in dontAsk/headless.',
+  'Do not write ONBOARDING.md unless the human explicitly asks.',
+].join(' ')
+
+export function formatOnboardingTurn(scan: OnboardingScan): string {
+  return `${ONBOARDING_PROMPT}\n\nscan:\n\`\`\`json\n${JSON.stringify(scan)}\n\`\`\``
+}
 
 export const TASKS_NOTICE = 'no background tasks'
 export const UNDO_NOTHING_NOTICE = 'nothing to undo'

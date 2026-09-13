@@ -5,11 +5,13 @@ import { join } from 'node:path'
 import {
   LEARN_PROMPT,
   NO_EXTRA_RULES_NOTICE,
+  ONBOARDING_PROMPT,
   RELOAD_NOTICE,
   SLASH_COMMANDS,
   SLASH_HELP,
   TASKS_NOTICE,
   formatContextNotice,
+  formatOnboardingTurn,
   formatPermissionsNotice,
   handleSlashCommand,
 } from './commands'
@@ -74,6 +76,8 @@ describe('handleSlashCommand', () => {
     ['/queue', { type: 'command', name: 'queue' }],
     ['/copy', { type: 'command', name: 'copy' }],
     ['/interview', { type: 'command', name: 'interview' }],
+    ['/team-onboarding', { type: 'command', name: 'team-onboarding' }],
+    ['/onboard', { type: 'command', name: 'team-onboarding' }],
     ['/bash echo hi', { type: 'command', name: 'bash', arg: 'echo hi' }],
     ['/skill:foo', { type: 'command', name: 'skill', arg: 'foo' }],
     ['/config', { type: 'command', name: 'config' }],
@@ -119,6 +123,7 @@ describe('handleSlashCommand', () => {
     expect(SLASH_HELP).toContain('/queue')
     expect(SLASH_HELP).toContain('/copy')
     expect(SLASH_HELP).toContain('/interview')
+    expect(SLASH_HELP).toContain('/team-onboarding')
     expect(SLASH_HELP).toContain('/bash')
     expect(SLASH_HELP).toContain('/skill:')
     expect(SLASH_HELP).toContain('/config')
@@ -157,6 +162,7 @@ describe('handleSlashCommand', () => {
       'queue',
       'copy',
       'interview',
+      'team-onboarding',
       'bash',
       'skill',
       'config',
@@ -166,6 +172,22 @@ describe('handleSlashCommand', () => {
     ])
     expect(SLASH_COMMANDS.find((command) => command.name === 'clear')?.aliases).toContain('new')
     expect(SLASH_COMMANDS.find((command) => command.name === 'help')?.aliases).toContain('?')
+  })
+
+  test('onboarding prompt is frozen and formatOnboardingTurn seeds the scan', () => {
+    expect(ONBOARDING_PROMPT).toContain('Do not invent')
+    expect(
+      formatOnboardingTurn({
+        teamName: 'Acme',
+        projectFiles: [],
+        skills: [],
+        agents: [],
+        hookEvents: [],
+        mcpServers: [],
+        usage: { label: 'your last 30 days in this workspace', days: 30, sessionCount: 0, slashCounts: [] },
+        missing: [],
+      }).startsWith('Walk this human'),
+    ).toBe(true)
   })
 
   test('learn prompt asks to write a skill, and is not a tool name', () => {
