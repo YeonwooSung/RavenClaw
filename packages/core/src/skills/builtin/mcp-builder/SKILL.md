@@ -12,4 +12,4 @@ Use when the user wants a new MCP server for this workspace.
 2. One tool = one job. Give each tool a clear name, description, and a required input schema.
 3. Implement the smallest server that lists and handles those tools. Keep secrets out of skill text and onboarding scan JSON (name + transport only in scans).
 4. Wire config only through RavenClaw config docs / `config.yaml` — never invent a marketplace or install channel.
-5. Verify with `/mcp` (and config docs) after reload; fix spawn or schema errors before adding more tools.
+5. Verify spawn with `raven mcp tools` (re-reads config). In-session `/mcp` and `/reload` do not load a newly registered server. Fix spawn or schema errors before adding more tools.

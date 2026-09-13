@@ -19,4 +19,10 @@ describe('builtin skills', () => {
       expect(markdown).not.toContain('Anthropic')
     }
   })
+
+  test('mcp-builder verifies spawn via raven mcp tools, not in-session /mcp after reload', () => {
+    const markdown = readFileSync(join(builtinSkillsRoot(), 'mcp-builder', 'SKILL.md'), 'utf8')
+    expect(markdown).toContain('raven mcp tools')
+    expect(markdown).not.toMatch(/Verify with `\/mcp`/)
+  })
 })
