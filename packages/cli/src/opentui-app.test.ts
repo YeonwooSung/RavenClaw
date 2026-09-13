@@ -326,6 +326,25 @@ describe('runOpenTuiApp', () => {
     expect(written.join('')).toContain('/model')
   })
 
+  test('/team-onboarding starts a turn with the scan JSON', async () => {
+    const prompts: string[] = []
+    const engine = fakeEngine(makeSession(), async function* (text: string) {
+      prompts.push(text)
+      return { reason: 'completed' }
+    })
+    const written: string[] = []
+    const code = await runOpenTuiApp(fakeRuntime(engine, { store: fakeStore() }), {
+      input: asyncLines('/team-onboarding', '/quit'),
+      write: (chunk) => {
+        written.push(chunk)
+      },
+    })
+    expect(code).toBe(0)
+    expect(prompts[0] ?? '').toContain('Walk this human')
+    expect(prompts[0] ?? '').toContain('"teamName"')
+    expect(written.join('')).not.toContain('unknown command')
+  })
+
   test('/stop and /cancel abort the engine', async () => {
     let aborted = 0
     const engine = fakeEngine(makeSession(), emptyTurn)

@@ -16,6 +16,8 @@ import {
   discoverSkills,
   maybePruneSkillsOnIdle,
   setSkillDisabled,
+  ravenclawHome,
+  scanTeamOnboarding,
   createSecondAbortGate,
   formatKilledBackgroundNotice,
   formatTasksNotice,
@@ -31,6 +33,7 @@ import {
   SLASH_HELP,
   TASKS_NOTICE,
   formatContextNotice,
+  formatOnboardingTurn,
   formatPermissionsNotice,
   handleSlashCommand,
 } from './commands'
@@ -525,6 +528,16 @@ export async function runOpenTuiApp(
         case 'interview':
           await runTurn(INTERVIEW_PROMPT)
           continue
+        case 'team-onboarding': {
+          const scan = await scanTeamOnboarding({
+            cwd: current.cwd,
+            home: ravenclawHome(),
+            store: current.store,
+            mcp: current.config.mcp ?? { servers: [] },
+          })
+          await runTurn(formatOnboardingTurn(scan))
+          continue
+        }
         case 'bash': {
           if (parsed.arg === undefined || parsed.arg.trim() === '') {
             write('usage: /bash <cmd>\n')

@@ -20,6 +20,8 @@ import {
   setSkillDisabled,
   agentCatalog,
   LIFECYCLE_EVENTS,
+  ravenclawHome,
+  scanTeamOnboarding,
   type Funding,
   type PermissionMode,
   type SessionRecord,
@@ -41,6 +43,7 @@ import {
   SLASH_HELP,
   TASKS_NOTICE,
   formatContextNotice,
+  formatOnboardingTurn,
   formatPermissionsNotice,
   handleSlashCommand,
 } from './commands'
@@ -675,6 +678,18 @@ export function App(props: AppProps) {
         case 'interview':
           void runTurn(INTERVIEW_PROMPT)
           return
+        case 'team-onboarding': {
+          void (async () => {
+            const scan = await scanTeamOnboarding({
+              cwd: runtimeRef.current.cwd,
+              home: ravenclawHome(),
+              store: runtimeRef.current.store,
+              mcp: runtimeRef.current.config.mcp ?? { servers: [] },
+            })
+            await runTurn(formatOnboardingTurn(scan))
+          })()
+          return
+        }
         case 'bash': {
           if (parsed.arg === undefined || parsed.arg.trim() === '') {
             setNotice('usage: /bash <cmd>')
