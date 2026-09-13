@@ -36,6 +36,8 @@ Discord rewrite, `execute_code`, Electron, `bypass` / yolo, streaming tool execu
 
 ### L16. Background Bash mailbox notice
 
+**Status.** Done.
+
 **Why.** Hermes `tools/process_registry_notifications.py` injects completed background shells. RavenClaw Agent children `enqueueAgentMail`; `packages/core/src/tools/bash.ts` `startBackground` only `tasks.complete`. Ink / OpenTUI / `serve` already peek mailbox — Bash never writes it. Overnight `bun test` finishes silently.
 
 **Contract.** On background Bash `complete` / fail, `enqueueAgentMail` one clipped line: `bash <id[:8]> exit=<n>\n` + last ~1k of the output file. Same `AGENT_MAIL_BODY_MAX` as children. Do not splice into a live API call. Existing mailbox wake starts the next turn.

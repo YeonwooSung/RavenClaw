@@ -1,7 +1,8 @@
-import { appendFileSync, mkdirSync, writeFileSync } from 'node:fs'
+import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { Tool, ToolContext } from '../types'
 import { ravenclawHome } from '../home'
+import { enqueueAgentMail, formatBashMailboxNotice } from '../tasks/mailbox'
 import { parseWithSchema } from './parse'
 import { createLocalTerminalBackend, type TerminalBackend } from './terminal-backend'
 
@@ -183,9 +184,11 @@ function startBackground(
         // keep the streamed log if the final write fails
       }
       tasks.complete(task.id, result.exitCode)
+      void notifyBackgroundBash(ctx, task.id, result.exitCode, outputFile)
     },
     () => {
       tasks.complete(task.id, 137)
+      void notifyBackgroundBash(ctx, task.id, 137, outputFile)
     },
   )
   return {
@@ -194,6 +197,27 @@ function startBackground(
       `output: ${outputFile}\n` +
       'use TaskOutput to read; TaskStop or /tasks kill <id> to stop',
     exitCode: 0,
+  }
+}
+
+async function notifyBackgroundBash(
+  ctx: ToolContext,
+  taskId: string,
+  exitCode: number,
+  outputFile: string,
+): Promise<void> {
+  const store = ctx.store
+  if (!store) return
+  let output = ''
+  try {
+    output = readFileSync(outputFile, 'utf8')
+  } catch {
+    output = ''
+  }
+  try {
+    await enqueueAgentMail(store, ctx.turn.sessionId, formatBashMailboxNotice(taskId, exitCode, output))
+  } catch {
+    // mailbox is best-effort; the task is already complete
   }
 }
 

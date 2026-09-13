@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ToolContext, Turn } from '../types'
 import { decidePermission } from '../permissions/pipeline'
+import { createMemoryStore } from '../session/memory-store'
+import { drainAgentMail } from '../tasks/mailbox'
 import { bashTool, createBashTool, matchesDangerousPattern, matchesDestructiveGit } from './bash'
 
 const emptyRules = { session: [], user: [], project: [] }
@@ -174,6 +176,47 @@ describe('Bash', () => {
       if (output.includes('bg-hi') || output.includes('completed')) break
     }
     expect(output).toContain('bg-hi')
+  })
+
+  test('background complete enqueues a mailbox notice for the parent session', async () => {
+    const root = fixtureRoot()
+    const home = fixtureRoot()
+    savedHome = process.env[HOME_ENV]
+    process.env[HOME_ENV] = home
+    const { createTaskRegistry } = await import('../tasks/registry')
+    const store = createMemoryStore()
+    await store.createSession({
+      id: 'sess_1',
+      createdAt: 1,
+      updatedAt: 1,
+      cwd: root,
+      model: 'dummy',
+      permissionMode: 'default',
+      compactGeneration: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      funding: 'byok',
+    })
+    const ctx = makeCtx(root)
+    ctx.tasks = createTaskRegistry()
+    ctx.store = store
+    const result = await bashTool.execute(
+      { command: 'echo bg-mail', run_in_background: true },
+      ctx,
+    )
+    expect(result.exitCode).toBe(0)
+    const match = /started background task (b_[a-f0-9]+)/.exec(result.content)
+    expect(match?.[1]).toBeTruthy()
+    const id = match![1]!
+    const deadline = Date.now() + 3000
+    let notices: string[] = []
+    while (Date.now() < deadline) {
+      notices = await drainAgentMail(store, 'sess_1')
+      if (notices.length > 0) break
+      await Bun.sleep(20)
+    }
+    expect(notices).toHaveLength(1)
+    expect(notices[0]).toContain(`bash ${id.slice(0, 8)} exit=0`)
+    expect(notices[0]).toContain('bg-mail')
   })
 
   test('docker backend run_in_background registers a task and TaskStop kills the job', async () => {

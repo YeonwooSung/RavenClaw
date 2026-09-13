@@ -9,6 +9,7 @@ import {
   AGENT_MAIL_BODY_MAX,
   drainAgentMail,
   enqueueAgentMail,
+  formatBashMailboxNotice,
   peekAgentMail,
   MAX_PARALLEL_CHILDREN,
 } from './mailbox'
@@ -116,5 +117,13 @@ describe('agent mailbox', () => {
 
   test('MAX_PARALLEL_CHILDREN is 6', () => {
     expect(MAX_PARALLEL_CHILDREN).toBe(6)
+  })
+
+  test('formatBashMailboxNotice clips to id[:8], exit, and last 1k of output', () => {
+    const notice = formatBashMailboxNotice('b_abcdef12deadbeef', 0, `${'x'.repeat(1200)}tail`)
+    expect(notice.startsWith('bash b_abcdef exit=0\n')).toBe(true)
+    expect(notice.endsWith('xtail')).toBe(true)
+    expect(notice.length).toBeLessThanOrEqual(AGENT_MAIL_BODY_MAX)
+    expect(notice.slice(notice.indexOf('\n') + 1).length).toBe(1000)
   })
 })

@@ -202,6 +202,7 @@ export interface ToolContext {
   onProgress: (text: string) => void
   tasks?: import('./tasks/registry').TaskRegistry
   fileHistory?: import('./session/file-history').FileHistory
+  store?: SessionStore
 }
 
 export interface ToolResult {
