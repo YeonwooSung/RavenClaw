@@ -65,6 +65,11 @@ export function collectHookCommands(
   return specsFor(readHookFiles(cwd, home), event)
 }
 
+export function listConfiguredHookEvents(cwd: string, home: string): string[] {
+  const files = readHookFiles(cwd, home)
+  return LIFECYCLE_EVENTS.filter((event) => specsFor(files, event).length > 0)
+}
+
 /** `Bash` or `Bash(*)` matches tool name === "Bash". Unset `if` always matches. */
 export function matchesToolIf(matcher: string | undefined, name: unknown): boolean {
   if (matcher === undefined || matcher === '') return true

@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import {
   LIFECYCLE_EVENTS,
   collectHookCommands,
+  listConfiguredHookEvents,
   loadLifecycleHooks,
   matchesToolIf,
 } from './lifecycle'
@@ -213,4 +214,14 @@ describe('matchesToolIf', () => {
     expect(matchesToolIf('Bash(*)', 'Read')).toBe(false)
     expect(matchesToolIf('Bash', undefined)).toBe(false)
   })
+})
+
+test('listConfiguredHookEvents names only events that have a command', () => {
+  const home = tempDir('ravenclaw-onboard-hooks-home-')
+  const cwd = tempDir('ravenclaw-onboard-hooks-cwd-')
+  writeHooks(home, {
+    Stop: [{ command: 'true' }],
+    PostToolUse: [{ command: 'true', if: 'Bash' }],
+  })
+  expect(listConfiguredHookEvents(cwd, home)).toEqual(['PostToolUse', 'Stop'])
 })
