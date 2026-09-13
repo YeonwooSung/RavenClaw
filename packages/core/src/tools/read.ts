@@ -3,6 +3,7 @@ import { extname, resolve } from 'node:path'
 import type { Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
 import { formatNotebookRead, parseNotebook } from './notebook-format'
+import { extractOfficeText, type OfficeExt } from './read-extract'
 
 export interface ReadInput {
   path: string
@@ -84,6 +85,16 @@ export const readTool: Tool<ReadInput, string> = {
       return `IMAGE::${mediaType}::${buf.toString('base64')}`
     }
 
+    const officeExt = officeExtOf(resolved)
+    if (officeExt) {
+      const extracted = extractOfficeText(buf, officeExt)
+      if (!extracted.ok) return 'Read failed: cannot extract'
+      ctx.turn.readFiles.add(resolved)
+      return extracted.text.length > READ_CHAR_CAP
+        ? extracted.text.slice(0, READ_CHAR_CAP) + TRUNCATION_NOTE
+        : extracted.text
+    }
+
     if (containsNul(buf.subarray(0, Math.min(buf.length, BINARY_SCAN)))) {
       return 'Read failed: binary file (NUL in first 8 KiB)'
     }
@@ -115,6 +126,12 @@ export const readTool: Tool<ReadInput, string> = {
 
 function imageMediaType(path: string): string | undefined {
   return IMAGE_MEDIA[extname(path).toLowerCase()]
+}
+
+function officeExtOf(path: string): OfficeExt | undefined {
+  const ext = extname(path).toLowerCase()
+  if (ext === '.docx' || ext === '.xlsx') return ext
+  return undefined
 }
 
 function containsNul(buf: Uint8Array): boolean {

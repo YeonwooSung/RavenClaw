@@ -120,6 +120,8 @@ Discord rewrite, `execute_code`, Electron, `bypass` / yolo, streaming tool execu
 
 ### L25. Read stdlib office extract
 
+**Status.** Done.
+
 **Why.** Hermes `tools/read_extract.py` turns `.docx` / `.xlsx` / `.ipynb` into text via stdlib zip+xml. RavenClaw Read rejects binary (NUL / unknown). `NotebookEdit` already owns `.ipynb`. Specs and sheets in the repo stay invisible.
 
 **Contract.** For `.docx` / `.xlsx` only: unzip, extract document.xml / sharedStrings+sheet rows, return text under the existing Read cap. Malformed → `Read failed: cannot extract`. No PDF, no `anydoc`, no extra dependency. `.ipynb` stays NotebookEdit. Images unchanged.
