@@ -453,6 +453,10 @@ export function createSqliteStore(dbPath: string): SessionStore {
     },
   )
 
+  function readActiveMessages(sessionId: string): Message[] {
+    return (selectActiveMessages.all(sessionId) as MessageRow[]).map(messageFromRow)
+  }
+
   const store: SessionStore & { close(): void } = {
     async createSession(session) {
       await withWrite(async () => {
@@ -508,7 +512,7 @@ export function createSqliteStore(dbPath: string): SessionStore {
           throw new PersistError('unknown', `session not found: ${sessionId}`)
         }
         session = sessionFromRow(row)
-        active = (selectActiveMessages.all(sessionId) as MessageRow[]).map(messageFromRow)
+        active = readActiveMessages(sessionId)
       } catch (error) {
         throw toPersistError(error)
       }
@@ -522,6 +526,18 @@ export function createSqliteStore(dbPath: string): SessionStore {
         await store.persistToolResults(sessionId, inserted)
       }
       return { session, messages: repaired }
+    },
+
+    async loadMessages(sessionId) {
+      try {
+        const row = selectSession.get(sessionId) as SessionRow | null
+        if (!row) {
+          throw new PersistError('unknown', `session not found: ${sessionId}`)
+        }
+        return readActiveMessages(sessionId)
+      } catch (error) {
+        throw toPersistError(error)
+      }
     },
 
     async deleteSession(sessionId) {

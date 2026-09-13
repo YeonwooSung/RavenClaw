@@ -315,6 +315,11 @@ export interface SessionStore {
   upsertSession(session: SessionRecord): Promise<void>
   listSessions(filter?: SessionListFilter): Promise<SessionRecord[]>
   loadSession(sessionId: string): Promise<{ session: SessionRecord; messages: Message[] }>
+  /**
+   * Active messages only. Must not repair unpaired tool_use or persist.
+   * loadSession may synthesize incomplete tool rows and write them.
+   */
+  loadMessages?(sessionId: string): Promise<Message[]>
   deleteSession(sessionId: string): Promise<void>
   persistUser(sessionId: string, message: Extract<Message, { role: 'user' }>): Promise<void>
   /**

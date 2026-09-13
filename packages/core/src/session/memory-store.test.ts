@@ -93,6 +93,28 @@ describe('createMemoryStore', () => {
     expect(tools).toHaveLength(1)
   })
 
+  test('loadMessages does not persist incomplete for unpaired tool_use', async () => {
+    const store = createMemoryStore()
+    await store.createSession(session())
+    await store.persistUser('s1', {
+      id: 'u1',
+      role: 'user',
+      blocks: [{ type: 'text', text: 'go' }],
+      createdAt: 1,
+    })
+    await store.persistToolCalls('s1', {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'c1', name: 'Echo', input: {} }],
+      createdAt: 2,
+    })
+    const messages = await store.loadMessages!('s1')
+    expect(messages.some((m) => m.role === 'tool')).toBe(false)
+
+    const again = await store.loadMessages!('s1')
+    expect(again.filter((m) => m.role === 'tool')).toHaveLength(0)
+  })
+
   test('recordCompact inactivates ids; loadSession returns only active', async () => {
     const store = createMemoryStore()
     await store.createSession(session())

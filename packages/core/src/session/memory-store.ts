@@ -107,6 +107,13 @@ export function createMemoryStore(): SessionStore {
     return rows
   }
 
+  function readActiveMessages(sessionId: string): Message[] {
+    return (messages.get(sessionId) ?? [])
+      .filter((row) => row.active)
+      .map((row) => row.message)
+      .sort((a, b) => a.createdAt - b.createdAt)
+  }
+
   function pushMessage(sessionId: string, message: Message): void {
     const rows = bucket(sessionId)
     if (rows.some((row) => row.message.id === message.id)) {
@@ -157,10 +164,7 @@ export function createMemoryStore(): SessionStore {
       if (!session) {
         throw new PersistError('unknown', `session not found: ${sessionId}`)
       }
-      const active = (messages.get(sessionId) ?? [])
-        .filter((row) => row.active)
-        .map((row) => row.message)
-        .sort((a, b) => a.createdAt - b.createdAt)
+      const active = readActiveMessages(sessionId)
       const repaired = repairRoleAlternation(active)
       const existingIds = new Set(active.map((msg) => msg.id))
       const inserted = repaired.filter(
@@ -171,6 +175,13 @@ export function createMemoryStore(): SessionStore {
         await store.persistToolResults(sessionId, inserted)
       }
       return { session: { ...session }, messages: repaired }
+    },
+
+    async loadMessages(sessionId) {
+      if (!sessions.has(sessionId)) {
+        throw new PersistError('unknown', `session not found: ${sessionId}`)
+      }
+      return readActiveMessages(sessionId)
     },
 
     async deleteSession(sessionId) {

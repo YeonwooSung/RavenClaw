@@ -269,6 +269,28 @@ describe('createSqliteStore', () => {
     expect(tools).toHaveLength(1)
   })
 
+  test('loadMessages does not persist incomplete for unpaired tool_use', async () => {
+    const store = openStore()
+    await store.createSession(session())
+    await store.persistUser('s1', {
+      id: 'u1',
+      role: 'user',
+      blocks: [{ type: 'text', text: 'go' }],
+      createdAt: 1,
+    })
+    await store.persistToolCalls('s1', {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'c1', name: 'Bash', input: { command: 'echo hi' } }],
+      createdAt: 2,
+    })
+    const messages = await store.loadMessages!('s1')
+    expect(messages.some((m) => m.role === 'tool')).toBe(false)
+
+    const again = await store.loadMessages!('s1')
+    expect(again.filter((m) => m.role === 'tool')).toHaveLength(0)
+  })
+
   test('persist indexes FTS and compact hides inactive rows', async () => {
     const path = tempDbPath()
     const store = openStore(path)

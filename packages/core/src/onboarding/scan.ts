@@ -141,7 +141,7 @@ async function countSlashCommands(
     }
     for (const message of messages) {
       if (message.role !== 'user') continue
-      // loadSession joins consecutive user rows; count each matching line.
+      // Consecutive user rows stay separate; count each matching line.
       for (const line of userText(message).split(/\r?\n/)) {
         const match = SLASH_RE.exec(line.trim())
         const name = match?.[1]
@@ -160,14 +160,8 @@ async function countSlashCommands(
 function resolveLoadMessages(
   store: SessionStore,
 ): ((sessionId: string) => Promise<Message[]>) | undefined {
-  const extra = store as SessionStore & {
-    loadMessages?: (sessionId: string) => Promise<Message[]>
-  }
-  if (typeof extra.loadMessages === 'function') {
-    return (sessionId) => extra.loadMessages!(sessionId)
-  }
-  if (typeof store.loadSession === 'function') {
-    return async (sessionId) => (await store.loadSession(sessionId)).messages
+  if (typeof store.loadMessages === 'function') {
+    return (sessionId) => store.loadMessages!(sessionId)
   }
   return undefined
 }

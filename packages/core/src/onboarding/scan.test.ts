@@ -106,4 +106,36 @@ describe('scanTeamOnboarding', () => {
     expect(scan.missing).not.toContain('no AGENTS.md/RAVEN.md/CLAUDE.md in cwd')
     expect(scan.missing).toContain('no MCP servers in config')
   })
+
+  test('does not persist loadSession repairs while counting slashes', async () => {
+    const cwd = tempCwd()
+    const store = createMemoryStore()
+    let persistedTools = 0
+    const persistToolResults = store.persistToolResults.bind(store)
+    store.persistToolResults = async (sessionId, messages) => {
+      persistedTools += messages.length
+      return persistToolResults(sessionId, messages)
+    }
+    const here = session({ id: 'sess_here', cwd, updatedAt: Date.now() })
+    await store.createSession(here)
+    await store.persistUser('sess_here', {
+      id: 'u1',
+      role: 'user',
+      blocks: [{ type: 'text', text: '/review please' }],
+      createdAt: 1,
+    })
+    await store.persistToolCalls('sess_here', {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'c1', name: 'Bash', input: { command: 'echo hi' } }],
+      createdAt: 2,
+    })
+
+    const scan = await scanTeamOnboarding({ cwd, home: tempCwd(), store, mcp: { servers: [] } })
+    expect(persistedTools).toBe(0)
+    expect(scan.usage.slashCounts).toEqual([{ name: 'review', count: 1 }])
+
+    await store.loadSession('sess_here')
+    expect(persistedTools).toBeGreaterThan(0)
+  })
 })
