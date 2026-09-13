@@ -2,12 +2,14 @@ import { inflateRawSync } from 'node:zlib'
 
 export type OfficeExt = '.docx' | '.xlsx'
 
+const MAX_INFLATE = 2_000_000
+
 export function extractOfficeText(
   buf: Buffer,
   ext: OfficeExt,
 ): { ok: true; text: string } | { ok: false } {
   try {
-    const files = unzipEntries(buf)
+    const files = unzipEntries(buf, (name) => wantedOfficePath(name, ext))
     if (ext === '.docx') {
       const xml = files.get('word/document.xml')
       if (xml === undefined) return { ok: false }
@@ -89,7 +91,12 @@ function decodeXml(text: string): string {
     .replace(/&amp;/g, '&')
 }
 
-function unzipEntries(buf: Buffer): Map<string, Buffer> {
+function wantedOfficePath(name: string, ext: OfficeExt): boolean {
+  if (ext === '.docx') return name === 'word/document.xml'
+  return name === 'xl/sharedStrings.xml' || /^xl\/worksheets\/sheet\d+\.xml$/i.test(name)
+}
+
+function unzipEntries(buf: Buffer, wanted: (name: string) => boolean): Map<string, Buffer> {
   if (buf.length < 22) throw new Error('short zip')
   const eocd = findEocd(buf)
   const count = buf.readUInt16LE(eocd + 10)
@@ -104,7 +111,9 @@ function unzipEntries(buf: Buffer): Map<string, Buffer> {
     const commentLen = buf.readUInt16LE(cdOff + 32)
     const localOff = buf.readUInt32LE(cdOff + 42)
     const name = buf.subarray(cdOff + 46, cdOff + 46 + nameLen).toString('utf8')
-    if (!name.endsWith('/')) out.set(name, inflateLocal(buf, localOff, method, compSize))
+    if (!name.endsWith('/') && wanted(name)) {
+      out.set(name, inflateLocal(buf, localOff, method, compSize))
+    }
     cdOff += 46 + nameLen + extraLen + commentLen
   }
   return out
@@ -127,7 +136,10 @@ function inflateLocal(buf: Buffer, localOff: number, method: number, compSize: n
   const dataStart = localOff + 30 + nameLen + extraLen
   if (dataStart + compSize > buf.length) throw new Error('short data')
   const data = buf.subarray(dataStart, dataStart + compSize)
-  if (method === 0) return Buffer.from(data)
-  if (method === 8) return Buffer.from(inflateRawSync(data))
+  if (method === 0) {
+    if (data.length > MAX_INFLATE) throw new Error('too large')
+    return Buffer.from(data)
+  }
+  if (method === 8) return Buffer.from(inflateRawSync(data, { maxOutputLength: MAX_INFLATE }))
   throw new Error('unsupported method')
 }

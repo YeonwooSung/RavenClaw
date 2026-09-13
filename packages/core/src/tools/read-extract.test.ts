@@ -27,6 +27,20 @@ describe('extractOfficeText', () => {
     expect(extractOfficeText(Buffer.from('not a zip'), '.docx').ok).toBe(false)
     expect(extractOfficeText(zipStore({ 'xl/workbook.xml': '<x/>' }), '.xlsx').ok).toBe(false)
   })
+
+  test('skips unused zip entries and refuses oversized document.xml', () => {
+    const huge = 'x'.repeat(2_000_001)
+    const kept = extractOfficeText(
+      zipStore({
+        'word/document.xml': '<w:p><w:t>keep</w:t></w:p>',
+        'word/media/image1.bin': huge,
+      }),
+      '.docx',
+    )
+    expect(kept.ok).toBe(true)
+    if (kept.ok) expect(kept.text).toBe('keep')
+    expect(extractOfficeText(zipStore({ 'word/document.xml': huge }), '.docx').ok).toBe(false)
+  })
 })
 
 function zipStore(files: Record<string, string>): Buffer {
