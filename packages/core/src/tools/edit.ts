@@ -113,11 +113,19 @@ function resolveReplacement(
   if (exact > 1) return { ok: false, matches: exact }
 
   const flexed = indentFlex(text, oldString, newString)
-  if (!flexed) return { ok: false, matches: 0 }
-  if (flexed.matches === 1) {
-    return { ok: true, oldString: flexed.oldString, newString: flexed.newString }
+  if (flexed) {
+    if (flexed.matches === 1) {
+      return { ok: true, oldString: flexed.oldString, newString: flexed.newString }
+    }
+    if (flexed.matches > 1) return { ok: false, matches: flexed.matches }
   }
-  return { ok: false, matches: flexed.matches }
+
+  const folded = foldFlex(text, oldString, newString)
+  if (!folded) return { ok: false, matches: 0 }
+  if (folded.matches === 1) {
+    return { ok: true, oldString: folded.oldString, newString: folded.newString }
+  }
+  return { ok: false, matches: folded.matches }
 }
 
 function indentFlex(
@@ -183,6 +191,98 @@ function applyLineDelta(line: string, delta: IndentDelta): string {
   if (delta.type === 'add') return `${delta.ws}${line}`
   if (line.startsWith(delta.ws)) return line.slice(delta.ws.length)
   return line
+}
+
+function foldFlex(
+  text: string,
+  oldString: string,
+  newString: string,
+): { matches: number; oldString: string; newString: string } | undefined {
+  const foldedOld = foldSpecials(oldString)
+  if (foldedOld.length === 0) return undefined
+
+  const { folded: foldedText, map } = foldSpecialsWithMap(text)
+  const starts: number[] = []
+  let from = 0
+  while (from <= foldedText.length - foldedOld.length) {
+    const idx = foldedText.indexOf(foldedOld, from)
+    if (idx === -1) break
+    const end = idx + foldedOld.length
+    if (isFoldAligned(map, idx, end)) starts.push(idx)
+    from = idx + foldedOld.length
+  }
+  if (starts.length !== 1) {
+    return { matches: starts.length, oldString, newString }
+  }
+  const start = starts[0] ?? 0
+  const end = start + foldedOld.length
+  return {
+    matches: 1,
+    oldString: text.slice(map[start] ?? 0, map[end] ?? text.length),
+    newString: foldSpecials(newString),
+  }
+}
+
+const FOLD_CHARS: Record<string, string> = {
+  '\u2018': "'",
+  '\u2019': "'",
+  '\u201A': "'",
+  '\u201B': "'",
+  '\u201C': '"',
+  '\u201D': '"',
+  '\u201E': '"',
+  '\u201F': '"',
+  '\u2010': '-',
+  '\u2011': '-',
+  '\u2012': '-',
+  '\u2013': '-',
+  '\u2014': '-',
+  '\u2015': '-',
+  '\u2212': '-',
+  '\u2026': '...',
+  '\u00A0': ' ',
+}
+
+function foldSpecials(text: string): string {
+  return foldSpecialsWithMap(text).folded
+}
+
+function foldSpecialsWithMap(text: string): { folded: string; map: number[] } {
+  const chars: string[] = []
+  const map: number[] = []
+  let i = 0
+  while (i < text.length) {
+    const lineEnd = text.indexOf('\n', i)
+    const end = lineEnd === -1 ? text.length : lineEnd
+    let contentEnd = end
+    while (contentEnd > i && isLineTrailingWs(text[contentEnd - 1] ?? '')) contentEnd -= 1
+    for (let j = i; j < contentEnd; j += 1) {
+      const mapped = FOLD_CHARS[text[j] ?? ''] ?? text[j] ?? ''
+      for (const ch of mapped) {
+        chars.push(ch)
+        map.push(j)
+      }
+    }
+    if (lineEnd !== -1) {
+      chars.push('\n')
+      map.push(lineEnd)
+      i = lineEnd + 1
+    } else {
+      i = text.length
+    }
+  }
+  map.push(text.length)
+  return { folded: chars.join(''), map }
+}
+
+function isLineTrailingWs(ch: string): boolean {
+  return ch === ' ' || ch === '\t' || ch === '\u00A0'
+}
+
+function isFoldAligned(map: number[], start: number, end: number): boolean {
+  if (start > 0 && map[start] === map[start - 1]) return false
+  if (end > 0 && end < map.length - 1 && map[end] === map[end - 1]) return false
+  return true
 }
 
 function countOccurrences(haystack: string, needle: string): number {

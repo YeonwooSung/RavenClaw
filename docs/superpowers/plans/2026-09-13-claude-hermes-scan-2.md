@@ -18,6 +18,8 @@ Discord rewrite, `execute_code`, Electron, `bypass` / yolo, streaming tool execu
 
 ### L14. Edit quote / trailing-ws flex
 
+**Status.** Done.
+
 **Why.** Claude `src/tools/FileEditTool/utils.ts` `findActualString` / `normalizeQuotes` + Hermes `tools/fuzzy_match.py` unicode map: smart quotes, NBSP, trailing spaces still land on a unique region. RavenClaw `packages/core/src/tools/edit.ts` already has newline normalize + indent-flex. One curly quote or trailing space still fails `old_string not found`.
 
 **Contract.** After exact and indent-flex miss: try (1) curly→straight quotes, (2) unicode dashes/ellipsis/NBSP→ASCII, (3) strip trailing whitespace per line. Still require exactly one match. Apply the same transform to `new_string`. No similarity / difflib fallback. ApplyPatch unchanged.

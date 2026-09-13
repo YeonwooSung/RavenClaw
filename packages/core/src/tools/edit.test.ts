@@ -202,6 +202,80 @@ describe('Edit', () => {
     expect(readFileSync(join(root, 'note.txt'), 'utf8')).toBe('hello raven\r\nnext line\r\n')
   })
 
+  test('matches curly quotes after exact and indent-flex miss', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'note.txt'), 'say \u201Chello\u201D now\n')
+    const ctx = makeCtx(root)
+    ctx.turn.readFiles.add(resolvedOf(root, 'note.txt'))
+
+    const out = await editTool.execute(
+      { path: 'note.txt', old_string: 'say "hello" now', new_string: 'say "hi" now' },
+      ctx,
+    )
+    expect(typeof out).toBe('string')
+    expect(out.toLowerCase()).not.toMatch(/fail|error|deny/)
+    expect(readFileSync(join(root, 'note.txt'), 'utf8')).toBe('say "hi" now\n')
+  })
+
+  test('matches unicode dash, ellipsis, and NBSP on a unique region', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'note.txt'), 'wait\u00A0now\u2014see\u2026end\n')
+    const ctx = makeCtx(root)
+    ctx.turn.readFiles.add(resolvedOf(root, 'note.txt'))
+
+    const out = await editTool.execute(
+      { path: 'note.txt', old_string: 'wait now-see...end', new_string: 'done' },
+      ctx,
+    )
+    expect(typeof out).toBe('string')
+    expect(out.toLowerCase()).not.toMatch(/fail|error|deny/)
+    expect(readFileSync(join(root, 'note.txt'), 'utf8')).toBe('done\n')
+  })
+
+  test('matches unique region when the file has trailing spaces', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'note.txt'), 'alpha  \nbeta\n')
+    const ctx = makeCtx(root)
+    ctx.turn.readFiles.add(resolvedOf(root, 'note.txt'))
+
+    const out = await editTool.execute(
+      { path: 'note.txt', old_string: 'alpha\nbeta', new_string: 'gamma\ndelta' },
+      ctx,
+    )
+    expect(typeof out).toBe('string')
+    expect(out.toLowerCase()).not.toMatch(/fail|error|deny/)
+    expect(readFileSync(join(root, 'note.txt'), 'utf8')).toBe('gamma\ndelta\n')
+  })
+
+  test('applies the same fold to new_string', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'note.txt'), 'say \u201Chello\u201D\n')
+    const ctx = makeCtx(root)
+    ctx.turn.readFiles.add(resolvedOf(root, 'note.txt'))
+
+    const out = await editTool.execute(
+      { path: 'note.txt', old_string: 'say "hello"', new_string: 'say \u201Cgoodbye\u201D' },
+      ctx,
+    )
+    expect(typeof out).toBe('string')
+    expect(out.toLowerCase()).not.toMatch(/fail|error|deny/)
+    expect(readFileSync(join(root, 'note.txt'), 'utf8')).toBe('say "goodbye"\n')
+  })
+
+  test('still fails when fold-equivalent old_string is not unique', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'note.txt'), 'say \u201Chello\u201D and say \u201Chello\u201D\n')
+    const ctx = makeCtx(root)
+    ctx.turn.readFiles.add(resolvedOf(root, 'note.txt'))
+
+    const out = await editTool.execute(
+      { path: 'note.txt', old_string: 'say "hello"', new_string: 'say "hi"' },
+      ctx,
+    )
+    expect(out.toLowerCase()).toMatch(/context|unique|2|twice|multiple/)
+    expect(readFileSync(join(root, 'note.txt'), 'utf8')).toBe('say \u201Chello\u201D and say \u201Chello\u201D\n')
+  })
+
   test('matches old_string with two extra spaces of indent', async () => {
     const root = fixtureRoot()
     writeFileSync(join(root, 'src.ts'), 'function f() {\n  const x = 1\n  return x\n}\n')
