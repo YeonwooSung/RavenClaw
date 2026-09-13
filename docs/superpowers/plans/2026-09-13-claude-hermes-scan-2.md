@@ -102,6 +102,8 @@ Discord rewrite, `execute_code`, Electron, `bypass` / yolo, streaming tool execu
 
 ### L24. Unknown-tool name alias repair
 
+**Status.** Done.
+
 **Why.** Hermes `agent/turn_tool_validation.py` repairs common names before dispatch. RavenClaw `unknownToolText` fails the call. Models trained on Claude/Hermes emit `Task`, `read_file`, `search_files`, `write_file`.
 
 **Contract.** Before `unknown_tool`, map a frozen alias table onto an existing registered name (`Task`→`Agent`, `read_file`→`Read`, `write_file`→`Write`, `search_files`→`Grep`, `list_dir`/`list_files`→`ListDir`/`Glob`). Keep the model’s `tool_use` id. No 3-strike exit (unknown still errors and the loop can complete). Do not invent tools.

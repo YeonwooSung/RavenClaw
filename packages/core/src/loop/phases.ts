@@ -33,6 +33,7 @@ import {
   makeToolMessage,
   pairMissing,
   parseFailedText,
+  resolveToolAlias,
   unknownToolText,
 } from './pairing'
 import { repairRoleAlternation, selectProtectedTail } from './repair'
@@ -456,22 +457,35 @@ function resolveCallTool(
   const enabled = filterToolsForTurn(state.tools, state.turn)
   if (call.name !== 'ToolCall') {
     const tool = enabled.find((entry) => entry.name === call.name)
-    if (!tool) return { ok: false, message: unknownToolText(call.name) }
-    return { ok: true, tool, name: call.name, input: call.input }
+    if (tool) return { ok: true, tool, name: call.name, input: call.input }
+    const alias = resolveToolAlias(
+      call.name,
+      enabled.map((entry) => entry.name),
+    )
+    if (alias) {
+      const aliased = enabled.find((entry) => entry.name === alias)
+      if (aliased) return { ok: true, tool: aliased, name: alias, input: call.input }
+    }
+    return { ok: false, message: unknownToolText(call.name) }
   }
 
   const bridge = enabled.find((entry) => entry.name === 'ToolCall')
   if (!bridge) return { ok: false, message: unknownToolText('ToolCall') }
   const parsed = toolCallTool.parse(call.input)
   if (!parsed.ok) return { ok: false, message: parseFailedText(parsed.message) }
-  const realName = parsed.value.name
+  const requested = parsed.value.name
+  const alias = resolveToolAlias(
+    requested,
+    state.tools.map((entry) => entry.name),
+  )
+  const realName = alias ?? requested
   if (TOOLCALL_BRIDGES.has(realName)) return { ok: false, message: toolCallTargetText(realName) }
   const frozen = state.turn.frozenToolNames ?? snapshotFrozenNames(state)
   if (frozen.includes(realName)) return { ok: false, message: toolCallTargetText(realName) }
   const real = state.tools.find((entry) => entry.name === realName)
-  if (!real) return { ok: false, message: unknownToolText(realName) }
+  if (!real) return { ok: false, message: unknownToolText(requested) }
   if (!skillAllowsName(state.turn, realName)) {
-    return { ok: false, message: unknownToolText(realName) }
+    return { ok: false, message: unknownToolText(requested) }
   }
   return { ok: true, tool: real, name: realName, input: parsed.value.arguments }
 }

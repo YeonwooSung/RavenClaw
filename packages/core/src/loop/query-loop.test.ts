@@ -786,6 +786,61 @@ describe('queryLoop via SessionEngine', () => {
     expect(pairingHolds(loaded.messages)).toBe(true)
   })
 
+  test('unknown alias maps onto a registered tool and keeps the tool_use id', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_alias' })
+    await store.createSession(session)
+    const read = stubNamedTool('Read')
+    let executed = 0
+    const orig = read.execute.bind(read)
+    read.execute = async (input, ctx) => {
+      executed += 1
+      return orig(input, ctx)
+    }
+    const provider = createFakeProvider([
+      toolThenStop('rf1', 'read_file', { path: 'a.ts' }),
+      textThenStop('done'),
+    ])
+    const engine = createSessionEngine(
+      engineOpts({ provider, store, session, tools: [read] }),
+    )
+    const { result } = await collect(engine.submitMessage('read it'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(executed).toBe(1)
+    const loaded = await store.loadSession(session.id)
+    const row = loaded.messages.find(
+      (m): m is Extract<Message, { role: 'tool' }> =>
+        m.role === 'tool' && m.toolUseId === 'rf1',
+    )
+    expect(row?.ok).toBe(true)
+    expect(row?.blocks[0]?.text).toBe('Read')
+    expect(pairingHolds(loaded.messages)).toBe(true)
+  })
+
+  test('alias does not invent a tool that is not registered', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_alias_missing' })
+    await store.createSession(session)
+    const echo = createEcho()
+    const provider = createFakeProvider([
+      toolThenStop('rf2', 'read_file', { path: 'a.ts' }),
+      textThenStop('recovered'),
+    ])
+    const engine = createSessionEngine(
+      engineOpts({ provider, store, session, tools: [echo] }),
+    )
+    const { result } = await collect(engine.submitMessage('read it'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(echo.executeCount).toBe(0)
+    const loaded = await store.loadSession(session.id)
+    const row = loaded.messages.find(
+      (m): m is Extract<Message, { role: 'tool' }> =>
+        m.role === 'tool' && m.toolUseId === 'rf2',
+    )
+    expect(row?.ok).toBe(false)
+    expect(row?.blocks[0]?.text.startsWith('unknown_tool:')).toBe(true)
+  })
+
   test('persistUser failure does not call provider.stream', async () => {
     const store = createMemoryStore()
     const session = makeSession({ id: 'sess_user_fail' })

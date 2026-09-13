@@ -73,6 +73,25 @@ export function unknownToolText(name: string): string {
   return `unknown_tool: no tool named '${name}' is registered.`
 }
 
+export const TOOL_NAME_ALIASES: Readonly<Record<string, string>> = {
+  Task: 'Agent',
+  read_file: 'Read',
+  write_file: 'Write',
+  search_files: 'Grep',
+  list_dir: 'ListDir',
+  list_files: 'Glob',
+}
+
+export function resolveToolAlias(
+  name: string,
+  registered: ReadonlyArray<string> | ReadonlySet<string>,
+): string | undefined {
+  const alias = TOOL_NAME_ALIASES[name]
+  if (alias === undefined) return undefined
+  if (Array.isArray(registered) ? registered.includes(alias) : registered.has(alias)) return alias
+  return undefined
+}
+
 export function parseFailedText(message: string): string {
   return `parse_failed: ${message}`
 }

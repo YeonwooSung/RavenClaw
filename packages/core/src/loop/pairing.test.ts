@@ -17,9 +17,11 @@ import type {
 import { createSessionEngine } from './session-engine'
 import {
   INCOMPLETE_TEXT,
+  TOOL_NAME_ALIASES,
   TOOLS_OMITTED_TEXT,
   makeToolMessage,
   pairMissing,
+  resolveToolAlias,
   unpairedToolUseIds,
 } from './pairing'
 
@@ -35,6 +37,21 @@ afterEach(() => {
     const dir = tempDirs.pop()
     if (dir) rmSync(dir, { recursive: true, force: true })
   }
+})
+
+describe('tool name aliases', () => {
+  test('maps frozen Claude/Hermes names onto registered tools only', () => {
+    expect(TOOL_NAME_ALIASES.Task).toBe('Agent')
+    expect(TOOL_NAME_ALIASES.read_file).toBe('Read')
+    expect(TOOL_NAME_ALIASES.write_file).toBe('Write')
+    expect(TOOL_NAME_ALIASES.search_files).toBe('Grep')
+    expect(TOOL_NAME_ALIASES.list_dir).toBe('ListDir')
+    expect(TOOL_NAME_ALIASES.list_files).toBe('Glob')
+    expect(resolveToolAlias('read_file', ['Read', 'Write'])).toBe('Read')
+    expect(resolveToolAlias('Task', ['Agent'])).toBe('Agent')
+    expect(resolveToolAlias('read_file', ['Write'])).toBeUndefined()
+    expect(resolveToolAlias('NotATool', ['Read'])).toBeUndefined()
+  })
 })
 
 describe('pairing invariant helpers', () => {
