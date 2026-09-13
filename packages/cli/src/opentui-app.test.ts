@@ -127,6 +127,7 @@ function fakeEngine(
     drainSteering() {
       return []
     },
+    bindDrainQueued() {},
     async rewindLast() {
       return { ok: false, notice: 'nothing to rewind' }
     },

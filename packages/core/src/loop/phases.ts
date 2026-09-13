@@ -895,6 +895,10 @@ export async function* finalizeRound(
 ): AsyncGenerator<StreamEvent, PhaseResult> {
   const fail = await persistResultsWithRetry(state, state.toolResults)
   if (fail) return { action: 'return', end: fail }
+  const queued = await injectQueued(state)
+  if (queued !== undefined) {
+    yield { type: 'status', message: `queued: ${steerPreview(queued)}` }
+  }
   const steered = await injectSteering(state)
   for (const text of steered) {
     yield { type: 'status', message: `steered: ${steerPreview(text)}` }
@@ -902,8 +906,18 @@ export async function* finalizeRound(
   return { action: 'continue' }
 }
 
+async function injectQueued(state: LoopState): Promise<string | undefined> {
+  const text = state.drainQueued?.()
+  if (text === undefined || text.trim() === '') return undefined
+  const injected = await injectHintTexts(state, [text])
+  return injected[0]
+}
+
 async function injectSteering(state: LoopState): Promise<string[]> {
-  const texts = state.drainSteering?.() ?? []
+  return injectHintTexts(state, state.drainSteering?.() ?? [])
+}
+
+async function injectHintTexts(state: LoopState, texts: string[]): Promise<string[]> {
   if (texts.length === 0) return []
   const injected: string[] = []
   for (const text of texts) {

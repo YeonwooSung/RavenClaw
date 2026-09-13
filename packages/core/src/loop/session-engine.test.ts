@@ -317,6 +317,152 @@ describe('steering and image submit', () => {
     expect(engine.drainSteering()).toEqual([])
   })
 
+  test('drainQueued suffixes the last tool row once per tool batch', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_queue' })
+    await store.createSession(sess)
+    const queued = ['first queued', 'second queued']
+    const engine = createSessionEngine({
+      session: sess,
+      provider: createFakeProvider([
+        [
+          { type: 'tool_call', id: 'c1', name: 'Ping', input: {} },
+          { type: 'stop', reason: 'tool' },
+        ],
+        [
+          { type: 'text_delta', text: 'done' },
+          { type: 'stop', reason: 'end' },
+        ],
+      ]),
+      store,
+      tools: [
+        {
+          name: 'Ping',
+          description: 'ping',
+          inputSchema: { type: 'object' },
+          parse() {
+            return { ok: true as const, value: {} }
+          },
+          isConcurrencySafe() {
+            return true
+          },
+          isReadOnly() {
+            return true
+          },
+          async checkPermissions() {
+            return { behavior: 'allow' as const, reason: 'mode' as const }
+          },
+          async execute() {
+            return 'pong'
+          },
+        },
+      ],
+      compact: defaultCompact({ enabled: false }),
+      model: defaultModel(),
+      maxRounds: 8,
+      drainQueued: () => queued.shift(),
+      async askUser() {
+        return 'deny'
+      },
+    })
+
+    const gen = engine.submitMessage('hi')
+    const statuses: string[] = []
+    while (true) {
+      const next = await gen.next()
+      if (next.done) break
+      if (next.value.type === 'status') statuses.push(next.value.message)
+    }
+    const loaded = await store.loadSession(sess.id)
+    const toolRow = loaded.messages.find(
+      (msg): msg is Extract<Message, { role: 'tool' }> =>
+        msg.role === 'tool' && msg.toolUseId === 'c1',
+    )
+    expect(toolRow?.blocks[0]?.text).toContain('pong')
+    expect(toolRow?.blocks[0]?.text).toContain('first queued')
+    expect(toolRow?.blocks[0]?.text).not.toContain('second queued')
+    expect(queued).toEqual(['second queued'])
+    expect(statuses.some((line) => line.startsWith('queued: first queued'))).toBe(true)
+  })
+
+  test('bindDrainQueued is used after a tool round; no-tool turns do not drain', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_queue_bind' })
+    await store.createSession(sess)
+    let drains = 0
+    const queued = ['late']
+    const engine = createSessionEngine({
+      session: sess,
+      provider: createFakeProvider([
+        [
+          { type: 'text_delta', text: 'plain' },
+          { type: 'stop', reason: 'end' },
+        ],
+        [
+          { type: 'tool_call', id: 'c2', name: 'Ping', input: {} },
+          { type: 'stop', reason: 'tool' },
+        ],
+        [
+          { type: 'text_delta', text: 'done' },
+          { type: 'stop', reason: 'end' },
+        ],
+      ]),
+      store,
+      tools: [
+        {
+          name: 'Ping',
+          description: 'ping',
+          inputSchema: { type: 'object' },
+          parse() {
+            return { ok: true as const, value: {} }
+          },
+          isConcurrencySafe() {
+            return true
+          },
+          isReadOnly() {
+            return true
+          },
+          async checkPermissions() {
+            return { behavior: 'allow' as const, reason: 'mode' as const }
+          },
+          async execute() {
+            return 'pong'
+          },
+        },
+      ],
+      compact: defaultCompact({ enabled: false }),
+      model: defaultModel(),
+      maxRounds: 8,
+      async askUser() {
+        return 'deny'
+      },
+    })
+
+    const first = engine.submitMessage('no tools')
+    while (!(await first.next()).done) {
+      // drain
+    }
+    expect(drains).toBe(0)
+    expect(queued).toEqual(['late'])
+
+    engine.bindDrainQueued(() => {
+      drains += 1
+      return queued.shift()
+    })
+    const second = engine.submitMessage('with tools')
+    while (!(await second.next()).done) {
+      // drain
+    }
+    const loaded = await store.loadSession(sess.id)
+    const toolRow = loaded.messages.find(
+      (msg): msg is Extract<Message, { role: 'tool' }> =>
+        msg.role === 'tool' && msg.toolUseId === 'c2',
+    )
+    expect(drains).toBe(1)
+    expect(queued).toEqual([])
+    expect(toolRow?.blocks[0]?.text).toContain('late')
+  })
+
   test('submitMessage accepts image blocks', async () => {
     const store = createMemoryStore()
     const sess = makeSession({ id: 'sess_img' })

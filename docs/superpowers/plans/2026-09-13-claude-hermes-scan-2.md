@@ -48,6 +48,8 @@ Discord rewrite, `execute_code`, Electron, `bypass` / yolo, streaming tool execu
 
 ### L17. Mid-turn queue drain
 
+**Status.** Done.
+
 **Why.** Claude `src/query.ts` converts queued prompts to mid-turn attachments after a tool batch so the model sees them before `completed`. RavenClaw `packages/cli/src/app.tsx` only `dequeue` after the turn ends. `/steer` already exists for live-turn text; `/queue` waits a full round.
 
 **Contract.** After `runToolRound`, if the host queue is nonempty, `injectMidTurnHint` the dequeued text onto the last tool row (R1.1 cache-safe path). Cap one item per tool batch. Empty / no-tool completion still dequeues as today’s next-turn. OpenTUI same. Headless unchanged.

@@ -378,6 +378,8 @@ export interface SessionEngineOptions {
   verifyOnStop?: boolean
   /** After a tool batch, return newly ready deferred tools (MCP). Prefix stays unchanged. */
   refreshTools?: () => Promise<Tool[] | undefined> | Tool[] | undefined
+  /** After a tool batch, take at most one host-queued prompt. */
+  drainQueued?: () => string | undefined
   /** After a completed TUI turn, fork a persist-detached memory/skill review. Default off. */
   backgroundReview?: boolean
   /** Reuse a parent FileHistory. Unset creates one for this engine. */
@@ -400,6 +402,8 @@ export interface SessionEngine {
   submitMessage(input: UserSubmitInput): AsyncGenerator<StreamEvent, RoundEnd>
   enqueueSteer(text: string): void
   drainSteering(): string[]
+  /** Host `/queue` drain. Called after each tool round; one item per batch. */
+  bindDrainQueued(fn: (() => string | undefined) | undefined): void
   rewindLast(): Promise<{ ok: boolean; notice: string }>
   compactNow(): Promise<void>
   setPermissionMode(mode: PermissionMode): Promise<void>
@@ -422,6 +426,8 @@ export interface QueryLoopOptions {
   tasks?: import('./tasks/registry').TaskRegistry
   fileHistory?: import('./session/file-history').FileHistory
   drainSteering?: () => string[]
+  /** After a tool batch, take at most one host-queued prompt. */
+  drainQueued?: () => string | undefined
   fallbackModel?: string
   jsonSchema?: unknown
   verifyOnStop?: boolean

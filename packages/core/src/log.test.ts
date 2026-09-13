@@ -134,6 +134,7 @@ function stubEngine(sessionId: string, end: RoundEnd, events: StreamEvent[] = []
     drainSteering() {
       return []
     },
+    bindDrainQueued() {},
     async rewindLast() {
       return { ok: true, notice: '' }
     },

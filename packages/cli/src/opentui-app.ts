@@ -140,6 +140,7 @@ export async function runOpenTuiApp(
       write(`queued (${n})\n`)
       return
     }
+    current.engine.bindDrainQueued(() => dequeue(queue))
     turnBusy = true
     const expanded = expandMentions(text, current.cwd)
     appendPrompt(text, current.config.home)

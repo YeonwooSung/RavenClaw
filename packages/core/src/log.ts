@@ -77,6 +77,9 @@ export function wrapSessionEngineLog(
     drainSteering() {
       return engine.drainSteering()
     },
+    bindDrainQueued(fn) {
+      engine.bindDrainQueued(fn)
+    },
     rewindLast() {
       return engine.rewindLast()
     },

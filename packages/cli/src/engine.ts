@@ -1043,6 +1043,9 @@ function attachRavenclawLog(engine: SessionEngine, log: RavenclawLog): SessionEn
     drainSteering() {
       return engine.drainSteering()
     },
+    bindDrainQueued(fn) {
+      engine.bindDrainQueued(fn)
+    },
     rewindLast() {
       return engine.rewindLast()
     },

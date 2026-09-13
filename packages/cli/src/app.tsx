@@ -256,6 +256,7 @@ export function App(props: AppProps) {
         setNotice(`queued (${n})`)
         return
       }
+      runtimeRef.current.engine.bindDrainQueued(() => dequeue(queueRef.current))
       busyRef.current = true
       setBusy(true)
       setNotice(undefined)

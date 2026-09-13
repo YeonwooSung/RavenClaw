@@ -54,6 +54,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
   const fileHistory = opts.fileHistory ?? createFileHistory(session.id)
   const ownsHistoryTurn = opts.fileHistory === undefined || opts.fileHistoryOwnsTurn === true
   const steering: string[] = []
+  let drainQueued = opts.drainQueued
   const injectedAgentsDirs = new Set<string>()
   let closed = false
   let sessionStartDone = false
@@ -81,6 +82,10 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
 
     drainSteering() {
       return steering.splice(0)
+    },
+
+    bindDrainQueued(fn) {
+      drainQueued = fn
     },
 
     async rewindLast() {
@@ -208,6 +213,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         loopOpts.tasks = tasks
         loopOpts.fileHistory = fileHistory
         loopOpts.drainSteering = () => steering.splice(0)
+        loopOpts.drainQueued = () => drainQueued?.()
         loopOpts.lifecycle = lifecycle
         if (opts.fallbackModel !== undefined) loopOpts.fallbackModel = opts.fallbackModel
         if (opts.jsonSchema !== undefined) loopOpts.jsonSchema = opts.jsonSchema
