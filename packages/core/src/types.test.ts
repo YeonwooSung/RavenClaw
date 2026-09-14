@@ -3,6 +3,7 @@ import {
   PersistError,
   SessionLockError,
   defaultConfig,
+  defaultModelId,
   getModelProfile,
   ravenclawHome,
   reserveOutputTokens,
@@ -280,6 +281,7 @@ describe('package root re-exports PR3 APIs', () => {
   test('home, config, and ModelProfile are importable from @ravenclaw/core', () => {
     expect(ravenclawHome().endsWith('.ravenclaw')).toBe(true)
     expect(defaultConfig().ads.feedUrl).toBe('')
+    expect(defaultConfig().model).toBe(defaultModelId('anthropic'))
     expect(reserveOutputTokens(200_000)).toBe(20_000)
     expect(getModelProfile('missing').contextWindow).toBe(32_000)
   })

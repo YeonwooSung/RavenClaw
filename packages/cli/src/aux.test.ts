@@ -1,5 +1,12 @@
 import { describe, expect, test } from 'bun:test'
-import { defaultCompactPolicy, defaultConfig, type ModelProfile, type Provider, type ResolvedConfig } from '@ravenclaw/core'
+import {
+  defaultCompactPolicy,
+  defaultConfig,
+  defaultModelId,
+  type ModelProfile,
+  type Provider,
+  type ResolvedConfig,
+} from '@ravenclaw/core'
 import {
   applyAuxCompactPolicy,
   auxSameProvider,
@@ -49,7 +56,9 @@ function config(over: Partial<ResolvedConfig> = {}): ResolvedConfig {
 describe('providerKindFromModelId', () => {
   test('maps common prefixes', () => {
     expect(providerKindFromModelId('anthropic/claude-haiku-4.5')).toBe('anthropic')
+    expect(providerKindFromModelId(defaultModelId('anthropic'))).toBe('anthropic')
     expect(providerKindFromModelId('openai/gpt-4o-mini')).toBe('openai_compat')
+    expect(providerKindFromModelId(defaultModelId('openai'))).toBe('openai_compat')
     expect(providerKindFromModelId('ollama/qwen')).toBe('ollama')
     expect(providerKindFromModelId('vllm/local-model')).toBe('vllm')
     expect(providerKindFromModelId('llama3.2')).toBeUndefined()

@@ -10,6 +10,7 @@ import {
   parseConfigYaml,
   resolveProviderModel,
 } from './config'
+import { defaultModelId } from './cost/models'
 
 const ENV_KEYS = [
   'RAVENCLAW_HOME',
@@ -54,7 +55,7 @@ function tempHome(): string {
 describe('defaultConfig', () => {
   test('matches documented defaults including empty ads.feedUrl', () => {
     const cfg = defaultConfig()
-    expect(cfg.model).toBe('anthropic/claude-sonnet-4')
+    expect(cfg.model).toBe(defaultModelId('anthropic'))
     expect(cfg.provider).toBe('anthropic')
     expect(cfg.permissionMode).toBe('default')
     expect(cfg.maxRounds).toBe(80)
@@ -76,7 +77,7 @@ describe('loadConfig', () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-test'
     const home = tempHome()
     const cfg = loadConfig({ home })
-    expect(cfg.model).toBe('anthropic/claude-sonnet-4')
+    expect(cfg.model).toBe(defaultModelId('anthropic'))
     expect(cfg.provider).toBe('anthropic')
     expect(cfg.maxRounds).toBe(80)
     expect(cfg.childMaxRounds).toBe(30)
@@ -230,6 +231,7 @@ describe('loadConfig', () => {
     process.env.OPENAI_API_KEY = 'sk-openai-only'
     const cfg = loadConfig({ home: tempHome() })
     expect(cfg.provider).toBe('openai_compat')
+    expect(cfg.model).toBe(defaultModelId('openai'))
     expect(cfg.env.OPENAI_API_KEY).toBe('sk-openai-only')
   })
 
@@ -237,6 +239,8 @@ describe('loadConfig', () => {
     process.env.ANTHROPIC_API_KEY = 'sk-ant-only'
     const cfg = loadConfig({ home: tempHome() })
     expect(cfg.provider).toBe('anthropic')
+    expect(cfg.model).toBe(defaultModelId('anthropic'))
+    expect(cfg.profile.id).toBe(defaultModelId('anthropic'))
     expect(cfg.env.ANTHROPIC_API_KEY).toBe('sk-ant-only')
   })
 

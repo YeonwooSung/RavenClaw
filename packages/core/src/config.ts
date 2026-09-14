@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
-import { getModelProfile } from './cost/models'
+import { defaultModelId, getModelProfile } from './cost/models'
 import { ravenclawHome } from './home'
 import type { ModelProfile, PermissionMode } from './types'
 import { parseYamlMap, stripWrappingQuotes } from './config/yaml'
@@ -177,7 +177,7 @@ const ENV_KEYS = [
 
 export function defaultConfig(): RavenClawConfig {
   return {
-    model: 'anthropic/claude-sonnet-4',
+    model: defaultModelId('anthropic'),
     provider: 'anthropic',
     permissionMode: 'default',
     maxRounds: 80,
@@ -351,7 +351,8 @@ export function resolveProviderModel(opts: {
 export function defaultModelForProvider(provider: ProviderKind): string {
   if (provider === 'ollama') return OLLAMA_DEFAULT_MODEL
   if (provider === 'vllm') return VLLM_DEFAULT_MODEL
-  return defaultConfig().model
+  if (provider === 'openai_compat') return defaultModelId('openai')
+  return defaultModelId('anthropic')
 }
 
 export function normalizeOpenAiBaseUrl(raw: string): string {

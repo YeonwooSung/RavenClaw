@@ -7,7 +7,7 @@ import type {
   SystemPart,
   TokenUsage,
 } from '@ravenclaw/core'
-import { getModelProfile } from '@ravenclaw/core'
+import { defaultModelId, getModelProfile } from '@ravenclaw/core'
 import {
   fetchWithSingleRetry,
   isAbortError,
@@ -20,9 +20,7 @@ import {
 } from './errors'
 
 const DEFAULT_BASE_URL = 'https://api.openai.com/v1'
-// Default Responses model when the request omits one. gpt-4.1 is the
-// current general-purpose Responses-capable chat model.
-const DEFAULT_MODEL = 'gpt-4.1'
+const DEFAULT_MODEL = defaultModelId('openai')
 
 export interface OpenAIResponsesProviderOptions {
   apiKey: string

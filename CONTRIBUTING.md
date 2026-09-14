@@ -26,7 +26,7 @@ bun run smoke
 
 | Package | Role |
 |---|---|
-| `packages/core` | query loop, tools, permissions, sessions, MCP, skills |
+| `packages/core` | query loop, tools, permissions, sessions, MCP, skills. Model roles and prices: `src/cost/models.ts` |
 | `packages/providers` | Anthropic, OpenAI-compat, Responses, included gateway |
 | `packages/ads` | first-party ads (must not import `@ravenclaw/core`) |
 | `packages/sdk` | `createRavenSession` (no Ink, ads, or CLI) |
@@ -61,6 +61,31 @@ Commands that must not require a key: `help`, `version`, `sessions`, `show`, `rm
 In-session slash commands live in `packages/cli/src/commands.ts` (`SLASH_COMMANDS`). Add `/loop` and `/skills` subcommands there, then handle them in `app.tsx` and `opentui-app.ts`. Builtin skills are `packages/core/src/skills/builtin/<name>/SKILL.md` — keep frontmatter `name` + `description`, no vendor brand strings. `bun test packages/core/src/skills/` checks that.
 
 When you add a user-facing flag or slash, update `README.md` in the same PR.
+
+## Updating the model catalog
+
+Official snapshot ids and prices live in **one file**: `packages/core/src/cost/models.ts`.
+
+| Layer | What it is | Who edits it |
+|---|---|---|
+| `CURRENT` | Role → current official API id (`default` / `strong` / `fast`) | Bump when a generation ships |
+| `BUILT_INS` | Context window, 5-minute cache prices, thinking | Add a row for the new snapshot |
+| `ALIASES` | Prefixed / dated / vendor nicknames → canonical id | Add if the vendor publishes extras |
+| `defaultModelId(family, role)` | The only API other packages should call | Do not duplicate snapshot strings |
+
+`defaultConfig()`, `defaultModelForProvider()`, and the OpenAI Responses fallback all call `defaultModelId`. Do **not** paste a new id into `packages/core/src/config.ts`, `packages/providers/src/responses.ts`, README examples-as-defaults, or tests that only check “did the default load”.
+
+When Anthropic or OpenAI ships a new generation:
+
+1. Add the official API id to `BUILT_INS` (context, list prices, `supportsThinking`).
+2. Point `CURRENT.<family>.<role>` at that id.
+3. Add `ALIASES` for prefixed or dated forms (`anthropic/…`, `openai/…`, dated Haiku ids).
+4. Update the pointer assertions in `packages/core/src/cost/models.test.ts` (`defaultModelId` describe). Catalog-row tests may keep naming the snapshot; they are the price table, not the default.
+5. Refresh the README [Models](README.md#models) table and the `config.yaml` example id if the **default** role moved.
+
+Default-value tests must compare against `defaultModelId('anthropic')` / `defaultModelId('openai')`, not a literal. Parser and payload tests may use any fixture string (`anthropic/claude-sonnet-4`, `vendor/fixture-model`).
+
+Do not fetch a vendor `/models` list at runtime. Unknown user ids stay pass-through (`conservativeProfile`).
 
 ## Releases
 

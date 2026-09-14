@@ -69,9 +69,13 @@ export type {
 } from './config'
 export {
   conservativeProfile,
+  defaultModelId,
   getModelProfile,
+  MODEL_FAMILIES,
+  MODEL_ROLES,
   reserveOutputTokens,
 } from './cost/models'
+export type { ModelFamily, ModelRole } from './cost/models'
 export {
   CostTracker,
   estimateUsd,

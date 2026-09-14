@@ -15,8 +15,8 @@ import { createProvider } from '@ravenclaw/providers'
 export function providerKindFromModelId(modelId: string): ProviderKind | undefined {
   const slash = modelId.indexOf('/')
   const prefix = (slash === -1 ? modelId : modelId.slice(0, slash)).toLowerCase()
-  if (prefix === 'anthropic') return 'anthropic'
-  if (prefix === 'openai') return 'openai_compat'
+  if (prefix === 'anthropic' || prefix.startsWith('claude-')) return 'anthropic'
+  if (prefix === 'openai' || prefix.startsWith('gpt-')) return 'openai_compat'
   if (prefix === 'ollama') return 'ollama'
   if (prefix === 'vllm') return 'vllm'
   return undefined

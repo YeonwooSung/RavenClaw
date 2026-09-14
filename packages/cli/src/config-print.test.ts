@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { defaultModelId } from '@ravenclaw/core'
 import { formatPublicConfig } from './config-print'
 
 describe('formatPublicConfig', () => {
@@ -11,7 +12,7 @@ describe('formatPublicConfig', () => {
     const text = formatPublicConfig({ home })
     expect(text).toContain(`home: ${home}`)
     expect(text).toContain('provider: (unset)')
-    expect(text).toContain('model: anthropic/claude-sonnet-4')
+    expect(text).toContain(`model: ${defaultModelId('anthropic')}`)
     expect(text).toContain('ANTHROPIC_API_KEY: unset')
     expect(text).not.toContain('sk-')
   })

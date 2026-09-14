@@ -44,7 +44,7 @@ chmod 600 ~/.ravenclaw/.env
 Optional `~/.ravenclaw/config.yaml`:
 
 ```yaml
-model: anthropic/claude-sonnet-4
+model: claude-sonnet-5       # official API id; omit to use the provider default
 provider: anthropic          # anthropic | openai_compat | ollama | vllm
 permissionMode: default      # default | acceptEdits | plan | dontAsk
 maxRounds: 80
@@ -72,6 +72,58 @@ A server that fails to spawn or list tools is skipped; RavenClaw still boots. Bu
 Optional memory files (context snapshot, 8k/file, 16k total): `~/.ravenclaw/USER.md`, `~/.ravenclaw/MEMORY.md`, and the same names under the project root or `.ravenclaw/`.
 
 Resolution: `--provider` / `--model` flags beat `config.yaml`, which beats env for the *choice* of provider. Env still supplies the secret (except Ollama/vLLM, which do not need a cloud key).
+
+## Models
+
+`--model` and `config.yaml` `model:` are sent **as-is** to the provider. RavenClaw does not rewrite or pin them to a remote catalog.
+
+When `model:` is omitted, the provider's **default role** is used:
+
+| Provider | Default API id | Strong | Fast |
+|---|---|---|---|
+| `anthropic` | `claude-sonnet-5` | `claude-opus-5` | `claude-haiku-4-5` |
+| `openai_compat` | `gpt-5.6-terra` | `gpt-6-astra` | `gpt-5.6-luna` |
+| `ollama` | `llama3.2` | — | — |
+| `vllm` | `local-model` | — | — |
+
+Roles (`default` / `strong` / `fast`) exist only in code (`defaultModelId` in `packages/core/src/cost/models.ts`). They are not `config.yaml` keys. Put the official API id in config:
+
+```yaml
+provider: openai_compat
+model: gpt-5.6-terra
+```
+
+```bash
+raven --provider anthropic --model claude-opus-5
+```
+
+Built-in price / context / thinking rows (plus a few extras):
+
+| API id | Family | Context | Thinking |
+|---|---|---|---|
+| `claude-sonnet-5` | Anthropic | 1M | yes |
+| `claude-opus-5` | Anthropic | 1M | yes |
+| `claude-fable-5-1` | Anthropic | 1M | yes |
+| `claude-haiku-4-5` | Anthropic | 200k | yes |
+| `gpt-5.6-terra` | OpenAI | 1.05M | no |
+| `gpt-5.6-sol` (`gpt-5.6`) | OpenAI | 1.05M | no |
+| `gpt-6-astra` | OpenAI | 1.05M | no |
+| `gpt-5.6-luna` | OpenAI | 1.05M | no |
+
+An unknown id still runs. It gets a conservative 32k window, $0 cost, and no thinking. You can override window and prices without a code change:
+
+```yaml
+model: claude-sonnet-6
+contextWindow: 1000000
+prices:
+  claude-sonnet-6:
+    input: 3.0
+    output: 15.0
+```
+
+Vendor-prefixed and dated aliases (`anthropic/claude-sonnet-5`, `openai/gpt-5.6-terra`, `claude-haiku-4-5-20251001`) resolve to the same profile. `/model <id>` changes the session string only; restart or pass `--model` so the profile (window, thinking, prices) reloads.
+
+Sources: [Claude models](https://docs.anthropic.com/en/docs/about-claude/models/overview), [OpenAI models](https://developers.openai.com/api/docs/models). To bump defaults after a new generation, see [CONTRIBUTING.md](CONTRIBUTING.md#updating-the-model-catalog).
 
 ## Local LLMs (Ollama / vLLM)
 
@@ -143,7 +195,7 @@ Prefix session ids are ok.
 | Flag | Meaning |
 |---|---|
 | `--provider` | `anthropic` \| `openai_compat` \| `ollama` \| `vllm` |
-| `--model <id>` | Model id |
+| `--model <id>` | Official API model id (see [Models](#models)) |
 | `--tui ink\|opentui` | TUI host (default Ink) |
 | `--dont-ask` | Leftover asks become denials (except in-tree Edit/Write/ApplyPatch and read-only tools; Fetch and AskUser stay denied) |
 | `--json` | `exec` only: StreamEvents as JSONL |
