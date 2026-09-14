@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createMemoryStore } from '../session/memory-store'
-import { loadPermissionRules, persistAllowAlways } from './rules'
+import { appendPermissionRule, loadPermissionRules, persistAllowAlways } from './rules'
 
 const HOME_ENV = 'RAVENCLAW_HOME'
 const tempDirs: string[] = []
@@ -146,5 +146,20 @@ describe('permission rules', () => {
     expect(user).toHaveLength(1)
     expect(user[0]?.tool).toBe('Write')
     expect(await store.listPermissionRules('sess_1')).toEqual([])
+  })
+
+  test('appendPermissionRule puts the new rule in the matching list without reloading files', () => {
+    const rule = {
+      id: 'r1',
+      sessionId: 'sess_1',
+      tool: 'Bash',
+      spec: 'echo',
+      behavior: 'allow' as const,
+    }
+    const empty = { session: [], user: [], project: [] }
+    expect(appendPermissionRule(empty, rule, 'session').session).toEqual([rule])
+    expect(appendPermissionRule(empty, rule, 'user').user).toEqual([rule])
+    expect(appendPermissionRule(empty, rule, 'project').project).toEqual([rule])
+    expect(appendPermissionRule(empty, rule, 'session').user).toEqual([])
   })
 })

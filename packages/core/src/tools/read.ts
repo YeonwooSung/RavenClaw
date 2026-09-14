@@ -1,10 +1,11 @@
-import { readFileSync, statSync } from 'node:fs'
+import { closeSync, openSync, readFileSync, readSync, statSync } from 'node:fs'
 import { extname, resolve } from 'node:path'
 import type { Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
 import { formatNotebookRead, parseNotebook } from './notebook-format'
 import { extractOfficeText, type OfficeExt } from './read-extract'
 import { markReadPath } from './read-files'
+import { READ_CHAR_CAP, TRUNCATION_NOTE, sliceUtf8Lines, streamUtf8LineWindow } from './read-lines'
 
 export interface ReadInput {
   path: string
@@ -13,9 +14,8 @@ export interface ReadInput {
 }
 
 const BINARY_SCAN = 8192
-const READ_CHAR_CAP = 100_000
+const STREAM_AFTER = 256_000
 const IMAGE_BYTE_CAP = 512_000
-const TRUNCATION_NOTE = '\n... [truncated: output exceeds 100000 characters]'
 const IMAGE_MEDIA: Record<string, string> = {
   '.png': 'image/png',
   '.jpg': 'image/jpeg',
@@ -69,6 +69,21 @@ export const readTool: Tool<ReadInput, string> = {
       return `Read failed: path is a directory: ${input.path}`
     }
 
+    const mediaEarly = imageMediaType(resolved)
+    const officeEarly = officeExtOf(resolved)
+    if (
+      !mediaEarly &&
+      !officeEarly &&
+      extname(resolved).toLowerCase() !== '.ipynb' &&
+      stat.size > STREAM_AFTER
+    ) {
+      if (peekHasNul(resolved)) {
+        return 'Read failed: binary file (NUL in first 8 KiB)'
+      }
+      markReadPath(ctx.turn, resolved)
+      return streamUtf8LineWindow(resolved, input.offset, input.limit)
+    }
+
     let buf: Buffer
     try {
       buf = readFileSync(resolved)
@@ -111,18 +126,21 @@ export const readTool: Tool<ReadInput, string> = {
       }
     }
 
-    const lines = buf.toString('utf8').split(/\r?\n/)
-    const start = Math.max(0, (input.offset ?? 1) - 1)
-    const sliced =
-      input.limit === undefined ? lines.slice(start) : lines.slice(start, start + input.limit)
-    let text = sliced.join('\n')
-    if (text.length > READ_CHAR_CAP) {
-      text = text.slice(0, READ_CHAR_CAP) + TRUNCATION_NOTE
-    }
-
+    const text = sliceUtf8Lines(buf.toString('utf8'), input.offset, input.limit)
     markReadPath(ctx.turn, resolved)
     return text
   },
+}
+
+function peekHasNul(path: string): boolean {
+  const fd = openSync(path, 'r')
+  try {
+    const buf = Buffer.alloc(BINARY_SCAN)
+    const n = readSync(fd, buf, 0, BINARY_SCAN, 0)
+    return containsNul(buf.subarray(0, n))
+  } finally {
+    closeSync(fd)
+  }
 }
 
 function imageMediaType(path: string): string | undefined {

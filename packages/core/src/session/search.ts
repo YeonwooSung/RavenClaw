@@ -151,15 +151,40 @@ export function rebuildMessagesFts(db: Database): void {
   }
 }
 
-export function indexMessageFts(db: Database, sessionId: string, message: Message): void {
+type FtsStatements = {
+  del: ReturnType<Database['query']>
+  ins: ReturnType<Database['query']>
+}
+
+const ftsStatements = new WeakMap<Database, FtsStatements>()
+
+function preparedFts(db: Database): FtsStatements {
+  let stmts = ftsStatements.get(db)
+  if (!stmts) {
+    stmts = {
+      del: db.query('DELETE FROM messages_fts WHERE message_id = ?'),
+      ins: db.query(
+        `INSERT INTO messages_fts (session_id, message_id, body)
+         VALUES (?, ?, ?)`,
+      ),
+    }
+    ftsStatements.set(db, stmts)
+  }
+  return stmts
+}
+
+export function indexMessageFts(
+  db: Database,
+  sessionId: string,
+  message: Message,
+  blocksJson?: string,
+): void {
   try {
-    const body = extractSearchText(JSON.stringify(message.blocks))
-    db.query('DELETE FROM messages_fts WHERE message_id = ?').run(message.id)
+    const body = extractSearchText(blocksJson ?? JSON.stringify(message.blocks))
+    const stmts = preparedFts(db)
+    stmts.del.run(message.id)
     if (!body) return
-    db.query(
-      `INSERT INTO messages_fts (session_id, message_id, body)
-       VALUES (?, ?, ?)`,
-    ).run(sessionId, message.id, body)
+    stmts.ins.run(sessionId, message.id, body)
   } catch {
     // fail-open
   }
@@ -167,7 +192,7 @@ export function indexMessageFts(db: Database, sessionId: string, message: Messag
 
 export function unindexMessagesFts(db: Database, messageIds: string[]): void {
   try {
-    const del = db.query('DELETE FROM messages_fts WHERE message_id = ?')
+    const del = preparedFts(db).del
     for (const id of messageIds) del.run(id)
   } catch {
     // fail-open

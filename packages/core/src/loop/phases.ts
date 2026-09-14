@@ -20,7 +20,12 @@ import { applyToolResultBudget, microcompact, runAutocompact } from '../compact/
 import { compactSummary } from '../compact/summarize'
 import { decidePermission } from '../permissions/pipeline'
 import type { PermissionRuleSet } from '../permissions/types'
-import { commandOrPath, loadPermissionRules, persistAllowAlways } from '../permissions/rules'
+import {
+  appendPermissionRule,
+  commandOrPath,
+  loadPermissionRules,
+  persistAllowAlways,
+} from '../permissions/rules'
 import { isAbortError, nextOrAbort } from './abort'
 import { partitionToolCalls } from '../tools/partition'
 import { toolCallTool } from '../tools/tool-call'
@@ -1241,7 +1246,7 @@ async function executeOneCall(
         if (answer === 'allow_always') {
           const scope = decision.saveAs ?? 'session'
           const policyCwd = state.turn.projectCwd ?? state.turn.cwd
-          await persistAllowAlways({
+          const saved = await persistAllowAlways({
             store: state.store,
             sessionId: state.turn.sessionId,
             cwd: policyCwd,
@@ -1249,11 +1254,7 @@ async function executeOneCall(
             tool: callName,
             spec: commandOrPath(input) ?? {},
           })
-          box.rules = await loadPermissionRules({
-            cwd: policyCwd,
-            store: state.store,
-            sessionId: state.turn.sessionId,
-          })
+          box.rules = appendPermissionRule(box.rules, saved, scope)
         }
         allowed = true
       } catch {

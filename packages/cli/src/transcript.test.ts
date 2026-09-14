@@ -3,7 +3,9 @@ import type { ToolResult } from '@ravenclaw/core'
 import {
   RESULT_CLIP,
   TRANSCRIPT_EXPAND_KEY,
+  TRANSCRIPT_WINDOW,
   clipToolResult,
+  windowedRows,
   isCompactTool,
   selectedToolId,
   shouldToggleExpand,
@@ -133,5 +135,28 @@ describe('visibleToolResult', () => {
     expect(visibleToolResult(toolRow('Read', 'pending'))).toBeUndefined()
     expect(visibleToolResult(toolRow('Bash', 'pending'))).toBeUndefined()
     expect(visibleToolResult(toolRow('Read', 'empty', ''))).toBeUndefined()
+  })
+})
+
+describe('windowedRows', () => {
+  test('keeps a short list intact', () => {
+    const windowed = windowedRows(rows, 1)
+    expect(windowed.offset).toBe(0)
+    expect(windowed.rows).toHaveLength(rows.length)
+  })
+
+  test('keeps the last window and includes an earlier selection', () => {
+    const many: TranscriptRow[] = Array.from({ length: TRANSCRIPT_WINDOW + 20 }, (_, i) => ({
+      kind: 'user' as const,
+      text: `u${i}`,
+    }))
+    const tail = windowedRows(many)
+    expect(tail.offset).toBe(20)
+    expect(tail.rows).toHaveLength(TRANSCRIPT_WINDOW)
+    expect(tail.rows[0]?.kind === 'user' && tail.rows[0].text).toBe('u20')
+
+    const selected = windowedRows(many, 5)
+    expect(selected.offset).toBe(5)
+    expect(selected.rows[0]?.kind === 'user' && selected.rows[0].text).toBe('u5')
   })
 })

@@ -20,7 +20,21 @@ export type TranscriptProps = {
 const COMPACT_TOOLS = new Set(['Read', 'Grep', 'Glob'])
 
 export const RESULT_CLIP = 2000
+export const TRANSCRIPT_WINDOW = 200
 export const TRANSCRIPT_EXPAND_KEY = 'ctrl+o'
+
+export function windowedRows(
+  rows: readonly TranscriptRow[],
+  selectedIndex?: number,
+  window = TRANSCRIPT_WINDOW,
+): { rows: TranscriptRow[]; offset: number } {
+  if (rows.length <= window) return { rows: [...rows], offset: 0 }
+  let start = rows.length - window
+  if (selectedIndex !== undefined && selectedIndex < start) {
+    start = Math.max(0, selectedIndex)
+  }
+  return { rows: rows.slice(start), offset: start }
+}
 
 export function isCompactTool(name: string): boolean {
   return COMPACT_TOOLS.has(name)
@@ -176,13 +190,14 @@ export function rowsFromMessages(messages: Message[]): TranscriptRow[] {
 }
 
 export function Transcript(props: TranscriptProps) {
+  const windowed = windowedRows(props.rows, props.selectedIndex)
   return (
     <Box flexDirection="column">
-      {props.rows.map((row, i) => (
+      {windowed.rows.map((row, i) => (
         <TranscriptItem
-          key={rowKey(row, i)}
+          key={rowKey(row, windowed.offset + i)}
           row={row}
-          selected={props.selectedIndex === i}
+          selected={props.selectedIndex === windowed.offset + i}
           expandedIds={props.expandedIds}
         />
       ))}

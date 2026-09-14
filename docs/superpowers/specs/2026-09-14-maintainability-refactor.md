@@ -1,7 +1,7 @@
 # Maintainability refactor (waves)
 
 Date: 2026-09-14
-Status: wave 3 implemented (not merged)
+Status: wave 4 implemented (not merged)
 
 ## Finding
 
@@ -29,9 +29,14 @@ Shared: everything else, including `/add-dir`, `/effort`, `/agents`, `/hooks`. `
 `packages/cli/src/chat-host/stream-turn.ts` owns stub/throttle/edit-or-repost.
 Slack/Discord keep transport, admit, pairing, and ledger.
 
-### Wave 4 — more perf, later
+### Wave 4 — more perf
 
-Permission rule cache per turn; FTS prepared statements; Read offset I/O; TUI windowing. Do not change microcompact timing or `repairRoleAlternation` rules.
+- allow_always appends the saved rule into the in-memory set (no file reload).
+- FTS delete/insert statements are prepared per Database; persist reuses `blocks_json`.
+- Text files larger than 256 KiB stream line windows after an 8 KiB binary peek.
+- Ink Transcript renders a 200-row window (keeps selection in view).
+
+Do not change microcompact timing or `repairRoleAlternation` rules.
 
 ## Non-goals
 

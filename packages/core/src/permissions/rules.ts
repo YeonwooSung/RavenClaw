@@ -17,6 +17,16 @@ export async function loadPermissionRules(opts: {
   return { session, user, project }
 }
 
+export function appendPermissionRule(
+  set: PermissionRuleSet,
+  rule: PermissionRule,
+  scope: PermissionScope,
+): PermissionRuleSet {
+  if (scope === 'session') return { ...set, session: [...set.session, rule] }
+  if (scope === 'user') return { ...set, user: [...set.user, rule] }
+  return { ...set, project: [...set.project, rule] }
+}
+
 export async function persistAllowAlways(opts: {
   store: SessionStore
   sessionId: string

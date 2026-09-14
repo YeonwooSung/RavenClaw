@@ -411,21 +411,24 @@ export function createSqliteStore(dbPath: string): SessionStore {
   }
 
   function insertMessageRow(sessionId: string, message: Message): void {
+    const bind = messageBind(sessionId, message)
     try {
-      insertMessage.run(messageBind(sessionId, message))
+      insertMessage.run(bind)
     } catch (error) {
       if (isUniqueConstraint(error)) {
         throw new PersistError('unknown', `duplicate message id ${message.id}`)
       }
       throw error
     }
-    indexMessageFts(db, sessionId, message)
+    indexMessageFts(db, sessionId, message, bind.$blocks_json)
   }
 
   const persistToolsTx = db.transaction(
     (sessionId: string, msgs: Array<Extract<Message, { role: 'tool' }>>) => {
       for (const msg of msgs) {
-        upsertTool.run(messageBind(sessionId, msg))
+        const bind = messageBind(sessionId, msg)
+        upsertTool.run(bind)
+        indexMessageFts(db, sessionId, msg, bind.$blocks_json)
       }
     },
   )
@@ -589,9 +592,6 @@ export function createSqliteStore(dbPath: string): SessionStore {
     async persistToolResults(sessionId, msgs) {
       await withWrite(async () => {
         persistToolsTx(sessionId, msgs)
-        for (const msg of msgs) {
-          indexMessageFts(db, sessionId, msg)
-        }
       })
     },
 
