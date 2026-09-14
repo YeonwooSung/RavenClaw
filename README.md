@@ -121,7 +121,7 @@ prices:
     output: 15.0
 ```
 
-Vendor-prefixed and dated aliases (`anthropic/claude-sonnet-5`, `openai/gpt-5.6-terra`, `claude-haiku-4-5-20251001`) resolve to the same profile. `/model <id>` changes the session string only; restart or pass `--model` so the profile (window, thinking, prices) reloads.
+Vendor-prefixed and dated aliases (`anthropic/claude-sonnet-5`, `openai/gpt-5.6-terra`, `claude-haiku-4-5-20251001`) resolve to the same profile. `/model <id>` updates the session string **and** reloads the profile (window, thinking, prices) for the next turn. The live in-flight `queryLoop` is not mutated.
 
 Sources: [Claude models](https://docs.anthropic.com/en/docs/about-claude/models/overview), [OpenAI models](https://developers.openai.com/api/docs/models). To bump defaults after a new generation, see [CONTRIBUTING.md](CONTRIBUTING.md#updating-the-model-catalog).
 
@@ -187,6 +187,8 @@ After setup, `bun run smoke` does one live text-only turn and expects `pong`. CI
 | `cron tick\|watch` | if a job fires | Run due jobs once, or poll |
 | `serve` | yes | Loopback HTTP turn + HMAC webhook (`dontAsk`) |
 | `slack` | yes | Slack Socket Mode bot (allowlist; no public URL) |
+| `discord` | yes | Discord Gateway bot (allowlist + DM pairing) |
+| `pairing` | no | List / approve / revoke Discord DM pairing |
 
 Prefix session ids are ok.
 
@@ -339,6 +341,8 @@ Builtin skills:
 | `debug` | Reproduce, hypothesize, then a minimal fix |
 | `tdd` | Red-green-refactor |
 | `plan` | Write a plan before editing |
+| `frontend-design` | Pick one aesthetic before building or reshaping UI |
+| `mcp-builder` | Write a local MCP server this CLI can load (`raven mcp tools` to verify) |
 
 ```bash
 bun run raven skills
@@ -363,7 +367,7 @@ bun run raven serve --listen 127.0.0.1:8787
 #   each delivery is a new session; tools are Read/Grep/Glob/Fetch/WebSearch only
 ```
 
-Non-loopback binds are rejected. Discord/Slack adapters are not in this tree yet.
+Non-loopback binds are rejected. Chat hosts that reuse the same loop (not `raven serve`) are `raven slack` (Socket Mode, allowlist) and `raven discord` (Gateway, allowlist + DM pairing via `raven pairing`).
 
 ## Loop
 
@@ -429,6 +433,8 @@ If `included.gatewayUrl` is a real URL and `GET /v1/entitlement` admits the sess
 
 ## Docs
 
+- [Architecture](ARCHITECTURE.md) ([한국어](ARCHITECTURE.ko.md))
+- [Slash commands](SLASH_COMMANDS.md) ([한국어](SLASH_COMMANDS.ko.md))
 - [Headless / `raven exec` permissions](docs/headless.md)
 - [GitHub Action (`raven-exec`)](.github/actions/raven-exec/README.md)
 - [System design](docs/superpowers/specs/2026-09-08-ravenclaw-coding-agent-design.md)

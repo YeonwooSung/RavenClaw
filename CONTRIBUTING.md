@@ -34,7 +34,7 @@ bun run smoke
 | `packages/tui-opentui` | StreamEvent line view |
 | `packages/acp` | editor JSON-RPC adapter |
 
-Design notes live in `docs/superpowers/specs/`. Prior-art research is in `docs/research/`. Do not copy Claude Code source or prompts.
+Architecture: [ARCHITECTURE.md](ARCHITECTURE.md) ([한국어](ARCHITECTURE.ko.md)). Slash commands: [SLASH_COMMANDS.md](SLASH_COMMANDS.md) ([한국어](SLASH_COMMANDS.ko.md)). Design notes live in `docs/superpowers/specs/`. Prior-art research is in `docs/research/`. Do not copy Claude Code source or prompts.
 
 ## Tests
 
@@ -60,7 +60,7 @@ Commands that must not require a key: `help`, `version`, `sessions`, `show`, `rm
 
 In-session slash commands live in `packages/cli/src/commands.ts` (`SLASH_COMMANDS`). Add `/loop` and `/skills` subcommands there, then handle them in `app.tsx` and `opentui-app.ts`. Builtin skills are `packages/core/src/skills/builtin/<name>/SKILL.md` — keep frontmatter `name` + `description`, no vendor brand strings. `bun test packages/core/src/skills/` checks that.
 
-When you add a user-facing flag or slash, update `README.md` in the same PR.
+When you add a user-facing flag or slash, update `README.md` and [SLASH_COMMANDS.md](SLASH_COMMANDS.md) (plus [SLASH_COMMANDS.ko.md](SLASH_COMMANDS.ko.md) if the English page changed) in the same PR.
 
 ## Updating the model catalog
 

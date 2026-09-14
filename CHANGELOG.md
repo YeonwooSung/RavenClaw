@@ -2,10 +2,14 @@
 
 ## Unreleased
 
+### Added
+- Architecture and slash-command references: [ARCHITECTURE.md](ARCHITECTURE.md) / [ARCHITECTURE.ko.md](ARCHITECTURE.ko.md), [SLASH_COMMANDS.md](SLASH_COMMANDS.md) / [SLASH_COMMANDS.ko.md](SLASH_COMMANDS.ko.md).
+
 ### Changed
 - Built-in model catalog now matches the current Claude and OpenAI flagship lineups (`claude-sonnet-5`, `claude-opus-5`, `claude-fable-5-1`, `claude-haiku-4-5`, `gpt-6-astra`, `gpt-5.6-sol` / `gpt-5.6`, `gpt-5.6-terra`, `gpt-5.6-luna`). Defaults go through `defaultModelId(family, role)` so generation bumps touch one table. Vendor-prefixed and dated aliases still resolve. README Models section and CONTRIBUTING catalog-update steps document the pattern.
 - `/add-dir` and `/effort` help and notices say they do not add a root or persist effort. README lists `/team-onboarding`.
 - `/model <id>` reloads the session profile (context, prices, thinking) for the next turn.
+- README: `/model` is no longer described as string-only; `raven discord` and `raven pairing` are in the CLI table; Local gateway no longer says Slack/Discord are missing; builtin skills include `frontend-design` and `mcp-builder`.
 
 ## 0.1.33 — 2026-09-11
 
