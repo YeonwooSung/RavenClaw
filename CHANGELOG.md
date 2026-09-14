@@ -4,6 +4,7 @@
 
 ### Changed
 - Built-in model catalog now matches the current Claude and OpenAI flagship lineups (`claude-sonnet-5`, `claude-opus-5`, `claude-fable-5-1`, `claude-haiku-4-5`, `gpt-6-astra`, `gpt-5.6-sol` / `gpt-5.6`, `gpt-5.6-terra`, `gpt-5.6-luna`). Defaults go through `defaultModelId(family, role)` so generation bumps touch one table. Vendor-prefixed and dated aliases still resolve. README Models section and CONTRIBUTING catalog-update steps document the pattern.
+- `/add-dir` and `/effort` help and notices say they do not add a root or persist effort. README lists `/team-onboarding`.
 
 ## 0.1.33 — 2026-09-11
 

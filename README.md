@@ -255,8 +255,9 @@ Ink is the default. OpenTUI is `--tui opentui`.
 | `/loop <n> <prompt>` | Repeat a prompt n times (max 20). `/loop` status, `/loop stop` |
 | `/tasks [kill <id>]` | Background Bash / Agent tasks |
 | `/cron [add\|rm\|on\|off]` | Local scheduled jobs |
-| `/add-dir <path>` | Extra permission root (or use the `AddDir` tool / `--add-dir`) |
-| `/effort [low\|medium\|high\|max]` | Thinking-effort hint |
+| `/add-dir <path>` | Notice only — does not add a root; use the `AddDir` tool or `--add-dir` |
+| `/effort [low\|medium\|high\|max]` | Notice only — does not persist; pass `--effort` at start |
+| `/team-onboarding` `/onboard` | Walk a new teammate through this workspace |
 | `/agents` | Built-in and disk agents |
 | `/hooks` | Lifecycle event names |
 | `/skills [show\|disable\|enable <name>]` | List, show, or disable skills |

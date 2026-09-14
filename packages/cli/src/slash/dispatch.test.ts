@@ -136,8 +136,8 @@ describe('dispatchSharedSlash', () => {
     expect(await dispatchSharedSlash(cmd('add-dir'), host)).toBe('handled')
     expect(await dispatchSharedSlash(cmd('add-dir', '../pkg'), host)).toBe('handled')
     expect(host.notices).toEqual([
-      'usage: /add-dir <path> (or use the AddDir tool / --add-dir)',
-      'will allow extra root after AddDir tool: ../pkg',
+      'usage: /add-dir <path> — this slash does not add a root; use the AddDir tool or --add-dir',
+      'this slash does not add a root; use the AddDir tool or --add-dir: ../pkg',
     ])
   })
 
@@ -145,7 +145,10 @@ describe('dispatchSharedSlash', () => {
     const host = fakeHost(fakeRuntime(fakeEngine(makeSession())))
     expect(await dispatchSharedSlash(cmd('effort'), host)).toBe('handled')
     expect(await dispatchSharedSlash(cmd('effort', 'high'), host)).toBe('handled')
-    expect(host.notices).toEqual(['usage: /effort low|medium|high|max', 'effort high (hint only)'])
+    expect(host.notices).toEqual([
+      'usage: /effort low|medium|high|max — hint only; does not persist (use --effort)',
+      'effort high (hint only; does not persist — use --effort)',
+    ])
   })
 
   test('agents and hooks are handled', async () => {

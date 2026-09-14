@@ -157,15 +157,15 @@ export async function dispatchSharedSlash(
     case 'add-dir':
       host.notice(
         parsed.arg === undefined || parsed.arg.trim() === ''
-          ? 'usage: /add-dir <path> (or use the AddDir tool / --add-dir)'
-          : `will allow extra root after AddDir tool: ${parsed.arg}`,
+          ? 'usage: /add-dir <path> — this slash does not add a root; use the AddDir tool or --add-dir'
+          : `this slash does not add a root; use the AddDir tool or --add-dir: ${parsed.arg}`,
       )
       return 'handled'
     case 'effort':
       host.notice(
         parsed.arg === undefined || parsed.arg.trim() === ''
-          ? 'usage: /effort low|medium|high|max'
-          : `effort ${parsed.arg.trim()} (hint only)`,
+          ? 'usage: /effort low|medium|high|max — hint only; does not persist (use --effort)'
+          : `effort ${parsed.arg.trim()} (hint only; does not persist — use --effort)`,
       )
       return 'handled'
     case 'agents':

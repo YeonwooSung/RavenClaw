@@ -31,8 +31,16 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
   { name: 'rewind', usage: '/rewind', summary: 'undo last turn files and drop that conversation turn' },
   { name: 'diff', usage: '/diff [n|close]', summary: 'open working-tree git diff panel' },
   { name: 'steer', usage: '/steer <text>', summary: 'inject text into the live turn (next tool round)' },
-  { name: 'add-dir', usage: '/add-dir <path>', summary: 'allow file tools in an extra directory' },
-  { name: 'effort', usage: '/effort [low|medium|high|max]', summary: 'set thinking effort for this session' },
+  {
+    name: 'add-dir',
+    usage: '/add-dir <path>',
+    summary: 'print how to add an extra root (AddDir tool or --add-dir; this slash does not add one)',
+  },
+  {
+    name: 'effort',
+    usage: '/effort [low|medium|high|max]',
+    summary: 'print a thinking-effort hint (does not persist; use --effort)',
+  },
   { name: 'agents', usage: '/agents', summary: 'list built-in and disk agents' },
   { name: 'hooks', usage: '/hooks', summary: 'list lifecycle hook events from hooks.json' },
   { name: 'reload', usage: '/reload', summary: 'reload skills on the next turn' },
