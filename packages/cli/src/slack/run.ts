@@ -1,26 +1,15 @@
-import { AsyncLocalStorage } from 'node:async_hooks'
 import {
   loadConfig,
-  loadSessionMap,
   ravenclawHome,
-  resolveSessionId,
-  saveSessionMap,
   type ConfigFlags,
   type SessionLockHolderName,
 } from '@ravenclaw/core'
-import { bootCli, openNewSession, resumeRuntime, type CliRuntime } from '../engine'
-import { singleFlight, startMailboxPoller } from '../serve'
+import { createChatSessionHost } from '../chat-host/session-host'
+import { bootCli } from '../engine'
 import { runSlackAdapter } from './adapter'
 import { createSlackWebApi } from './api'
 import { connectSlackSocket } from './socket'
-import type { SlackOpenSession, SlackPermissionAnswer } from './types'
-
-type SlackAsk = (
-  event: { id: string; tool: string; message: string },
-  signal: AbortSignal,
-) => Promise<SlackPermissionAnswer>
-
-const askStore = new AsyncLocalStorage<SlackAsk>()
+import type { SlackOpenSession } from './types'
 
 export const SLACK_LOCK_HOLDER: SessionLockHolderName = 'slack'
 
@@ -37,21 +26,14 @@ export async function runSlack(opts: { flags: ConfigFlags }): Promise<number> {
     return 1
   }
 
-  const map = loadSessionMap(home)
-  const engines = new Map<string, CliRuntime>()
-  const opening = new Map<string, Promise<CliRuntime>>()
-  const turnFlights = new Map<string, Promise<unknown>>()
   const shared = await bootCli({
     flags: opts.flags,
     createSession: false,
     surface: 'headless',
     lockHolder: SLACK_LOCK_HOLDER,
   })
-  shared.ask.bind(async (event, signal) => {
-    const ask = askStore.getStore()
-    if (!ask) return 'deny'
-    return ask({ id: event.id, tool: event.tool, message: event.message }, signal)
-  })
+  const host = createChatSessionHost({ home, shared })
+  const openSession: SlackOpenSession = (req) => host.openSession(req)
 
   const api = createSlackWebApi({ botToken: slack.botToken })
   let botUserId: string | undefined
@@ -62,51 +44,12 @@ export async function runSlack(opts: { flags: ConfigFlags }): Promise<number> {
     // mention-only still matches <@U…> tags
   }
 
-  const openSession: SlackOpenSession = async (req) => {
-    const resolvedId = resolveSessionId(map, req.sessionKey, () => crypto.randomUUID())
-    if (resolvedId.created) saveSessionMap(map, home)
-    const runtime = await singleFlight(opening, resolvedId.id, async () => {
-      const cached = engines.get(resolvedId.id)
-      if (cached) return cached
-      const boot = {
-        ...shared,
-        config: { ...shared.config, permissionMode: req.permissionMode },
-      }
-      const opened = resolvedId.created
-        ? await openNewSession(boot, { sessionId: resolvedId.id })
-        : await resumeRuntime(boot, resolvedId.id)
-      if (opened.engine.session.permissionMode !== req.permissionMode) {
-        await opened.engine.setPermissionMode(req.permissionMode)
-      }
-      engines.set(resolvedId.id, opened)
-      return opened
-    })
-    return {
-      sessionId: runtime.engine.session.id,
-      async *submitMessage(text: string) {
-        const gen = runtime.engine.submitMessage(text)
-        while (true) {
-          const next = await askStore.run(req.askUser, () => gen.next())
-          if (next.done) return next.value
-          yield next.value
-        }
-      },
-    }
-  }
-
   const stop = new AbortController()
-  const stopMailbox = startMailboxPoller(engines, turnFlights)
-  let stopped = false
+  const stopMailbox = host.startMailbox()
   const shutdown = async () => {
-    if (stopped) return
-    stopped = true
     stop.abort()
     stopMailbox()
-    await Promise.allSettled([...turnFlights.values()])
-    for (const runtime of engines.values()) {
-      await runtime.engine.close?.()
-      await runtime.mcpCloser?.()
-    }
+    await host.shutdown()
   }
   const onStop = () => {
     void shutdown()
@@ -134,7 +77,7 @@ export async function runSlack(opts: { flags: ConfigFlags }): Promise<number> {
         socket,
         api,
         signal: stop.signal,
-        turnFlights,
+        turnFlights: host.turnFlights,
       }
       if (botUserId !== undefined) adapterOpts.botUserId = botUserId
       await runSlackAdapter(adapterOpts)

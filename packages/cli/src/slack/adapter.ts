@@ -1,3 +1,4 @@
+import { streamChatTurn } from '../chat-host/stream-turn'
 import { singleFlight } from '../serve'
 import { admitSlackEvent } from './admit'
 import { createSlackWebApi } from './api'
@@ -6,7 +7,6 @@ import { slackEventIsDm, slackSessionKey, slackUserText } from './session-key'
 import { connectSlackSocket } from './socket'
 import type {
   SlackApi,
-  SlackBoundSession,
   SlackConfig,
   SlackInbound,
   SlackOpenSession,
@@ -15,9 +15,7 @@ import type {
 } from './types'
 
 export const SLACK_PERMISSION_TIMEOUT_MS = 120_000
-const STUB_TEXT = '…'
 const SLACK_TEXT_MAX = 39_000
-const UPDATE_THROTTLE_MS = 1_000
 
 export async function runSlackAdapter(opts: {
   config: SlackConfig
@@ -149,64 +147,26 @@ async function handleTurn(opts: {
   })
 
   await singleFlight(opts.turnFlights, session.sessionId, async () => {
-    const stub = await api.postMessage({
-      channel: inbound.channel,
-      text: STUB_TEXT,
-      threadTs,
+    await streamChatTurn({
+      session,
+      text,
+      clip: clipSlackText,
+      now: opts.now,
+      transport: {
+        async post(body) {
+          const posted = await api.postMessage({
+            channel: inbound.channel,
+            text: body,
+            threadTs,
+          })
+          return { ok: posted.ok, ...(posted.ts !== undefined ? { id: posted.ts } : {}) }
+        },
+        async edit(id, body) {
+          return api.updateMessage({ channel: inbound.channel, ts: id, text: body })
+        },
+      },
     })
-    let messageTs = stub.ok ? stub.ts : undefined
-    let acc = ''
-    let lastUpdate = 0
-
-    const publish = async (final: boolean) => {
-      const body = clipSlackText(acc === '' ? (final ? '(no output)' : STUB_TEXT) : acc)
-      if (messageTs !== undefined) {
-        const updated = await api.updateMessage({
-          channel: inbound.channel,
-          ts: messageTs,
-          text: body,
-        })
-        if (updated.ok) return
-      }
-      const posted = await api.postMessage({
-        channel: inbound.channel,
-        text: body,
-        threadTs,
-      })
-      if (posted.ok && posted.ts !== undefined) messageTs = posted.ts
-    }
-
-    try {
-      await consumeSubmit(session, text, async (delta) => {
-        acc += delta
-        const t = opts.now()
-        if (t - lastUpdate >= UPDATE_THROTTLE_MS) {
-          lastUpdate = t
-          await publish(false)
-        }
-      })
-      await publish(true)
-    } catch (error) {
-      acc = error instanceof Error ? error.message : String(error)
-      await publish(true)
-    }
   })
-}
-
-async function consumeSubmit(
-  session: SlackBoundSession,
-  text: string,
-  onDelta: (text: string) => Promise<void>,
-): Promise<void> {
-  const gen = session.submitMessage(text)
-  while (true) {
-    const next = await gen.next()
-    if (next.done) return
-    const event = next.value
-    if (!isRecord(event) || event.type !== 'text_delta') continue
-    if (typeof event.text !== 'string' || event.text === '') continue
-    await onDelta(event.text)
-  }
 }
 
 interface PendingPermit {
@@ -316,8 +276,4 @@ function permissionBlocks(tool: string, prompt: string): unknown[] {
 function clipSlackText(text: string): string {
   if (text.length <= SLACK_TEXT_MAX) return text
   return `${text.slice(0, SLACK_TEXT_MAX - 1)}…`
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }

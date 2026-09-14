@@ -1,4 +1,5 @@
 import { deliveryKey, type DeliveryLedger } from '@ravenclaw/core'
+import { streamChatTurn } from '../chat-host/stream-turn'
 import { issueOrReusePending } from '../pairing'
 import { singleFlight } from '../serve'
 import { admitDiscordEvent } from './admit'
@@ -8,7 +9,6 @@ import { normalizeDiscordMessage } from './normalize'
 import { DISCORD_PERMISSION_TIMEOUT_MS, discordEventIsDm, discordSessionKey } from './session-key'
 import type {
   DiscordApi,
-  DiscordBoundSession,
   DiscordConfig,
   DiscordGateway,
   DiscordInbound,
@@ -16,9 +16,7 @@ import type {
   DiscordPermissionAnswer,
 } from './types'
 
-const STUB_TEXT = '…'
 const DISCORD_TEXT_MAX = 2_000
-const UPDATE_THROTTLE_MS = 1_000
 
 export async function runDiscordAdapter(opts: {
   config: DiscordConfig
@@ -126,67 +124,28 @@ async function handleTurn(opts: {
     })
 
     await singleFlight(opts.turnFlights, session.sessionId, async () => {
-      const stub = await api.createMessage({
-        channelId: replyChannelId,
-        content: STUB_TEXT,
+      await streamChatTurn({
+        session,
+        text: inbound.content,
+        clip: clipDiscordText,
+        now: opts.now,
+        formatError: turnFailureBody,
+        transport: {
+          async post(body) {
+            const posted = await api.createMessage({ channelId: replyChannelId, content: body })
+            return { ok: posted.ok, ...(posted.id !== undefined ? { id: posted.id } : {}) }
+          },
+          async edit(id, body) {
+            return api.editMessage({ channelId: replyChannelId, messageId: id, content: body })
+          },
+        },
       })
-      let messageId = stub.ok ? stub.id : undefined
-      let acc = ''
-      let lastUpdate = 0
-
-      const publish = async (final: boolean) => {
-        const body = clipDiscordText(acc === '' ? (final ? '(no output)' : STUB_TEXT) : acc)
-        if (messageId !== undefined) {
-          const updated = await api.editMessage({
-            channelId: replyChannelId,
-            messageId,
-            content: body,
-          })
-          if (updated.ok) return
-        }
-        const posted = await api.createMessage({
-          channelId: replyChannelId,
-          content: body,
-        })
-        if (posted.ok && posted.id !== undefined) messageId = posted.id
-      }
-
-      try {
-        await consumeSubmit(session, inbound.content, async (delta) => {
-          acc += delta
-          const t = opts.now()
-          if (t - lastUpdate >= UPDATE_THROTTLE_MS) {
-            lastUpdate = t
-            await publish(false)
-          }
-        })
-        await publish(true)
-      } catch (error) {
-        acc = turnFailureBody(error)
-        await publish(true)
-      }
     })
   } catch (error) {
     await api.createMessage({
       channelId: replyChannelId,
       content: turnFailureBody(error),
     })
-  }
-}
-
-async function consumeSubmit(
-  session: DiscordBoundSession,
-  text: string,
-  onDelta: (text: string) => Promise<void>,
-): Promise<void> {
-  const gen = session.submitMessage(text)
-  while (true) {
-    const next = await gen.next()
-    if (next.done) return
-    const event = next.value
-    if (!isRecord(event) || event.type !== 'text_delta') continue
-    if (typeof event.text !== 'string' || event.text === '') continue
-    await onDelta(event.text)
   }
 }
 
@@ -229,8 +188,4 @@ function turnFailureBody(error: unknown): string {
 function clipDiscordText(text: string): string {
   if (text.length <= DISCORD_TEXT_MAX) return text
   return `${text.slice(0, DISCORD_TEXT_MAX - 1)}…`
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
 }

@@ -1,30 +1,19 @@
-import { AsyncLocalStorage } from 'node:async_hooks'
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import {
   createSqliteDeliveries,
   loadConfig,
   loadDotEnv,
-  loadSessionMap,
   parseConfigYaml,
   ravenclawHome,
-  resolveSessionId,
-  saveSessionMap,
   sqliteStoreDatabase,
   type ConfigFlags,
   type SessionLockHolderName,
 } from '@ravenclaw/core'
-import { bootCli, openNewSession, resumeRuntime, type CliRuntime } from '../engine'
-import { singleFlight, startMailboxPoller } from '../serve'
+import { createChatSessionHost } from '../chat-host/session-host'
+import { bootCli } from '../engine'
 import { runDiscordAdapter } from './adapter'
-import type { DiscordOpenSession, DiscordPermissionAnswer } from './types'
-
-type DiscordAsk = (
-  event: { id: string; tool: string; message: string },
-  signal: AbortSignal,
-) => Promise<DiscordPermissionAnswer>
-
-const askStore = new AsyncLocalStorage<DiscordAsk>()
+import type { DiscordOpenSession } from './types'
 
 export const DISCORD_LOCK_HOLDER: SessionLockHolderName = 'discord'
 
@@ -57,72 +46,26 @@ export async function runDiscord(opts: { flags: ConfigFlags }): Promise<number> 
     return 1
   }
 
-  const map = loadSessionMap(home)
-  const engines = new Map<string, CliRuntime>()
-  const opening = new Map<string, Promise<CliRuntime>>()
-  const turnFlights = new Map<string, Promise<unknown>>()
   const shared = await bootCli({
     flags: opts.flags,
     createSession: false,
     surface: 'headless',
     lockHolder: DISCORD_LOCK_HOLDER,
   })
-  shared.ask.bind(async (event, signal) => {
-    const ask = askStore.getStore()
-    if (!ask) return 'deny'
-    return ask({ id: event.id, tool: event.tool, message: event.message }, signal)
-  })
+  const host = createChatSessionHost({ home, shared })
+  const openSession: DiscordOpenSession = (req) => host.openSession(req)
 
   const db = sqliteStoreDatabase(shared.store)
   if (db === undefined) throw new Error('discord ledger requires sqlite session store')
   const ledger = createSqliteDeliveries(db)
   ledger.gc(Date.now() - DELIVERY_TTL_MS)
 
-  const openSession: DiscordOpenSession = async (req) => {
-    const resolvedId = resolveSessionId(map, req.sessionKey, () => crypto.randomUUID())
-    if (resolvedId.created) saveSessionMap(map, home)
-    const runtime = await singleFlight(opening, resolvedId.id, async () => {
-      const cached = engines.get(resolvedId.id)
-      if (cached) return cached
-      const boot = {
-        ...shared,
-        config: { ...shared.config, permissionMode: req.permissionMode },
-      }
-      const opened = resolvedId.created
-        ? await openNewSession(boot, { sessionId: resolvedId.id })
-        : await resumeRuntime(boot, resolvedId.id)
-      if (opened.engine.session.permissionMode !== req.permissionMode) {
-        await opened.engine.setPermissionMode(req.permissionMode)
-      }
-      engines.set(resolvedId.id, opened)
-      return opened
-    })
-    return {
-      sessionId: runtime.engine.session.id,
-      async *submitMessage(text: string) {
-        const gen = runtime.engine.submitMessage(text)
-        while (true) {
-          const next = await askStore.run(req.askUser, () => gen.next())
-          if (next.done) return next.value
-          yield next.value
-        }
-      },
-    }
-  }
-
   const stop = new AbortController()
-  const stopMailbox = startMailboxPoller(engines, turnFlights)
-  let stopped = false
+  const stopMailbox = host.startMailbox()
   const shutdown = async () => {
-    if (stopped) return
-    stopped = true
     stop.abort()
     stopMailbox()
-    await Promise.allSettled([...turnFlights.values()])
-    for (const runtime of engines.values()) {
-      await runtime.engine.close?.()
-      await runtime.mcpCloser?.()
-    }
+    await host.shutdown()
   }
   const onStop = () => {
     void shutdown()
@@ -139,7 +82,7 @@ export async function runDiscord(opts: { flags: ConfigFlags }): Promise<number> 
           openSession,
           ledger,
           pairingHome: home,
-          turnFlights,
+          turnFlights: host.turnFlights,
           signal: stop.signal,
         })
       } catch (error) {

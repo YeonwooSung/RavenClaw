@@ -1,7 +1,7 @@
 # Maintainability refactor (waves)
 
 Date: 2026-09-14
-Status: wave 2 implemented (not merged)
+Status: wave 3 implemented (not merged)
 
 ## Finding
 
@@ -23,9 +23,11 @@ Host-only (stay in each TUI): `quit`, `stop`, `clear`, `resume`, `diff`, `queue`
 
 Shared: everything else, including `/add-dir`, `/effort`, `/agents`, `/hooks`. `/skills` disable/enable always `reloadSystem` (Ink behavior). Ink `/team-onboarding` stays fire-and-forget via host; OpenTUI awaits the dispatcher.
 
-### Wave 3 — one chat host, later
+### Wave 3 — one chat host
 
-Shared Slack/Discord session map + stream-turn over a transport port.
+`packages/cli/src/chat-host/session-host.ts` owns mapped engines, ALS ask, mailbox, shutdown.
+`packages/cli/src/chat-host/stream-turn.ts` owns stub/throttle/edit-or-repost.
+Slack/Discord keep transport, admit, pairing, and ledger.
 
 ### Wave 4 — more perf, later
 
