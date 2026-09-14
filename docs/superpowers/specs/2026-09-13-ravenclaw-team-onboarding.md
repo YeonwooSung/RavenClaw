@@ -1,7 +1,7 @@
 # RavenClaw `/team-onboarding`
 
 Date: 2026-09-13  
-Status: approved for spec (not implemented)  
+Status: implemented
 Steal contracts from Claude Code `/team-onboarding` (described in https://cross-the-line.tistory.com/117). Do **not** copy Claude source, skill files, or system-prompt text from that post.
 
 Does not extend `2026-09-12-ravenclaw-remaining-roadmap.md`.

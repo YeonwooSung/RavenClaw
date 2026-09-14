@@ -1,7 +1,7 @@
 # Maintainability refactor (waves)
 
 Date: 2026-09-14
-Status: wave 4 implemented (not merged)
+Status: implemented (waves 1–4 on main)
 
 ## Finding
 

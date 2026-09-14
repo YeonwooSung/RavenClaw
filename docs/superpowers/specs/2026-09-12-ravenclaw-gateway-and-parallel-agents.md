@@ -1,7 +1,7 @@
 # RavenClaw gateway + parallel agents
 
 Date: 2026-09-12  
-Status: partial (G0/G1 + A0–A2 landed; G2 Slack/Discord and A3 steer not built)  
+Status: implemented (G0–G3 Slack/Discord + pairing/ledger; A0–A3 TaskSteer on live Agent)
 Sources: Hermes Agent (`/Users/yeonwoosung/Desktop/hermes-agent`, MIT) — steal contracts, do not copy code. RavenClaw stays Apache-2.0, BYOK, no company backend.
 
 This spec covers two v1.x seams:

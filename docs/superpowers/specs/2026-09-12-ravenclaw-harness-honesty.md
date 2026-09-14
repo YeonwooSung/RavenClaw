@@ -1,7 +1,7 @@
 # RavenClaw harness honesty (H0 leftover + H1.3/H1.7)
 
 Date: 2026-09-12  
-Status: implementing  
+Status: implemented
 HEAD at write: `6763f43`
 
 Steal contracts. Do not copy Hermes or Claude source.

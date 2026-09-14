@@ -1,7 +1,7 @@
 # RavenClaw remaining-work roadmap
 
 Date: 2026-09-12  
-Status: implemented (local; not pushed)  
+Status: implemented
 HEAD at write: `5629c82`  
 Implemented on `main` through Wave 4 in this session.  
 Supersedes remaining H1/H2 of `2026-09-12-ravenclaw-roadmap.md`. H0 and harness-honesty (`2026-09-12-ravenclaw-harness-honesty.md`) stay done.

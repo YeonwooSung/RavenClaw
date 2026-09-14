@@ -1,7 +1,7 @@
 # RavenClaw Discord + pairing + inbound ledger
 
 Date: 2026-09-12  
-Status: approved for spec (not implemented)  
+Status: implemented
 Implements gateway spec slice **G3** in `2026-09-12-ravenclaw-gateway-and-parallel-agents.md`.  
 Does not extend `2026-09-12-ravenclaw-remaining-roadmap.md`.  
 Sibling: `2026-09-12-ravenclaw-child-session-honesty.md` (TaskSteer) is a separate spec.

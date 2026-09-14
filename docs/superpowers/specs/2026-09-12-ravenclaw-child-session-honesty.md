@@ -1,7 +1,7 @@
 # RavenClaw child-session honesty
 
 Date: 2026-09-12  
-Status: approved for spec (not implemented)  
+Status: implemented
 Supersedes: gateway spec slices **A2 report** and **A3 steer** in `2026-09-12-ravenclaw-gateway-and-parallel-agents.md`. Isolation cleanup already keeps dirty trees; this spec adds the parent-visible report and live-child steer.  
 Does not extend `2026-09-12-ravenclaw-remaining-roadmap.md`.
 
