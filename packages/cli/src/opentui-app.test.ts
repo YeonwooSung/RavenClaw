@@ -544,6 +544,23 @@ describe('runOpenTuiApp', () => {
     expect(out).toContain('no mcp servers')
     expect(out).not.toContain('unknown command')
   })
+
+  test('/add-dir /effort /agents /hooks are not unknown', async () => {
+    const written: string[] = []
+    const code = await runOpenTuiApp(fakeRuntime(fakeEngine(makeSession(), emptyTurn)), {
+      input: asyncLines('/add-dir ../pkg', '/effort high', '/agents', '/hooks', '/quit'),
+      write: (chunk) => {
+        written.push(chunk)
+      },
+    })
+    expect(code).toBe(0)
+    const out = written.join('')
+    expect(out).toContain('will allow extra root after AddDir tool: ../pkg')
+    expect(out).toContain('effort high (hint only)')
+    expect(out).toContain('general')
+    expect(out).toContain('PreToolUse')
+    expect(out).not.toContain('unknown command')
+  })
 })
 
 async function* emptyTurn(): AsyncGenerator<StreamEvent, RoundEnd> {

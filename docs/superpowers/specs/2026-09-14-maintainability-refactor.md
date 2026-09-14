@@ -1,7 +1,7 @@
 # Maintainability refactor (waves)
 
 Date: 2026-09-14
-Status: wave 1 in progress
+Status: wave 2 implemented (not merged)
 
 ## Finding
 
@@ -15,9 +15,13 @@ Do not rewrite `queryLoop`, permissions, persist, or hosts. The tree is already 
 2. Move the hand-rolled YAML parser out of `packages/core/src/config.ts` into `packages/core/src/config/yaml.ts`. Public exports stay on `./config`.
 3. Drop dead `ToolSearchOpts.unlock`. Do **not** remove `turn.unlockedToolNames` (MCP prefix gate).
 
-### Wave 2 — one slash host, later
+### Wave 2 — one slash host
 
-`dispatchSlashCommand(cmd, host)` shared by Ink and OpenTUI. Stop the `/add-dir` `/effort` `/skills` drift.
+`dispatchSharedSlash(cmd, host)` in `packages/cli/src/slash/dispatch.ts`.
+
+Host-only (stay in each TUI): `quit`, `stop`, `clear`, `resume`, `diff`, `queue`, `loop`, `bash`.
+
+Shared: everything else, including `/add-dir`, `/effort`, `/agents`, `/hooks`. `/skills` disable/enable always `reloadSystem` (Ink behavior). Ink `/team-onboarding` stays fire-and-forget via host; OpenTUI awaits the dispatcher.
 
 ### Wave 3 — one chat host, later
 

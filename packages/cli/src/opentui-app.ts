@@ -5,7 +5,6 @@ import {
   permissionPromptLines,
 } from '@ravenclaw/tui-opentui'
 import {
-  buildSystemParts,
   createJsonCronStore,
   fireDueJobs,
   parseLoopArg,
@@ -13,39 +12,16 @@ import {
   takeLoopTurn,
   formatLoopStatus,
   shouldAdvanceLoop,
-  discoverSkills,
   maybePruneSkillsOnIdle,
-  setSkillDisabled,
-  ravenclawHome,
-  scanTeamOnboarding,
   createSecondAbortGate,
   formatKilledBackgroundNotice,
-  formatTasksNotice,
-  formatUndoNotice,
-  parseTasksArg,
   type StreamEvent,
 } from '@ravenclaw/core'
-import {
-  INTERVIEW_PROMPT,
-  LEARN_PROMPT,
-  RELOAD_NOTICE,
-  REVIEW_PROMPT,
-  SLASH_HELP,
-  TASKS_NOTICE,
-  formatContextNotice,
-  formatOnboardingTurn,
-  formatPermissionsNotice,
-  handleSlashCommand,
-} from './commands'
-import { formatPublicConfig } from './config-print'
-import { formatCostNotice } from './cost-format'
-import { formatMcpList } from './mcp-list'
-import { runSessionReview } from './review'
-import { searchNotice } from './search'
-import { applyCronMutate } from './cron-cmd'
+import { handleSlashCommand } from './commands'
 import { fireCronJob } from './cron-fire'
-import { formatSkillPruneResult, formatSkillShow, formatSkillsList, parseSkillsSlashArg, runSkillsPrune } from './skills-list'
-import { openNewSession, parsePermissionMode, resumeRuntime, type CliRuntime } from './engine'
+import { formatSkillPruneResult } from './skills-list'
+import { openNewSession, resumeRuntime, type CliRuntime } from './engine'
+import { dispatchSharedSlash } from './slash/dispatch'
 import { collectUserImages, readClipboardImage } from './image-paste'
 import { parseBangLine, runBangCommand } from './bash-line'
 import { appendPrompt } from './prompt-history'
@@ -58,7 +34,6 @@ import {
   parseQueueArg,
   removeAt,
 } from './message-queue'
-import { copyConversationToClipboard, formatConversationMarkdown } from './copy-conversation'
 import {
   formatDiffPanel,
   loadGitDiff,
@@ -67,7 +42,7 @@ import {
 } from './diff-cmd'
 import { formatAskUserDialog, parseAskUserAnswer } from './ask-host'
 import { loadIncludedDockLines } from './included-ads'
-import { applySessionTitle, formatResumeSessionLine } from './resume'
+import { formatResumeSessionLine } from './resume'
 import { formatStatusLine, shortSessionId } from './status-line'
 
 export interface OpenTuiAppIo {
@@ -276,11 +251,18 @@ export async function runOpenTuiApp(
         continue
       }
 
+      const shared = await dispatchSharedSlash(parsed, {
+        runtime: () => current,
+        notice: (text) => {
+          write(`${text}\n`)
+        },
+        runTurn,
+        writeOsc52: (text) => {
+          write(text)
+        },
+      })
+      if (shared === 'handled') continue
       switch (parsed.name) {
-        case 'help':
-        case '?':
-          write(`${SLASH_HELP}\n`)
-          continue
         case 'quit':
           return 0
         case 'stop':
@@ -291,33 +273,6 @@ export async function runOpenTuiApp(
           } else {
             write(turnBusy ? 'stopped\n' : 'nothing to stop\n')
           }
-          continue
-        case 'learn':
-          await runTurn(LEARN_PROMPT)
-          continue
-        case 'title':
-          if (parsed.arg === undefined || parsed.arg.trim() === '') {
-            write('usage: /title <name>\n')
-            continue
-          }
-          await applySessionTitle(current.store, current.engine.session, parsed.arg.trim())
-          write(`title ${parsed.arg.trim()}\n`)
-          continue
-        case 'review':
-          write(`${await runSessionReview(current, parsed.arg ?? REVIEW_PROMPT)}\n`)
-          continue
-        case 'compact':
-          await current.engine.compactNow()
-          write('compact requested\n')
-          continue
-        case 'cost':
-          write(`${formatCostNotice({
-            usage: current.engine.session.usage,
-            profile: current.config.profile,
-            funding: current.engine.session.funding,
-            remaining: current.remainingSessions,
-            compactGeneration: current.engine.session.compactGeneration,
-          })}\n`)
           continue
         case 'clear': {
           try {
@@ -332,106 +287,6 @@ export async function runOpenTuiApp(
             const message = error instanceof Error ? error.message : String(error)
             write(`${message}\n`)
           }
-          continue
-        }
-        case 'model': {
-          const session = current.engine.session
-          if (parsed.arg === undefined || parsed.arg.trim() === '') {
-            write(`model ${session.model}\n`)
-            continue
-          }
-          session.model = parsed.arg.trim()
-          await current.store.upsertSession(session)
-          write(`model ${session.model}\n`)
-          continue
-        }
-        case 'reload':
-          current.engine.reloadSystem(
-            buildSystemParts({
-              cwd: current.cwd,
-              permissionMode: current.engine.session.permissionMode,
-            }),
-          )
-          write(`${RELOAD_NOTICE}\n`)
-          continue
-        case 'tasks': {
-          const parsedTasks = parseTasksArg(parsed.arg)
-          if (parsedTasks.action === 'error') {
-            write(`${parsedTasks.message}\n`)
-            continue
-          }
-          if (parsedTasks.action === 'steer') {
-            const out = current.engine.tasks.steer(parsedTasks.id, parsedTasks.text)
-            write(`${out.ok ? `steered ${parsedTasks.id}` : `TaskSteer failed: ${out.error}`}\n`)
-            continue
-          }
-          if (parsedTasks.action === 'kill') {
-            const stopped = current.engine.tasks.kill(parsedTasks.id)
-            write(`${stopped ? `stopped ${stopped.id}` : `unknown task ${parsedTasks.id}`}\n`)
-            continue
-          }
-          const listed = current.engine.tasks.list()
-          write(`${listed.length === 0 ? TASKS_NOTICE : formatTasksNotice(listed)}\n`)
-          continue
-        }
-        case 'undo': {
-          write(`${formatUndoNotice(current.engine.fileHistory.undo())}\n`)
-          continue
-        }
-        case 'permissions': {
-          let sessionRuleCount = 0
-          try {
-            sessionRuleCount = (await current.store.listPermissionRules(current.engine.session.id)).length
-          } catch {
-            sessionRuleCount = 0
-          }
-          write(`${formatPermissionsNotice({
-            home: current.config.home ?? '',
-            cwd: current.cwd,
-            sessionRuleCount,
-          })}\n`)
-          continue
-        }
-        case 'context': {
-          let messageCount = 0
-          try {
-            messageCount = (await current.store.loadSession(current.engine.session.id)).messages.length
-          } catch {
-            messageCount = 0
-          }
-          write(`${formatContextNotice(current.engine.session.compactGeneration, messageCount)}\n`)
-          continue
-        }
-        case 'mcp':
-          write(`${formatMcpList(current.config.mcp?.servers ?? [])}\n`)
-          continue
-        case 'skills': {
-          const home = current.config.home
-          const parsedSkills = parseSkillsSlashArg(parsed.arg)
-          if (parsedSkills.action === 'error') {
-            write(`${parsedSkills.message}\n`)
-            continue
-          }
-          if (parsedSkills.action === 'list') {
-            write(`${formatSkillsList({ cwd: current.cwd, ...(home !== undefined ? { home } : {}) })}\n`)
-            continue
-          }
-          if (parsedSkills.action === 'prune') {
-            write(`${runSkillsPrune({ cwd: current.cwd, ...(home !== undefined ? { home } : {}) })}\n`)
-            continue
-          }
-          const skills = discoverSkills(current.cwd, home)
-          const skill = skills.find((row) => row.name === parsedSkills.name)
-          if (parsedSkills.action === 'show') {
-            write(`${skill ? formatSkillShow(skill.dir) : `unknown skill: ${parsedSkills.name}`}\n`)
-            continue
-          }
-          if (home === undefined) {
-            write('no home directory\n')
-            continue
-          }
-          setSkillDisabled(parsedSkills.name, parsedSkills.action === 'disable', home)
-          write(`${parsedSkills.action}d ${parsedSkills.name}\n`)
           continue
         }
         case 'loop': {
@@ -455,9 +310,6 @@ export async function runOpenTuiApp(
           if (first.prompt !== undefined) void runTurn(first.prompt)
           continue
         }
-        case 'rewind':
-          write(`${(await current.engine.rewindLast()).notice}\n`)
-          continue
         case 'diff': {
           const action = parseDiffArg(parsed.arg)
           if (action.action === 'error') {
@@ -474,18 +326,6 @@ export async function runOpenTuiApp(
           writeDiffPanel()
           continue
         }
-        case 'steer': {
-          if (parsed.arg === undefined || parsed.arg.trim() === '') {
-            write('usage: /steer <text>\n')
-            continue
-          }
-          current.engine.enqueueSteer(parsed.arg)
-          write('steered (next round)\n')
-          continue
-        }
-        case 'cron':
-          write(`${applyCronMutate(parsed.arg, current.cwd, current.config.home).text}\n`)
-          continue
         case 'queue': {
           const action = parseQueueArg(parsed.arg)
           if (action.action === 'error') {
@@ -505,39 +345,6 @@ export async function runOpenTuiApp(
           write(`${formatQueue(queue)}\n`)
           continue
         }
-        case 'copy': {
-          try {
-            const loaded = await current.store.loadSession(current.engine.session.id)
-            const markdown = formatConversationMarkdown(
-              loaded.messages.map((message) => ({
-                role: message.role,
-                text: message.blocks
-                  .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
-                  .map((block) => block.text)
-                  .join(''),
-              })),
-            )
-            const copied = copyConversationToClipboard(markdown)
-            if (copied.method === 'osc52') write(copied.text)
-            write(`${copied.ok ? 'copied conversation' : 'copy failed'}\n`)
-          } catch {
-            write('copy failed\n')
-          }
-          continue
-        }
-        case 'interview':
-          await runTurn(INTERVIEW_PROMPT)
-          continue
-        case 'team-onboarding': {
-          const scan = await scanTeamOnboarding({
-            cwd: current.cwd,
-            home: ravenclawHome(),
-            store: current.store,
-            mcp: current.config.mcp ?? { servers: [] },
-          })
-          await runTurn(formatOnboardingTurn(scan))
-          continue
-        }
         case 'bash': {
           if (parsed.arg === undefined || parsed.arg.trim() === '') {
             write('usage: /bash <cmd>\n')
@@ -545,42 +352,6 @@ export async function runOpenTuiApp(
           }
           const result = runBangCommand(parsed.arg, current.cwd)
           write(`${result.text || `exit ${result.code}`}\n`)
-          continue
-        }
-        case 'skill': {
-          if (parsed.arg === undefined || parsed.arg.trim() === '') {
-            write('usage: /skill:<name>\n')
-            continue
-          }
-          await runTurn(`Use the Skill tool to load "${parsed.arg.trim()}" and follow its instructions.`)
-          continue
-        }
-        case 'config':
-          write(
-            current.config.home !== undefined
-              ? `${formatPublicConfig({ home: current.config.home })}\n`
-              : 'see raven config\n',
-          )
-          continue
-        case 'search':
-          write(`${searchNotice({
-            store: current.store,
-            arg: parsed.arg,
-            sessionId: current.engine.session.id,
-          })}\n`)
-          continue
-        case 'mode': {
-          if (parsed.arg === undefined) {
-            write('usage: /mode default|acceptEdits|plan|dontAsk\n')
-            continue
-          }
-          const next = parsePermissionMode(parsed.arg)
-          if (!next) {
-            write(`unknown mode: ${parsed.arg}\n`)
-            continue
-          }
-          await current.engine.setPermissionMode(next)
-          write(`mode ${next}\n`)
           continue
         }
         case 'resume': {

@@ -6,22 +6,13 @@ import {
   fireDueJobs,
   createSecondAbortGate,
   formatKilledBackgroundNotice,
-  formatTasksNotice,
-  formatUndoNotice,
-  parseTasksArg,
   parseLoopArg,
   startLoop,
   takeLoopTurn,
   formatLoopStatus,
   shouldAdvanceLoop,
   type LoopState,
-  discoverSkills,
   maybePruneSkillsOnIdle,
-  setSkillDisabled,
-  agentCatalog,
-  LIFECYCLE_EVENTS,
-  ravenclawHome,
-  scanTeamOnboarding,
   type Funding,
   type PermissionMode,
   type SessionRecord,
@@ -29,42 +20,23 @@ import {
   type TaskSnapshot,
   type TokenUsage,
   type TodoItem,
-  buildSystemParts,
   loadTodos,
   nearCompact,
   todosFromToolResult,
 } from '@ravenclaw/core'
 import { AdDock } from './ad-dock'
-import {
-  INTERVIEW_PROMPT,
-  LEARN_PROMPT,
-  RELOAD_NOTICE,
-  REVIEW_PROMPT,
-  SLASH_HELP,
-  TASKS_NOTICE,
-  formatContextNotice,
-  formatOnboardingTurn,
-  formatPermissionsNotice,
-  handleSlashCommand,
-} from './commands'
-import { formatPublicConfig } from './config-print'
-import { formatCostNotice } from './cost-format'
-import { formatMcpList } from './mcp-list'
-import { runSessionReview } from './review'
-import { searchNotice } from './search'
+import { handleSlashCommand } from './commands'
 import { collectUserImages, readClipboardImage } from './image-paste'
-import { formatSkillPruneResult, formatSkillShow, formatSkillsList, parseSkillsSlashArg, runSkillsPrune } from './skills-list'
 import { Composer } from './composer'
-import { applySessionTitle } from './resume'
-import { applyCronMutate } from './cron-cmd'
 import { fireCronJob } from './cron-fire'
 import {
   compactPolicyFromConfig,
   openNewSession,
-  parsePermissionMode,
   resumeRuntime,
   type CliRuntime,
 } from './engine'
+import { formatSkillPruneResult } from './skills-list'
+import { dispatchSharedSlash } from './slash/dispatch'
 import { ChildAgentList } from './child-agents'
 import { TodoPanel } from './todo-panel'
 import { parseBangLine, runBangCommand } from './bash-line'
@@ -78,7 +50,6 @@ import {
   parseQueueArg,
   removeAt,
 } from './message-queue'
-import { copyConversationToClipboard, formatConversationMarkdown } from './copy-conversation'
 import { formatAskUserDialog, parseAskUserAnswer } from './ask-host'
 import { loadGitDiff, parseDiffArg, type GitDiffView } from './diff-cmd'
 import { DiffPanel } from './diff-panel'
@@ -388,409 +359,133 @@ export function App(props: AppProps) {
         void runTurn(parsed.text)
         return
       }
-      switch (parsed.name) {
-        case 'help':
-        case '?':
-          setNotice(SLASH_HELP)
-          return
-        case 'quit':
-          exit()
-          return
-        case 'compact':
-          void runtimeRef.current.engine.compactNow().then(() => {
-            setNotice('compact requested')
-          })
-          return
-        case 'cost':
-          setNotice(
-            formatCostNotice({
-              usage: runtimeRef.current.engine.session.usage,
-              profile: runtimeRef.current.config.profile,
-              funding: runtimeRef.current.engine.session.funding,
-              remaining: runtimeRef.current.remainingSessions,
-              compactGeneration: runtimeRef.current.engine.session.compactGeneration,
-            }),
-          )
-          return
-        case 'clear':
-          void (async () => {
-            await runtimeRef.current.engine.close()
-            await runtimeRef.current.mcpCloser?.()
-            const next = await openNewSession(runtimeRef.current)
-            runtimeRef.current = next
-            bindAskQuestions()
-            setRows([])
-            setTodos(loadTodos(next.cwd))
-            setTasks(next.engine.tasks.list())
-            setSelectedIndex(undefined)
-            setExpandedIds(new Set())
-            setLastAssembleInput(0)
-            syncSession()
-            setNotice(`new session ${shortSessionId(next.engine.session.id)}`)
-          })()
-          return
-        case 'model': {
-          const session = runtimeRef.current.engine.session
-          if (parsed.arg === undefined || parsed.arg.trim() === '') {
-            setNotice(`model ${session.model}`)
+      void dispatchSharedSlash(parsed, {
+        runtime: () => runtimeRef.current,
+        notice: setNotice,
+        runTurn: (prompt) => {
+          void runTurn(prompt)
+        },
+        onModelChanged: setModel,
+        onModeChanged: (mode) => {
+          setMode(mode as PermissionMode)
+        },
+        writeOsc52: (text) => {
+          process.stdout.write(text)
+        },
+      }).then((shared) => {
+        if (shared === 'handled') return
+        switch (parsed.name) {
+          case 'quit':
+            exit()
             return
-          }
-          session.model = parsed.arg.trim()
-          setModel(session.model)
-          void runtimeRef.current.store.upsertSession(session).then(() => {
-            setNotice(`model ${session.model}`)
-          })
-          return
-        }
-        case 'reload': {
-          runtimeRef.current.engine.reloadSystem(
-            buildSystemParts({
-              cwd: runtimeRef.current.cwd,
-              permissionMode: runtimeRef.current.engine.session.permissionMode,
-            }),
-          )
-          setNotice(RELOAD_NOTICE)
-          return
-        }
-        case 'tasks': {
-          const parsedTasks = parseTasksArg(parsed.arg)
-          if (parsedTasks.action === 'error') {
-            setNotice(parsedTasks.message)
+          case 'stop':
+            runtimeRef.current.engine.abort()
+            setNotice(busyRef.current ? 'stopped' : 'nothing to stop')
             return
-          }
-          if (parsedTasks.action === 'steer') {
-            const out = runtimeRef.current.engine.tasks.steer(parsedTasks.id, parsedTasks.text)
-            setNotice(out.ok ? `steered ${parsedTasks.id}` : `TaskSteer failed: ${out.error}`)
+          case 'clear':
+            void (async () => {
+              await runtimeRef.current.engine.close()
+              await runtimeRef.current.mcpCloser?.()
+              const next = await openNewSession(runtimeRef.current)
+              runtimeRef.current = next
+              bindAskQuestions()
+              setRows([])
+              setTodos(loadTodos(next.cwd))
+              setTasks(next.engine.tasks.list())
+              setSelectedIndex(undefined)
+              setExpandedIds(new Set())
+              setLastAssembleInput(0)
+              syncSession()
+              setNotice(`new session ${shortSessionId(next.engine.session.id)}`)
+            })()
             return
-          }
-          if (parsedTasks.action === 'kill') {
-            const stopped = runtimeRef.current.engine.tasks.kill(parsedTasks.id)
-            setNotice(stopped ? `stopped ${stopped.id}` : `unknown task ${parsedTasks.id}`)
-            return
-          }
-          const listed = runtimeRef.current.engine.tasks.list()
-          setNotice(listed.length === 0 ? TASKS_NOTICE : formatTasksNotice(listed))
-          return
-        }
-        case 'undo': {
-          setNotice(formatUndoNotice(runtimeRef.current.engine.fileHistory.undo()))
-          return
-        }
-        case 'permissions':
-          void runtimeRef.current.store
-            .listPermissionRules(runtimeRef.current.engine.session.id)
-            .then((rules) => {
-              setNotice(
-                formatPermissionsNotice({
-                  home: runtimeRef.current.config.home ?? '',
-                  cwd: runtimeRef.current.cwd,
-                  sessionRuleCount: rules.length,
-                }),
-              )
-            })
-            .catch(() => {
-              setNotice(
-                formatPermissionsNotice({
-                  home: runtimeRef.current.config.home ?? '',
-                  cwd: runtimeRef.current.cwd,
-                  sessionRuleCount: 0,
-                }),
-              )
-            })
-          return
-        case 'context':
-          void runtimeRef.current.store
-            .loadSession(runtimeRef.current.engine.session.id)
-            .then((loaded) => {
-              setNotice(
-                formatContextNotice(
-                  runtimeRef.current.engine.session.compactGeneration,
-                  loaded.messages.length,
-                ),
-              )
-            })
-            .catch(() => {
-              setNotice(
-                formatContextNotice(runtimeRef.current.engine.session.compactGeneration, 0),
-              )
-            })
-          return
-        case 'mcp':
-          setNotice(formatMcpList(runtimeRef.current.config.mcp?.servers ?? []))
-          return
-        case 'skills': {
-          const home = runtimeRef.current.config.home
-          const parsedSkills = parseSkillsSlashArg(parsed.arg)
-          if (parsedSkills.action === 'error') {
-            setNotice(parsedSkills.message)
-            return
-          }
-          if (parsedSkills.action === 'list') {
-            setNotice(formatSkillsList({ cwd: runtimeRef.current.cwd, ...(home !== undefined ? { home } : {}) }))
-            return
-          }
-          if (parsedSkills.action === 'prune') {
-            setNotice(runSkillsPrune({ cwd: runtimeRef.current.cwd, ...(home !== undefined ? { home } : {}) }))
-            return
-          }
-          const skills = discoverSkills(runtimeRef.current.cwd, home)
-          const skill = skills.find((row) => row.name === parsedSkills.name)
-          if (parsedSkills.action === 'show') {
-            if (!skill) {
-              setNotice(`unknown skill: ${parsedSkills.name}`)
+          case 'loop': {
+            const action = parseLoopArg(parsed.arg)
+            if (action.action === 'error') {
+              setNotice(action.message)
               return
             }
-            setNotice(formatSkillShow(skill.dir))
+            if (action.action === 'stop') {
+              loopRef.current = null
+              setNotice('loop stopped')
+              return
+            }
+            if (action.action === 'status') {
+              setNotice(formatLoopStatus(loopRef.current))
+              return
+            }
+            loopRef.current = startLoop(action.times, action.prompt)
+            const first = takeLoopTurn(loopRef.current)
+            loopRef.current = first.next
+            if (first.prompt !== undefined) void runTurn(first.prompt)
             return
           }
-          if (home === undefined) {
-            setNotice('no home directory')
+          case 'diff': {
+            const action = parseDiffArg(parsed.arg)
+            if (action.action === 'error') {
+              setNotice(action.message)
+              return
+            }
+            if (action.action === 'close' || (action.action === 'toggle' && diffOpenRef.current)) {
+              closeDiff()
+              return
+            }
+            applyDiffView(action.action === 'select' ? action.index : undefined)
             return
           }
-          setSkillDisabled(parsedSkills.name, parsedSkills.action === 'disable', home)
-          runtimeRef.current.engine.reloadSystem(
-            buildSystemParts({
-              cwd: runtimeRef.current.cwd,
-              permissionMode: runtimeRef.current.engine.session.permissionMode,
-            }),
-          )
-          setNotice(`${parsedSkills.action}d ${parsedSkills.name}`)
-          return
+          case 'queue': {
+            const action = parseQueueArg(parsed.arg)
+            if (action.action === 'error') {
+              setNotice(action.message)
+              return
+            }
+            if (action.action === 'clear') {
+              queueRef.current.items.length = 0
+              setNotice('queue empty')
+              return
+            }
+            if (action.action === 'drop') {
+              const removed = removeAt(queueRef.current, action.index - 1)
+              setNotice(removed === undefined ? `unknown queue item ${action.index}` : formatQueue(queueRef.current))
+              return
+            }
+            setNotice(formatQueue(queueRef.current))
+            return
+          }
+          case 'bash': {
+            if (parsed.arg === undefined || parsed.arg.trim() === '') {
+              setNotice('usage: /bash <cmd>')
+              return
+            }
+            const result = runBangCommand(parsed.arg, runtimeRef.current.cwd)
+            setRows((prev) => [
+              ...prev,
+              { kind: 'user', text: `!${parsed.arg}` },
+              { kind: 'status', message: result.text || `exit ${result.code}` },
+            ])
+            return
+          }
+          case 'resume': {
+            if (parsed.arg) {
+              void applyResume(parsed.arg)
+              return
+            }
+            void runtimeRef.current.store
+              .listSessions({ cwd: runtimeRef.current.cwd, limit: 20 })
+              .then((sessions) => {
+                if (sessions.length === 0) {
+                  setNotice('no sessions to resume')
+                  return
+                }
+                setPicker(sessions)
+                setPickerIndex(0)
+              })
+            return
+          }
+          default:
+            setNotice(`unknown command: /${parsed.name}`)
         }
-        case 'loop': {
-          const action = parseLoopArg(parsed.arg)
-          if (action.action === 'error') {
-            setNotice(action.message)
-            return
-          }
-          if (action.action === 'stop') {
-            loopRef.current = null
-            setNotice('loop stopped')
-            return
-          }
-          if (action.action === 'status') {
-            setNotice(formatLoopStatus(loopRef.current))
-            return
-          }
-          loopRef.current = startLoop(action.times, action.prompt)
-          const first = takeLoopTurn(loopRef.current)
-          loopRef.current = first.next
-          if (first.prompt !== undefined) void runTurn(first.prompt)
-          return
-        }
-        case 'rewind':
-          void runtimeRef.current.engine.rewindLast().then((result) => {
-            setNotice(result.notice)
-          })
-          return
-        case 'diff': {
-          const action = parseDiffArg(parsed.arg)
-          if (action.action === 'error') {
-            setNotice(action.message)
-            return
-          }
-          if (action.action === 'close' || (action.action === 'toggle' && diffOpenRef.current)) {
-            closeDiff()
-            return
-          }
-          applyDiffView(action.action === 'select' ? action.index : undefined)
-          return
-        }
-        case 'add-dir':
-          setNotice(
-            parsed.arg === undefined || parsed.arg.trim() === ''
-              ? 'usage: /add-dir <path> (or use the AddDir tool / --add-dir)'
-              : `will allow extra root after AddDir tool: ${parsed.arg}`,
-          )
-          return
-        case 'effort':
-          setNotice(
-            parsed.arg === undefined || parsed.arg.trim() === ''
-              ? 'usage: /effort low|medium|high|max'
-              : `effort ${parsed.arg.trim()} (hint only)`,
-          )
-          return
-        case 'agents':
-          setNotice(agentCatalog(runtimeRef.current.cwd).map((agent) => `${agent.id}  ${agent.displayName}`).join('\n'))
-          return
-        case 'hooks':
-          setNotice(LIFECYCLE_EVENTS.join('\n'))
-          return
-        case 'steer': {
-          if (parsed.arg === undefined || parsed.arg.trim() === '') {
-            setNotice('usage: /steer <text>')
-            return
-          }
-          runtimeRef.current.engine.enqueueSteer(parsed.arg)
-          setNotice('steered (next round)')
-          return
-        }
-        case 'cron':
-          setNotice(
-            applyCronMutate(
-              parsed.arg,
-              runtimeRef.current.cwd,
-              runtimeRef.current.config.home,
-            ).text,
-          )
-          return
-        case 'queue': {
-          const action = parseQueueArg(parsed.arg)
-          if (action.action === 'error') {
-            setNotice(action.message)
-            return
-          }
-          if (action.action === 'clear') {
-            queueRef.current.items.length = 0
-            setNotice('queue empty')
-            return
-          }
-          if (action.action === 'drop') {
-            const removed = removeAt(queueRef.current, action.index - 1)
-            setNotice(removed === undefined ? `unknown queue item ${action.index}` : formatQueue(queueRef.current))
-            return
-          }
-          setNotice(formatQueue(queueRef.current))
-          return
-        }
-        case 'copy': {
-          void runtimeRef.current.store
-            .loadSession(runtimeRef.current.engine.session.id)
-            .then((loaded) => {
-              const markdown = formatConversationMarkdown(
-                loaded.messages.map((message) => ({
-                  role: message.role,
-                  text: message.blocks
-                    .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
-                    .map((block) => block.text)
-                    .join(''),
-                })),
-              )
-              const copied = copyConversationToClipboard(markdown)
-              if (copied.method === 'osc52') process.stdout.write(copied.text)
-              setNotice(copied.ok ? 'copied conversation' : 'copy failed')
-            })
-            .catch(() => {
-              setNotice('copy failed')
-            })
-          return
-        }
-        case 'interview':
-          void runTurn(INTERVIEW_PROMPT)
-          return
-        case 'team-onboarding': {
-          void (async () => {
-            const scan = await scanTeamOnboarding({
-              cwd: runtimeRef.current.cwd,
-              home: ravenclawHome(),
-              store: runtimeRef.current.store,
-              mcp: runtimeRef.current.config.mcp ?? { servers: [] },
-            })
-            await runTurn(formatOnboardingTurn(scan))
-          })()
-          return
-        }
-        case 'bash': {
-          if (parsed.arg === undefined || parsed.arg.trim() === '') {
-            setNotice('usage: /bash <cmd>')
-            return
-          }
-          const result = runBangCommand(parsed.arg, runtimeRef.current.cwd)
-          setRows((prev) => [
-            ...prev,
-            { kind: 'user', text: `!${parsed.arg}` },
-            { kind: 'status', message: result.text || `exit ${result.code}` },
-          ])
-          return
-        }
-        case 'skill': {
-          if (parsed.arg === undefined || parsed.arg.trim() === '') {
-            setNotice('usage: /skill:<name>')
-            return
-          }
-          void runTurn(`Use the Skill tool to load "${parsed.arg.trim()}" and follow its instructions.`)
-          return
-        }
-        case 'config':
-          setNotice(
-            runtimeRef.current.config.home !== undefined
-              ? formatPublicConfig({ home: runtimeRef.current.config.home })
-              : 'see raven config',
-          )
-          return
-        case 'search':
-          setNotice(
-            searchNotice({
-              store: runtimeRef.current.store,
-              arg: parsed.arg,
-              sessionId: runtimeRef.current.engine.session.id,
-            }),
-          )
-          return
-        case 'learn':
-          void runTurn(LEARN_PROMPT)
-          return
-        case 'title':
-          if (parsed.arg === undefined || parsed.arg.trim() === '') {
-            setNotice('usage: /title <name>')
-            return
-          }
-          void applySessionTitle(
-            runtimeRef.current.store,
-            runtimeRef.current.engine.session,
-            parsed.arg.trim(),
-          ).then(() => {
-            setNotice(`title ${parsed.arg?.trim()}`)
-          })
-          return
-        case 'review':
-          void runSessionReview(
-            runtimeRef.current,
-            parsed.arg ?? REVIEW_PROMPT,
-          ).then((notice) => {
-            setNotice(notice)
-          })
-          return
-        case 'mode': {
-          if (parsed.arg === undefined) {
-            setNotice('usage: /mode default|acceptEdits|plan|dontAsk')
-            return
-          }
-          const next = parsePermissionMode(parsed.arg)
-          if (!next) {
-            setNotice(`unknown mode: ${parsed.arg}`)
-            return
-          }
-          void runtimeRef.current.engine.setPermissionMode(next).then(() => {
-            setMode(next)
-            setNotice(`mode ${next}`)
-          })
-          return
-        }
-        case 'stop':
-          runtimeRef.current.engine.abort()
-          setNotice(busyRef.current ? 'stopped' : 'nothing to stop')
-          return
-        case 'resume': {
-          if (parsed.arg) {
-            void applyResume(parsed.arg)
-            return
-          }
-          void runtimeRef.current.store
-            .listSessions({ cwd: runtimeRef.current.cwd, limit: 20 })
-            .then((sessions) => {
-              if (sessions.length === 0) {
-                setNotice('no sessions to resume')
-                return
-              }
-              setPicker(sessions)
-              setPickerIndex(0)
-            })
-          return
-        }
-        default:
-          setNotice(`unknown command: /${parsed.name}`)
-      }
+      })
     },
     [applyResume, applyDiffView, closeDiff, exit, runTurn],
   )
