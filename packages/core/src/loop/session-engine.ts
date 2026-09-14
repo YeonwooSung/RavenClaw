@@ -50,6 +50,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
   let messages: Message[] = opts.messages ? [...opts.messages] : []
   let liveTurn: Turn | null = null
   let system = opts.system
+  let model = opts.model
   const tasks = createTaskRegistry()
   const fileHistory = opts.fileHistory ?? createFileHistory(session.id)
   const ownsHistoryTurn = opts.fileHistory === undefined || opts.fileHistoryOwnsTurn === true
@@ -205,7 +206,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
           provider: opts.provider,
           store: opts.store,
           compact: opts.compact,
-          model: opts.model,
+          model,
           askUser: opts.askUser,
         }
         if (system !== undefined) loopOpts.system = system
@@ -256,7 +257,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
             system,
             tools: opts.tools,
             compact: opts.compact,
-            model: opts.model,
+            model,
           })
         }
         return end
@@ -278,7 +279,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       const result = await runAutocompact({
         messages: source,
         compact: opts.compact,
-        model: opts.model,
+        model,
         store: opts.store,
         sessionId: session.id,
         generation: liveTurn?.compactGeneration ?? session.compactGeneration,
@@ -302,6 +303,13 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
 
     reloadSystem(next: SystemPart[]) {
       system = next
+    },
+
+    async setModel(next: SessionEngineOptions['model']) {
+      session.model = next.id
+      session.updatedAt = Date.now()
+      model = next
+      await opts.store.upsertSession(session)
     },
 
     async setPermissionMode(mode: PermissionMode) {

@@ -44,6 +44,9 @@ function fakeEngine(session: SessionRecord): SessionEngine & { reloads: number }
       return { reason: 'completed' as const }
     },
     async compactNow() {},
+    async setModel(profile) {
+      session.model = profile.id
+    },
     async setPermissionMode() {},
     reloadSystem() {
       reloads.n += 1
@@ -123,6 +126,18 @@ describe('dispatchSharedSlash', () => {
     const result = await dispatchSharedSlash(cmd('help'), host)
     expect(result).toBe('handled')
     expect(host.notices[0]).toBe(SLASH_HELP)
+  })
+
+  test('model with an id reloads config.profile for the next turn', async () => {
+    const runtime = fakeRuntime(fakeEngine(makeSession({ model: 'dummy' })))
+    const host = fakeHost(runtime)
+    expect(await dispatchSharedSlash(cmd('model', 'claude-sonnet-5'), host)).toBe('handled')
+    expect(runtime.engine.session.model).toBe('claude-sonnet-5')
+    expect(runtime.config.model).toBe('claude-sonnet-5')
+    expect(runtime.config.profile.id).toBe('claude-sonnet-5')
+    expect(runtime.config.profile.contextWindow).toBe(1_000_000)
+    expect(runtime.config.profile.supportsThinking).toBe(true)
+    expect(host.notices).toEqual(['model claude-sonnet-5'])
   })
 
   test('quit is left to the host', async () => {

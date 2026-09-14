@@ -108,6 +108,59 @@ async function persistAll(
   }
 }
 
+describe('setModel', () => {
+  test('next submit uses the new id and reserve', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_set_model', model: 'dummy' })
+    await store.createSession(sess)
+    const seen: ProviderRequest[] = []
+    const provider = createFakeProvider([
+      [
+        { type: 'text_delta', text: 'ok' },
+        { type: 'stop', reason: 'end' },
+      ],
+    ])
+    const orig = provider.stream.bind(provider)
+    provider.stream = async function* (req, signal) {
+      seen.push(req)
+      yield* orig(req, signal)
+    }
+    const engine = createSessionEngine({
+      session: sess,
+      provider,
+      store,
+      tools: [],
+      compact: defaultCompact({ enabled: false }),
+      model: defaultModel(),
+      maxRounds: 8,
+      async askUser() {
+        return 'deny'
+      },
+    })
+    await engine.setModel({
+      id: 'claude-sonnet-5',
+      contextWindow: 1_000_000,
+      reserveOutputTokens: 20_000,
+      inputUsdPerMTok: 2,
+      outputUsdPerMTok: 10,
+      cacheReadUsdPerMTok: 0.2,
+      cacheWriteUsdPerMTok: 2.5,
+      supportsThinking: true,
+    })
+    expect(engine.session.model).toBe('claude-sonnet-5')
+    const loaded = await store.loadSession(sess.id)
+    expect(loaded.session.model).toBe('claude-sonnet-5')
+
+    const gen = engine.submitMessage('hi')
+    while (true) {
+      const next = await gen.next()
+      if (next.done) break
+    }
+    expect(seen[0]?.model).toBe('claude-sonnet-5')
+    expect(seen[0]?.maxTokens).toBe(20_000)
+  })
+})
+
 describe('compactNow', () => {
   test('llmSummarize true omits mechanical override and records the LLM summary', async () => {
     const store = createMemoryStore()

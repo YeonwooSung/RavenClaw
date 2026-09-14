@@ -133,6 +133,9 @@ function fakeEngine(
     },
     submitMessage: submit,
     async compactNow() {},
+    async setModel(profile) {
+      session.model = profile.id
+    },
     async setPermissionMode() {},
     reloadSystem() {},
     abort() {},

@@ -24,7 +24,11 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
   { name: 'title', usage: '/title <name>', summary: "set this session's title" },
   { name: 'stop', aliases: ['cancel'], usage: '/stop', summary: 'abort the current turn (alias /cancel)' },
   { name: 'clear', aliases: ['new'], usage: '/clear', summary: 'start a new session (alias /new)' },
-  { name: 'model', usage: '/model [id]', summary: "show or set this session's model" },
+  {
+    name: 'model',
+    usage: '/model [id]',
+    summary: "show or set this session's model for the next turn (reloads profile)",
+  },
   { name: 'permissions', usage: '/permissions', summary: 'list extra permission rule files' },
   { name: 'tasks', usage: '/tasks [kill <id>|steer <id> <text>]', summary: 'list, stop, or steer background tasks' },
   { name: 'undo', usage: '/undo', summary: 'restore files from the last edit checkpoint' },

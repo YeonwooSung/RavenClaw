@@ -139,6 +139,7 @@ function stubEngine(sessionId: string, end: RoundEnd, events: StreamEvent[] = []
       return { ok: true, notice: '' }
     },
     async compactNow() {},
+    async setModel() {},
     async setPermissionMode() {},
     reloadSystem() {},
     abort() {},

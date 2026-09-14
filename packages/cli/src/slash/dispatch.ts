@@ -4,6 +4,7 @@ import {
   discoverSkills,
   formatTasksNotice,
   formatUndoNotice,
+  getModelProfile,
   LIFECYCLE_EVENTS,
   parseTasksArg,
   ravenclawHome,
@@ -86,10 +87,19 @@ export async function dispatchSharedSlash(
         host.notice(`model ${session.model}`)
         return 'handled'
       }
-      session.model = parsed.arg.trim()
-      host.onModelChanged?.(session.model)
-      await runtime.store.upsertSession(session)
-      host.notice(`model ${session.model}`)
+      const id = parsed.arg.trim()
+      const profile = getModelProfile(id, {
+        ...(runtime.config.contextWindow !== undefined
+          ? { contextWindow: runtime.config.contextWindow }
+          : {}),
+        ...(runtime.config.prices?.[id] !== undefined ? { prices: runtime.config.prices[id] } : {}),
+      })
+      await runtime.engine.setModel(profile)
+      runtime.config.model = profile.id
+      runtime.config.profile = profile
+      host.onModelChanged?.(profile.id)
+      await runtime.store.upsertSession(runtime.engine.session)
+      host.notice(`model ${profile.id}`)
       return 'handled'
     }
     case 'reload':

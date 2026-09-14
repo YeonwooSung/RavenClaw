@@ -86,6 +86,9 @@ export function wrapSessionEngineLog(
     compactNow() {
       return engine.compactNow()
     },
+    setModel(profile) {
+      return engine.setModel(profile)
+    },
     setPermissionMode(mode) {
       return engine.setPermissionMode(mode)
     },

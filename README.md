@@ -242,7 +242,7 @@ Ink is the default. OpenTUI is `--tui opentui`.
 | `/cost` | Token and USD estimate |
 | `/search [ --all] <q>` | FTS5 search |
 | `/mode <mode>` | `default` \| `acceptEdits` \| `plan` \| `dontAsk` |
-| `/model [id]` | Show or set model |
+| `/model [id]` | Show or set model for the next turn (reloads window, prices, thinking) |
 | `/title <name>` | Session title |
 | `/learn` | Ask the model to write a skill from this session |
 | `/review` | Append a read-only review to `.ravenclaw/MEMORY.md` |

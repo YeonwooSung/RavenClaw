@@ -1056,6 +1056,9 @@ function attachRavenclawLog(engine: SessionEngine, log: RavenclawLog): SessionEn
     compactNow() {
       return engine.compactNow()
     },
+    setModel(profile) {
+      return engine.setModel(profile)
+    },
     setPermissionMode(mode) {
       return engine.setPermissionMode(mode)
     },

@@ -411,6 +411,7 @@ export interface SessionEngine {
   bindDrainQueued(fn: (() => string | undefined) | undefined): void
   rewindLast(): Promise<{ ok: boolean; notice: string }>
   compactNow(): Promise<void>
+  setModel(profile: ModelProfile): Promise<void>
   setPermissionMode(mode: PermissionMode): Promise<void>
   reloadSystem(system: SystemPart[]): void
   abort(): void
