@@ -57,7 +57,7 @@ function session(over: Partial<SessionRecord> = {}): SessionRecord {
 }
 
 describe('createSqliteStore', () => {
-  test('fresh install uses WAL and schema_version 5', () => {
+  test('fresh install uses WAL and schema_version 6', () => {
     const path = tempDbPath()
     openStore(path)
     const db = new Database(path, { readonly: true })
@@ -67,7 +67,7 @@ describe('createSqliteStore', () => {
       const version = db
         .query("SELECT value FROM meta WHERE key = 'schema_version'")
         .get() as { value: string }
-      expect(version.value).toBe('5')
+      expect(version.value).toBe('6')
       expect(
         db
           .query("SELECT 1 AS ok FROM sqlite_master WHERE name = 'messages_fts'")
@@ -342,6 +342,33 @@ describe('createSqliteStore', () => {
     } finally {
       after.close()
     }
+  })
+
+  test('persistToolResults keeps Read mtime across reload', async () => {
+    const store = openStore()
+    await store.createSession(session())
+    await store.persistToolCalls('s1', {
+      id: 'a_read',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'c_read', name: 'Read', input: { path: 'a.txt' } }],
+      createdAt: 1,
+    })
+    await store.persistToolResults('s1', [
+      {
+        id: 't_read',
+        role: 'tool',
+        toolUseId: 'c_read',
+        ok: true,
+        blocks: [{ type: 'text', text: 'old\n' }],
+        createdAt: 2,
+        readMtimeMs: 1_700_000_000_000,
+      },
+    ])
+    const loaded = await store.loadSession('s1')
+    const row = loaded.messages.find(
+      (m): m is Extract<Message, { role: 'tool' }> => m.role === 'tool',
+    )
+    expect(row?.readMtimeMs).toBe(1_700_000_000_000)
   })
 
   test('broken FTS does not throw from persist or compact', async () => {

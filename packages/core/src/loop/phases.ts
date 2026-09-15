@@ -29,6 +29,7 @@ import {
 import { isAbortError, nextOrAbort } from './abort'
 import { partitionToolCalls } from '../tools/partition'
 import { toolCallTool } from '../tools/tool-call'
+import { stampReadMtime } from '../tools/read-files'
 import { filterToolsForTurn } from '../tools/skill'
 import { appendDeferredMcpTools } from '../mcp/tools'
 import { estimateTokens, shouldEnterGrace, suffixGraceNotice } from './budget'
@@ -1394,6 +1395,7 @@ async function executeOneCall(
       })
       if (hook?.preventContinuation === true) {
         const msg = makeToolMessage(call.id, true, content, formatted.persistPath)
+        stampReadMtime(state.turn, callName, input, msg)
         events.push({ type: 'tool_result', id: call.id, result: {
           toolUseId: call.id,
           ok: true,
@@ -1414,8 +1416,10 @@ async function executeOneCall(
       id: call.id,
       result,
     })
+    const success = makeToolMessage(call.id, true, content, formatted.persistPath)
+    stampReadMtime(state.turn, callName, input, success)
     return {
-      messages: [makeToolMessage(call.id, true, content, formatted.persistPath)],
+      messages: [success],
       events,
       abortRest: false,
     }

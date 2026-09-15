@@ -56,6 +56,7 @@ type MessageRow = {
   ok: number | null
   persist_path: string | null
   usage_json: string | null
+  read_mtime_ms: number | null
   active: number
   generation: number
 }
@@ -175,6 +176,7 @@ function messageFromRow(row: MessageRow): Message {
       createdAt: row.created_at,
     }
     if (row.persist_path != null) message.persistPath = row.persist_path
+    if (row.read_mtime_ms != null) message.readMtimeMs = row.read_mtime_ms
     return message
   }
   throw new PersistError('corrupt', `unknown message role ${row.role}`)
@@ -217,6 +219,10 @@ function messageBind(sessionId: string, message: Message) {
     $usage_json:
       message.role === 'assistant' && message.usage !== undefined
         ? JSON.stringify(message.usage)
+        : null,
+    $read_mtime_ms:
+      message.role === 'tool' && message.readMtimeMs !== undefined
+        ? message.readMtimeMs
         : null,
   }
 }
@@ -284,19 +290,19 @@ export function createSqliteStore(dbPath: string): SessionStore {
   const insertMessage = db.query(
     `INSERT INTO messages (
        id, session_id, created_at, role, blocks_json, tool_use_id, ok,
-       persist_path, usage_json, active, generation
+       persist_path, usage_json, read_mtime_ms, active, generation
      ) VALUES (
        $id, $session_id, $created_at, $role, $blocks_json, $tool_use_id, $ok,
-       $persist_path, $usage_json, 1, 0
+       $persist_path, $usage_json, $read_mtime_ms, 1, 0
      )`,
   )
   const upsertTool = db.query(
     `INSERT INTO messages (
        id, session_id, created_at, role, blocks_json, tool_use_id, ok,
-       persist_path, usage_json, active, generation
+       persist_path, usage_json, read_mtime_ms, active, generation
      ) VALUES (
        $id, $session_id, $created_at, $role, $blocks_json, $tool_use_id, $ok,
-       $persist_path, $usage_json, 1, 0
+       $persist_path, $usage_json, $read_mtime_ms, 1, 0
      )
      ON CONFLICT(id) DO UPDATE SET
        session_id = excluded.session_id,
@@ -307,6 +313,7 @@ export function createSqliteStore(dbPath: string): SessionStore {
        ok = excluded.ok,
        persist_path = excluded.persist_path,
        usage_json = excluded.usage_json,
+       read_mtime_ms = excluded.read_mtime_ms,
        active = 1`,
   )
   const selectActiveMessages = db.query(

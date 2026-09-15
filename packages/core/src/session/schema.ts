@@ -27,12 +27,18 @@ export const PENDING_ASKS_SQL = readFileSync(
   'utf8',
 )
 
+export const READ_MTIME_SQL = readFileSync(
+  join(import.meta.dir, '../migrations/006_read_mtime.sql'),
+  'utf8',
+)
+
 const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: 1, sql: INIT_SQL },
   { version: 2, sql: FTS5_SQL },
   { version: 3, sql: AGENT_MAIL_SQL },
   { version: 4, sql: DELIVERIES_SQL },
   { version: 5, sql: PENDING_ASKS_SQL },
+  { version: 6, sql: READ_MTIME_SQL },
 ]
 
 function currentSchemaVersion(db: Database): number {

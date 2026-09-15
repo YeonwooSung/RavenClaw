@@ -1,5 +1,13 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  utimesSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -21,6 +29,7 @@ import { resumeSession } from '../session/resume'
 import { unpairedToolUseIds } from './pairing'
 import { createMemoryStore } from '../session/memory-store'
 import { writeTool } from '../tools/write'
+import { readTool } from '../tools/read'
 import { skillTool } from '../tools/skill'
 import { toolCallTool } from '../tools/tool-call'
 import { GRACE_NOTICE } from './budget'
@@ -1030,6 +1039,109 @@ describe('queryLoop via SessionEngine', () => {
     expect(toolRow?.ok).toBe(true)
     expect(toolRow?.blocks[0]?.text ?? '').not.toMatch(/must be Read first/)
     expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('new\n')
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('applyAskAnswer allow of existing Write is stale when file changed since persisted Read', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'raven-apply-write-stale-'))
+    const path = join(root, 'a.txt')
+    writeFileSync(path, 'old\n')
+    const readMtime = statSync(path).mtimeMs
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_write_stale', cwd: root })
+    await store.createSession(session)
+    await store.persistToolCalls(session.id, {
+      id: 'a_read',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_read', name: 'Read', input: { path: 'a.txt' } }],
+      createdAt: 1,
+    })
+    await store.persistToolResults(session.id, [
+      {
+        id: 't_read',
+        role: 'tool',
+        toolUseId: 'call_read',
+        ok: true,
+        blocks: [{ type: 'text', text: 'old\n' }],
+        createdAt: 2,
+        readMtimeMs: readMtime,
+      },
+    ])
+    writeFileSync(path, 'changed\n')
+    const later = (readMtime + 2_000) / 1000
+    utimesSync(path, later, later)
+    await store.persistToolCalls(session.id, {
+      id: 'a_write',
+      role: 'assistant',
+      blocks: [
+        {
+          type: 'tool_use',
+          id: 'call_write',
+          name: 'Write',
+          input: { path: 'a.txt', content: 'new\n' },
+        },
+      ],
+      createdAt: 3,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_write',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Write',
+      message: 'Write this file?',
+      input: { path: 'a.txt', content: 'new\n' },
+      createdAt: 3,
+    })
+    const loaded = await store.loadSession(session.id)
+    const engine = createSessionEngine(
+      engineOpts({
+        provider: createFakeProvider([textThenStop('nope')]),
+        store,
+        session,
+        messages: loaded.messages,
+        tools: [writeTool],
+      }),
+    )
+    expect(await engine.applyAskAnswer('call_write', 'allow')).toBe('matched')
+    const after = await store.loadSession(session.id)
+    const toolRow = after.messages.find(
+      (m): m is Extract<Message, { role: 'tool' }> =>
+        m.role === 'tool' && m.toolUseId === 'call_write',
+    )
+    expect(toolRow?.ok).toBe(true)
+    expect(toolRow?.blocks[0]?.type === 'text' ? toolRow.blocks[0].text : '').toMatch(
+      /changed since last Read/,
+    )
+    expect(readFileSync(path, 'utf8')).toBe('changed\n')
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('live Read persist stamps readMtimeMs on the tool result', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'raven-read-mtime-'))
+    writeFileSync(join(root, 'a.txt'), 'hello\n')
+    const mtime = statSync(join(root, 'a.txt')).mtimeMs
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_read_mtime', cwd: root })
+    await store.createSession(session)
+    const engine = createSessionEngine(
+      engineOpts({
+        provider: createFakeProvider([
+          toolThenStop('call_read', 'Read', { path: 'a.txt' }),
+          textThenStop('done'),
+        ]),
+        store,
+        session,
+        tools: [readTool],
+      }),
+    )
+    await collect(engine.submitMessage('read it'))
+    const loaded = await store.loadSession(session.id)
+    const row = loaded.messages.find(
+      (m): m is Extract<Message, { role: 'tool' }> =>
+        m.role === 'tool' && m.toolUseId === 'call_read',
+    )
+    expect(row?.ok).toBe(true)
+    expect(row?.readMtimeMs).toBe(mtime)
     rmSync(root, { recursive: true, force: true })
   })
 
