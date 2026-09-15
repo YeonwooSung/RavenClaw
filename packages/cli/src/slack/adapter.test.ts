@@ -539,6 +539,49 @@ describe('runSlackAdapter', () => {
     expect(actions[0]?.action_id).toBe('raven_allow')
   })
 
+  test('slack leftover-ask labels childSessionId', async () => {
+    const api = new FakeSlackApi()
+    const socket = new FakeSlackSocket()
+    let posted!: () => void
+    const sawAsk = new Promise<void>((resolve) => {
+      posted = resolve
+    })
+    const origPost = api.postMessage.bind(api)
+    api.postMessage = async (opts) => {
+      const result = await origPost(opts)
+      if (opts.text.includes('Allow')) posted()
+      return result
+    }
+    const running = runSlackAdapter({
+      config: slackConfig(),
+      socket,
+      api,
+      store: createMemoryStore(),
+      openSession: async (req) => ({
+        sessionId: 'sess_parent',
+        async *submitMessage() {
+          const ac = new AbortController()
+          await req.askUser(
+            {
+              id: 'call_child',
+              tool: 'Bash',
+              message: 'child bash?',
+              childSessionId: 'sess_child',
+            },
+            ac.signal,
+          )
+        },
+      }),
+    })
+    socket.push(dmMessage({ text: 'please', ts: '110.0' }))
+    await sawAsk
+    const prompt = api.posts.find((post) => post.text.includes('Allow'))
+    expect(prompt?.text).toContain('child sess_child')
+    socket.push(dmMessage({ text: 'deny', ts: '111.0' }))
+    socket.end()
+    await running
+  })
+
   test('slack does not deny a durable pending row on timer', async () => {
     const store = createMemoryStore()
     const sessionId = 'sess_slack'

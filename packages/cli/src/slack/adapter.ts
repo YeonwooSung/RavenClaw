@@ -351,7 +351,7 @@ function parsePermitReply(text: string): SlackPermissionAnswer | undefined {
 async function askSlackPermission(opts: {
   api: SlackApi
   inbound: SlackInbound
-  event: { id: string; tool: string; message: string }
+  event: { id: string; tool: string; message: string; childSessionId?: string }
   signal: AbortSignal
   permits: Map<string, PendingPermit>
   timeoutMs: number
@@ -362,10 +362,11 @@ async function askSlackPermission(opts: {
   const key = permitKey(opts.inbound.team, opts.inbound.channel, opts.inbound.userId)
   if (opts.permits.has(key)) return 'deny'
 
+  const child = opts.event.childSessionId ? ` child ${opts.event.childSessionId}` : ''
   const durable = opts.getPendingAsk !== undefined
   const prompt = durable
-    ? `Allow \`${opts.event.tool}\`? Reply *allow* or *deny*.`
-    : `Allow \`${opts.event.tool}\`? Reply *allow* or *deny* (${Math.round(opts.timeoutMs / 1000)}s).`
+    ? `Allow \`${opts.event.tool}\`${child}? Reply *allow* or *deny*.`
+    : `Allow \`${opts.event.tool}\`${child}? Reply *allow* or *deny* (${Math.round(opts.timeoutMs / 1000)}s).`
 
   let settle!: (answer: SlackPermissionAnswer) => void
   const waiter = new Promise<SlackPermissionAnswer>((resolve) => {

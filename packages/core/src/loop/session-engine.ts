@@ -394,6 +394,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
           model,
           askUser: opts.askUser,
         }
+        if (session.parentSessionId !== undefined) loopOpts.parentSessionId = session.parentSessionId
         if (system !== undefined) loopOpts.system = system
         if (opts.hooks !== undefined) loopOpts.hooks = opts.hooks
         loopOpts.tasks = tasks

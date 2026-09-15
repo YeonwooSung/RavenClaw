@@ -68,7 +68,7 @@ export interface SlackOpenSessionOpts {
   userId: string
   threadTs?: string
   askUser: (
-    event: { id: string; tool: string; message: string },
+    event: { id: string; tool: string; message: string; childSessionId?: string },
     signal: AbortSignal,
   ) => Promise<SlackPermissionAnswer>
   replayPending?: boolean

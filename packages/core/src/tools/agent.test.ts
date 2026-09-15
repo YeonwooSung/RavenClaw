@@ -16,6 +16,7 @@ import type {
   Provider,
   ProviderChunk,
   ProviderRequest,
+  SessionEngineOptions,
   SessionRecord,
   SessionStore,
   StreamEvent,
@@ -231,6 +232,7 @@ function createTestAgent(
     childMaxRounds?: number
     system?: SystemPart[]
     specialistModel?: string
+    askUser?: SessionEngineOptions['askUser']
   } = {},
 ) {
   const store = over.store ?? createMemoryStore()
@@ -243,7 +245,7 @@ function createTestAgent(
     tools: over.tools ?? parentPool(),
     compact,
     model: over.model ?? defaultModel(),
-    askUser,
+    askUser: over.askUser ?? askUser,
   }
   if (over.childMaxRounds !== undefined) opts.childMaxRounds = over.childMaxRounds
   if (over.system !== undefined) opts.system = over.system
@@ -654,6 +656,52 @@ describe('createAgentTool', () => {
     expect(resume.result).toEqual({ reason: 'completed' })
     expect(executeCount).toBe(1)
     expect(resumeProvider.streamCount).toBe(1)
+  })
+
+  test('child leftover-ask permission_ask includes childSessionId', async () => {
+    const seen: Array<string | undefined> = []
+    const parentAsk: SessionEngineOptions['askUser'] = async (event) => {
+      seen.push(event.childSessionId)
+      return 'deny'
+    }
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_child_ask' })
+    await store.createSession(session)
+    const bash: Tool = {
+      ...stubTool('Bash'),
+      async checkPermissions() {
+        return { behavior: 'ask', message: 'child bash?' }
+      },
+    }
+    const provider = createFakeProvider([
+      toolThenStop('bash_1', 'Bash', { command: 'ls' }),
+      textThenStop('child denied'),
+    ])
+    const { tool } = createTestAgent({
+      store,
+      provider,
+      tools: parentPool().map((item) => (item.name === 'Bash' ? bash : item)),
+      askUser: parentAsk,
+    })
+    await tool.execute({ prompt: 'run ls' }, makeCtx(makeTurn(session)))
+    const childSession = (await store.listSessions({ parentSessionId: session.id }))[0]
+    expect(childSession).toBeDefined()
+    expect(seen[0]).toBeTruthy()
+    expect(seen[0]).toBe(childSession!.id)
+
+    const childLoaded = await store.loadSession(childSession!.id)
+    const childResult = childLoaded.messages.find(
+      (msg): msg is Extract<Message, { role: 'tool' }> =>
+        msg.role === 'tool' && msg.toolUseId === 'bash_1',
+    )
+    expect(childResult?.ok).toBe(false)
+    expect(childResult?.blocks[0]?.text).toContain('permission_denied')
+    const parentLoaded = await store.loadSession(session.id)
+    expect(
+      parentLoaded.messages.some(
+        (msg) => msg.role === 'tool' && msg.toolUseId === 'bash_1',
+      ),
+    ).toBe(false)
   })
 
   test('resume parent with unpaired Agent tool_use does not call execute again', async () => {

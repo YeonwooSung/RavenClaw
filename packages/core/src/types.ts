@@ -161,6 +161,7 @@ export type StreamEvent =
       input: unknown
       message: string
       saveAs?: PermissionScope
+      childSessionId?: string
     }
   | { type: 'error'; message: string; recoverable: boolean }
   | { type: 'usage'; usage: TokenUsage }
@@ -447,6 +448,8 @@ export interface QueryLoopOptions {
   system?: SystemPart[]
   hooks?: SessionEngineOptions['hooks']
   askUser: SessionEngineOptions['askUser']
+  /** Present when this loop is a child session. */
+  parentSessionId?: string
   tasks?: import('./tasks/registry').TaskRegistry
   fileHistory?: import('./session/file-history').FileHistory
   drainSteering?: () => string[]

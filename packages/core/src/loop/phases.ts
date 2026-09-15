@@ -1297,6 +1297,7 @@ async function executeOneCall(
         message: decision.message,
       }
       if (decision.saveAs !== undefined) event.saveAs = decision.saveAs
+      if (state.parentSessionId !== undefined) event.childSessionId = state.turn.sessionId
       try {
         const answer = await serializedAsk(async () => {
           const pending: PendingAsk = {
