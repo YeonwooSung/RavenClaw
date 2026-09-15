@@ -1,6 +1,14 @@
 import { describe, expect, test } from 'bun:test'
-import { createMemoryStore, type PendingAsk, type StreamEvent } from '@ravenclaw/core'
 import {
+  createMemoryStore,
+  PersistError,
+  SessionLockError,
+  type PendingAsk,
+  type StreamEvent,
+} from '@ravenclaw/core'
+import { IncludedResumeError } from './engine'
+import {
+  createServeRuntimeCaches,
   createSessionEventHub,
   gatewaySecret,
   handleServeRequest,
@@ -11,6 +19,7 @@ import {
   tapEngineEvents,
   tickMailbox,
   type MailboxLiveEngine,
+  type ServeEngine,
   type ServeRequestContext,
 } from './serve'
 
@@ -416,5 +425,97 @@ describe('handleServeRequest', () => {
     expect(compact.status).toBe(200)
     expect(ctx.abortCalls).toBe(1)
     expect(ctx.compactCalls).toBe(1)
+  })
+
+  test('missing session is 404; lock is 409; other resume errors are 500', async () => {
+    const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
+    const req = (id: string) =>
+      new Request(`http://127.0.0.1/v1/session/${id}/cancel`, {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+      })
+
+    const missing = await handleServeRequest(req('s1'), {
+      ...makeServeCtx(secret),
+      runtimeForSession: async () => {
+        throw new PersistError('unknown', 'session not found: s1')
+      },
+    })
+    expect(missing.status).toBe(404)
+    expect(await missing.json()).toEqual({ error: 'not found' })
+
+    const locked = await handleServeRequest(req('s1'), {
+      ...makeServeCtx(secret),
+      runtimeForSession: async () => {
+        throw new SessionLockError('session locked by serve until 2099-01-01T00:00:00.000Z', {
+          holderName: 'serve',
+          expiresAt: Date.parse('2099-01-01T00:00:00.000Z'),
+        })
+      },
+    })
+    expect(locked.status).toBe(409)
+    expect(await locked.json()).toEqual({
+      error: 'session locked by serve until 2099-01-01T00:00:00.000Z',
+    })
+
+    const failed = await handleServeRequest(req('s1'), {
+      ...makeServeCtx(secret),
+      runtimeForSession: async () => {
+        throw new IncludedResumeError()
+      },
+    })
+    expect(failed.status).toBe(500)
+    expect(await failed.json()).toEqual({ error: new IncludedResumeError().message })
+  })
+})
+
+function stubRuntime(tag: string): { engine: ServeEngine; tag: string } {
+  const engine: ServeEngine = {
+    session: { id: 's1' },
+    async applyAskAnswer() {
+      return 'unmatched'
+    },
+    abort() {},
+    async compactNow() {},
+    async *submitMessage() {},
+    async *replayPendingAsks() {},
+  }
+  return { engine, tag }
+}
+
+describe('createServeRuntimeCaches', () => {
+  test('turn and session caches never share an engine for the same id', async () => {
+    const hub = createSessionEventHub()
+    const caches = createServeRuntimeCaches(hub)
+    let turnOpens = 0
+    let sessionOpens = 0
+    const turn = stubRuntime('turn')
+    const session = stubRuntime('session')
+
+    const firstTurn = await caches.runtimeForTurnId('s1', async () => {
+      turnOpens += 1
+      return turn as never
+    })
+    const firstSession = await caches.runtimeForSessionId('s1', async () => {
+      sessionOpens += 1
+      return session as never
+    })
+    const againTurn = await caches.runtimeForTurnId('s1', async () => {
+      turnOpens += 1
+      return stubRuntime('turn-2') as never
+    })
+    const againSession = await caches.runtimeForSessionId('s1', async () => {
+      sessionOpens += 1
+      return stubRuntime('session-2') as never
+    })
+
+    expect(turnOpens).toBe(1)
+    expect(sessionOpens).toBe(1)
+    expect(caches.turnEngines.has('s1')).toBe(true)
+    expect(caches.sessionEngines.has('s1')).toBe(true)
+    expect(caches.turnEngines.get('s1')).not.toBe(caches.sessionEngines.get('s1'))
+    expect(firstTurn).toBe(againTurn)
+    expect(firstSession).toBe(againSession)
+    expect(firstTurn).not.toBe(firstSession)
   })
 })
