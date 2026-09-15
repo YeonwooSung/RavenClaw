@@ -52,7 +52,6 @@ export async function runSlackAdapter(opts: {
   const seen = new Set<string>()
   const inflight = new Set<Promise<void>>()
   const turnFlights = opts.turnFlights ?? new Map<string, Promise<unknown>>()
-  const occupancy = new Set<string>()
   const stashed = new Map<string, string>()
   const timeoutMs = opts.permissionTimeoutMs ?? SLACK_PERMISSION_TIMEOUT_MS
   const now = opts.now ?? Date.now
@@ -80,7 +79,6 @@ export async function runSlackAdapter(opts: {
           timeoutMs,
           store,
           stashed,
-          occupancy,
           turnFlights,
           now,
         })
@@ -106,7 +104,6 @@ export async function runSlackAdapter(opts: {
         timeoutMs,
         now,
         turnFlights,
-        occupancy,
         stashed,
         store,
       }).catch(() => {
@@ -139,23 +136,18 @@ async function handleTurn(opts: {
   timeoutMs: number
   now: () => number
   turnFlights: Map<string, Promise<unknown>>
-  occupancy: Set<string>
   stashed: Map<string, string>
   store?: Pick<SessionStore, 'getPendingAsk' | 'listPendingAsks' | 'upsertPendingAsk'>
 }): Promise<void> {
-  const { inbound, text, api } = opts
+  const { inbound, text } = opts
   const session = await openSlackSession(opts, inbound)
-  if (occupancyHas(opts, session.sessionId)) {
+  const pending = await listSessionPending(session, opts.store)
+  if (pending.length > 0) {
     stashOne(opts.stashed, session.sessionId, text)
     return
   }
-  opts.occupancy.add(session.sessionId)
-  try {
-    await submitSlackText(opts, session, inbound, text)
-    await flushSlackStash(opts, session, inbound)
-  } finally {
-    opts.occupancy.delete(session.sessionId)
-  }
+  await submitSlackText(opts, session, inbound, text)
+  await flushSlackStash(opts, session, inbound)
 }
 
 async function trySettleDurableAsk(opts: {
@@ -166,7 +158,6 @@ async function trySettleDurableAsk(opts: {
   timeoutMs: number
   store?: Pick<SessionStore, 'getPendingAsk' | 'listPendingAsks' | 'upsertPendingAsk'>
   stashed: Map<string, string>
-  occupancy: Set<string>
   turnFlights: Map<string, Promise<unknown>>
   now: () => number
 }): Promise<boolean> {
@@ -193,13 +184,6 @@ async function trySettleDurableAsk(opts: {
   if (settled !== 'matched') return false
   await flushSlackStash(opts, session, opts.inbound)
   return true
-}
-
-function occupancyHas(
-  opts: { occupancy: Set<string>; turnFlights: Map<string, Promise<unknown>> },
-  sessionId: string,
-): boolean {
-  return opts.occupancy.has(sessionId) || opts.turnFlights.has(sessionId)
 }
 
 function stashOne(stashed: Map<string, string>, sessionId: string, text: string): void {

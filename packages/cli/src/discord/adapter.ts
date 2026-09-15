@@ -51,7 +51,6 @@ export async function runDiscordAdapter(opts: {
   const gateway = opts.gateway ?? (await connectDiscordGateway(opts.config.token, { signal: opts.signal }))
   const inflight = new Set<Promise<void>>()
   const turnFlights = opts.turnFlights ?? new Map<string, Promise<unknown>>()
-  const occupancy = new Set<string>()
   const stashed = new Map<string, string>()
   const permits = new Map<string, PendingPermit>()
   const timeoutMs = opts.permissionTimeoutMs ?? DISCORD_PERMISSION_TIMEOUT_MS
@@ -89,7 +88,6 @@ export async function runDiscordAdapter(opts: {
           timeoutMs,
           store,
           stashed,
-          occupancy,
           turnFlights,
           now,
         })
@@ -104,7 +102,6 @@ export async function runDiscordAdapter(opts: {
         timeoutMs,
         now,
         turnFlights,
-        occupancy,
         stashed,
         permits,
         store,
@@ -127,7 +124,6 @@ async function handleTurn(opts: {
   timeoutMs: number
   now: () => number
   turnFlights: Map<string, Promise<unknown>>
-  occupancy: Set<string>
   stashed: Map<string, string>
   permits: Map<string, PendingPermit>
   store?: Pick<SessionStore, 'getPendingAsk' | 'listPendingAsks' | 'upsertPendingAsk'>
@@ -136,17 +132,17 @@ async function handleTurn(opts: {
   const replyChannelId = inbound.threadId ?? inbound.channelId
   try {
     const session = await openDiscordSession(opts, inbound)
-    if (opts.occupancy.has(session.sessionId) || opts.turnFlights.has(session.sessionId)) {
+    const pending = session.listPendingAsks
+      ? await session.listPendingAsks()
+      : opts.store
+        ? await opts.store.listPendingAsks(session.sessionId)
+        : []
+    if (pending.length > 0) {
       if (!opts.stashed.has(session.sessionId)) opts.stashed.set(session.sessionId, inbound.content)
       return
     }
-    opts.occupancy.add(session.sessionId)
-    try {
-      await submitDiscordText(opts, session, inbound)
-      await flushDiscordStash(opts, session, inbound)
-    } finally {
-      opts.occupancy.delete(session.sessionId)
-    }
+    await submitDiscordText(opts, session, inbound)
+    await flushDiscordStash(opts, session, inbound)
   } catch (error) {
     await api.createMessage({
       channelId: replyChannelId,
@@ -163,7 +159,6 @@ async function trySettleDurableAsk(opts: {
   timeoutMs: number
   store?: Pick<SessionStore, 'getPendingAsk' | 'listPendingAsks' | 'upsertPendingAsk'>
   stashed: Map<string, string>
-  occupancy: Set<string>
   turnFlights: Map<string, Promise<unknown>>
   now: () => number
 }): Promise<boolean> {

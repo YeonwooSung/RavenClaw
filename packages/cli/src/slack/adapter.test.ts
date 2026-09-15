@@ -135,6 +135,32 @@ function dmMessage(over: {
   }
 }
 
+function blockActions(over: {
+  actionId?: string
+  value?: string
+  user?: string
+  channel?: string
+  team?: string
+  envelopeId?: string
+}): SlackSocketEnvelope {
+  return {
+    envelope_id: over.envelopeId ?? 'env-action',
+    type: 'interactive',
+    payload: {
+      type: 'block_actions',
+      team: { id: over.team ?? 'T1' },
+      user: { id: over.user ?? 'U1' },
+      channel: { id: over.channel ?? 'D1' },
+      actions: [
+        {
+          action_id: over.actionId ?? 'raven_allow',
+          value: over.value ?? 'call_1',
+        },
+      ],
+    },
+  }
+}
+
 function channelMessage(over: {
   text?: string
   user?: string
@@ -475,15 +501,6 @@ describe('runSlackAdapter', () => {
   test('slack does not deny a durable pending row on timer', async () => {
     const store = createMemoryStore()
     const sessionId = 'sess_slack'
-    await store.upsertPendingAsk({
-      callId: 'call_1',
-      sessionId,
-      kind: 'leftover',
-      tool: 'Bash',
-      message: 'Allow Bash?',
-      input: { command: 'ls' },
-      createdAt: 1,
-    })
     const socket = new FakeSlackSocket()
     let answered: string | undefined
     let askStarted!: () => void
@@ -499,6 +516,15 @@ describe('runSlackAdapter', () => {
       openSession: async (req) => ({
         sessionId,
         async *submitMessage() {
+          await store.upsertPendingAsk({
+            callId: 'call_1',
+            sessionId,
+            kind: 'leftover',
+            tool: 'Bash',
+            message: 'Allow Bash?',
+            input: { command: 'ls' },
+            createdAt: 1,
+          })
           const ac = new AbortController()
           askStarted()
           answered = await req.askUser({ id: 'call_1', tool: 'Bash', message: 'Allow Bash?' }, ac.signal)
@@ -518,15 +544,6 @@ describe('runSlackAdapter', () => {
   test('non-allow/deny text does not submit while a pending row exists', async () => {
     const store = createMemoryStore()
     const sessionId = 'sess_stash'
-    await store.upsertPendingAsk({
-      callId: 'call_stash',
-      sessionId,
-      kind: 'leftover',
-      tool: 'Bash',
-      message: 'Allow Bash?',
-      input: { command: 'ls' },
-      createdAt: 1,
-    })
     const socket = new FakeSlackSocket()
     const submitted: string[] = []
     let releaseAsk!: (answer: 'allow' | 'deny') => void
@@ -547,6 +564,15 @@ describe('runSlackAdapter', () => {
         async *submitMessage(text: string) {
           submitted.push(text)
           if (text !== 'please') return
+          await store.upsertPendingAsk({
+            callId: 'call_stash',
+            sessionId,
+            kind: 'leftover',
+            tool: 'Bash',
+            message: 'Allow Bash?',
+            input: { command: 'ls' },
+            createdAt: 1,
+          })
           const ac = new AbortController()
           askStarted()
           const answer = await Promise.race([
@@ -572,5 +598,92 @@ describe('runSlackAdapter', () => {
     socket.end()
     await running
     expect(submitted).toEqual(['please', 'first extra'])
+  })
+
+  test('crash-resume allow button calls applyAskAnswer and does not submitMessage', async () => {
+    const store = createMemoryStore()
+    const sessionId = 'sess_resume'
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Allow Bash?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    const applied: Array<{ callId: string; answer: string }> = []
+    const submitted: string[] = []
+    const socket = new FakeSlackSocket()
+    const running = runSlackAdapter({
+      config: slackConfig(),
+      socket,
+      api: new FakeSlackApi(),
+      store,
+      openSession: async () => ({
+        sessionId,
+        async *submitMessage(text: string) {
+          submitted.push(text)
+        },
+        async applyAskAnswer(callId, answer) {
+          applied.push({ callId, answer })
+          await store.deletePendingAsk(callId)
+          return 'matched'
+        },
+        listPendingAsks: () => store.listPendingAsks(sessionId),
+        getPendingAsk: (callId) => store.getPendingAsk(callId),
+      }),
+    })
+    socket.push(blockActions({ actionId: 'raven_allow', value: 'call_1' }))
+    socket.end()
+    await running
+    expect(applied).toEqual([{ callId: 'call_1', answer: 'allow' }])
+    expect(submitted).toEqual([])
+    expect(await store.listPendingAsks(sessionId)).toHaveLength(0)
+  })
+
+  test('crash-resume extra is stashed until applyAskAnswer', async () => {
+    const store = createMemoryStore()
+    const sessionId = 'sess_resume_stash'
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Allow Bash?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    const applied: Array<{ callId: string; answer: string }> = []
+    const submitted: string[] = []
+    const socket = new FakeSlackSocket()
+    const running = runSlackAdapter({
+      config: slackConfig(),
+      socket,
+      api: new FakeSlackApi(),
+      store,
+      openSession: async () => ({
+        sessionId,
+        async *submitMessage(text: string) {
+          submitted.push(text)
+        },
+        async applyAskAnswer(callId, answer) {
+          applied.push({ callId, answer })
+          await store.deletePendingAsk(callId)
+          return 'matched'
+        },
+        listPendingAsks: () => store.listPendingAsks(sessionId),
+        getPendingAsk: (callId) => store.getPendingAsk(callId),
+      }),
+    })
+    socket.push(dmMessage({ text: 'hello after crash', ts: '100.0' }))
+    socket.push(dmMessage({ text: 'second extra', ts: '101.0' }))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(submitted).toEqual([])
+    socket.push(blockActions({ actionId: 'raven_allow', value: 'call_1', envelopeId: 'env-allow' }))
+    socket.end()
+    await running
+    expect(applied).toEqual([{ callId: 'call_1', answer: 'allow' }])
+    expect(submitted).toEqual(['hello after crash'])
   })
 })
