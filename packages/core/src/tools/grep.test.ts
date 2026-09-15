@@ -74,4 +74,12 @@ describe('Grep', () => {
     expect(out.length).toBeLessThanOrEqual(20_000)
     expect(out.toLowerCase()).toContain('truncat')
   })
+
+  test('refuses a path outside cwd', async () => {
+    const root = fixtureRoot()
+    const ctx = makeCtx(root)
+    ctx.turn.terminalBackend = 'docker'
+    const out = await grepTool.execute({ pattern: 'root', path: '/etc' }, ctx)
+    expect(String(out).toLowerCase()).toMatch(/outside workspace|denied|protected/)
+  })
 })

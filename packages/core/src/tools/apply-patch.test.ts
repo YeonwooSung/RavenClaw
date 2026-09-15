@@ -382,6 +382,18 @@ describe('ApplyPatch', () => {
     ).rejects.toMatchObject({ name: 'AbortError' })
     expect(existsSync(join(root, 'a.txt'))).toBe(false)
   })
+
+  test('refuses a path outside cwd', async () => {
+    const root = fixtureRoot()
+    const ctx = makeCtx(root)
+    ctx.turn.terminalBackend = 'docker'
+    const out = await applyPatchTool.execute(
+      { operations: [{ type: 'create_file', path: '/tmp/raven-outside.txt', diff: '+x\n' }] },
+      ctx,
+    )
+    expect(String(out).toLowerCase()).toMatch(/outside workspace|denied|protected/)
+    expect(existsSync('/tmp/raven-outside.txt')).toBe(false)
+  })
 })
 
 describe('applyUnifiedDiff / contentFromCreateDiff', () => {

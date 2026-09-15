@@ -43,7 +43,7 @@ raven exec --dont-ask --tools-preset ci "run bun test"
 
 ## Optional Docker sandbox
 
-The Docker terminal backend already exists. It does not change permission decisions; it only changes where allowed Bash runs.
+The Docker terminal backend runs allowed Bash in a container (`-v cwd:cwd -w cwd`) and jails Read/Write/Edit/ApplyPatch/ListDir/ReadSubtree to that same cwd bind. Grep/Glob still run on the host but refuse paths outside cwd. It is not a substitute for `dontAsk`.
 
 ```yaml
 # ~/.ravenclaw/config.yaml

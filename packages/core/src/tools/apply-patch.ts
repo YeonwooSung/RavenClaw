@@ -1,10 +1,10 @@
-import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import type { Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
 import { appendLintBlock, lintWrittenFile } from './lint'
 import { isHardDeniedWritePath, resolveWritePath } from './write'
 import { isStaleSinceRead, markReadPath, wasRead } from './read-files'
+import { workspaceFsFor, type WorkspaceFs } from './workspace-fs'
 
 export type ApplyPatchOp =
   | { type: 'create_file'; path: string; diff: string }
@@ -91,14 +91,15 @@ function applyOne(
   if (isHardDeniedWritePath(resolved)) {
     return { ok: false, message: `write denied to protected path: ${op.path}` }
   }
+  const fs = workspaceFsFor(ctx.turn)
 
   if (op.type === 'create_file') {
-    return createFile(op.path, resolved, op.diff, ctx)
+    return createFile(op.path, resolved, op.diff, ctx, fs)
   }
   if (op.type === 'update_file') {
-    return updateFile(op.path, resolved, op.diff, ctx)
+    return updateFile(op.path, resolved, op.diff, ctx, fs)
   }
-  return deleteFile(op.path, resolved, ctx)
+  return deleteFile(op.path, resolved, ctx, fs)
 }
 
 function createFile(
@@ -106,18 +107,19 @@ function createFile(
   resolved: string,
   diff: string,
   ctx: ToolContext,
+  fs: WorkspaceFs,
 ): { ok: true; action: string } | { ok: false; message: string } {
   try {
-    readFileSync(resolved)
+    fs.readFile(resolved)
     return { ok: false, message: `file already exists: ${inputPath}` }
   } catch {
-    // create only when missing
+    // create only when missing or unreadable
   }
   const content = contentFromCreateDiff(diff)
   try {
-    mkdirSync(dirname(resolved), { recursive: true })
+    fs.mkdir(dirname(resolved))
     ctx.fileHistory?.snapshot(resolved)
-    writeFileSync(resolved, content, 'utf8')
+    fs.writeFile(resolved, content)
   } catch (error) {
     return { ok: false, message: errorMessage(error) }
   }
@@ -129,6 +131,7 @@ function updateFile(
   resolved: string,
   diff: string,
   ctx: ToolContext,
+  fs: WorkspaceFs,
 ): { ok: true; action: string } | { ok: false; message: string } {
   const candidate = resolve(ctx.turn.cwd, inputPath)
   if (!wasRead(ctx.turn.readFiles, resolved, candidate)) {
@@ -139,7 +142,7 @@ function updateFile(
   }
   let text: string
   try {
-    text = readFileSync(resolved, 'utf8')
+    text = fs.readFile(resolved)
   } catch (error) {
     return { ok: false, message: errorMessage(error) }
   }
@@ -147,7 +150,7 @@ function updateFile(
   if (patched.ok === false) return patched
   try {
     ctx.fileHistory?.snapshot(resolved)
-    writeFileSync(resolved, patched.text, 'utf8')
+    fs.writeFile(resolved, patched.text)
   } catch (error) {
     return { ok: false, message: errorMessage(error) }
   }
@@ -159,18 +162,19 @@ function deleteFile(
   inputPath: string,
   resolved: string,
   ctx: ToolContext,
+  fs: WorkspaceFs,
 ): { ok: true; action: string } | { ok: false; message: string } {
   if (!wasRead(ctx.turn.readFiles, resolved, resolve(ctx.turn.cwd, inputPath))) {
     return { ok: false, message: `path must be Read first: ${inputPath}` }
   }
   try {
-    readFileSync(resolved)
+    fs.readFile(resolved)
   } catch (error) {
     return { ok: false, message: errorMessage(error) }
   }
   try {
     ctx.fileHistory?.snapshot(resolved)
-    unlinkSync(resolved)
+    fs.unlink(resolved)
   } catch (error) {
     return { ok: false, message: errorMessage(error) }
   }

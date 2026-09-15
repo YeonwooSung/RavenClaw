@@ -1,4 +1,4 @@
-import { closeSync, openSync, readFileSync, readSync, statSync } from 'node:fs'
+import { closeSync, openSync, readFileSync, readSync } from 'node:fs'
 import { extname, resolve } from 'node:path'
 import type { Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
@@ -6,6 +6,7 @@ import { formatNotebookRead, parseNotebook } from './notebook-format'
 import { extractOfficeText, type OfficeExt } from './read-extract'
 import { markReadPath } from './read-files'
 import { READ_CHAR_CAP, TRUNCATION_NOTE, sliceUtf8Lines, streamUtf8LineWindow } from './read-lines'
+import { workspaceFsFor } from './workspace-fs'
 
 export interface ReadInput {
   path: string
@@ -58,14 +59,19 @@ export const readTool: Tool<ReadInput, string> = {
   async execute(input: ReadInput, ctx: ToolContext) {
     if (ctx.signal.aborted) throw abortError()
     const resolved = resolve(ctx.turn.cwd, input.path)
+    const fs = workspaceFsFor(ctx.turn)
 
     let stat
     try {
-      stat = statSync(resolved)
-    } catch {
+      stat = fs.stat(resolved)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return `Read failed: ${message}`
+    }
+    if (!stat.exists) {
       return `Read failed: file not found: ${input.path}`
     }
-    if (stat.isDirectory()) {
+    if (stat.isDir) {
       return `Read failed: path is a directory: ${input.path}`
     }
 
@@ -77,33 +83,36 @@ export const readTool: Tool<ReadInput, string> = {
       extname(resolved).toLowerCase() !== '.ipynb' &&
       stat.size > STREAM_AFTER
     ) {
-      if (peekHasNul(resolved)) {
+      let jailed: string
+      try {
+        jailed = fs.realpath(resolved)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return `Read failed: ${message}`
+      }
+      if (peekHasNul(jailed)) {
         return 'Read failed: binary file (NUL in first 8 KiB)'
       }
       markReadPath(ctx.turn, resolved)
-      return streamUtf8LineWindow(resolved, input.offset, input.limit)
+      return streamUtf8LineWindow(jailed, input.offset, input.limit)
     }
 
-    let buf: Buffer
-    try {
-      buf = readFileSync(resolved)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      return `Read failed: ${message}`
-    }
-
-    const mediaType = imageMediaType(resolved)
-    if (mediaType) {
-      if (buf.length > IMAGE_BYTE_CAP) {
-        return `Read failed: image too large (${buf.length} bytes)`
+    if (mediaEarly || officeEarly) {
+      let buf: Buffer
+      try {
+        buf = readFileSync(fs.realpath(resolved))
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return `Read failed: ${message}`
       }
-      markReadPath(ctx.turn, resolved)
-      return `IMAGE::${mediaType}::${buf.toString('base64')}`
-    }
-
-    const officeExt = officeExtOf(resolved)
-    if (officeExt) {
-      const extracted = extractOfficeText(buf, officeExt)
+      if (mediaEarly) {
+        if (buf.length > IMAGE_BYTE_CAP) {
+          return `Read failed: image too large (${buf.length} bytes)`
+        }
+        markReadPath(ctx.turn, resolved)
+        return `IMAGE::${mediaEarly}::${buf.toString('base64')}`
+      }
+      const extracted = extractOfficeText(buf, officeEarly as OfficeExt)
       if (!extracted.ok) return 'Read failed: cannot extract'
       markReadPath(ctx.turn, resolved)
       return extracted.text.length > READ_CHAR_CAP
@@ -111,12 +120,20 @@ export const readTool: Tool<ReadInput, string> = {
         : extracted.text
     }
 
-    if (containsNul(buf.subarray(0, Math.min(buf.length, BINARY_SCAN)))) {
+    let text: string
+    try {
+      text = fs.readFile(resolved)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return `Read failed: ${message}`
+    }
+
+    if (text.slice(0, BINARY_SCAN).includes('\0')) {
       return 'Read failed: binary file (NUL in first 8 KiB)'
     }
 
     if (extname(resolved).toLowerCase() === '.ipynb') {
-      const parsed = parseNotebook(buf.toString('utf8'))
+      const parsed = parseNotebook(text)
       if (parsed.ok) {
         markReadPath(ctx.turn, resolved)
         const formatted = formatNotebookRead(parsed.value)
@@ -126,9 +143,8 @@ export const readTool: Tool<ReadInput, string> = {
       }
     }
 
-    const text = sliceUtf8Lines(buf.toString('utf8'), input.offset, input.limit)
     markReadPath(ctx.turn, resolved)
-    return text
+    return sliceUtf8Lines(text, input.offset, input.limit)
   },
 }
 

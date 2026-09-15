@@ -161,6 +161,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       compactGeneration: session.compactGeneration,
       funding: session.funding,
       cwd: session.cwd,
+      terminalBackend: opts.terminalBackend ?? 'local',
       model: session.model,
       readFiles: new Set(),
     }
@@ -303,6 +304,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         compactGeneration: session.compactGeneration,
         funding: session.funding,
         cwd: session.cwd,
+        terminalBackend: opts.terminalBackend ?? 'local',
         model: session.model,
         readFiles: new Set(),
         readFileMtimes: new Map(),

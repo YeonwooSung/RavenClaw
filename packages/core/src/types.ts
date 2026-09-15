@@ -386,6 +386,8 @@ export interface SessionEngineOptions {
   jsonSchema?: unknown
   bare?: boolean
   additionalDirectories?: string[]
+  /** Copied onto each Turn. Unset means local. */
+  terminalBackend?: 'local' | 'docker'
   sessionLock?: {
     holderId: string
     ttlMs?: number

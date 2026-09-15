@@ -93,4 +93,12 @@ describe('Glob', () => {
     expect(lines.some((line) => line.includes('dist'))).toBe(false)
     expect(lines.some((line) => line.includes('deep.ts'))).toBe(false)
   })
+
+  test('refuses a path outside cwd', async () => {
+    const root = fixtureRoot()
+    const ctx = makeCtx(root)
+    ctx.turn.terminalBackend = 'docker'
+    const out = await globTool.execute({ pattern: '*', path: '/etc' }, ctx)
+    expect(String(out).toLowerCase()).toMatch(/outside workspace|denied|protected/)
+  })
 })

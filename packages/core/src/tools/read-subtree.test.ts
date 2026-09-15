@@ -133,6 +133,14 @@ describe('ReadSubtree', () => {
     expect(cappedHeaders.length).toBe(80)
   })
 
+  test('refuses a path outside cwd', async () => {
+    const root = fixtureRoot()
+    const ctx = makeCtx(root)
+    ctx.turn.terminalBackend = 'docker'
+    const out = await readSubtreeTool.execute({ path: '/etc' }, ctx)
+    expect(String(out).toLowerCase()).toMatch(/outside workspace|denied|protected/)
+  })
+
   test('returns ReadSubtree failed when the path is missing', async () => {
     const root = fixtureRoot()
     const out = await readSubtreeTool.execute({ path: 'missing' }, makeCtx(root))

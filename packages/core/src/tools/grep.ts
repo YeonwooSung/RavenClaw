@@ -12,6 +12,7 @@ import {
   walkFiles,
 } from './glob'
 import { parseWithSchema } from './parse'
+import { workspaceFsFor } from './workspace-fs'
 
 export interface GrepInput {
   pattern: string
@@ -55,6 +56,12 @@ export const grepTool: Tool<GrepInput, string> = {
     if (ctx.signal.aborted) throw abortError()
     const cwd = ctx.turn.cwd
     const searchRoot = resolve(cwd, input.path ?? '.')
+    try {
+      workspaceFsFor(ctx.turn).stat(searchRoot)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return `Grep failed: ${message}`
+    }
     const fileFilter = input.glob ?? input.include
 
     const rg = tryRipgrep(input.pattern, searchRoot, cwd, fileFilter)

@@ -553,6 +553,7 @@ async function finishOpenEngine(
     maxRounds: opts.maxRounds ?? opts.config.maxRounds,
     askUser: opts.askUser,
     system,
+    terminalBackend: opts.config.terminal?.backend ?? 'local',
   }
   if (opts.messages) engineOpts.messages = opts.messages
   if (hooks.length > 0) engineOpts.hooks = hooks

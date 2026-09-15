@@ -26,6 +26,13 @@ export type WorkspaceFs = {
   realpath(path: string): string
 }
 
+export function workspaceFsFor(turn: {
+  cwd: string
+  terminalBackend?: 'local' | 'docker'
+}): WorkspaceFs {
+  return createWorkspaceFs({ cwd: turn.cwd, backend: turn.terminalBackend ?? 'local' })
+}
+
 export function createWorkspaceFs(opts: {
   cwd: string
   backend: 'local' | 'docker'

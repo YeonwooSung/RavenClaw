@@ -174,4 +174,12 @@ describe('Write', () => {
     expect(out.toLowerCase()).toContain('error')
     expect(readFileSync(join(root, 'bad.json'), 'utf8')).toBe('{')
   })
+
+  test('Write with terminalBackend docker refuses a path outside cwd', async () => {
+    const cwd = fixtureRoot()
+    const ctx = makeCtx(cwd)
+    ctx.turn.terminalBackend = 'docker'
+    const out = await writeTool.execute({ path: '/etc/passwd', content: 'x' }, ctx)
+    expect(String(out).toLowerCase()).toMatch(/outside workspace|denied|protected/)
+  })
 })

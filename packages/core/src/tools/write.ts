@@ -1,4 +1,4 @@
-import { mkdirSync, realpathSync, statSync, writeFileSync } from 'node:fs'
+import { realpathSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import type { Tool, ToolContext } from '../types'
@@ -6,6 +6,7 @@ import { ravenclawHome } from '../home'
 import { parseWithSchema } from './parse'
 import { appendLintBlock, lintWrittenFile } from './lint'
 import { isStaleSinceRead, markReadPath, wasRead } from './read-files'
+import { workspaceFsFor } from './workspace-fs'
 
 export interface WriteInput {
   path: string
@@ -48,12 +49,14 @@ export const writeTool: Tool<WriteInput, string> = {
     if (isHardDeniedWritePath(resolved)) {
       return `Write failed: write denied to protected path: ${input.path}`
     }
+    const fs = workspaceFsFor(ctx.turn)
     const candidate = resolve(ctx.turn.cwd, input.path)
     let exists = false
     try {
-      exists = statSync(resolved).isFile()
-    } catch {
-      exists = false
+      exists = fs.stat(resolved).isFile
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return `Write failed: ${message}`
     }
     if (exists) {
       if (!wasRead(ctx.turn.readFiles, resolved, candidate)) {
@@ -65,9 +68,9 @@ export const writeTool: Tool<WriteInput, string> = {
     }
 
     try {
-      mkdirSync(dirname(resolved), { recursive: true })
+      fs.mkdir(dirname(resolved))
       ctx.fileHistory?.snapshot(resolved)
-      writeFileSync(resolved, input.content, 'utf8')
+      fs.writeFile(resolved, input.content)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return `Write failed: ${message}`

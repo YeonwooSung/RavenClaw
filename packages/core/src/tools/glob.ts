@@ -2,6 +2,7 @@ import { readdirSync, statSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
 import type { Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
+import { workspaceFsFor } from './workspace-fs'
 
 export const DEFAULT_IGNORE_DIR_NAMES = [
   'node_modules',
@@ -146,6 +147,12 @@ export const globTool: Tool<GlobInput, string> = {
     if (ctx.signal.aborted) throw abortError()
     const cwd = ctx.turn.cwd
     const searchRoot = resolve(cwd, input.path ?? '.')
+    try {
+      workspaceFsFor(ctx.turn).stat(searchRoot)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return `Glob failed: ${message}`
+    }
     const matches: string[] = []
     for (const file of walkFiles(searchRoot, cwd)) {
       if (matchGlob(input.pattern, file.relToRoot)) matches.push(file.relToCwd)

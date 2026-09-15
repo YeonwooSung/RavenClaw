@@ -1,10 +1,10 @@
-import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type { Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
 import { appendLintBlock, lintWrittenFile } from './lint'
 import { isHardDeniedWritePath, resolveWritePath } from './write'
 import { isStaleSinceRead, markReadPath, wasRead } from './read-files'
+import { workspaceFsFor } from './workspace-fs'
 
 export interface EditInput {
   path: string
@@ -49,6 +49,13 @@ export const editTool: Tool<EditInput, string> = {
     if (isHardDeniedWritePath(resolved)) {
       return `Edit failed: write denied to protected path: ${input.path}`
     }
+    const fs = workspaceFsFor(ctx.turn)
+    try {
+      fs.stat(resolved)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return `Edit failed: ${message}`
+    }
     const candidate = resolve(ctx.turn.cwd, input.path)
     if (!wasRead(ctx.turn.readFiles, resolved, candidate)) {
       return `Edit failed: path must be Read first: ${input.path}`
@@ -62,7 +69,7 @@ export const editTool: Tool<EditInput, string> = {
 
     let raw: string
     try {
-      raw = readFileSync(resolved, 'utf8')
+      raw = fs.readFile(resolved)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return `Edit failed: ${message}`
@@ -84,7 +91,7 @@ export const editTool: Tool<EditInput, string> = {
     try {
       ctx.fileHistory?.snapshot(resolved)
       const updated = text.replace(replacement.oldString, replacement.newString)
-      writeFileSync(resolved, crlf ? restoreCrlf(updated) : updated, 'utf8')
+      fs.writeFile(resolved, crlf ? restoreCrlf(updated) : updated)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return `Edit failed: ${message}`

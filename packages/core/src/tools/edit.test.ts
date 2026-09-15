@@ -357,4 +357,15 @@ describe('Edit', () => {
     ).rejects.toMatchObject({ name: 'AbortError' })
     expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('ok\n')
   })
+
+  test('refuses a path outside cwd', async () => {
+    const root = fixtureRoot()
+    const ctx = makeCtx(root)
+    ctx.turn.terminalBackend = 'docker'
+    const out = await editTool.execute(
+      { path: '/etc/passwd', old_string: 'root', new_string: 'x' },
+      ctx,
+    )
+    expect(String(out).toLowerCase()).toMatch(/outside workspace|denied|protected/)
+  })
 })
