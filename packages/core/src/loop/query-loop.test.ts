@@ -687,6 +687,59 @@ describe('queryLoop via SessionEngine', () => {
     await gen.next() // drain
   })
 
+  test('live allow then applyAskAnswer does not execute the tool twice', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_live_double' })
+    await store.createSession(session)
+    let releaseAsk!: (answer: 'allow' | 'deny' | 'allow_always') => void
+    const held = new Promise<'allow' | 'deny' | 'allow_always'>((resolve) => {
+      releaseAsk = resolve
+    })
+    let releaseExec!: () => void
+    const blocked = new Promise<void>((resolve) => {
+      releaseExec = resolve
+    })
+    let started!: () => void
+    const sawExecute = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    const echo = createEcho({
+      async onExecute() {
+        started()
+        await blocked
+        return 'hi'
+      },
+    })
+    echo.checkPermissions = async () => ({ behavior: 'ask', message: 'Echo?' })
+    const engine = createSessionEngine({
+      ...engineOpts({
+        provider: createFakeProvider([
+          toolThenStop('call_live', 'Echo', { text: 'hi' }),
+          textThenStop('done'),
+        ]),
+        store,
+        session,
+        tools: [echo],
+      }),
+      askUser: async () => held,
+    })
+    const gen = engine.submitMessage('go')
+    const events: StreamEvent[] = []
+    while (events.every((e) => e.type !== 'permission_ask')) {
+      const next = await gen.next()
+      if (next.done) break
+      events.push(next.value)
+    }
+    expect(await store.listPendingAsks(session.id)).toHaveLength(1)
+    releaseAsk('allow')
+    await sawExecute
+    const settled = engine.applyAskAnswer('call_live', 'allow')
+    releaseExec()
+    await expect(settled).resolves.toBe('matched')
+    await collect(gen)
+    expect(echo.executeCount).toBe(1)
+  })
+
   test('loadSession after pending row does not insert incomplete', async () => {
     const store = createMemoryStore()
     const session = makeSession({ id: 'sess_crash' })
@@ -1069,6 +1122,52 @@ describe('queryLoop via SessionEngine', () => {
     await expect(engine.applyAskAnswer('call_1', 'allow')).resolves.toBe('matched')
     expect(echo.executeCount).toBe(1)
     expect(await store.listPendingAsks(session.id)).toHaveLength(1)
+    const { events, result } = await collect(engine.submitMessage('hello'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(events.some((e) => e.type === 'status' && e.message.includes('pending'))).toBe(false)
+    expect(echo.executeCount).toBe(1)
+  })
+
+  test('child persist-ok delete-fail does not brick parent submitMessage', async () => {
+    const store = createMemoryStore()
+    const parent = makeSession({ id: 'sess_parent_df' })
+    const child = makeSession({ id: 'sess_child_df', parentSessionId: parent.id })
+    await store.createSession(parent)
+    await store.createSession(child)
+    await store.persistToolCalls(child.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_child', name: 'Echo', input: { text: 'hi' } }],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_child',
+      sessionId: child.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    const inner = store.deletePendingAsk.bind(store)
+    let deleteCalls = 0
+    store.deletePendingAsk = async (callId) => {
+      deleteCalls += 1
+      if (deleteCalls === 1) throw new Error('delete boom')
+      return inner(callId)
+    }
+    const echo = createAskEcho()
+    const engine = createSessionEngine(
+      engineOpts({
+        provider: createFakeProvider([textThenStop('next')]),
+        store,
+        session: parent,
+        tools: [echo],
+      }),
+    )
+    await expect(engine.applyAskAnswer('call_child', 'allow')).resolves.toBe('matched')
+    expect(echo.executeCount).toBe(1)
+    expect(await store.listPendingAsks(child.id)).toHaveLength(1)
     const { events, result } = await collect(engine.submitMessage('hello'))
     expect(result).toEqual({ reason: 'completed' })
     expect(events.some((e) => e.type === 'status' && e.message.includes('pending'))).toBe(false)

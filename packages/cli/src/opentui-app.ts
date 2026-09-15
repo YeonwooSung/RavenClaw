@@ -93,10 +93,13 @@ export async function runOpenTuiApp(
   const bindHosts = () => {
     current.ask.bind(async (event, signal) => {
       for (const line of permissionPromptLines(event)) write(`${line}\n`)
-      if (signal.aborted) throw abortError()
-      const answer = await readLine()
-      if (answer === undefined || signal.aborted) throw abortError()
-      return parsePermissionAnswer(answer)
+      while (true) {
+        if (signal.aborted) throw abortError()
+        const answer = await readLine()
+        if (answer === undefined || signal.aborted) throw abortError()
+        const parsed = parsePermissionAnswer(answer)
+        if (parsed !== undefined) return parsed
+      }
     })
     current.askQuestions?.bind(async (input, signal) => {
       write(`${formatAskUserDialog(input)}\n`)
@@ -424,12 +427,12 @@ function abortError(): Error {
   return Object.assign(new Error('aborted'), { name: 'AbortError' })
 }
 
-function parsePermissionAnswer(line: string): 'allow' | 'deny' | 'allow_always' {
+function parsePermissionAnswer(line: string): 'allow' | 'deny' | 'allow_always' | undefined {
   const key = line.trim().toLowerCase()
-  if (key === 'y') return 'allow'
-  if (key === 'n') return 'deny'
-  if (key === 'a') return 'allow_always'
-  return 'deny'
+  if (key === 'y' || key === 'yes' || key === 'allow') return 'allow'
+  if (key === 'n' || key === 'no' || key === 'deny') return 'deny'
+  if (key === 'a' || key === 'always' || key === 'allow_always') return 'allow_always'
+  return undefined
 }
 
 function lineReader(source: AsyncIterable<string>): () => Promise<string | undefined> {

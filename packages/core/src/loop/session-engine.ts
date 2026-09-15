@@ -123,6 +123,13 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
   let replayAbort: AbortController | undefined
   const applyFlights = new Map<string, Promise<unknown>>()
   const executedAsks = new Set<string>()
+  const claimedAsks = new Set<string>()
+
+  function claimAsk(callId: string): boolean {
+    if (claimedAsks.has(callId) || executedAsks.has(callId)) return false
+    claimedAsks.add(callId)
+    return true
+  }
   const lifecycle = opts.bare
     ? { run: async () => undefined }
     : loadLifecycleHooks(session.cwd)
@@ -246,6 +253,8 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       await dropPendingAsk(callId)
       return 'matched'
     }
+
+    if (!claimAsk(callId)) return 'matched'
 
     if (answer === 'deny') {
       await persistSettledTool(makeToolMessage(callId, false, denyText(row.message)), target.sessionId)
@@ -480,7 +489,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       const pending = await listOwnedPendingAsks()
       let askBlocked = false
       for (const row of pending) {
-        if (await isCallPaired(row.callId)) {
+        if (await isCallPaired(row.callId, row.sessionId)) {
           await dropPendingAsk(row.callId)
           continue
         }
@@ -590,7 +599,11 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
           store: opts.store,
           compact: opts.compact,
           model,
-          askUser: opts.askUser,
+          askUser: async (event, signal) => {
+            const answer = await opts.askUser(event, signal)
+            if (answer !== 'deny') claimAsk(event.id)
+            return answer
+          },
         }
         if (session.parentSessionId !== undefined) loopOpts.parentSessionId = session.parentSessionId
         if (system !== undefined) loopOpts.system = system

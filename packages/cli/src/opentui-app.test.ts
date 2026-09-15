@@ -221,6 +221,36 @@ describe('runOpenTuiApp', () => {
     expect(written.join('')).toContain('answer:allow')
   })
 
+  test('casual line during leftover-ask does not deny; y still allows', async () => {
+    const answers: Array<'allow' | 'deny' | 'allow_always'> = []
+    const ask = createAskBridge()
+    const event: Extract<StreamEvent, { type: 'permission_ask' }> = {
+      type: 'permission_ask',
+      id: 'p1',
+      tool: 'Bash',
+      input: { command: 'ls' },
+      message: 'Allow Bash?',
+    }
+    const engine = fakeEngine(makeSession(), async function* (text) {
+      expect(text).toBe('run ls')
+      yield event
+      const answer = await ask.ask(event, new AbortController().signal)
+      answers.push(answer)
+      yield { type: 'text_delta', text: `answer:${answer}` }
+      return { reason: 'completed' }
+    })
+    const written: string[] = []
+    const code = await runOpenTuiApp(fakeRuntime(engine, { ask }), {
+      input: asyncLines('run ls', 'hello there', 'y', '/quit'),
+      write: (chunk) => {
+        written.push(chunk)
+      },
+    })
+    expect(code).toBe(0)
+    expect(answers).toEqual(['allow'])
+    expect(written.join('')).toContain('answer:allow')
+  })
+
   test('/resume with no sessions prints no sessions to resume', async () => {
     const store = fakeStore([])
     const written: string[] = []
