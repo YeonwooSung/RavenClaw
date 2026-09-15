@@ -789,6 +789,49 @@ describe('queryLoop via SessionEngine', () => {
     expect(await store.listPendingAsks(session.id)).toHaveLength(0)
   })
 
+  test('applyAskAnswer persist failure after execute does not write executeFailedText', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_persist_fail' })
+    await store.createSession(session)
+    await store.persistToolCalls(session.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_1', name: 'Echo', input: { text: 'hi' } }],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    const inner = store.persistToolResults.bind(store)
+    let persistCalls = 0
+    store.persistToolResults = async (sessionId, messages) => {
+      persistCalls += 1
+      if (persistCalls === 1) throw new PersistError('busy', 'persist boom')
+      return inner(sessionId, messages)
+    }
+    const echo = createAskEcho()
+    const engine = createSessionEngine(
+      engineOpts({
+        provider: createFakeProvider([textThenStop('nope')]),
+        store,
+        session,
+        tools: [echo],
+      }),
+    )
+    await expect(engine.applyAskAnswer('call_1', 'allow')).rejects.toThrow('persist boom')
+    expect(echo.executeCount).toBe(1)
+    expect(await store.listPendingAsks(session.id)).toHaveLength(1)
+    store.persistToolResults = inner
+    const loaded = await store.loadSession(session.id)
+    expect(loaded.messages.filter((m) => m.role === 'tool')).toHaveLength(0)
+  })
+
   test('submitMessage while a pending ask exists does not append a user row', async () => {
     const store = createMemoryStore()
     const session = makeSession({ id: 'sess_block' })

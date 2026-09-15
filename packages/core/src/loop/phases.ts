@@ -228,8 +228,6 @@ export async function persistResultsWithRetry(
 ): Promise<RoundEnd | undefined> {
   try {
     await state.store.persistToolResults(state.turn.sessionId, results)
-    await deletePendingForResults(state, results)
-    return undefined
   } catch (first) {
     const incomplete = pairMissing(
       results.map((row) => row.toolUseId),
@@ -237,7 +235,6 @@ export async function persistResultsWithRetry(
     )
     try {
       await state.store.persistToolResults(state.turn.sessionId, incomplete)
-      await deletePendingForResults(state, incomplete)
     } catch (second) {
       return { reason: 'results_persist_failed', error: second }
     }
@@ -248,8 +245,11 @@ export async function persistResultsWithRetry(
       if (idx >= 0) state.turn.messages[idx] = row
     }
     state.toolResults = incomplete
+    await deletePendingForResults(state, incomplete)
     return { reason: 'results_persist_failed', error: first }
   }
+  await deletePendingForResults(state, results)
+  return undefined
 }
 
 export async function* beginRound(state: LoopState): AsyncGenerator<StreamEvent, PhaseResult> {
@@ -1167,10 +1167,16 @@ function createLiveEvents(): {
     },
     async *drain(done) {
       let settled = false
-      const finished = done.then(() => {
-        settled = true
-        notify?.()
-      })
+      const finished = done.then(
+        () => {
+          settled = true
+          notify?.()
+        },
+        () => {
+          settled = true
+          notify?.()
+        },
+      )
       try {
         while (true) {
           if (queue.length > 0) {

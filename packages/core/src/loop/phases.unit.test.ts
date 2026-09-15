@@ -7,6 +7,7 @@ import {
   buildAssistantMessage,
   persistAssistantOnce,
   persistResultsWithRetry,
+  runToolRound,
   type LoopState,
 } from './phases'
 
@@ -360,5 +361,105 @@ describe('persistResultsWithRetry', () => {
     expect(calls).toBe(2)
     const stored = current.turn.messages[0]
     expect(stored && stored.role === 'tool' ? stored.ok : undefined).toBe(false)
+  })
+
+  test('deletePendingAsk throw after persist does not write incomplete', async () => {
+    const store = createMemoryStore()
+    await store.createSession({
+      id: 's1',
+      createdAt: 1,
+      updatedAt: 1,
+      cwd: '/tmp',
+      model: 'dummy',
+      permissionMode: 'default',
+      compactGeneration: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      funding: 'byok',
+    })
+    await store.persistUser('s1', {
+      id: 'u1',
+      role: 'user',
+      blocks: [{ type: 'text', text: 'go' }],
+      createdAt: 1,
+    })
+    await store.persistToolCalls('s1', {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'c1', name: 'Echo', input: {} }],
+      createdAt: 2,
+    })
+    await store.upsertPendingAsk({
+      callId: 'c1',
+      sessionId: 's1',
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: {},
+      createdAt: 3,
+    })
+    store.deletePendingAsk = async () => {
+      throw new Error('delete boom')
+    }
+    const current = state({ store })
+    const result = {
+      id: 'tr1',
+      role: 'tool' as const,
+      toolUseId: 'c1',
+      ok: true,
+      blocks: [{ type: 'text' as const, text: 'ok' }],
+      createdAt: 4,
+    }
+    current.turn.messages = [result]
+    await expect(persistResultsWithRetry(current, [result])).rejects.toThrow('delete boom')
+    expect(current.turn.messages[0]).toBe(result)
+    const loaded = await store.loadSession('s1')
+    const tools = loaded.messages.filter((msg) => msg.role === 'tool')
+    expect(tools).toHaveLength(1)
+    expect(tools[0]?.id).toBe('tr1')
+    expect(tools[0] && tools[0].role === 'tool' ? tools[0].ok : undefined).toBe(true)
+    expect(await store.listPendingAsks('s1')).toHaveLength(1)
+  })
+})
+
+describe('runToolRound live drain', () => {
+  test('does not hang when PreToolUse throws', async () => {
+    const store = createMemoryStore()
+    await store.createSession({
+      id: 's1',
+      createdAt: 1,
+      updatedAt: 1,
+      cwd: '/tmp',
+      model: 'dummy',
+      permissionMode: 'default',
+      compactGeneration: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      funding: 'byok',
+    })
+    const current = state({
+      store,
+      pendingToolCalls: [{ id: 'c1', name: 'Echo', input: {} }],
+      assistantMessage: {
+        id: 'a1',
+        role: 'assistant',
+        blocks: [{ type: 'tool_use', id: 'c1', name: 'Echo', input: {} }],
+        createdAt: 1,
+      },
+      lifecycle: {
+        async run(event) {
+          if (event === 'PreToolUse') throw new Error('pre boom')
+        },
+      },
+    })
+    const gen = runToolRound(current)
+    const drained = (async () => {
+      while (true) {
+        const next = await gen.next()
+        if (next.done) return next.value
+      }
+    })()
+    const hung = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('hung')), 1000)
+    })
+    await expect(Promise.race([drained, hung])).rejects.toThrow('pre boom')
   })
 })

@@ -174,16 +174,16 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       fileHistory,
     }
 
+    let toolRow: Extract<Message, { role: 'tool' }>
     try {
       const output = await tool.execute(parsed.value, ctx)
       const formatted = formatSettledOutput(tool, output)
-      await persistSettledTool(
-        makeToolMessage(callId, true, formatted.content, formatted.persistPath),
-      )
+      toolRow = makeToolMessage(callId, true, formatted.content, formatted.persistPath)
     } catch (error) {
       const text = executeFailedText(error instanceof Error ? error.message : String(error))
-      await persistSettledTool(makeToolMessage(callId, false, text))
+      toolRow = makeToolMessage(callId, false, text)
     }
+    await persistSettledTool(toolRow)
     await opts.store.deletePendingAsk(callId)
     return 'matched'
   }
