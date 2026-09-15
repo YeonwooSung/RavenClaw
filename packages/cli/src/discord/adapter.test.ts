@@ -404,6 +404,106 @@ describe('runDiscordAdapter', () => {
     await running
   })
 
+  test('discord leftover-ask labels childSessionId', async () => {
+    const api = new FakeDiscordApi()
+    const gateway = new FakeDiscordGateway()
+    let askStarted!: () => void
+    const sawAsk = new Promise<void>((resolve) => {
+      askStarted = resolve
+    })
+    const running = runDiscordAdapter({
+      config: cfg({ allowFrom: ['U1'] }),
+      pairingHome: home(),
+      ledger: createMemoryDeliveries(),
+      store: createMemoryStore(),
+      botUserId: 'BOT',
+      openSession: async (req) => ({
+        sessionId: 'sess_parent',
+        async *submitMessage() {
+          const ac = new AbortController()
+          askStarted()
+          await req.askUser(
+            {
+              id: 'call_child',
+              tool: 'Bash',
+              message: 'child bash?',
+              childSessionId: 'sess_child',
+            },
+            ac.signal,
+          )
+        },
+      }),
+      gateway,
+      api,
+    })
+    gateway.push(dmPayload({ id: 'm-child', authorId: 'U1', content: 'please' }))
+    await sawAsk
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const prompt = api.posts.find((post) => post.content.includes('Allow'))
+    expect(prompt?.content).toContain('child sess_child')
+    gateway.push(dmPayload({ id: 'm-child-deny', authorId: 'U1', content: 'deny' }))
+    gateway.end()
+    await running
+  })
+
+  test('failed discord permission post does not auto-deny the next ask', async () => {
+    const store = createMemoryStore()
+    const gateway = new FakeDiscordGateway()
+    const api = new FakeDiscordApi()
+    const orig = api.createMessage.bind(api)
+    let allowPosts = 0
+    api.createMessage = async (opts) => {
+      if (opts.content.includes('Allow')) {
+        allowPosts += 1
+        if (allowPosts === 1) throw new Error('discord down')
+      }
+      return orig(opts)
+    }
+    const answers: string[] = []
+    let asks = 0
+    let sawSecond!: () => void
+    const secondAsk = new Promise<void>((resolve) => {
+      sawSecond = resolve
+    })
+    const running = runDiscordAdapter({
+      config: cfg({ allowFrom: ['U1'] }),
+      pairingHome: home(),
+      ledger: createMemoryDeliveries(),
+      store,
+      openSession: async (req) => ({
+        sessionId: 'sess_post_fail',
+        async *submitMessage() {
+          asks += 1
+          const ac = new AbortController()
+          if (asks === 2) sawSecond()
+          try {
+            answers.push(
+              await req.askUser({ id: `call_${asks}`, tool: 'Bash', message: 'Allow Bash?' }, ac.signal),
+            )
+          } catch {
+            answers.push('threw')
+          }
+        },
+      }),
+      gateway,
+      api,
+    })
+    gateway.push(dmPayload({ id: 'm-fail-1', authorId: 'U1', content: 'first' }))
+    for (let i = 0; i < 40 && answers.length === 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    expect(answers).toEqual(['threw'])
+    gateway.push(dmPayload({ id: 'm-fail-2', authorId: 'U1', content: 'second' }))
+    await secondAsk
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(answers).toEqual(['threw'])
+    gateway.push(dmPayload({ id: 'm-fail-allow', authorId: 'U1', content: 'allow' }))
+    gateway.end()
+    await running
+    expect(answers).toEqual(['threw', 'allow'])
+  })
+
   test('durable discord waiter abort does not deny the pending row', async () => {
     const store = createMemoryStore()
     const sessionId = 'sess_discord_abort'

@@ -625,6 +625,62 @@ describe('runSlackAdapter', () => {
     await running
   })
 
+  test('failed slack permission post does not auto-deny the next ask', async () => {
+    const store = createMemoryStore()
+    const socket = new FakeSlackSocket()
+    const api = new FakeSlackApi()
+    const origPost = api.postMessage.bind(api)
+    let allowPosts = 0
+    api.postMessage = async (opts) => {
+      if (typeof opts.text === 'string' && opts.text.includes('Allow')) {
+        allowPosts += 1
+        if (allowPosts === 1) throw new Error('slack down')
+      }
+      return origPost(opts)
+    }
+    const answers: string[] = []
+    let asks = 0
+    let sawSecond!: () => void
+    const secondAsk = new Promise<void>((resolve) => {
+      sawSecond = resolve
+    })
+    const running = runSlackAdapter({
+      config: slackConfig(),
+      socket,
+      api,
+      store,
+      openSession: async (req) => ({
+        sessionId: 'sess_post_fail',
+        async *submitMessage() {
+          asks += 1
+          const ac = new AbortController()
+          if (asks === 2) sawSecond()
+          try {
+            answers.push(
+              await req.askUser({ id: `call_${asks}`, tool: 'Bash', message: 'Allow Bash?' }, ac.signal),
+            )
+          } catch {
+            answers.push('threw')
+          }
+        },
+      }),
+    })
+    socket.push(dmMessage({ text: 'first', ts: '200.0' }))
+    for (let i = 0; i < 40 && answers.length === 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    expect(answers).toEqual(['threw'])
+    socket.push(dmMessage({ text: 'second', ts: '201.0' }))
+    await secondAsk
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(answers).toEqual(['threw'])
+    socket.push(dmMessage({ text: 'allow', ts: '202.0' }))
+    socket.end()
+    await running
+    expect(answers).toEqual(['threw', 'allow'])
+  })
+
   test('durable slack waiter abort does not deny the pending row', async () => {
     const store = createMemoryStore()
     const sessionId = 'sess_slack_abort'

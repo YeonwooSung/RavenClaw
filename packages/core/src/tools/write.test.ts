@@ -116,6 +116,7 @@ describe('Write', () => {
     expect(typeof out).toBe('string')
     expect(out.toLowerCase()).not.toMatch(/fail|error|deny/)
     expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('new\n')
+    expect(ctx.turn.readFiles.has(path)).toBe(true)
   })
 
   test('Write existing file without Read fails', async () => {

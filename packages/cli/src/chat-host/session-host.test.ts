@@ -104,6 +104,52 @@ describe('createChatSessionHost', () => {
     expect(replayed).toBe(1)
   })
 
+  test('overlapping openSession does not start a second leftover-ask replay', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'raven-chat-host-replay-overlap-'))
+    const existingSessionId = 'sess_replay_overlap'
+    saveSessionMap({ 'resume-key': existingSessionId }, home)
+    let replayed = 0
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let sawFirst!: () => void
+    const firstEntered = new Promise<void>((resolve) => {
+      sawFirst = resolve
+    })
+    const host = createChatSessionHost({
+      home,
+      shared: fakeRuntime('shared'),
+      resumeRuntime: async () => {
+        const runtime = fakeRuntime(existingSessionId)
+        runtime.engine.replayPendingAsks = async function* () {
+          replayed += 1
+          sawFirst()
+          await held
+        }
+        return runtime
+      },
+    })
+    const first = host.openSession({
+      sessionKey: 'resume-key',
+      permissionMode: 'default',
+      askUser: async () => 'allow',
+    })
+    await firstEntered
+    const second = host.openSession({
+      sessionKey: 'resume-key',
+      permissionMode: 'default',
+      askUser: async () => 'deny',
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(replayed).toBe(1)
+    release()
+    await first
+    await second
+    expect(replayed).toBe(1)
+  })
+
   test('replay abort can re-ask on the next openSession', async () => {
     const home = mkdtempSync(join(tmpdir(), 'raven-chat-host-replay-abort-'))
     const existingSessionId = 'sess_replay_abort'

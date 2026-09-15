@@ -216,10 +216,21 @@ describe('createMemoryStore', () => {
       blocks: [{ type: 'text', text: 'hi' }],
       createdAt: 1,
     })
+    await store.upsertPendingAsk({
+      callId: 'call_keep',
+      sessionId: 's1',
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Bash?',
+      input: {},
+      createdAt: 1,
+    })
     await store.deleteSession('s1')
     await expect(store.loadSession('s1')).rejects.toBeInstanceOf(PersistError)
     await expect(store.loadSession('child')).rejects.toBeInstanceOf(PersistError)
     expect(await store.listSessions()).toEqual([])
+    expect(await store.listPendingAsks('s1')).toEqual([])
+    expect(await store.getPendingAsk('call_keep')).toBeUndefined()
   })
 
   test('mailbox is FIFO and session-isolated', async () => {

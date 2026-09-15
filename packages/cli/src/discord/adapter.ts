@@ -289,7 +289,7 @@ function parsePermitReply(text: string): DiscordPermissionAnswer | undefined {
 }
 
 async function askDiscordPermission(opts: {
-  event: { id: string; tool: string; message: string }
+  event: { id: string; tool: string; message: string; childSessionId?: string }
   signal: AbortSignal
   timeoutMs: number
   isDm: boolean
@@ -302,10 +302,11 @@ async function askDiscordPermission(opts: {
   const key = permitKey(opts.inbound.channelId, opts.inbound.userId)
   if (opts.permits.has(key)) return 'deny'
 
+  const child = opts.event.childSessionId ? ` child ${opts.event.childSessionId}` : ''
   const durable = opts.getPendingAsk !== undefined
   const prompt = durable
-    ? `Allow \`${opts.event.tool}\`? Reply allow or deny.`
-    : `Allow \`${opts.event.tool}\`? Reply allow or deny (${Math.round(opts.timeoutMs / 1000)}s).`
+    ? `Allow \`${opts.event.tool}\`${child}? Reply allow or deny.`
+    : `Allow \`${opts.event.tool}\`${child}? Reply allow or deny (${Math.round(opts.timeoutMs / 1000)}s).`
 
   let settle!: (answer: DiscordPermissionAnswer) => void
   let fail!: (error: Error) => void
@@ -342,10 +343,20 @@ async function askDiscordPermission(opts: {
     return waiter
   }
   opts.signal.addEventListener('abort', onAbort)
-  await opts.api.createMessage({
-    channelId: opts.inbound.threadId ?? opts.inbound.channelId,
-    content: prompt,
-  })
+  try {
+    const posted = await opts.api.createMessage({
+      channelId: opts.inbound.threadId ?? opts.inbound.channelId,
+      content: prompt,
+    })
+    if (posted.ok === false) throw new Error('discord post failed')
+  } catch (error) {
+    if (opts.permits.get(key)?.resolve === finish) {
+      opts.permits.delete(key)
+      if (timer !== undefined) clearTimeout(timer)
+      opts.signal.removeEventListener('abort', onAbort)
+    }
+    throw error
+  }
   return waiter
 }
 

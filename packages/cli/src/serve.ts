@@ -142,6 +142,19 @@ export type ServeEngine = {
 
 export type ServeRuntime = {
   engine: ServeEngine
+  store?: {
+    listPendingAsks: (sessionId: string) => Promise<
+      Array<{
+        callId: string
+        sessionId: string
+        tool: string
+        message: string
+        input: unknown
+        saveAs?: string
+      }>
+    >
+    listSessions?: (filter?: { parentSessionId?: string | null }) => Promise<Array<{ id: string }>>
+  }
 }
 
 export type SessionEventSink = (event: StreamEvent) => void
@@ -243,8 +256,16 @@ export function createServeRuntimeCaches(hub: SessionEventHub): ServeRuntimeCach
   return {
     turnEngines,
     sessionEngines,
-    runtimeForTurnId: (sessionId, open) => cached(turnEngines, turnOpening, sessionId, open),
-    runtimeForSessionId: (sessionId, open) => cached(sessionEngines, sessionOpening, sessionId, open),
+    runtimeForTurnId: (sessionId, open) => {
+      const liveSession = sessionEngines.get(sessionId)
+      if (liveSession) return Promise.resolve(liveSession)
+      return cached(turnEngines, turnOpening, sessionId, open)
+    },
+    runtimeForSessionId: (sessionId, open) => {
+      const liveTurn = turnEngines.get(sessionId)
+      if (liveTurn) return Promise.resolve(liveTurn)
+      return cached(sessionEngines, sessionOpening, sessionId, open)
+    },
     liveEngines() {
       return {
         *[Symbol.iterator]() {
@@ -278,6 +299,38 @@ export function sessionOpenErrorResponse(error: unknown): Response {
 function isMissingSession(error: unknown): boolean {
   if (error instanceof PersistError && error.message.startsWith('session not found')) return true
   return error instanceof Error && error.message.startsWith('session not found')
+}
+
+async function publishParkedAsks(
+  runtime: ServeRuntime,
+  sessionId: string,
+  hub: SessionEventHub,
+): Promise<void> {
+  const store = runtime.store
+  if (!store?.listPendingAsks) return
+  const rows = [...(await store.listPendingAsks(sessionId))]
+  if (store.listSessions) {
+    const children = await store.listSessions({ parentSessionId: sessionId })
+    for (const child of children) {
+      for (const row of await store.listPendingAsks(child.id)) {
+        rows.push({ ...row, sessionId: child.id })
+      }
+    }
+  }
+  for (const row of rows) {
+    const event: Extract<StreamEvent, { type: 'permission_ask' }> = {
+      type: 'permission_ask',
+      id: row.callId,
+      tool: row.tool,
+      input: row.input,
+      message: row.message,
+    }
+    if (row.saveAs !== undefined) {
+      event.saveAs = row.saveAs as Extract<StreamEvent, { type: 'permission_ask' }>['saveAs']
+    }
+    if (row.sessionId !== sessionId) event.childSessionId = row.sessionId
+    hub.publish(sessionId, event)
+  }
 }
 
 function unauthorized(): Response {
@@ -361,6 +414,7 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
               unsub()
             }
           })
+          void publishParkedAsks(loaded.runtime, sessionId, ctx.hub)
           const onAbort = () => {
             unsub()
             try {
@@ -444,7 +498,7 @@ export async function runServe(opts: { flags: ConfigFlags }): Promise<number> {
   })
   const sessionBoot = {
     ...shared,
-    lockHolderId: crypto.randomUUID(),
+    lockHolderId: shared.lockHolderId,
     config: loadConfig({ home: shared.config.home, flags: { ...opts.flags, dontAsk: false } }),
   }
 

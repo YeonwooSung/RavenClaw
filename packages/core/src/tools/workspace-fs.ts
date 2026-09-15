@@ -72,8 +72,11 @@ export function createWorkspaceFs(opts: {
           mtimeMs: st.mtimeMs,
           size: st.size,
         }
-      } catch {
-        return { exists: false, isFile: false, isDir: false, mtimeMs: 0, size: 0 }
+      } catch (error) {
+        if (isEnoent(error)) {
+          return { exists: false, isFile: false, isDir: false, mtimeMs: 0, size: 0 }
+        }
+        throw error
       }
     },
     readdir(path) {
@@ -93,4 +96,13 @@ function isInsideRoot(resolved: string, root: string): boolean {
   if (resolved === root) return true
   const prefix = root.endsWith(sep) ? root : root + sep
   return resolved.startsWith(prefix)
+}
+
+function isEnoent(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: unknown }).code === 'ENOENT'
+  )
 }

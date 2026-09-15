@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createWorkspaceFs } from './workspace-fs'
@@ -82,6 +82,21 @@ describe('createWorkspaceFs', () => {
     expect(() => fs.readdir('/tmp')).toThrow(/outside workspace/)
     expect(() => fs.unlink('/tmp/raven-outside.txt')).toThrow(/outside workspace/)
     expect(() => fs.realpath('/etc/passwd')).toThrow(/outside workspace/)
+  })
+
+  test('stat maps only ENOENT to exists:false and rethrows other errors', () => {
+    const cwd = fixtureRoot()
+    const fs = createWorkspaceFs({ cwd, backend: 'local' })
+    expect(fs.stat(join(cwd, 'missing.txt')).exists).toBe(false)
+    const hidden = join(cwd, 'hidden')
+    mkdirSync(hidden)
+    writeFileSync(join(hidden, 'secret.txt'), 'x')
+    chmodSync(hidden, 0)
+    try {
+      expect(() => fs.stat(join(hidden, 'secret.txt'))).toThrow()
+    } finally {
+      chmodSync(hidden, 0o700)
+    }
   })
 
   test('symlink that resolves outside cwd is rejected before I/O', () => {

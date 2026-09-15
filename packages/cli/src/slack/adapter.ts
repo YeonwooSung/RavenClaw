@@ -403,12 +403,22 @@ async function askSlackPermission(opts: {
     return waiter
   }
   opts.signal.addEventListener('abort', onAbort)
-  await opts.api.postMessage({
-    channel: opts.inbound.channel,
-    text: prompt,
-    threadTs: opts.inbound.threadTs ?? opts.inbound.ts,
-    blocks: permissionBlocks(opts.event.id, opts.event.tool, prompt),
-  })
+  try {
+    const posted = await opts.api.postMessage({
+      channel: opts.inbound.channel,
+      text: prompt,
+      threadTs: opts.inbound.threadTs ?? opts.inbound.ts,
+      blocks: permissionBlocks(opts.event.id, opts.event.tool, prompt),
+    })
+    if (posted.ok === false) throw new Error('slack post failed')
+  } catch (error) {
+    if (opts.permits.get(key)?.resolve === finish) {
+      opts.permits.delete(key)
+      if (timer !== undefined) clearTimeout(timer)
+      opts.signal.removeEventListener('abort', onAbort)
+    }
+    throw error
+  }
   return waiter
 }
 

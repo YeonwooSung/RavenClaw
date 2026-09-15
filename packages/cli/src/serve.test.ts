@@ -363,6 +363,44 @@ describe('handleServeRequest', () => {
     expect(await firstLine).toEqual({ type: 'text_delta', text: 'hi' })
   })
 
+  test('GET /v1/session/:id/stream emits parked permission_ask rows on subscribe', async () => {
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    await ctx.store.createSession({
+      id: 's1',
+      createdAt: 1,
+      updatedAt: 1,
+      cwd: '/tmp',
+      model: 'dummy',
+      permissionMode: 'default',
+      compactGeneration: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      funding: 'byok',
+    })
+    await ctx.store.upsertPendingAsk({
+      callId: 'parked_1',
+      sessionId: 's1',
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    const streamRes = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/stream', {
+        headers: { authorization: 'Bearer secret' },
+      }),
+      ctx,
+    )
+    expect(streamRes.status).toBe(200)
+    expect(await readFirstJsonLine(streamRes)).toEqual({
+      type: 'permission_ask',
+      id: 'parked_1',
+      tool: 'Echo',
+      input: { text: 'hi' },
+      message: 'Echo?',
+    })
+  })
+
   test('GET /v1/session/:id/stream tails replayPendingAsks events as NDJSON', async () => {
     const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
     ctx.replayEvents.push({
@@ -484,7 +522,7 @@ function stubRuntime(tag: string): { engine: ServeEngine; tag: string } {
 }
 
 describe('createServeRuntimeCaches', () => {
-  test('turn and session caches never share an engine for the same id', async () => {
+  test('session routes reuse a live turn engine for the same id', async () => {
     const hub = createSessionEventHub()
     const caches = createServeRuntimeCaches(hub)
     let turnOpens = 0
@@ -510,12 +548,46 @@ describe('createServeRuntimeCaches', () => {
     })
 
     expect(turnOpens).toBe(1)
-    expect(sessionOpens).toBe(1)
+    expect(sessionOpens).toBe(0)
     expect(caches.turnEngines.has('s1')).toBe(true)
-    expect(caches.sessionEngines.has('s1')).toBe(true)
-    expect(caches.turnEngines.get('s1')).not.toBe(caches.sessionEngines.get('s1'))
+    expect(caches.sessionEngines.has('s1')).toBe(false)
     expect(firstTurn).toBe(againTurn)
-    expect(firstSession).toBe(againSession)
-    expect(firstTurn).not.toBe(firstSession)
+    expect(firstSession).toBe(firstTurn)
+    expect(againSession).toBe(firstTurn)
+  })
+
+  test('turn routes reuse a live session engine for the same id', async () => {
+    const hub = createSessionEventHub()
+    const caches = createServeRuntimeCaches(hub)
+    let turnOpens = 0
+    let sessionOpens = 0
+    const session = stubRuntime('session')
+
+    const firstSession = await caches.runtimeForSessionId('s3', async () => {
+      sessionOpens += 1
+      return session as never
+    })
+    const firstTurn = await caches.runtimeForTurnId('s3', async () => {
+      turnOpens += 1
+      return stubRuntime('turn') as never
+    })
+
+    expect(sessionOpens).toBe(1)
+    expect(turnOpens).toBe(0)
+    expect(firstTurn).toBe(firstSession)
+    expect(caches.sessionEngines.has('s3')).toBe(true)
+    expect(caches.turnEngines.has('s3')).toBe(false)
+  })
+
+  test('session-only open still uses the session cache', async () => {
+    const hub = createSessionEventHub()
+    const caches = createServeRuntimeCaches(hub)
+    const session = stubRuntime('session')
+    const first = await caches.runtimeForSessionId('s2', async () => session as never)
+    const again = await caches.runtimeForSessionId('s2', async () => stubRuntime('session-2') as never)
+    expect(again).toBe(first)
+    expect((first as { tag: string }).tag).toBe('session')
+    expect(caches.turnEngines.has('s2')).toBe(false)
+    expect(caches.sessionEngines.get('s2')).toBe(first)
   })
 })

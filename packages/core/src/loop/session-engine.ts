@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import { runAutocompact } from '../compact/prune'
 import { mechanicalSummary } from '../compact/summarize'
 import { loadLifecycleHooks } from '../hooks/lifecycle'
@@ -11,6 +12,7 @@ import {
   type RoundEnd,
   type SessionEngine,
   type SessionEngineOptions,
+  type SessionStore,
   type StreamEvent,
   type SystemPart,
   type Tool,
@@ -25,17 +27,19 @@ import { selectProtectedTail } from './repair'
 import {
   denyText,
   executeFailedText,
+  INCOMPLETE_TEXT,
   makeToolMessage,
   parseFailedText,
   unknownToolText,
 } from './pairing'
+import { markReadPath } from '../tools/read-files'
 import { rewindLastTurn } from '../session/rewind'
 import { getSessionWorktree } from '../tools/session-worktree'
 import { applyPermissionMode } from '../prompt/builder'
 import { injectMidTurnHint } from '../prompt/cache'
 import { createMemoryStore } from '../session/memory-store'
 import { commandOrPath, persistAllowAlways } from '../permissions/rules'
-import type { PendingAskAnswer } from '../session/pending-asks'
+import type { PendingAsk, PendingAskAnswer } from '../session/pending-asks'
 import {
   BACKGROUND_REVIEW_PROMPT,
   backgroundReviewSession,
@@ -48,6 +52,24 @@ import {
 } from '../review/fork'
 
 const TITLE_MAX = 50
+
+function restoreReadFilesFromMessages(turn: Turn, rows: Message[]): void {
+  const paths = new Map<string, string>()
+  for (const msg of rows) {
+    if (msg.role === 'assistant') {
+      for (const block of msg.blocks) {
+        if (block.type !== 'tool_use' || block.name !== 'Read') continue
+        const path = (block.input as { path?: unknown } | undefined)?.path
+        if (typeof path === 'string' && path.length > 0) paths.set(block.id, path)
+      }
+    }
+    if (msg.role === 'tool' && msg.ok) {
+      const path = paths.get(msg.toolUseId)
+      if (path === undefined) continue
+      markReadPath(turn, resolve(turn.cwd, path))
+    }
+  }
+}
 
 function titleFromUserText(text: string): string | undefined {
   const first = text.split(/\r?\n/, 1)[0] ?? ''
@@ -100,14 +122,17 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
   let cancelBackgroundReview: (() => void) | undefined
   let replayAbort: AbortController | undefined
   const applyFlights = new Map<string, Promise<unknown>>()
+  const executedAsks = new Set<string>()
   const lifecycle = opts.bare
     ? { run: async () => undefined }
     : loadLifecycleHooks(session.cwd)
 
   async function persistSettledTool(
     row: Extract<Message, { role: 'tool' }>,
+    targetSessionId = session.id,
   ): Promise<void> {
-    await opts.store.persistToolResults(session.id, [row])
+    await opts.store.persistToolResults(targetSessionId, [row])
+    if (targetSessionId !== session.id) return
     messages = [...messages, row]
     if (liveTurn) liveTurn.messages = [...liveTurn.messages, row]
   }
@@ -124,13 +149,82 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
     return rows.some((msg) => msg.role === 'tool' && msg.toolUseId === callId)
   }
 
-  async function isCallPaired(callId: string): Promise<boolean> {
-    if (hasToolResult(callId, messages)) return true
+  async function isCallPaired(callId: string, targetSessionId = session.id): Promise<boolean> {
+    if (targetSessionId === session.id && hasToolResult(callId, messages)) return true
     if (opts.store.loadMessages === undefined) return false
     try {
-      return hasToolResult(callId, await opts.store.loadMessages(session.id))
+      return hasToolResult(callId, await opts.store.loadMessages(targetSessionId))
     } catch {
       return false
+    }
+  }
+
+  async function listOwnedPendingAsks() {
+    const own = await opts.store.listPendingAsks(session.id)
+    const children = opts.store.listSessions
+      ? await opts.store.listSessions({ parentSessionId: session.id })
+      : []
+    const nested: PendingAsk[] = []
+    for (const child of children) {
+      nested.push(...(await opts.store.listPendingAsks(child.id)))
+    }
+    return [...own, ...nested]
+  }
+
+  async function resolveAskTarget(callId: string): Promise<
+    | { status: 'unmatched' }
+    | { status: 'paired' }
+    | {
+        status: 'open'
+        row: PendingAsk
+        sessionId: string
+        messages: Message[]
+        cwd: string
+        permissionMode: PermissionMode
+        prePlanMode?: PermissionMode
+      }
+  > {
+    const row = await opts.store.getPendingAsk(callId)
+    if (!row) {
+      if (await isCallPaired(callId)) return { status: 'paired' }
+      return { status: 'unmatched' }
+    }
+    if (row.sessionId === session.id) {
+      if (await isCallPaired(callId, session.id)) {
+        await dropPendingAsk(callId)
+        return { status: 'paired' }
+      }
+      return {
+        status: 'open',
+        row,
+        sessionId: session.id,
+        messages,
+        cwd: session.cwd,
+        permissionMode: session.permissionMode,
+        ...(session.prePlanMode !== undefined ? { prePlanMode: session.prePlanMode } : {}),
+      }
+    }
+    let child: Awaited<ReturnType<SessionStore['loadSession']>>
+    try {
+      child = await opts.store.loadSession(row.sessionId)
+    } catch {
+      return { status: 'unmatched' }
+    }
+    if (child.session.parentSessionId !== session.id) return { status: 'unmatched' }
+    if (await isCallPaired(callId, row.sessionId)) {
+      await dropPendingAsk(callId)
+      return { status: 'paired' }
+    }
+    return {
+      status: 'open',
+      row,
+      sessionId: row.sessionId,
+      messages: child.messages,
+      cwd: child.session.cwd,
+      permissionMode: child.session.permissionMode,
+      ...(child.session.prePlanMode !== undefined
+        ? { prePlanMode: child.session.prePlanMode }
+        : {}),
     }
   }
 
@@ -138,15 +232,23 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
     callId: string,
     answer: PendingAskAnswer,
   ): Promise<'matched' | 'unmatched'> {
-    if (await isCallPaired(callId)) {
+    const target = await resolveAskTarget(callId)
+    if (target.status === 'unmatched') return 'unmatched'
+    if (target.status === 'paired') return 'matched'
+
+    const { row } = target
+    if (executedAsks.has(callId)) {
+      try {
+        await persistSettledTool(makeToolMessage(callId, false, INCOMPLETE_TEXT), target.sessionId)
+      } catch {
+        // already executed; pairing is best-effort
+      }
       await dropPendingAsk(callId)
       return 'matched'
     }
-    const row = await opts.store.getPendingAsk(callId)
-    if (!row || row.sessionId !== session.id) return 'unmatched'
 
     if (answer === 'deny') {
-      await persistSettledTool(makeToolMessage(callId, false, denyText(row.message)))
+      await persistSettledTool(makeToolMessage(callId, false, denyText(row.message)), target.sessionId)
       await dropPendingAsk(callId)
       return 'matched'
     }
@@ -154,8 +256,8 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
     if (answer === 'allow_always') {
       await persistAllowAlways({
         store: opts.store,
-        sessionId: session.id,
-        cwd: session.cwd,
+        sessionId: target.sessionId,
+        cwd: target.cwd,
         scope: row.saveAs ?? 'session',
         tool: row.tool,
         spec: commandOrPath(row.input) ?? {},
@@ -164,36 +266,53 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
 
     const tool = opts.tools.find((item) => item.name === row.tool)
     if (!tool) {
-      await persistSettledTool(makeToolMessage(callId, false, unknownToolText(row.tool)))
+      await persistSettledTool(makeToolMessage(callId, false, unknownToolText(row.tool)), target.sessionId)
       await dropPendingAsk(callId)
       return 'matched'
     }
 
     const parsed = tool.parse(row.input)
     if (!parsed.ok) {
-      await persistSettledTool(makeToolMessage(callId, false, parseFailedText(parsed.message)))
+      await persistSettledTool(
+        makeToolMessage(callId, false, parseFailedText(parsed.message)),
+        target.sessionId,
+      )
       await dropPendingAsk(callId)
       return 'matched'
     }
 
     const turn: Turn = {
       id: crypto.randomUUID(),
-      sessionId: session.id,
-      messages,
+      sessionId: target.sessionId,
+      messages: target.messages,
       round: 0,
       maxRounds: opts.maxRounds,
       graceUsed: false,
       abort: new AbortController(),
-      permissionMode: session.permissionMode,
+      permissionMode: target.permissionMode,
       usage: { ...session.usage },
       compactGeneration: session.compactGeneration,
       funding: session.funding,
-      cwd: session.cwd,
+      cwd: target.cwd,
       terminalBackend: opts.terminalBackend ?? 'local',
       model: session.model,
-      readFiles: new Set(),
+      readFiles:
+        liveTurn && target.sessionId === session.id ? new Set(liveTurn.readFiles) : new Set(),
+      readFileMtimes:
+        liveTurn && target.sessionId === session.id && liveTurn.readFileMtimes
+          ? new Map(liveTurn.readFileMtimes)
+          : new Map(),
     }
-    if (session.prePlanMode !== undefined) turn.prePlanMode = session.prePlanMode
+    if (target.prePlanMode !== undefined) turn.prePlanMode = target.prePlanMode
+    const extras = opts.additionalDirectories
+    if (extras !== undefined && extras.length > 0) {
+      turn.additionalDirectories = [...extras]
+    }
+    const worktree = getSessionWorktree(target.sessionId)
+    if (worktree) turn.projectCwd = worktree.originalCwd
+    if (!liveTurn || target.sessionId !== session.id) {
+      restoreReadFilesFromMessages(turn, target.messages)
+    }
     const ctx: ToolContext = {
       turn,
       signal: turn.abort.signal,
@@ -212,7 +331,17 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       const text = executeFailedText(error instanceof Error ? error.message : String(error))
       toolRow = makeToolMessage(callId, false, text)
     }
-    await persistSettledTool(toolRow)
+    executedAsks.add(callId)
+    try {
+      await persistSettledTool(toolRow, target.sessionId)
+    } catch (first) {
+      const incomplete = makeToolMessage(callId, false, INCOMPLETE_TEXT)
+      try {
+        await persistSettledTool(incomplete, target.sessionId)
+      } catch {
+        throw first
+      }
+    }
     await dropPendingAsk(callId)
     return 'matched'
   }
@@ -274,7 +403,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
   async function* replayPendingAsks(): AsyncGenerator<StreamEvent, void> {
     replayAbort = new AbortController()
     try {
-      for (const row of await opts.store.listPendingAsks(session.id)) {
+      for (const row of await listOwnedPendingAsks()) {
         const event: Extract<StreamEvent, { type: 'permission_ask' }> = {
           type: 'permission_ask',
           id: row.callId,
@@ -283,6 +412,8 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
           message: row.message,
         }
         if (row.saveAs !== undefined) event.saveAs = row.saveAs
+        if (row.sessionId !== session.id) event.childSessionId = row.sessionId
+        else if (session.parentSessionId !== undefined) event.childSessionId = session.id
         yield event
         const answer = await opts.askUser(event, replayAbort.signal)
         await applyAskAnswer(row.callId, answer)
@@ -346,7 +477,16 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       }
       const stopLockRenew = lock ? startLockRenew(opts.store, session.id, lock) : undefined
       try {
-      if ((await opts.store.listPendingAsks(session.id)).length > 0) {
+      const pending = await listOwnedPendingAsks()
+      let askBlocked = false
+      for (const row of pending) {
+        if (await isCallPaired(row.callId)) {
+          await dropPendingAsk(row.callId)
+          continue
+        }
+        askBlocked = true
+      }
+      if (askBlocked) {
         yield { type: 'status', message: 'pending permission ask' }
         return { reason: 'completed' as const }
       }
@@ -422,6 +562,14 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         messages = messages.slice(0, -1)
         liveTurn = null
         fileHistory.endTurn()
+        if (compactQueued) {
+          compactQueued = false
+          try {
+            await runCompactNow()
+          } catch {
+            // keep the persist error
+          }
+        }
         throw error
       }
 

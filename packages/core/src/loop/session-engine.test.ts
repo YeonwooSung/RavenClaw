@@ -1435,4 +1435,67 @@ describe('replayPendingAsks', () => {
     expect(events.some((e) => e.type === 'permission_ask' && e.id === 'call_1')).toBe(true)
     expect(await store.listPendingAsks(session.id)).toHaveLength(0)
   })
+
+  test('replayPendingAsks on a child session sets childSessionId', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_child', parentSessionId: 'sess_parent' })
+    await store.createSession(makeSession({ id: 'sess_parent' }))
+    await store.createSession(session)
+    await store.upsertPendingAsk({
+      callId: 'call_child',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Run ls?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    const engine = createSessionEngine({
+      ...engineOpts({
+        provider: createFakeProvider([]),
+        store,
+        session,
+      }),
+      askUser: async () => 'deny',
+    })
+    const events: StreamEvent[] = []
+    for await (const ev of engine.replayPendingAsks()) events.push(ev)
+    const ask = events.find((e) => e.type === 'permission_ask')
+    expect(ask && ask.type === 'permission_ask' ? ask.childSessionId : undefined).toBe('sess_child')
+  })
+
+  test('parent replayPendingAsks yields child leftover-asks with childSessionId', async () => {
+    const store = createMemoryStore()
+    const parent = makeSession({ id: 'sess_parent' })
+    const child = makeSession({ id: 'sess_child', parentSessionId: 'sess_parent' })
+    await store.createSession(parent)
+    await store.createSession(child)
+    await store.upsertPendingAsk({
+      callId: 'call_child',
+      sessionId: child.id,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Run ls?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    const seen: string[] = []
+    const engine = createSessionEngine({
+      ...engineOpts({
+        provider: createFakeProvider([]),
+        store,
+        session: parent,
+      }),
+      askUser: async (event) => {
+        seen.push(event.childSessionId ?? '')
+        return 'deny'
+      },
+    })
+    const events: StreamEvent[] = []
+    for await (const ev of engine.replayPendingAsks()) events.push(ev)
+    expect(seen).toEqual(['sess_child'])
+    const ask = events.find((e) => e.type === 'permission_ask')
+    expect(ask && ask.type === 'permission_ask' ? ask.id : undefined).toBe('call_child')
+    expect(await store.listPendingAsks(child.id)).toHaveLength(0)
+  })
 })

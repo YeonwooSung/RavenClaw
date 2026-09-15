@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -20,6 +20,7 @@ import { createSessionEngine } from './session-engine'
 import { resumeSession } from '../session/resume'
 import { unpairedToolUseIds } from './pairing'
 import { createMemoryStore } from '../session/memory-store'
+import { writeTool } from '../tools/write'
 import { skillTool } from '../tools/skill'
 import { toolCallTool } from '../tools/tool-call'
 import { GRACE_NOTICE } from './budget'
@@ -789,7 +790,7 @@ describe('queryLoop via SessionEngine', () => {
     expect(await store.listPendingAsks(session.id)).toHaveLength(0)
   })
 
-  test('applyAskAnswer persist failure after execute does not write executeFailedText', async () => {
+  test('applyAskAnswer persist failure after execute pairs incomplete and does not re-execute', async () => {
     const store = createMemoryStore()
     const session = makeSession({ id: 'sess_persist_fail' })
     await store.createSession(session)
@@ -824,12 +825,159 @@ describe('queryLoop via SessionEngine', () => {
         tools: [echo],
       }),
     )
-    await expect(engine.applyAskAnswer('call_1', 'allow')).rejects.toThrow('persist boom')
+    expect(await engine.applyAskAnswer('call_1', 'allow')).toBe('matched')
+    expect(echo.executeCount).toBe(1)
+    expect(await store.listPendingAsks(session.id)).toHaveLength(0)
+    const loaded = await store.loadSession(session.id)
+    const toolRow = loaded.messages.find((m) => m.role === 'tool')
+    expect(toolRow?.ok).toBe(false)
+    expect(toolRow && toolRow.role === 'tool' ? toolRow.blocks[0]?.text : '').toBe(INCOMPLETE_TEXT)
+    expect(await engine.applyAskAnswer('call_1', 'allow')).toBe('matched')
+    expect(echo.executeCount).toBe(1)
+  })
+
+  test('applyAskAnswer persist failure on both attempts does not re-execute', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_persist_both' })
+    await store.createSession(session)
+    await store.persistToolCalls(session.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_1', name: 'Echo', input: { text: 'hi' } }],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    store.persistToolResults = async () => {
+      throw new PersistError('busy', 'persist boom')
+    }
+    const echo = createAskEcho()
+    const engine = createSessionEngine(
+      engineOpts({
+        provider: createFakeProvider([textThenStop('nope')]),
+        store,
+        session,
+        tools: [echo],
+      }),
+    )
+    await expect(engine.applyAskAnswer('call_1', 'allow')).rejects.toBeInstanceOf(PersistError)
     expect(echo.executeCount).toBe(1)
     expect(await store.listPendingAsks(session.id)).toHaveLength(1)
-    store.persistToolResults = inner
+    await expect(engine.applyAskAnswer('call_1', 'allow')).resolves.toBe('matched')
+    expect(echo.executeCount).toBe(1)
+  })
+
+  test('parent applyAskAnswer settles a child leftover-ask onto the child session', async () => {
+    const store = createMemoryStore()
+    const parent = makeSession({ id: 'sess_parent' })
+    const child = makeSession({ id: 'sess_child', parentSessionId: 'sess_parent' })
+    await store.createSession(parent)
+    await store.createSession(child)
+    await store.persistToolCalls(child.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_child', name: 'Echo', input: { text: 'hi' } }],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_child',
+      sessionId: child.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    const echo = createAskEcho()
+    const engine = createSessionEngine(
+      engineOpts({
+        provider: createFakeProvider([textThenStop('nope')]),
+        store,
+        session: parent,
+        tools: [echo],
+      }),
+    )
+    expect(await engine.applyAskAnswer('call_child', 'allow')).toBe('matched')
+    expect(echo.executeCount).toBe(1)
+    expect(await store.listPendingAsks(child.id)).toHaveLength(0)
+    const childLoaded = await store.loadSession(child.id)
+    const toolRow = childLoaded.messages.find((m) => m.role === 'tool')
+    expect(toolRow?.ok).toBe(true)
+    const parentLoaded = await store.loadSession(parent.id)
+    expect(parentLoaded.messages.some((m) => m.role === 'tool')).toBe(false)
+  })
+
+  test('applyAskAnswer allow of existing Write honors a prior Read in session messages', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'raven-apply-write-'))
+    writeFileSync(join(root, 'a.txt'), 'old\n')
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_write_read', cwd: root })
+    await store.createSession(session)
+    await store.persistToolCalls(session.id, {
+      id: 'a_read',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_read', name: 'Read', input: { path: 'a.txt' } }],
+      createdAt: 1,
+    })
+    await store.persistToolResults(session.id, [
+      {
+        id: 't_read',
+        role: 'tool',
+        toolUseId: 'call_read',
+        ok: true,
+        blocks: [{ type: 'text', text: 'old\n' }],
+        createdAt: 2,
+      },
+    ])
+    await store.persistToolCalls(session.id, {
+      id: 'a_write',
+      role: 'assistant',
+      blocks: [
+        {
+          type: 'tool_use',
+          id: 'call_write',
+          name: 'Write',
+          input: { path: 'a.txt', content: 'new\n' },
+        },
+      ],
+      createdAt: 3,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_write',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Write',
+      message: 'Write this file?',
+      input: { path: 'a.txt', content: 'new\n' },
+      createdAt: 3,
+    })
     const loaded = await store.loadSession(session.id)
-    expect(loaded.messages.filter((m) => m.role === 'tool')).toHaveLength(0)
+    const engine = createSessionEngine(
+      engineOpts({
+        provider: createFakeProvider([textThenStop('nope')]),
+        store,
+        session,
+        messages: loaded.messages,
+        tools: [writeTool],
+      }),
+    )
+    expect(await engine.applyAskAnswer('call_write', 'allow')).toBe('matched')
+    const after = await store.loadSession(session.id)
+    const toolRow = after.messages.find(
+      (m): m is Extract<Message, { role: 'tool' }> =>
+        m.role === 'tool' && m.toolUseId === 'call_write',
+    )
+    expect(toolRow?.ok).toBe(true)
+    expect(toolRow?.blocks[0]?.text ?? '').not.toMatch(/must be Read first/)
+    expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('new\n')
+    rmSync(root, { recursive: true, force: true })
   })
 
   test('concurrent applyAskAnswer allow executes once and unblocks submitMessage', async () => {
@@ -921,12 +1069,10 @@ describe('queryLoop via SessionEngine', () => {
     await expect(engine.applyAskAnswer('call_1', 'allow')).resolves.toBe('matched')
     expect(echo.executeCount).toBe(1)
     expect(await store.listPendingAsks(session.id)).toHaveLength(1)
-    await expect(engine.applyAskAnswer('call_1', 'allow')).resolves.toBe('matched')
-    expect(echo.executeCount).toBe(1)
-    expect(await store.listPendingAsks(session.id)).toHaveLength(0)
     const { events, result } = await collect(engine.submitMessage('hello'))
     expect(result).toEqual({ reason: 'completed' })
     expect(events.some((e) => e.type === 'status' && e.message.includes('pending'))).toBe(false)
+    expect(echo.executeCount).toBe(1)
   })
 
   test('submitMessage while a pending ask exists does not append a user row', async () => {

@@ -48,6 +48,7 @@ export function createChatSessionHost(opts: {
   const opening = new Map<string, Promise<CliRuntime>>()
   const turnFlights = new Map<string, Promise<unknown>>()
   const replayed = new Set<string>()
+  const replaying = new Set<string>()
   const askStore = new AsyncLocalStorage<ChatAsk>()
   const openNew = opts.openNewSession ?? openNewSession
   const resume = opts.resumeRuntime ?? resumeRuntime
@@ -84,16 +85,22 @@ export function createChatSessionHost(opts: {
       engines.set(resolvedId.id, opened)
       return opened
     })
-    if (req.replayPending !== false && !replayed.has(runtime.engine.session.id)) {
-      const replay = runtime.engine.replayPendingAsks
-      if (typeof replay === 'function') {
-        await askStore.run(req.askUser, async () => {
-          for await (const _event of replay.call(runtime.engine)) {
-            // Slack/Discord askUser re-posts the leftover prompt
-          }
-        })
+    const sessionId = runtime.engine.session.id
+    if (req.replayPending !== false && !replayed.has(sessionId) && !replaying.has(sessionId)) {
+      replaying.add(sessionId)
+      try {
+        const replay = runtime.engine.replayPendingAsks
+        if (typeof replay === 'function') {
+          await askStore.run(req.askUser, async () => {
+            for await (const _event of replay.call(runtime.engine)) {
+              // Slack/Discord askUser re-posts the leftover prompt
+            }
+          })
+        }
+        replayed.add(sessionId)
+      } finally {
+        replaying.delete(sessionId)
       }
-      replayed.add(runtime.engine.session.id)
     }
     const bound: ChatBoundSession = {
       sessionId: runtime.engine.session.id,

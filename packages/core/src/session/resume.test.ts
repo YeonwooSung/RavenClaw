@@ -143,4 +143,40 @@ describe('resumeSession', () => {
     } as SessionStore
     await expect(resumeSession(store, 's1')).resolves.toBeTruthy()
   })
+
+  test('resumeSession allows unpaired Agent when a child session has a pending ask', async () => {
+    const store = {
+      async loadSession() {
+        return {
+          session: session(),
+          messages: [
+            {
+              id: 'a1',
+              role: 'assistant',
+              blocks: [{ type: 'tool_use', id: 'agent_1', name: 'Agent', input: { prompt: 'x' } }],
+              createdAt: 1,
+            },
+          ] satisfies Message[],
+        }
+      },
+      async listPendingAsks(sessionId: string) {
+        if (sessionId !== 'child') return []
+        return [
+          {
+            callId: 'child_call',
+            sessionId: 'child',
+            kind: 'leftover' as const,
+            tool: 'Bash',
+            message: 'Bash?',
+            input: {},
+            createdAt: 1,
+          },
+        ]
+      },
+      async listSessions() {
+        return [session({ id: 'child', parentSessionId: 's1' })]
+      },
+    } as unknown as SessionStore
+    await expect(resumeSession(store, 's1')).resolves.toBeTruthy()
+  })
 })

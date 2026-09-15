@@ -252,6 +252,9 @@ async function spawnChild(
         engineOpts.fileHistory = ctx.fileHistory
         engineOpts.fileHistoryOwnsTurn = false
       }
+      if (ctx.turn.terminalBackend !== undefined) {
+        engineOpts.terminalBackend = ctx.turn.terminalBackend
+      }
       engine = wrapSessionEngineLog(createSessionEngine(engineOpts), openRavenclawLog(), {
         closeLog: false,
       })
@@ -451,6 +454,7 @@ function buildChildTurn(
     readFiles: new Set(),
     readFileMtimes: new Map(),
   }
+  if (parent.terminalBackend !== undefined) turn.terminalBackend = parent.terminalBackend
   if (session.prePlanMode !== undefined) turn.prePlanMode = session.prePlanMode
   if (parent.specialistModel !== undefined) turn.specialistModel = parent.specialistModel
   if (parent.skillAllowedTools !== undefined) {
