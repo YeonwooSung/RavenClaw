@@ -19,6 +19,12 @@ import { clipAgentMailBody } from '../tasks/mailbox'
 import { repairRoleAlternation } from '../loop/repair'
 import { applyMigrations } from './schema'
 import {
+  deletePendingAskRow,
+  getPendingAskRow,
+  listPendingAskRows,
+  upsertPendingAskRow,
+} from './pending-asks'
+import {
   indexMessageFts,
   searchMessages,
   unindexMessagesFts,
@@ -315,6 +321,7 @@ export function createSqliteStore(dbPath: string): SessionStore {
     `UPDATE sessions SET compact_generation = ?, updated_at = ? WHERE id = ?`,
   )
   const deleteRules = db.query(`DELETE FROM permission_rules WHERE session_id = ?`)
+  const deletePendingAsksBySession = db.query(`DELETE FROM pending_asks WHERE session_id = ?`)
   const deleteFtsBySession = db.query(`DELETE FROM messages_fts WHERE session_id = ?`)
   const deleteMessagesBySession = db.query(`DELETE FROM messages WHERE session_id = ?`)
   const deleteBoundariesBySession = db.query(`DELETE FROM compact_boundaries WHERE session_id = ?`)
@@ -519,7 +526,8 @@ export function createSqliteStore(dbPath: string): SessionStore {
       } catch (error) {
         throw toPersistError(error)
       }
-      const repaired = repairRoleAlternation(active)
+      const open = await store.listPendingAsks(sessionId)
+      const repaired = repairRoleAlternation(active, new Set(open.map((r) => r.callId)))
       const existingIds = new Set(active.map((msg) => msg.id))
       const inserted = repaired.filter(
         (msg): msg is Extract<Message, { role: 'tool' }> =>
@@ -561,7 +569,28 @@ export function createSqliteStore(dbPath: string): SessionStore {
         deleteMessagesBySession.run(sessionId)
         deleteBoundariesBySession.run(sessionId)
         deleteRules.run(sessionId)
+        deletePendingAsksBySession.run(sessionId)
         deleteSessionRow.run(sessionId)
+      })
+    },
+
+    async upsertPendingAsk(row) {
+      await withWrite(async () => {
+        upsertPendingAskRow(db, row)
+      })
+    },
+
+    async listPendingAsks(sessionId) {
+      return listPendingAskRows(db, sessionId)
+    },
+
+    async getPendingAsk(callId) {
+      return getPendingAskRow(db, callId)
+    },
+
+    async deletePendingAsk(callId) {
+      await withWrite(async () => {
+        deletePendingAskRow(db, callId)
       })
     },
 

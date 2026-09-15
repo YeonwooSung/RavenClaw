@@ -11,6 +11,7 @@ import type {
   SessionRecord,
   SessionStore,
 } from '../types'
+import type { PendingAsk } from './pending-asks'
 import { repairRoleAlternation } from '../loop/repair'
 import { clipAgentMailBody } from '../tasks/mailbox'
 
@@ -58,6 +59,7 @@ export function createMemoryStore(): SessionStore {
   const rules = new Map<string, PermissionRule[]>()
   const mail = new Map<string, Array<{ id: number; createdAt: number; body: string }>>()
   const locks = new Map<string, MemoryLock>()
+  const pendingAsks = new Map<string, PendingAsk>()
   let mailSeq = 0
 
   let tail: Promise<void> = Promise.resolve()
@@ -165,7 +167,8 @@ export function createMemoryStore(): SessionStore {
         throw new PersistError('unknown', `session not found: ${sessionId}`)
       }
       const active = readActiveMessages(sessionId)
-      const repaired = repairRoleAlternation(active)
+      const open = await store.listPendingAsks(sessionId)
+      const repaired = repairRoleAlternation(active, new Set(open.map((r) => r.callId)))
       const existingIds = new Set(active.map((msg) => msg.id))
       const inserted = repaired.filter(
         (msg): msg is Extract<Message, { role: 'tool' }> =>
@@ -198,9 +201,36 @@ export function createMemoryStore(): SessionStore {
         rules.delete(sessionId)
         mail.delete(sessionId)
         locks.delete(sessionId)
+        for (const [callId, row] of pendingAsks) {
+          if (row.sessionId === sessionId) pendingAsks.delete(callId)
+        }
         for (const key of [...assistantKind.keys()]) {
           if (key.startsWith(`${sessionId}:`)) assistantKind.delete(key)
         }
+      })
+    },
+
+    async upsertPendingAsk(row) {
+      await withWrite(async () => {
+        pendingAsks.set(row.callId, { ...row })
+      })
+    },
+
+    async listPendingAsks(sessionId) {
+      return [...pendingAsks.values()]
+        .filter((row) => row.sessionId === sessionId)
+        .map((row) => ({ ...row }))
+        .sort((a, b) => a.createdAt - b.createdAt || a.callId.localeCompare(b.callId))
+    },
+
+    async getPendingAsk(callId) {
+      const row = pendingAsks.get(callId)
+      return row ? { ...row } : undefined
+    },
+
+    async deletePendingAsk(callId) {
+      await withWrite(async () => {
+        pendingAsks.delete(callId)
       })
     },
 

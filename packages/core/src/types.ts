@@ -1,3 +1,5 @@
+import type { PendingAsk } from './session/pending-asks'
+
 export type ApiMode = 'openai_compat' | 'anthropic_messages' | 'openai_responses'
 export type SystemTier = 'stable' | 'context' | 'volatile'
 
@@ -321,6 +323,10 @@ export interface SessionStore {
    */
   loadMessages?(sessionId: string): Promise<Message[]>
   deleteSession(sessionId: string): Promise<void>
+  upsertPendingAsk(row: PendingAsk): Promise<void>
+  listPendingAsks(sessionId: string): Promise<PendingAsk[]>
+  getPendingAsk(callId: string): Promise<PendingAsk | undefined>
+  deletePendingAsk(callId: string): Promise<void>
   persistUser(sessionId: string, message: Extract<Message, { role: 'user' }>): Promise<void>
   /**
    * Text-only assistant completions (no tool_use). Do not call for a tool-use round.

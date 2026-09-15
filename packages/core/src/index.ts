@@ -36,6 +36,7 @@ export {
 } from './loop/repair'
 export { createMemoryStore } from './session/memory-store'
 export { createSqliteStore, searchSessionStore, sqliteStoreDatabase } from './session/sqlite-store'
+export type { PendingAsk, PendingAskAnswer, PendingAskKind } from './session/pending-asks'
 export { createMemoryDeliveries, createSqliteDeliveries, deliveryKey } from './session/deliveries'
 export type { DeliveryLedger } from './session/deliveries'
 export { resumeSession } from './session/resume'
