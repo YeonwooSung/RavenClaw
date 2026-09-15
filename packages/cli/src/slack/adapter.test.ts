@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
+import { createMemoryStore } from '@ravenclaw/core'
 import { admitSlackEvent } from './admit'
-import { runSlackAdapter } from './adapter'
+import { permissionBlocks, runSlackAdapter } from './adapter'
 import { slackEventIsDm, slackSessionKey, slackUserText } from './session-key'
 import type {
   SlackApi,
@@ -462,5 +463,114 @@ describe('runSlackAdapter', () => {
     expect(submitted).toEqual(['first', 'second'])
     expect(submits).toBe(2)
     expect(maxInFlight).toBe(1)
+  })
+
+  test('slack allow button value is the call id', () => {
+    const blocks = permissionBlocks('call_1', 'Bash', 'Allow Bash?')
+    const actions = (blocks[1] as { elements: Array<{ value: string; action_id: string }> }).elements
+    expect(actions[0]?.value).toBe('call_1')
+    expect(actions[0]?.action_id).toBe('raven_allow')
+  })
+
+  test('slack does not deny a durable pending row on timer', async () => {
+    const store = createMemoryStore()
+    const sessionId = 'sess_slack'
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Allow Bash?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    const socket = new FakeSlackSocket()
+    let answered: string | undefined
+    let askStarted!: () => void
+    const sawAsk = new Promise<void>((resolve) => {
+      askStarted = resolve
+    })
+    const running = runSlackAdapter({
+      config: slackConfig(),
+      socket,
+      api: new FakeSlackApi(),
+      permissionTimeoutMs: 5,
+      store,
+      openSession: async (req) => ({
+        sessionId,
+        async *submitMessage() {
+          const ac = new AbortController()
+          askStarted()
+          answered = await req.askUser({ id: 'call_1', tool: 'Bash', message: 'Allow Bash?' }, ac.signal)
+        },
+      }),
+    })
+    socket.push(dmMessage({ text: 'please', ts: '80.0' }))
+    await sawAsk
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(answered).toBeUndefined()
+    expect(await store.listPendingAsks(sessionId)).toHaveLength(1)
+    socket.push(dmMessage({ text: 'deny', ts: '81.0' }))
+    socket.end()
+    await running
+  })
+
+  test('non-allow/deny text does not submit while a pending row exists', async () => {
+    const store = createMemoryStore()
+    const sessionId = 'sess_stash'
+    await store.upsertPendingAsk({
+      callId: 'call_stash',
+      sessionId,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Allow Bash?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    const socket = new FakeSlackSocket()
+    const submitted: string[] = []
+    let releaseAsk!: (answer: 'allow' | 'deny') => void
+    const askHeld = new Promise<'allow' | 'deny'>((resolve) => {
+      releaseAsk = resolve
+    })
+    let askStarted!: () => void
+    const sawAsk = new Promise<void>((resolve) => {
+      askStarted = resolve
+    })
+    const running = runSlackAdapter({
+      config: slackConfig(),
+      socket,
+      api: new FakeSlackApi(),
+      store,
+      openSession: async (req) => ({
+        sessionId,
+        async *submitMessage(text: string) {
+          submitted.push(text)
+          if (text !== 'please') return
+          const ac = new AbortController()
+          askStarted()
+          const answer = await Promise.race([
+            req.askUser({ id: 'call_stash', tool: 'Bash', message: 'Allow Bash?' }, ac.signal),
+            askHeld,
+          ])
+          if (answer === 'allow' || answer === 'deny') {
+            await store.deletePendingAsk('call_stash')
+          }
+        },
+        async listPendingAsks() {
+          return store.listPendingAsks(sessionId)
+        },
+      }),
+    })
+    socket.push(dmMessage({ text: 'please', ts: '90.0' }))
+    await sawAsk
+    socket.push(dmMessage({ text: 'first extra', ts: '91.0' }))
+    socket.push(dmMessage({ text: 'second extra', ts: '92.0' }))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(submitted).toEqual(['please'])
+    releaseAsk('allow')
+    socket.end()
+    await running
+    expect(submitted).toEqual(['please', 'first extra'])
   })
 })

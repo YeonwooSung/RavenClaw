@@ -71,11 +71,18 @@ export interface SlackOpenSessionOpts {
     event: { id: string; tool: string; message: string },
     signal: AbortSignal,
   ) => Promise<SlackPermissionAnswer>
+  replayPending?: boolean
 }
 
 export interface SlackBoundSession {
   sessionId: string
   submitMessage: (text: string) => AsyncGenerator<unknown, unknown>
+  applyAskAnswer?: (
+    callId: string,
+    answer: SlackPermissionAnswer,
+  ) => Promise<'matched' | 'unmatched'>
+  listPendingAsks?: () => Promise<Array<{ callId: string }>>
+  getPendingAsk?: (callId: string) => Promise<{ callId: string } | undefined>
 }
 
 export type SlackOpenSession = (opts: SlackOpenSessionOpts) => Promise<SlackBoundSession>

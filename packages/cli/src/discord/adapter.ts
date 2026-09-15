@@ -1,4 +1,4 @@
-import { deliveryKey, type DeliveryLedger } from '@ravenclaw/core'
+import { deliveryKey, type DeliveryLedger, type SessionStore } from '@ravenclaw/core'
 import { streamChatTurn } from '../chat-host/stream-turn'
 import { issueOrReusePending } from '../pairing'
 import { singleFlight } from '../serve'
@@ -9,6 +9,7 @@ import { normalizeDiscordMessage } from './normalize'
 import { DISCORD_PERMISSION_TIMEOUT_MS, discordEventIsDm, discordSessionKey } from './session-key'
 import type {
   DiscordApi,
+  DiscordBoundSession,
   DiscordConfig,
   DiscordGateway,
   DiscordInbound,
@@ -30,6 +31,7 @@ export async function runDiscordAdapter(opts: {
   permissionTimeoutMs?: number
   now?: () => number
   turnFlights?: Map<string, Promise<unknown>>
+  store?: Pick<SessionStore, 'getPendingAsk' | 'listPendingAsks' | 'upsertPendingAsk'>
 }): Promise<void> {
   if (opts.config.enabled !== true && opts.gateway === undefined) {
     throw new Error('discord is disabled (set discord.enabled: true in config.yaml)')
@@ -49,8 +51,12 @@ export async function runDiscordAdapter(opts: {
   const gateway = opts.gateway ?? (await connectDiscordGateway(opts.config.token, { signal: opts.signal }))
   const inflight = new Set<Promise<void>>()
   const turnFlights = opts.turnFlights ?? new Map<string, Promise<unknown>>()
+  const occupancy = new Set<string>()
+  const stashed = new Map<string, string>()
+  const permits = new Map<string, PendingPermit>()
   const timeoutMs = opts.permissionTimeoutMs ?? DISCORD_PERMISSION_TIMEOUT_MS
   const now = opts.now ?? Date.now
+  const store = opts.store
 
   try {
     for await (const raw of gateway.events()) {
@@ -62,6 +68,8 @@ export async function runDiscordAdapter(opts: {
       const key = deliveryKey('discord', inbound.id)
       if (!opts.ledger.seen(key)) continue
 
+      if (tryResolvePermit(permits, inbound)) continue
+
       const decision = admitDiscordEvent(inbound, opts.config, { home: opts.pairingHome })
       if (decision === 'pair-dm') {
         const issued = issueOrReusePending(opts.pairingHome, 'discord', inbound.userId)
@@ -72,6 +80,22 @@ export async function runDiscordAdapter(opts: {
         continue
       }
       if (decision !== 'ok') continue
+      if (
+        await trySettleDurableAsk({
+          inbound,
+          api,
+          openSession: opts.openSession,
+          permits,
+          timeoutMs,
+          store,
+          stashed,
+          occupancy,
+          turnFlights,
+          now,
+        })
+      ) {
+        continue
+      }
 
       const task = handleTurn({
         inbound,
@@ -80,6 +104,10 @@ export async function runDiscordAdapter(opts: {
         timeoutMs,
         now,
         turnFlights,
+        occupancy,
+        stashed,
+        permits,
+        store,
       }).catch(() => {
         // turn failures are reported in-channel when possible
       })
@@ -99,48 +127,26 @@ async function handleTurn(opts: {
   timeoutMs: number
   now: () => number
   turnFlights: Map<string, Promise<unknown>>
+  occupancy: Set<string>
+  stashed: Map<string, string>
+  permits: Map<string, PendingPermit>
+  store?: Pick<SessionStore, 'getPendingAsk' | 'listPendingAsks' | 'upsertPendingAsk'>
 }): Promise<void> {
   const { inbound, api } = opts
-  const isDm = discordEventIsDm({ guildId: inbound.guildId })
-  const sessionKey = discordSessionKey({
-    channelId: inbound.channelId,
-    isDm,
-    ...(inbound.guildId !== undefined ? { guildId: inbound.guildId } : {}),
-    ...(inbound.threadId !== undefined ? { threadId: inbound.threadId } : {}),
-  })
-  const permissionMode = isDm ? 'default' : 'dontAsk'
   const replyChannelId = inbound.threadId ?? inbound.channelId
   try {
-    const session = await opts.openSession({
-      sessionKey,
-      permissionMode,
-      isDm,
-      askUser: (_event, signal) =>
-        askDiscordPermission({
-          signal,
-          timeoutMs: opts.timeoutMs,
-          isDm,
-        }),
-    })
-
-    await singleFlight(opts.turnFlights, session.sessionId, async () => {
-      await streamChatTurn({
-        session,
-        text: inbound.content,
-        clip: clipDiscordText,
-        now: opts.now,
-        formatError: turnFailureBody,
-        transport: {
-          async post(body) {
-            const posted = await api.createMessage({ channelId: replyChannelId, content: body })
-            return { ok: posted.ok, ...(posted.id !== undefined ? { id: posted.id } : {}) }
-          },
-          async edit(id, body) {
-            return api.editMessage({ channelId: replyChannelId, messageId: id, content: body })
-          },
-        },
-      })
-    })
+    const session = await openDiscordSession(opts, inbound)
+    if (opts.occupancy.has(session.sessionId) || opts.turnFlights.has(session.sessionId)) {
+      if (!opts.stashed.has(session.sessionId)) opts.stashed.set(session.sessionId, inbound.content)
+      return
+    }
+    opts.occupancy.add(session.sessionId)
+    try {
+      await submitDiscordText(opts, session, inbound)
+      await flushDiscordStash(opts, session, inbound)
+    } finally {
+      opts.occupancy.delete(session.sessionId)
+    }
   } catch (error) {
     await api.createMessage({
       channelId: replyChannelId,
@@ -149,30 +155,191 @@ async function handleTurn(opts: {
   }
 }
 
+async function trySettleDurableAsk(opts: {
+  inbound: DiscordInbound
+  api: DiscordApi
+  openSession: DiscordOpenSession
+  permits: Map<string, PendingPermit>
+  timeoutMs: number
+  store?: Pick<SessionStore, 'getPendingAsk' | 'listPendingAsks' | 'upsertPendingAsk'>
+  stashed: Map<string, string>
+  occupancy: Set<string>
+  turnFlights: Map<string, Promise<unknown>>
+  now: () => number
+}): Promise<boolean> {
+  const answer = parsePermitReply(opts.inbound.content)
+  if (answer === undefined) return false
+  const session = await openDiscordSession(opts, opts.inbound, false)
+  const pending = session.listPendingAsks
+    ? await session.listPendingAsks()
+    : opts.store
+      ? await opts.store.listPendingAsks(session.sessionId)
+      : []
+  const callId = pending[0]?.callId
+  if (callId === undefined || session.applyAskAnswer === undefined) return false
+  const settled = await session.applyAskAnswer(callId, answer)
+  if (settled !== 'matched') return false
+  await flushDiscordStash(opts, session, opts.inbound)
+  return true
+}
+
+async function submitDiscordText(
+  opts: {
+    api: DiscordApi
+    now: () => number
+    turnFlights: Map<string, Promise<unknown>>
+  },
+  session: DiscordBoundSession,
+  inbound: DiscordInbound,
+  text = inbound.content,
+): Promise<void> {
+  const replyChannelId = inbound.threadId ?? inbound.channelId
+  await singleFlight(opts.turnFlights, session.sessionId, async () => {
+    await streamChatTurn({
+      session,
+      text,
+      clip: clipDiscordText,
+      now: opts.now,
+      formatError: turnFailureBody,
+      transport: {
+        async post(body) {
+          const posted = await opts.api.createMessage({ channelId: replyChannelId, content: body })
+          return { ok: posted.ok, ...(posted.id !== undefined ? { id: posted.id } : {}) }
+        },
+        async edit(id, body) {
+          return opts.api.editMessage({ channelId: replyChannelId, messageId: id, content: body })
+        },
+      },
+    })
+  })
+}
+
+async function flushDiscordStash(
+  opts: {
+    api: DiscordApi
+    now: () => number
+    turnFlights: Map<string, Promise<unknown>>
+    stashed: Map<string, string>
+  },
+  session: DiscordBoundSession,
+  inbound: DiscordInbound,
+): Promise<void> {
+  const extra = opts.stashed.get(session.sessionId)
+  if (extra === undefined) return
+  opts.stashed.delete(session.sessionId)
+  await submitDiscordText(opts, session, inbound, extra)
+}
+
+async function openDiscordSession(
+  opts: {
+    openSession: DiscordOpenSession
+    api: DiscordApi
+    permits: Map<string, PendingPermit>
+    timeoutMs: number
+    store?: Pick<SessionStore, 'getPendingAsk' | 'listPendingAsks' | 'upsertPendingAsk'>
+  },
+  inbound: DiscordInbound,
+  replayPending = true,
+): Promise<DiscordBoundSession> {
+  const isDm = discordEventIsDm({ guildId: inbound.guildId })
+  const sessionKey = discordSessionKey({
+    channelId: inbound.channelId,
+    isDm,
+    ...(inbound.guildId !== undefined ? { guildId: inbound.guildId } : {}),
+    ...(inbound.threadId !== undefined ? { threadId: inbound.threadId } : {}),
+  })
+  const req: Parameters<DiscordOpenSession>[0] = {
+    sessionKey,
+    permissionMode: isDm ? 'default' : 'dontAsk',
+    isDm,
+    askUser: (event, signal) =>
+      askDiscordPermission({
+        event,
+        signal,
+        timeoutMs: opts.timeoutMs,
+        isDm,
+        api: opts.api,
+        inbound,
+        permits: opts.permits,
+        getPendingAsk: opts.store?.getPendingAsk.bind(opts.store),
+      }),
+  }
+  if (!replayPending) req.replayPending = false
+  return opts.openSession(req)
+}
+
+interface PendingPermit {
+  resolve: (answer: DiscordPermissionAnswer) => void
+  callId: string
+}
+
+function permitKey(channelId: string, userId: string): string {
+  return `${channelId}:${userId}`
+}
+
+function tryResolvePermit(permits: Map<string, PendingPermit>, inbound: DiscordInbound): boolean {
+  const pending = permits.get(permitKey(inbound.channelId, inbound.userId))
+  if (!pending) return false
+  const answer = parsePermitReply(inbound.content)
+  if (answer === undefined) return false
+  pending.resolve(answer)
+  return true
+}
+
+function parsePermitReply(text: string): DiscordPermissionAnswer | undefined {
+  const trimmed = text.replace(/<@!?\d+>/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase()
+  if (trimmed === 'allow' || trimmed === 'yes') return 'allow'
+  if (trimmed === 'deny' || trimmed === 'no') return 'deny'
+  return undefined
+}
+
 async function askDiscordPermission(opts: {
+  event: { id: string; tool: string; message: string }
   signal: AbortSignal
   timeoutMs: number
   isDm: boolean
+  api: DiscordApi
+  inbound: DiscordInbound
+  permits: Map<string, PendingPermit>
+  getPendingAsk?: (callId: string) => Promise<unknown>
 }): Promise<DiscordPermissionAnswer> {
   if (!opts.isDm) return 'deny'
-  return new Promise((resolve) => {
-    let done = false
-    const finish = (answer: DiscordPermissionAnswer) => {
-      if (done) return
-      done = true
-      clearTimeout(timer)
-      opts.signal.removeEventListener('abort', onAbort)
-      resolve(answer)
-    }
-    const onAbort = () => finish('deny')
-    const timer = setTimeout(() => finish('deny'), opts.timeoutMs)
-    timer.unref?.()
-    if (opts.signal.aborted) {
-      finish('deny')
-      return
-    }
-    opts.signal.addEventListener('abort', onAbort)
+  const key = permitKey(opts.inbound.channelId, opts.inbound.userId)
+  if (opts.permits.has(key)) return 'deny'
+
+  const durable = opts.getPendingAsk !== undefined
+  const prompt = durable
+    ? `Allow \`${opts.event.tool}\`? Reply allow or deny.`
+    : `Allow \`${opts.event.tool}\`? Reply allow or deny (${Math.round(opts.timeoutMs / 1000)}s).`
+
+  let settle!: (answer: DiscordPermissionAnswer) => void
+  const waiter = new Promise<DiscordPermissionAnswer>((resolve) => {
+    settle = resolve
   })
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const finish = (answer: DiscordPermissionAnswer) => {
+    if (!opts.permits.has(key)) return
+    opts.permits.delete(key)
+    if (timer !== undefined) clearTimeout(timer)
+    opts.signal.removeEventListener('abort', onAbort)
+    settle(answer)
+  }
+  const onAbort = () => finish('deny')
+  opts.permits.set(key, { resolve: finish, callId: opts.event.id })
+  if (!durable) {
+    timer = setTimeout(() => finish('deny'), opts.timeoutMs)
+    timer.unref?.()
+  }
+  if (opts.signal.aborted) {
+    finish('deny')
+    return waiter
+  }
+  opts.signal.addEventListener('abort', onAbort)
+  await opts.api.createMessage({
+    channelId: opts.inbound.threadId ?? opts.inbound.channelId,
+    content: prompt,
+  })
+  return waiter
 }
 
 function turnFailureBody(error: unknown): string {

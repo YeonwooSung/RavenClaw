@@ -2,6 +2,7 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'bun:test'
+import { saveSessionMap } from '@ravenclaw/core'
 import { createChatSessionHost } from './session-host'
 import type { CliRuntime } from '../engine'
 
@@ -77,5 +78,29 @@ describe('createChatSessionHost', () => {
     expect(bound.sessionId).toBe('sess_mode')
     const cached = host.engines.get('sess_mode')
     expect(cached?.engine.session.permissionMode).toBe('dontAsk')
+  })
+
+  test('session host replays pending asks after resumeRuntime', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'raven-chat-host-replay-'))
+    const existingSessionId = 'sess_existing'
+    saveSessionMap({ 'resume-key': existingSessionId }, home)
+    let replayed = 0
+    const host = createChatSessionHost({
+      home,
+      shared: fakeRuntime('shared'),
+      resumeRuntime: async () => {
+        const runtime = fakeRuntime(existingSessionId)
+        runtime.engine.replayPendingAsks = async function* () {
+          replayed += 1
+        }
+        return runtime
+      },
+    })
+    await host.openSession({
+      sessionKey: 'resume-key',
+      permissionMode: 'default',
+      askUser: async () => 'deny',
+    })
+    expect(replayed).toBe(1)
   })
 })

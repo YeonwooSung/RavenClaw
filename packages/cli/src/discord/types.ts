@@ -33,6 +33,12 @@ export type DiscordPermissionAnswer = 'allow' | 'deny' | 'allow_always'
 export interface DiscordBoundSession {
   sessionId: string
   submitMessage: (text: string) => AsyncGenerator<unknown, unknown>
+  applyAskAnswer?: (
+    callId: string,
+    answer: DiscordPermissionAnswer,
+  ) => Promise<'matched' | 'unmatched'>
+  listPendingAsks?: () => Promise<Array<{ callId: string }>>
+  getPendingAsk?: (callId: string) => Promise<{ callId: string } | undefined>
 }
 
 export type DiscordOpenSession = (req: {
@@ -43,4 +49,5 @@ export type DiscordOpenSession = (req: {
     event: { id: string; tool: string; message: string },
     signal: AbortSignal,
   ) => Promise<DiscordPermissionAnswer>
+  replayPending?: boolean
 }) => Promise<DiscordBoundSession>

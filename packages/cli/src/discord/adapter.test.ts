@@ -2,7 +2,12 @@ import { describe, expect, test } from 'bun:test'
 import { mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createMemoryDeliveries, SessionLockError, sessionLockedMessage } from '@ravenclaw/core'
+import {
+  createMemoryDeliveries,
+  createMemoryStore,
+  SessionLockError,
+  sessionLockedMessage,
+} from '@ravenclaw/core'
 import { runDiscordAdapter } from './adapter'
 import type {
   DiscordApi,
@@ -346,5 +351,111 @@ describe('runDiscordAdapter', () => {
     gateway.end()
     await running
     expect(answer).toBe('deny')
+  })
+
+  test('discord does not deny a durable pending row on timer', async () => {
+    const store = createMemoryStore()
+    const sessionId = 'sess_discord'
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Allow Bash?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    let answered: string | undefined
+    let askStarted!: () => void
+    const sawAsk = new Promise<void>((resolve) => {
+      askStarted = resolve
+    })
+    const gateway = new FakeDiscordGateway()
+    const running = runDiscordAdapter({
+      config: cfg({ allowFrom: ['U1'] }),
+      pairingHome: home(),
+      ledger: createMemoryDeliveries(),
+      permissionTimeoutMs: 5,
+      store,
+      openSession: async (req) => ({
+        sessionId,
+        async *submitMessage() {
+          const ac = new AbortController()
+          askStarted()
+          answered = await req.askUser({ id: 'call_1', tool: 'Bash', message: 'Allow Bash?' }, ac.signal)
+        },
+      }),
+      gateway,
+      api: new FakeDiscordApi(),
+    })
+    gateway.push(dmPayload({ id: 'm-durable', authorId: 'U1', content: 'please' }))
+    await sawAsk
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(answered).toBeUndefined()
+    expect(await store.listPendingAsks(sessionId)).toHaveLength(1)
+    gateway.push(dmPayload({ id: 'm-deny', authorId: 'U1', content: 'deny' }))
+    gateway.end()
+    await running
+  })
+
+  test('non-allow/deny text does not submit while a pending row exists', async () => {
+    const store = createMemoryStore()
+    const sessionId = 'sess_stash'
+    await store.upsertPendingAsk({
+      callId: 'call_stash',
+      sessionId,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Allow Bash?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    const submitted: string[] = []
+    let releaseAsk!: (answer: 'allow' | 'deny') => void
+    const askHeld = new Promise<'allow' | 'deny'>((resolve) => {
+      releaseAsk = resolve
+    })
+    let askStarted!: () => void
+    const sawAsk = new Promise<void>((resolve) => {
+      askStarted = resolve
+    })
+    const gateway = new FakeDiscordGateway()
+    const running = runDiscordAdapter({
+      config: cfg({ allowFrom: ['U1'] }),
+      pairingHome: home(),
+      ledger: createMemoryDeliveries(),
+      store,
+      openSession: async (req) => ({
+        sessionId,
+        async *submitMessage(text: string) {
+          submitted.push(text)
+          if (text !== 'please') return
+          const ac = new AbortController()
+          askStarted()
+          const answer = await Promise.race([
+            req.askUser({ id: 'call_stash', tool: 'Bash', message: 'Allow Bash?' }, ac.signal),
+            askHeld,
+          ])
+          if (answer === 'allow' || answer === 'deny') {
+            await store.deletePendingAsk('call_stash')
+          }
+        },
+        async listPendingAsks() {
+          return store.listPendingAsks(sessionId)
+        },
+      }),
+      gateway,
+      api: new FakeDiscordApi(),
+    })
+    gateway.push(dmPayload({ id: 'm-please', authorId: 'U1', content: 'please' }))
+    await sawAsk
+    gateway.push(dmPayload({ id: 'm-first', authorId: 'U1', content: 'first extra' }))
+    gateway.push(dmPayload({ id: 'm-second', authorId: 'U1', content: 'second extra' }))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(submitted).toEqual(['please'])
+    releaseAsk('allow')
+    gateway.end()
+    await running
+    expect(submitted).toEqual(['please', 'first extra'])
   })
 })

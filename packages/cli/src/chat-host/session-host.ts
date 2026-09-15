@@ -14,11 +14,18 @@ export interface ChatOpenSessionReq {
   sessionKey: string
   permissionMode: 'default' | 'dontAsk'
   askUser: ChatAsk
+  replayPending?: boolean
 }
 
 export interface ChatBoundSession {
   sessionId: string
   submitMessage: (text: string) => AsyncGenerator<unknown, unknown>
+  applyAskAnswer?: (
+    callId: string,
+    answer: ChatPermissionAnswer,
+  ) => Promise<'matched' | 'unmatched'>
+  listPendingAsks?: () => Promise<Array<{ callId: string }>>
+  getPendingAsk?: (callId: string) => Promise<{ callId: string } | undefined>
 }
 
 export interface ChatSessionHost {
@@ -40,6 +47,7 @@ export function createChatSessionHost(opts: {
   const engines = new Map<string, CliRuntime>()
   const opening = new Map<string, Promise<CliRuntime>>()
   const turnFlights = new Map<string, Promise<unknown>>()
+  const replayed = new Set<string>()
   const askStore = new AsyncLocalStorage<ChatAsk>()
   const openNew = opts.openNewSession ?? openNewSession
   const resume = opts.resumeRuntime ?? resumeRuntime
@@ -70,7 +78,18 @@ export function createChatSessionHost(opts: {
       engines.set(resolvedId.id, opened)
       return opened
     })
-    return {
+    if (req.replayPending !== false && !replayed.has(runtime.engine.session.id)) {
+      replayed.add(runtime.engine.session.id)
+      const replay = runtime.engine.replayPendingAsks
+      if (typeof replay === 'function') {
+        await askStore.run(req.askUser, async () => {
+          for await (const _event of replay.call(runtime.engine)) {
+            // Slack/Discord askUser re-posts the leftover prompt
+          }
+        })
+      }
+    }
+    const bound: ChatBoundSession = {
       sessionId: runtime.engine.session.id,
       async *submitMessage(text: string) {
         const gen = runtime.engine.submitMessage(text)
@@ -81,6 +100,16 @@ export function createChatSessionHost(opts: {
         }
       },
     }
+    if (typeof runtime.engine.applyAskAnswer === 'function') {
+      bound.applyAskAnswer = (callId, answer) => runtime.engine.applyAskAnswer(callId, answer)
+    }
+    if (typeof runtime.store?.listPendingAsks === 'function') {
+      bound.listPendingAsks = () => runtime.store.listPendingAsks(runtime.engine.session.id)
+    }
+    if (typeof runtime.store?.getPendingAsk === 'function') {
+      bound.getPendingAsk = (callId) => runtime.store.getPendingAsk(callId)
+    }
+    return bound
   }
 
   let stopped = false
