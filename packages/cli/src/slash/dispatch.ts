@@ -194,6 +194,7 @@ export async function dispatchSharedSlash(
         return 'handled'
       }
       runtime.engine.enqueueSteer(parsed.arg)
+      runtime.engine.abort()
       host.notice('steered (next round)')
       return 'handled'
     case 'cron':

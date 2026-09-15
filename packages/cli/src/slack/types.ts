@@ -1,4 +1,4 @@
-import type { RavenClawConfig } from '@ravenclaw/core'
+import type { RavenClawConfig, UserSubmitInput } from '@ravenclaw/core'
 
 export type SlackConfig = NonNullable<RavenClawConfig['slack']>
 
@@ -76,7 +76,7 @@ export interface SlackOpenSessionOpts {
 
 export interface SlackBoundSession {
   sessionId: string
-  submitMessage: (text: string) => AsyncGenerator<unknown, unknown>
+  submitMessage: (input: UserSubmitInput) => AsyncGenerator<unknown, unknown>
   applyAskAnswer?: (
     callId: string,
     answer: SlackPermissionAnswer,

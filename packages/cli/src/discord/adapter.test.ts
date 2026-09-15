@@ -7,6 +7,7 @@ import {
   createMemoryStore,
   SessionLockError,
   sessionLockedMessage,
+  type UserSubmitInput,
 } from '@ravenclaw/core'
 import { runDiscordAdapter } from './adapter'
 import type {
@@ -153,6 +154,10 @@ async function runOnce(opts: {
   return api
 }
 
+function submitText(input: UserSubmitInput): string {
+  return typeof input === 'string' ? input : (input.text ?? '')
+}
+
 function recordingSession(
   submitted: string[],
   keys: string[],
@@ -163,7 +168,8 @@ function recordingSession(
     modes?.push(req.permissionMode)
     const session: DiscordBoundSession = {
       sessionId: `sess-${keys.length}`,
-      async *submitMessage(text: string) {
+      async *submitMessage(input: UserSubmitInput) {
+        const text = submitText(input)
         submitted.push(text)
         yield { type: 'text_delta', text: `pong:${text}` }
       },
@@ -418,7 +424,8 @@ describe('runDiscordAdapter', () => {
       store,
       openSession: async (req) => ({
         sessionId,
-        async *submitMessage(text: string) {
+        async *submitMessage(input: UserSubmitInput) {
+          const text = submitText(input)
           submitted.push(text)
           if (text !== 'please') return
           await store.upsertPendingAsk({
@@ -481,8 +488,8 @@ describe('runDiscordAdapter', () => {
       store,
       openSession: async () => ({
         sessionId,
-        async *submitMessage(text: string) {
-          submitted.push(text)
+        async *submitMessage(input: UserSubmitInput) {
+          submitted.push(submitText(input))
         },
         async applyAskAnswer(callId, answer) {
           applied.push({ callId, answer })
@@ -525,8 +532,8 @@ describe('runDiscordAdapter', () => {
       store,
       openSession: async () => ({
         sessionId,
-        async *submitMessage(text: string) {
-          submitted.push(text)
+        async *submitMessage(input: UserSubmitInput) {
+          submitted.push(submitText(input))
         },
         async applyAskAnswer(callId, answer) {
           applied.push({ callId, answer })

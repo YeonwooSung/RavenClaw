@@ -569,6 +569,50 @@ describe('steering and image submit', () => {
       ])
     }
   })
+
+  test('submitMessage turnPolicy does not abort or enqueueSteer', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_policy' })
+    await store.createSession(sess)
+    const engine = createSessionEngine({
+      session: sess,
+      provider: createFakeProvider([[{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: 'end' }]]),
+      store,
+      tools: [],
+      compact: defaultCompact({ enabled: false }),
+      model: defaultModel(),
+      maxRounds: 4,
+      async askUser() {
+        return 'deny'
+      },
+    })
+    let abortCalls = 0
+    const origAbort = engine.abort.bind(engine)
+    engine.abort = () => {
+      abortCalls += 1
+      origAbort()
+    }
+    const events: StreamEvent[] = []
+    const gen = engine.submitMessage({ text: 'hi', turnPolicy: 'steer' })
+    let end: { reason: string } | undefined
+    while (true) {
+      const next = await gen.next()
+      if (next.done) {
+        end = next.value
+        break
+      }
+      events.push(next.value)
+    }
+    expect(abortCalls).toBe(0)
+    expect(engine.drainSteering()).toEqual([])
+    expect(end?.reason).toBe('completed')
+    const loaded = await store.loadSession(sess.id)
+    const first = loaded.messages[0]
+    expect(first?.role).toBe('user')
+    if (first?.role === 'user') {
+      expect(first.blocks).toEqual([{ type: 'text', text: 'hi' }])
+    }
+  })
 })
 
 describe('agent mailbox drain', () => {

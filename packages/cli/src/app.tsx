@@ -283,7 +283,11 @@ export function App(props: AppProps) {
           runtimeRef.current.cwd,
           readClipboardImage,
         )
-        const gen = runtimeRef.current.engine.submitMessage(payload)
+        const queued =
+          typeof payload === 'string'
+            ? { text: payload, turnPolicy: 'queue' as const }
+            : { ...payload, turnPolicy: 'queue' as const }
+        const gen = runtimeRef.current.engine.submitMessage(queued)
         while (true) {
           const next = await gen.next()
           if (next.done) {

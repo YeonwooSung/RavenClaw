@@ -63,7 +63,8 @@ function liveEngine(opts: {
     runtime: {
       engine: {
         session: { id: opts.id },
-        async *submitMessage(text: string) {
+        async *submitMessage(input) {
+          const text = typeof input === 'string' ? input : (input.text ?? '')
           submitted.push(text)
           await opts.onSubmit?.(text)
         },

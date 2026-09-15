@@ -1,7 +1,7 @@
-import { describe, expect, test } from 'bun:test'
-import { createMemoryStore } from '@ravenclaw/core'
+import { describe, expect, mock, test } from 'bun:test'
+import { createMemoryStore, type UserSubmitInput } from '@ravenclaw/core'
 import { admitSlackEvent } from './admit'
-import { permissionBlocks, runSlackAdapter } from './adapter'
+import { permissionBlocks, runSlackAdapter, tryResolvePermit } from './adapter'
 import { slackEventIsDm, slackSessionKey, slackUserText } from './session-key'
 import type {
   SlackApi,
@@ -204,6 +204,10 @@ async function runOnce(opts: {
   return api
 }
 
+function submitText(input: UserSubmitInput): string {
+  return typeof input === 'string' ? input : (input.text ?? '')
+}
+
 function recordingSession(
   submitted: string[],
   keys: string[],
@@ -214,7 +218,8 @@ function recordingSession(
     modes?.push(req.permissionMode)
     const session: SlackBoundSession = {
       sessionId: `sess-${keys.length}`,
-      async *submitMessage(text: string) {
+      async *submitMessage(input: UserSubmitInput) {
+        const text = submitText(input)
         submitted.push(text)
         yield { type: 'text_delta', text: `pong:${text}` }
       },
@@ -436,6 +441,8 @@ describe('runSlackAdapter', () => {
   test('overlapping turns on the same session do not call submitMessage concurrently', async () => {
     const socket = new FakeSlackSocket()
     const submitted: string[] = []
+    const policies: Array<string | undefined> = []
+    let abortCalls = 0
     let inFlight = 0
     let maxInFlight = 0
     let submits = 0
@@ -456,22 +463,25 @@ describe('runSlackAdapter', () => {
     const openSession: SlackOpenSession = async () => {
       opened += 1
       if (opened === 2) secondOpened()
-      const session: SlackBoundSession = {
+      return {
         sessionId: 'sess-shared',
-        async *submitMessage(text: string) {
+        abort() {
+          abortCalls += 1
+        },
+        async *submitMessage(input: UserSubmitInput) {
           submits += 1
           inFlight += 1
           maxInFlight = Math.max(maxInFlight, inFlight)
-          submitted.push(text)
+          submitted.push(submitText(input))
+          policies.push(typeof input === 'string' ? undefined : input.turnPolicy)
           if (submits === 1) {
             firstBegan()
             await firstHeld
           }
           inFlight -= 1
-          yield { type: 'text_delta', text: `pong:${text}` }
+          yield { type: 'text_delta', text: `pong:${submitText(input)}` }
         },
-      }
-      return session
+      } as SlackBoundSession
     }
 
     const running = runOnce({ socket, openSession })
@@ -489,6 +499,36 @@ describe('runSlackAdapter', () => {
     expect(submitted).toEqual(['first', 'second'])
     expect(submits).toBe(2)
     expect(maxInFlight).toBe(1)
+    expect(abortCalls).toBe(0)
+    expect(policies).toEqual(['queue', 'queue'])
+  })
+
+  test('tryResolvePermit does not call abort or enqueueSteer', () => {
+    const abort = mock(() => {})
+    const enqueueSteer = mock(() => {})
+    const permits = new Map<string, { resolve: (answer: 'allow' | 'deny' | 'allow_always') => void; callId: string }>()
+    let answered: 'allow' | 'deny' | 'allow_always' | undefined
+    permits.set('T1:D1:U1', {
+      callId: 'call_1',
+      resolve: (answer) => {
+        answered = answer
+      },
+    })
+    const resolved = tryResolvePermit(permits, {
+      kind: 'block_actions',
+      team: 'T1',
+      channel: 'D1',
+      userId: 'U1',
+      text: '',
+      ts: '1.0',
+      mentioned: false,
+      actionId: 'raven_allow',
+      actionValue: 'call_1',
+    })
+    expect(resolved).toBe(true)
+    expect(answered).toBe('allow')
+    expect(abort).not.toHaveBeenCalled()
+    expect(enqueueSteer).not.toHaveBeenCalled()
   })
 
   test('slack allow button value is the call id', () => {
@@ -561,7 +601,8 @@ describe('runSlackAdapter', () => {
       store,
       openSession: async (req) => ({
         sessionId,
-        async *submitMessage(text: string) {
+        async *submitMessage(input: UserSubmitInput) {
+          const text = submitText(input)
           submitted.push(text)
           if (text !== 'please') return
           await store.upsertPendingAsk({
@@ -622,8 +663,8 @@ describe('runSlackAdapter', () => {
       store,
       openSession: async () => ({
         sessionId,
-        async *submitMessage(text: string) {
-          submitted.push(text)
+        async *submitMessage(input: UserSubmitInput) {
+          submitted.push(submitText(input))
         },
         async applyAskAnswer(callId, answer) {
           applied.push({ callId, answer })
@@ -664,8 +705,8 @@ describe('runSlackAdapter', () => {
       store,
       openSession: async () => ({
         sessionId,
-        async *submitMessage(text: string) {
-          submitted.push(text)
+        async *submitMessage(input: UserSubmitInput) {
+          submitted.push(submitText(input))
         },
         async applyAskAnswer(callId, answer) {
           applied.push({ callId, answer })

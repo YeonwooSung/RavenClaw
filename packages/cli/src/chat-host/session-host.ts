@@ -1,5 +1,5 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { loadSessionMap, resolveSessionId, saveSessionMap } from '@ravenclaw/core'
+import { loadSessionMap, resolveSessionId, saveSessionMap, type UserSubmitInput } from '@ravenclaw/core'
 import { openNewSession, resumeRuntime, type CliRuntime } from '../engine'
 import { singleFlight, startMailboxPoller } from '../serve'
 
@@ -19,7 +19,7 @@ export interface ChatOpenSessionReq {
 
 export interface ChatBoundSession {
   sessionId: string
-  submitMessage: (text: string) => AsyncGenerator<unknown, unknown>
+  submitMessage: (input: UserSubmitInput) => AsyncGenerator<unknown, unknown>
   applyAskAnswer?: (
     callId: string,
     answer: ChatPermissionAnswer,
@@ -91,8 +91,8 @@ export function createChatSessionHost(opts: {
     }
     const bound: ChatBoundSession = {
       sessionId: runtime.engine.session.id,
-      async *submitMessage(text: string) {
-        const gen = runtime.engine.submitMessage(text)
+      async *submitMessage(input: UserSubmitInput) {
+        const gen = runtime.engine.submitMessage(input)
         while (true) {
           const next = await askStore.run(req.askUser, () => gen.next())
           if (next.done) return next.value

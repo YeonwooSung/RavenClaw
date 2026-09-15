@@ -1,7 +1,7 @@
-import type { RoundEnd, SessionEngine, StreamEvent } from '@ravenclaw/core'
+import type { RoundEnd, SessionEngine, StreamEvent, UserSubmitInput } from '@ravenclaw/core'
 
 export interface RunExecOpts {
-  prompt: string
+  prompt: UserSubmitInput
   json?: boolean
   engine: SessionEngine
   write?: (chunk: string) => void

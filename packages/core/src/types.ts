@@ -193,11 +193,14 @@ export interface UserImage {
   data: string
 }
 
+export type TurnPolicy = 'steer' | 'queue'
+
 export type UserSubmitInput =
   | string
   | {
       text?: string
       images?: UserImage[]
+      turnPolicy?: TurnPolicy
     }
 
 export interface ToolContext {

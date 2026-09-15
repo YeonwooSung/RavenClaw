@@ -67,3 +67,7 @@ raven exec --verify-on-stop "implement the fix"
 ```
 
 A cron job may set `verifyOnStop: true` in `~/.ravenclaw/cron/jobs.json` (or pass `--verify-on-stop` on `raven cron add`). The same nudge cap applies. Default for exec/cron remains false.
+
+## Host delivery policy
+
+Slack, Discord, and `raven serve` serialize inbound with `singleFlight` (`turnPolicy: queue`). They do not abort a live turn. The TUI queues composer input while busy; `/steer` aborts the live turn. Permission answers never steer.

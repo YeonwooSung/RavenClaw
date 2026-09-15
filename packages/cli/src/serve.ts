@@ -10,7 +10,7 @@ import {
 } from '@ravenclaw/core'
 import { bootCli, openNewSession, resumeRuntime, type CliRuntime } from './engine'
 import { runExec } from './exec'
-import type { ConfigFlags } from '@ravenclaw/core'
+import type { ConfigFlags, UserSubmitInput } from '@ravenclaw/core'
 
 const DEFAULT_LISTEN = '127.0.0.1:8787'
 
@@ -19,7 +19,7 @@ export const MAILBOX_POLL_MS = 15_000
 export type MailboxLiveEngine = {
   engine: {
     session: { id: string }
-    submitMessage: (text: string) => AsyncGenerator<unknown, unknown>
+    submitMessage: (input: UserSubmitInput) => AsyncGenerator<unknown, unknown>
   }
   store: {
     peekAgentMail: (parentSessionId: string) => Promise<string[]>
@@ -187,7 +187,7 @@ export async function runServe(opts: { flags: ConfigFlags }): Promise<number> {
           const runtime = await runtimeFor(parsed.sessionKey, false)
           const result = await singleFlight(turnFlights, runtime.engine.session.id, () =>
             runExec({
-              prompt: parsed.text,
+              prompt: { text: parsed.text, turnPolicy: 'queue' },
               engine: runtime.engine,
               closeEngine: false,
             }),
@@ -221,7 +221,10 @@ export async function runServe(opts: { flags: ConfigFlags }): Promise<number> {
               ...shared,
               config: { ...shared.config, allowedTools: safeWebhookToolNames() },
             })
-            await runExec({ prompt: parsed.text, engine: opened.engine })
+            await runExec({
+              prompt: { text: parsed.text, turnPolicy: 'queue' },
+              engine: opened.engine,
+            })
           } catch {
             // fire-and-forget
           } finally {

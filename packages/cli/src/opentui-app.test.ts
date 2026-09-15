@@ -10,6 +10,7 @@ import {
   type SessionRecord,
   type SessionStore,
   type StreamEvent,
+  type UserSubmitInput,
 } from '@ravenclaw/core'
 import { createAskBridge, type AskBridge, type CliRuntime } from './engine'
 import { runOpenTuiApp } from './opentui-app'
@@ -131,7 +132,10 @@ function fakeEngine(
     async rewindLast() {
       return { ok: false, notice: 'nothing to rewind' }
     },
-    submitMessage: submit,
+    submitMessage(input: UserSubmitInput) {
+      const text = typeof input === 'string' ? input : (input.text ?? '')
+      return submit(text)
+    },
     async *replayPendingAsks() {},
     async applyAskAnswer() {
       return 'unmatched'
