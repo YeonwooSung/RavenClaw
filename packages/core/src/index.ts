@@ -123,6 +123,7 @@ export { todoWriteTool, loadTodos, todosFromToolResult, todoJsonPath } from './t
 export type { TodoItem, TodoStatus, TodoWriteInput } from './tools/todo'
 export { partitionToolCalls } from './tools/partition'
 export {
+  COMPACTION_PROMPT_TOKENS,
   compactThreshold,
   defaultCompactPolicy,
   hardLimit,

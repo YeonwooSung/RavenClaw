@@ -321,6 +321,50 @@ describe('compactNow', () => {
     expect(provider.streamCount).toBe(1)
     expect(recorded).toContain('old question')
   })
+
+  test('compactNow during submitMessage does not rewrite messages until the turn ends', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_c' })
+    await store.createSession(session)
+    const history = [
+      user('u0', 'old question', 1),
+      asst('a0', 'old reply', 2),
+      user('u1', 'recent', 3),
+      asst('a1', 'recent reply', 4),
+    ]
+    await persistAll(store, session.id, history)
+
+    let compactCalls = 0
+    const orig = store.recordCompact.bind(store)
+    store.recordCompact = async (sessionId, generation, summary, inactivatedIds) => {
+      compactCalls += 1
+      return orig(sessionId, generation, summary, inactivatedIds)
+    }
+
+    const provider = createFakeProvider([
+      [
+        { type: 'text_delta', text: 'hi' },
+        { type: 'stop', reason: 'end' },
+      ],
+    ])
+    const engine = createSessionEngine({
+      ...engineOpts({ provider, store, session }),
+      messages: history,
+      compact: defaultCompact({ protectLastMessages: 2, llmSummarize: false }),
+    })
+    const gen = engine.submitMessage('hi')
+    await gen.next()
+    const before = (await store.loadSession(session.id)).messages.length
+    expect(compactCalls).toBe(0)
+    await engine.compactNow()
+    const mid = (await store.loadSession(session.id)).messages.length
+    expect(mid).toBe(before)
+    expect(compactCalls).toBe(0)
+    while (!(await gen.next()).done) {
+      // drain
+    }
+    expect(compactCalls).toBe(1)
+  })
 })
 
 describe('steering and image submit', () => {

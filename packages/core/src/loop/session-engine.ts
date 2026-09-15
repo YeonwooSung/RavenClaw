@@ -85,6 +85,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
   const session = { ...opts.session }
   let messages: Message[] = opts.messages ? [...opts.messages] : []
   let liveTurn: Turn | null = null
+  let compactQueued = false
   let system = opts.system
   let model = opts.model
   const tasks = createTaskRegistry()
@@ -187,6 +188,37 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
     await persistSettledTool(toolRow)
     await opts.store.deletePendingAsk(callId)
     return 'matched'
+  }
+
+  async function runCompactNow(): Promise<void> {
+    const source = liveTurn?.messages ?? messages
+    const tail = selectProtectedTail(source, opts.compact.protectLastMessages)
+    const cut = source.length - tail.length
+    if (cut <= 0) return
+
+    const result = await runAutocompact({
+      messages: source,
+      compact: opts.compact,
+      model,
+      store: opts.store,
+      sessionId: session.id,
+      generation: liveTurn?.compactGeneration ?? session.compactGeneration,
+      cwd: liveTurn?.projectCwd ?? liveTurn?.cwd ?? session.cwd,
+      ...(opts.compact.llmSummarize
+        ? {
+            provider: opts.provider,
+            signal: liveTurn?.abort.signal ?? new AbortController().signal,
+          }
+        : { summary: mechanicalSummary(source.slice(0, cut)) }),
+    })
+    messages = result.messages
+    if (liveTurn) {
+      liveTurn.messages = result.messages
+      liveTurn.compactGeneration = result.generation
+    }
+    session.compactGeneration = result.generation
+    session.updatedAt = Date.now()
+    await opts.store.upsertSession(session)
   }
 
   async function* replayPendingAsks(): AsyncGenerator<StreamEvent, void> {
@@ -417,6 +449,10 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       } finally {
         if (ownsHistoryTurn) fileHistory.endTurn()
         liveTurn = null
+        if (compactQueued) {
+          compactQueued = false
+          await runCompactNow()
+        }
       }
       } finally {
         stopLockRenew?.()
@@ -424,34 +460,11 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
     },
 
     async compactNow() {
-      const source = liveTurn?.messages ?? messages
-      const tail = selectProtectedTail(source, opts.compact.protectLastMessages)
-      const cut = source.length - tail.length
-      if (cut <= 0) return
-
-      const result = await runAutocompact({
-        messages: source,
-        compact: opts.compact,
-        model,
-        store: opts.store,
-        sessionId: session.id,
-        generation: liveTurn?.compactGeneration ?? session.compactGeneration,
-        cwd: liveTurn?.projectCwd ?? liveTurn?.cwd ?? session.cwd,
-        ...(opts.compact.llmSummarize
-          ? {
-              provider: opts.provider,
-              signal: liveTurn?.abort.signal ?? new AbortController().signal,
-            }
-          : { summary: mechanicalSummary(source.slice(0, cut)) }),
-      })
-      messages = result.messages
-      if (liveTurn) {
-        liveTurn.messages = result.messages
-        liveTurn.compactGeneration = result.generation
+      if (liveTurn !== null) {
+        compactQueued = true
+        return
       }
-      session.compactGeneration = result.generation
-      session.updatedAt = Date.now()
-      await opts.store.upsertSession(session)
+      await runCompactNow()
     },
 
     reloadSystem(next: SystemPart[]) {

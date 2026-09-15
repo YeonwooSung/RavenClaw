@@ -146,26 +146,29 @@ describe('applyToolResultBudget', () => {
     expect(pairingHolds(out)).toBe(true)
   })
 
-  test('leaves Bash output that already has persistPath', () => {
+  test('applyToolResultBudget trims large Grep results with head and tail', () => {
+    const big = 'x'.repeat(200_000)
+    const messages = [
+      user('u1', 'g', 1),
+      asstTools('a1', [{ id: 'c1', name: 'Grep', input: { pattern: 'x' } }], 2),
+      tool('t1', 'c1', big, 3),
+    ]
+    const out = applyToolResultBudget(messages)
+    const text = textOf(out.find((m) => m.role === 'tool')!)
+    expect(text.length).toBeLessThan(2000)
+    expect(text.startsWith('x'.repeat(200))).toBe(true)
+    expect(text.endsWith('x'.repeat(200))).toBe(true)
+    expect(text).toContain('truncated')
+  })
+
+  test('applyToolResultBudget still skips persistPath', () => {
     const huge = 'y'.repeat(100_001)
     const messages = [
       user('u1', 'run', 1),
       asstTools('a1', [{ id: 'b1', name: 'Bash', input: { command: 'ls' } }], 2),
       tool('t1', 'b1', huge, 3, { persistPath: '/tmp/out.txt' }),
     ]
-    const out = applyToolResultBudget(messages)
-    expect(textOf(out.find((msg) => msg.id === 't1')!)).toBe(huge)
-  })
-
-  test('does not stub huge Read output', () => {
-    const huge = 'z'.repeat(100_001)
-    const messages = [
-      user('u1', 'read', 1),
-      asstTools('a1', [{ id: 'r1', name: 'Read', input: { path: 'a.ts' } }], 2),
-      tool('t1', 'r1', huge, 3),
-    ]
-    const out = applyToolResultBudget(messages)
-    expect(textOf(out.find((msg) => msg.id === 't1')!)).toBe(huge)
+    expect(textOf(applyToolResultBudget(messages).find((m) => m.id === 't1')!)).toBe(huge)
   })
 })
 
