@@ -507,14 +507,19 @@ describe('runSlackAdapter', () => {
   test('tryResolvePermit does not call abort or enqueueSteer', () => {
     const abort = mock(() => {})
     const enqueueSteer = mock(() => {})
-    const permits = new Map<string, { resolve: (answer: 'allow' | 'deny' | 'allow_always') => void; callId: string }>()
+    const permits = new Map<
+      string,
+      Array<{ resolve: (answer: 'allow' | 'deny' | 'allow_always') => void; callId: string }>
+    >()
     let answered: 'allow' | 'deny' | 'allow_always' | undefined
-    permits.set('T1:D1:U1', {
-      callId: 'call_1',
-      resolve: (answer) => {
-        answered = answer
+    permits.set('T1:D1:U1', [
+      {
+        callId: 'call_1',
+        resolve: (answer) => {
+          answered = answer
+        },
       },
-    })
+    ])
     const resolved = tryResolvePermit(permits, {
       kind: 'block_actions',
       team: 'T1',
@@ -679,6 +684,41 @@ describe('runSlackAdapter', () => {
     socket.end()
     await running
     expect(answers).toEqual(['threw', 'allow'])
+  })
+
+  test('overlapping leftover-asks are both answerable by call id', async () => {
+    const store = createMemoryStore()
+    const socket = new FakeSlackSocket()
+    const answers: string[] = []
+    let bothPosted!: () => void
+    const sawBoth = new Promise<void>((resolve) => {
+      bothPosted = resolve
+    })
+    const running = runSlackAdapter({
+      config: slackConfig(),
+      socket,
+      api: new FakeSlackApi(),
+      store,
+      openSession: async (req) => ({
+        sessionId: 'sess_two_asks',
+        async *submitMessage() {
+          const ac = new AbortController()
+          const first = req.askUser({ id: 'call_a', tool: 'Bash', message: 'Allow Bash?' }, ac.signal)
+          const second = req.askUser({ id: 'call_b', tool: 'Write', message: 'Allow Write?' }, ac.signal)
+          bothPosted()
+          answers.push(...(await Promise.all([first, second])))
+        },
+      }),
+    })
+    socket.push(dmMessage({ text: 'please', ts: '300.0' }))
+    await sawBoth
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(answers).toEqual([])
+    socket.push(blockActions({ actionId: 'raven_allow', value: 'call_b', envelopeId: 'env-b' }))
+    socket.push(blockActions({ actionId: 'raven_allow', value: 'call_a', envelopeId: 'env-a' }))
+    socket.end()
+    await running
+    expect(answers).toEqual(['allow', 'allow'])
   })
 
   test('durable slack waiter abort does not deny the pending row', async () => {

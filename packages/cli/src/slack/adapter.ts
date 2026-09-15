@@ -48,7 +48,7 @@ export async function runSlackAdapter(opts: {
 
   const ownsSocket = opts.socket === undefined
   const socket = opts.socket ?? (await connectLive(opts.config, opts.signal))
-  const permits = new Map<string, PendingPermit>()
+  const permits = new Map<string, PendingPermit[]>()
   const seen = new Set<string>()
   const inflight = new Set<Promise<void>>()
   const turnFlights = opts.turnFlights ?? new Map<string, Promise<unknown>>()
@@ -132,7 +132,7 @@ async function handleTurn(opts: {
   text: string
   api: SlackApi
   openSession: SlackOpenSession
-  permits: Map<string, PendingPermit>
+  permits: Map<string, PendingPermit[]>
   timeoutMs: number
   now: () => number
   turnFlights: Map<string, Promise<unknown>>
@@ -154,7 +154,7 @@ async function trySettleDurableAsk(opts: {
   inbound: SlackInbound
   api: SlackApi
   openSession: SlackOpenSession
-  permits: Map<string, PendingPermit>
+  permits: Map<string, PendingPermit[]>
   timeoutMs: number
   store?: Pick<SessionStore, 'getPendingAsk' | 'listPendingAsks' | 'upsertPendingAsk'>
   stashed: Map<string, string>
@@ -244,7 +244,7 @@ async function openSlackSession(
   opts: {
     openSession: SlackOpenSession
     api: SlackApi
-    permits: Map<string, PendingPermit>
+    permits: Map<string, PendingPermit[]>
     timeoutMs: number
     store?: Pick<SessionStore, 'getPendingAsk' | 'listPendingAsks' | 'upsertPendingAsk'>
   },
@@ -302,18 +302,36 @@ function permitKey(team: string, channel: string, userId: string): string {
   return `${team}:${channel}:${userId}`
 }
 
+function takePermit(
+  permits: Map<string, PendingPermit[]>,
+  key: string,
+  resolve: PendingPermit['resolve'],
+): boolean {
+  const list = permits.get(key)
+  if (!list) return false
+  const idx = list.findIndex((row) => row.resolve === resolve)
+  if (idx < 0) return false
+  list.splice(idx, 1)
+  if (list.length === 0) permits.delete(key)
+  return true
+}
+
 export function tryResolvePermit(
-  permits: Map<string, PendingPermit>,
+  permits: Map<string, PendingPermit[]>,
   inbound: SlackInbound,
 ): boolean {
   const key = permitKey(inbound.team, inbound.channel, inbound.userId)
-  const pending = permits.get(key)
-  if (!pending) return false
+  const list = permits.get(key)
+  if (!list || list.length === 0) return false
 
   if (inbound.kind === 'block_actions') {
     const action = inbound.actionId ?? ''
-    const matchesCall = inbound.actionValue === pending.callId
-    if (!matchesCall && action !== 'raven_allow' && action !== 'raven_deny') return false
+    const byCall = inbound.actionValue
+      ? list.find((row) => row.callId === inbound.actionValue)
+      : undefined
+    if (inbound.actionValue && !byCall) return false
+    const pending = byCall ?? list[0]
+    if (!pending) return false
     if (action === 'raven_allow' || inbound.actionValue === 'allow') {
       pending.resolve('allow')
       return true
@@ -327,7 +345,7 @@ export function tryResolvePermit(
 
   const answer = parsePermitReply(inbound.text)
   if (answer === undefined) return false
-  pending.resolve(answer)
+  list[0]?.resolve(answer)
   return true
 }
 
@@ -353,14 +371,13 @@ async function askSlackPermission(opts: {
   inbound: SlackInbound
   event: { id: string; tool: string; message: string; childSessionId?: string }
   signal: AbortSignal
-  permits: Map<string, PendingPermit>
+  permits: Map<string, PendingPermit[]>
   timeoutMs: number
   isDm: boolean
   getPendingAsk?: (callId: string) => Promise<unknown>
 }): Promise<SlackPermissionAnswer> {
   if (!opts.isDm) return 'deny'
   const key = permitKey(opts.inbound.team, opts.inbound.channel, opts.inbound.userId)
-  if (opts.permits.has(key)) return 'deny'
 
   const child = opts.event.childSessionId ? ` child ${opts.event.childSessionId}` : ''
   const durable = opts.getPendingAsk !== undefined
@@ -376,15 +393,13 @@ async function askSlackPermission(opts: {
   })
   let timer: ReturnType<typeof setTimeout> | undefined
   const finish = (answer: SlackPermissionAnswer) => {
-    if (!opts.permits.has(key)) return
-    opts.permits.delete(key)
+    if (!takePermit(opts.permits, key, finish)) return
     if (timer !== undefined) clearTimeout(timer)
     opts.signal.removeEventListener('abort', onAbort)
     settle(answer)
   }
   const abortWaiter = () => {
-    if (!opts.permits.has(key)) return
-    opts.permits.delete(key)
+    if (!takePermit(opts.permits, key, finish)) return
     if (timer !== undefined) clearTimeout(timer)
     opts.signal.removeEventListener('abort', onAbort)
     fail(Object.assign(new Error('aborted'), { name: 'AbortError' }))
@@ -393,7 +408,9 @@ async function askSlackPermission(opts: {
     if (durable) abortWaiter()
     else finish('deny')
   }
-  opts.permits.set(key, { resolve: finish, callId: opts.event.id })
+  const list = opts.permits.get(key) ?? []
+  list.push({ resolve: finish, callId: opts.event.id })
+  opts.permits.set(key, list)
   if (!durable) {
     timer = setTimeout(() => finish('deny'), opts.timeoutMs)
     timer.unref?.()
@@ -412,8 +429,7 @@ async function askSlackPermission(opts: {
     })
     if (posted.ok === false) throw new Error('slack post failed')
   } catch (error) {
-    if (opts.permits.get(key)?.resolve === finish) {
-      opts.permits.delete(key)
+    if (takePermit(opts.permits, key, finish)) {
       if (timer !== undefined) clearTimeout(timer)
       opts.signal.removeEventListener('abort', onAbort)
     }
