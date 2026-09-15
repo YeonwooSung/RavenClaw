@@ -6,7 +6,7 @@ import { singleFlight, startMailboxPoller } from '../serve'
 export type ChatPermissionAnswer = 'allow' | 'deny' | 'allow_always'
 
 export type ChatAsk = (
-  event: { id: string; tool: string; message: string },
+  event: { id: string; tool: string; message: string; childSessionId?: string },
   signal: AbortSignal,
 ) => Promise<ChatPermissionAnswer>
 
@@ -56,7 +56,13 @@ export function createChatSessionHost(opts: {
   opts.shared.ask.bind(async (event, signal) => {
     const ask = askStore.getStore()
     if (!ask) return 'deny'
-    return ask({ id: event.id, tool: event.tool, message: event.message }, signal)
+    const forwarded: Parameters<ChatAsk>[0] = {
+      id: event.id,
+      tool: event.tool,
+      message: event.message,
+    }
+    if (event.childSessionId !== undefined) forwarded.childSessionId = event.childSessionId
+    return ask(forwarded, signal)
   })
 
   async function openSession(req: ChatOpenSessionReq): Promise<ChatBoundSession> {

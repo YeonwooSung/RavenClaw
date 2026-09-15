@@ -4,7 +4,7 @@ import { join } from 'node:path'
 import { describe, expect, test } from 'bun:test'
 import { saveSessionMap } from '@ravenclaw/core'
 import { createChatSessionHost } from './session-host'
-import type { CliRuntime } from '../engine'
+import { createAskBridge, type CliRuntime } from '../engine'
 
 function fakeRuntime(id: string, mode: 'default' | 'dontAsk' = 'default'): CliRuntime {
   const session = { id, permissionMode: mode }
@@ -102,5 +102,50 @@ describe('createChatSessionHost', () => {
       askUser: async () => 'deny',
     })
     expect(replayed).toBe(1)
+  })
+
+  test('ask bind forwards childSessionId to the session askUser', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'raven-chat-host-child-ask-'))
+    const ask = createAskBridge()
+    const shared = fakeRuntime('shared')
+    shared.ask = ask
+    const seen: Array<string | undefined> = []
+    const host = createChatSessionHost({
+      home,
+      shared,
+      newId: () => 'sess_parent',
+      openNewSession: async () => {
+        const runtime = fakeRuntime('sess_parent')
+        runtime.ask = ask
+        runtime.engine.submitMessage = async function* () {
+          await ask.ask(
+            {
+              type: 'permission_ask',
+              id: 'call_1',
+              tool: 'Bash',
+              input: { command: 'ls' },
+              message: 'child bash?',
+              childSessionId: 'sess_child',
+            },
+            new AbortController().signal,
+          )
+          return { reason: 'completed' }
+        }
+        return runtime
+      },
+    })
+    const bound = await host.openSession({
+      sessionKey: 'k',
+      permissionMode: 'default',
+      askUser: async (event) => {
+        seen.push(event.childSessionId)
+        return 'deny'
+      },
+    })
+    const gen = bound.submitMessage('go')
+    while (!(await gen.next()).done) {
+      // drain
+    }
+    expect(seen).toEqual(['sess_child'])
   })
 })
