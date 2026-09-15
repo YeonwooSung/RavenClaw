@@ -113,6 +113,8 @@ export interface Turn {
   compactGeneration: number
   funding: Funding
   cwd: string
+  /** Terminal/workspace backend. Unset means local. Docker v1 is host fs + cwd jail. */
+  terminalBackend?: 'local' | 'docker'
   /** Project root for permissions/skills. Unset means `cwd`. Isolated worktrees set this to the parent. */
   projectCwd?: string
   /** Extra working roots for path checks (AddDir). Unset means cwd only. */
