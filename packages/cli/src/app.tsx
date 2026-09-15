@@ -183,13 +183,7 @@ export function App(props: AppProps) {
     })
   }, [])
 
-  useEffect(() => {
-    return () => {
-      void runtimeRef.current.engine.close()
-    }
-  }, [])
-
-  useEffect(() => {
+  const bindAsk = useCallback(() => {
     runtimeRef.current.ask.bind(async (event, signal) => {
       return await new Promise<'allow' | 'deny' | 'allow_always'>((resolve, reject) => {
         const pending: PendingAsk = {
@@ -223,6 +217,46 @@ export function App(props: AppProps) {
     bindAskQuestions()
   }, [bindAskQuestions])
 
+  const applyLiveEvent = useCallback((event: StreamEvent) => {
+    if (event.type === 'usage') {
+      setLastAssembleInput(event.usage.input)
+      setUsage((prev) => ({
+        input: prev.input + event.usage.input,
+        output: prev.output + event.usage.output,
+        cacheRead: prev.cacheRead + event.usage.cacheRead,
+        cacheWrite: prev.cacheWrite + event.usage.cacheWrite,
+      }))
+    }
+    setRows((prev) => {
+      const next = applyStreamEvent(prev, event)
+      if (event.type === 'tool_result') {
+        const name = next.find((row) => row.kind === 'tool' && row.id === event.id)?.name ?? ''
+        setTodos((prevTodos) =>
+          todosFromToolResult(name, runtimeRef.current.cwd, prevTodos),
+        )
+        setTasks(runtimeRef.current.engine.tasks.list())
+      }
+      return next
+    })
+  }, [])
+
+  const replayPending = useCallback(async () => {
+    for await (const ev of runtimeRef.current.engine.replayPendingAsks()) {
+      applyLiveEvent(ev)
+    }
+  }, [applyLiveEvent])
+
+  useEffect(() => {
+    return () => {
+      void runtimeRef.current.engine.close()
+    }
+  }, [])
+
+  useEffect(() => {
+    bindAsk()
+    void replayPending()
+  }, [bindAsk, replayPending])
+
   const runTurn = useCallback(
     async (text: string) => {
       if (busyRef.current) {
@@ -254,27 +288,7 @@ export function App(props: AppProps) {
             advanceLoop = shouldAdvanceLoop(next.value.reason)
             break
           }
-          const event: StreamEvent = next.value
-          if (event.type === 'usage') {
-            setLastAssembleInput(event.usage.input)
-            setUsage((prev) => ({
-              input: prev.input + event.usage.input,
-              output: prev.output + event.usage.output,
-              cacheRead: prev.cacheRead + event.usage.cacheRead,
-              cacheWrite: prev.cacheWrite + event.usage.cacheWrite,
-            }))
-          }
-          setRows((prev) => {
-            const next = applyStreamEvent(prev, event)
-            if (event.type === 'tool_result') {
-              const name = next.find((row) => row.kind === 'tool' && row.id === event.id)?.name ?? ''
-              setTodos((prevTodos) =>
-                todosFromToolResult(name, runtimeRef.current.cwd, prevTodos),
-              )
-              setTasks(runtimeRef.current.engine.tasks.list())
-            }
-            return next
-          })
+          applyLiveEvent(next.value)
         }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
@@ -305,7 +319,7 @@ export function App(props: AppProps) {
         }
       }
     },
-    [syncSession, refreshDiff],
+    [syncSession, refreshDiff, applyLiveEvent],
   )
 
   const applyResume = useCallback(
@@ -313,7 +327,7 @@ export function App(props: AppProps) {
       try {
         const next = await resumeRuntime(runtimeRef.current, id)
         runtimeRef.current = next
-        bindAskQuestions()
+        bindAsk()
         setRows(rowsFromMessages((await next.store.loadSession(id)).messages))
         setTodos(loadTodos(next.cwd))
         setTasks(next.engine.tasks.list())
@@ -322,12 +336,13 @@ export function App(props: AppProps) {
         setLastAssembleInput(0)
         syncSession()
         setNotice(`resumed ${shortSessionId(id)}`)
+        await replayPending()
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         setNotice(message)
       }
     },
-    [syncSession, bindAskQuestions],
+    [syncSession, bindAsk, replayPending],
   )
 
   const submitLine = useCallback(

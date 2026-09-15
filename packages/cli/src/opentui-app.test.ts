@@ -132,6 +132,10 @@ function fakeEngine(
       return { ok: false, notice: 'nothing to rewind' }
     },
     submitMessage: submit,
+    async *replayPendingAsks() {},
+    async applyAskAnswer() {
+      return 'unmatched'
+    },
     async compactNow() {},
     async setModel(profile) {
       session.model = profile.id
@@ -290,6 +294,37 @@ describe('runOpenTuiApp', () => {
     expect(written.join('')).toContain('resumed abcdef12')
     expect(written.join('')).toContain('from resumed')
     expect(submitted).toEqual(['resumed:hello'])
+  })
+
+  test('resume with a pending row replays permission_ask without submitMessage', async () => {
+    const replayed: string[] = []
+    const submitted: string[] = []
+    const original = fakeEngine(makeSession(), async function* (text) {
+      submitted.push(`original:${text}`)
+      return { reason: 'completed' }
+    })
+    const resumed = fakeEngine(
+      makeSession({ id: 'abcdef12-9999-0000' }),
+      async function* (text) {
+        submitted.push(`resumed:${text}`)
+        return { reason: 'completed' }
+      },
+    )
+    resumed.replayPendingAsks = async function* () {
+      replayed.push('call_1')
+    }
+    const written: string[] = []
+    const code = await runOpenTuiApp(fakeRuntime(original, { store: fakeStore() }), {
+      input: asyncLines('/resume abcdef12-9999-0000', '/quit'),
+      write: (chunk) => {
+        written.push(chunk)
+      },
+      resumeRuntime: async (runtime) => ({ ...runtime, engine: resumed }),
+    })
+    expect(code).toBe(0)
+    expect(replayed).toEqual(['call_1'])
+    expect(submitted).toEqual([])
+    expect(written.join('')).toContain('resumed abcdef12')
   })
 
   test('/resume <id> prints the error when resume fails', async () => {

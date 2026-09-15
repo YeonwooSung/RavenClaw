@@ -85,6 +85,11 @@ export async function runOpenTuiApp(
     write(`${lines.join('\n')}\n`)
   }
 
+  const renderEvent = (event: StreamEvent) => {
+    view.apply(event)
+    flush()
+  }
+
   const bindHosts = () => {
     current.ask.bind(async (event, signal) => {
       for (const line of permissionPromptLines(event)) write(`${line}\n`)
@@ -103,6 +108,13 @@ export async function runOpenTuiApp(
       return parseAskUserAnswer(input, line)
     })
   }
+
+  const replayPending = async () => {
+    for await (const ev of current.engine.replayPendingAsks()) {
+      renderEvent(ev)
+    }
+  }
+
   bindHosts()
   if (runtime.status !== undefined && runtime.status !== '') {
     write(`${runtime.status}\n`)
@@ -136,9 +148,7 @@ export async function runOpenTuiApp(
           advanceLoop = shouldAdvanceLoop(next.value.reason)
           break
         }
-        const event: StreamEvent = next.value
-        view.apply(event)
-        flush()
+        renderEvent(next.value)
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -227,6 +237,7 @@ export async function runOpenTuiApp(
 
   try {
     await writeIncludedAds(current)
+    await replayPending()
     while (true) {
       if (diffOpen) writeDiffPanel()
       write(`${composerLine()}\n`)
@@ -361,6 +372,7 @@ export async function runOpenTuiApp(
               bindHosts()
               write(`resumed ${shortSessionId(parsed.arg)}\n`)
               await writeIncludedAds(current)
+              await replayPending()
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error)
               write(`${message}\n`)

@@ -96,6 +96,26 @@ function createFakeProvider(scripts: ProviderChunk[][]): Provider & {
   return provider
 }
 
+function engineOpts(over: {
+  provider: Provider
+  store: ReturnType<typeof createMemoryStore>
+  session: SessionRecord
+  tools?: Tool[]
+}) {
+  return {
+    session: over.session,
+    provider: over.provider,
+    store: over.store,
+    tools: over.tools ?? [],
+    compact: defaultCompact({ enabled: false }),
+    model: defaultModel(),
+    maxRounds: 8,
+    async askUser() {
+      return 'deny' as const
+    },
+  }
+}
+
 async function persistAll(
   store: ReturnType<typeof createMemoryStore>,
   sessionId: string,
@@ -1292,5 +1312,39 @@ describe('background review and nudges', () => {
     } finally {
       rmSync(cwd, { recursive: true, force: true })
     }
+  })
+})
+
+describe('replayPendingAsks', () => {
+  test('resume with a pending row replays permission_ask without submitMessage', async () => {
+    const asks: string[] = []
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_tui' })
+    await store.createSession(session)
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Run ls?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    const engine = createSessionEngine({
+      ...engineOpts({
+        provider: createFakeProvider([]),
+        store,
+        session,
+      }),
+      askUser: async (event) => {
+        asks.push(event.id)
+        return 'deny'
+      },
+    })
+    const events: StreamEvent[] = []
+    for await (const ev of engine.replayPendingAsks()) events.push(ev)
+    expect(asks).toEqual(['call_1'])
+    expect(events.some((e) => e.type === 'permission_ask' && e.id === 'call_1')).toBe(true)
+    expect(await store.listPendingAsks(session.id)).toHaveLength(0)
   })
 })
