@@ -504,6 +504,45 @@ describe('runDiscordAdapter', () => {
     expect(answers).toEqual(['threw', 'allow'])
   })
 
+  test('overlapping leftover-asks are both answerable', async () => {
+    const store = createMemoryStore()
+    const gateway = new FakeDiscordGateway()
+    const api = new FakeDiscordApi()
+    const answers: string[] = []
+    let bothPosted!: () => void
+    const sawBoth = new Promise<void>((resolve) => {
+      bothPosted = resolve
+    })
+    const running = runDiscordAdapter({
+      config: cfg({ allowFrom: ['U1'] }),
+      pairingHome: home(),
+      ledger: createMemoryDeliveries(),
+      store,
+      openSession: async (req) => ({
+        sessionId: 'sess_two_asks',
+        async *submitMessage() {
+          const ac = new AbortController()
+          const first = req.askUser({ id: 'call_a', tool: 'Bash', message: 'Allow Bash?' }, ac.signal)
+          await new Promise((resolve) => setTimeout(resolve, 10))
+          const second = req.askUser({ id: 'call_b', tool: 'Write', message: 'Allow Write?' }, ac.signal)
+          bothPosted()
+          answers.push(...(await Promise.all([first, second])))
+        },
+      }),
+      gateway,
+      api,
+    })
+    gateway.push(dmPayload({ id: 'm-please', authorId: 'U1', content: 'please' }))
+    await sawBoth
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(api.posts.filter((post) => post.content.includes('Allow'))).toHaveLength(2)
+    gateway.push(dmPayload({ id: 'm-allow-a', authorId: 'U1', content: 'allow' }))
+    gateway.push(dmPayload({ id: 'm-allow-b', authorId: 'U1', content: 'allow' }))
+    gateway.end()
+    await running
+    expect(answers).toEqual(['allow', 'allow'])
+  })
+
   test('durable discord waiter abort does not deny the pending row', async () => {
     const store = createMemoryStore()
     const sessionId = 'sess_discord_abort'

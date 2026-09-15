@@ -52,7 +52,7 @@ export async function runDiscordAdapter(opts: {
   const inflight = new Set<Promise<void>>()
   const turnFlights = opts.turnFlights ?? new Map<string, Promise<unknown>>()
   const stashed = new Map<string, string>()
-  const permits = new Map<string, PendingPermit>()
+  const permits = new Map<string, PendingPermit[]>()
   const timeoutMs = opts.permissionTimeoutMs ?? DISCORD_PERMISSION_TIMEOUT_MS
   const now = opts.now ?? Date.now
   const store = opts.store
@@ -125,7 +125,7 @@ async function handleTurn(opts: {
   now: () => number
   turnFlights: Map<string, Promise<unknown>>
   stashed: Map<string, string>
-  permits: Map<string, PendingPermit>
+  permits: Map<string, PendingPermit[]>
   store?: Pick<SessionStore, 'getPendingAsk' | 'listPendingAsks' | 'upsertPendingAsk'>
 }): Promise<void> {
   const { inbound, api } = opts
@@ -155,7 +155,7 @@ async function trySettleDurableAsk(opts: {
   inbound: DiscordInbound
   api: DiscordApi
   openSession: DiscordOpenSession
-  permits: Map<string, PendingPermit>
+  permits: Map<string, PendingPermit[]>
   timeoutMs: number
   store?: Pick<SessionStore, 'getPendingAsk' | 'listPendingAsks' | 'upsertPendingAsk'>
   stashed: Map<string, string>
@@ -229,7 +229,7 @@ async function openDiscordSession(
   opts: {
     openSession: DiscordOpenSession
     api: DiscordApi
-    permits: Map<string, PendingPermit>
+    permits: Map<string, PendingPermit[]>
     timeoutMs: number
     store?: Pick<SessionStore, 'getPendingAsk' | 'listPendingAsks' | 'upsertPendingAsk'>
   },
@@ -272,12 +272,26 @@ function permitKey(channelId: string, userId: string): string {
   return `${channelId}:${userId}`
 }
 
-function tryResolvePermit(permits: Map<string, PendingPermit>, inbound: DiscordInbound): boolean {
-  const pending = permits.get(permitKey(inbound.channelId, inbound.userId))
-  if (!pending) return false
+function takePermit(
+  permits: Map<string, PendingPermit[]>,
+  key: string,
+  resolve: PendingPermit['resolve'],
+): boolean {
+  const list = permits.get(key)
+  if (!list) return false
+  const idx = list.findIndex((row) => row.resolve === resolve)
+  if (idx < 0) return false
+  list.splice(idx, 1)
+  if (list.length === 0) permits.delete(key)
+  return true
+}
+
+function tryResolvePermit(permits: Map<string, PendingPermit[]>, inbound: DiscordInbound): boolean {
+  const list = permits.get(permitKey(inbound.channelId, inbound.userId))
+  if (!list || list.length === 0) return false
   const answer = parsePermitReply(inbound.content)
   if (answer === undefined) return false
-  pending.resolve(answer)
+  list[0]?.resolve(answer)
   return true
 }
 
@@ -295,12 +309,11 @@ async function askDiscordPermission(opts: {
   isDm: boolean
   api: DiscordApi
   inbound: DiscordInbound
-  permits: Map<string, PendingPermit>
+  permits: Map<string, PendingPermit[]>
   getPendingAsk?: (callId: string) => Promise<unknown>
 }): Promise<DiscordPermissionAnswer> {
   if (!opts.isDm) return 'deny'
   const key = permitKey(opts.inbound.channelId, opts.inbound.userId)
-  if (opts.permits.has(key)) return 'deny'
 
   const child = opts.event.childSessionId ? ` child ${opts.event.childSessionId}` : ''
   const durable = opts.getPendingAsk !== undefined
@@ -316,15 +329,13 @@ async function askDiscordPermission(opts: {
   })
   let timer: ReturnType<typeof setTimeout> | undefined
   const finish = (answer: DiscordPermissionAnswer) => {
-    if (!opts.permits.has(key)) return
-    opts.permits.delete(key)
+    if (!takePermit(opts.permits, key, finish)) return
     if (timer !== undefined) clearTimeout(timer)
     opts.signal.removeEventListener('abort', onAbort)
     settle(answer)
   }
   const abortWaiter = () => {
-    if (!opts.permits.has(key)) return
-    opts.permits.delete(key)
+    if (!takePermit(opts.permits, key, finish)) return
     if (timer !== undefined) clearTimeout(timer)
     opts.signal.removeEventListener('abort', onAbort)
     fail(Object.assign(new Error('aborted'), { name: 'AbortError' }))
@@ -333,7 +344,9 @@ async function askDiscordPermission(opts: {
     if (durable) abortWaiter()
     else finish('deny')
   }
-  opts.permits.set(key, { resolve: finish, callId: opts.event.id })
+  const list = opts.permits.get(key) ?? []
+  list.push({ resolve: finish, callId: opts.event.id })
+  opts.permits.set(key, list)
   if (!durable) {
     timer = setTimeout(() => finish('deny'), opts.timeoutMs)
     timer.unref?.()
@@ -350,8 +363,7 @@ async function askDiscordPermission(opts: {
     })
     if (posted.ok === false) throw new Error('discord post failed')
   } catch (error) {
-    if (opts.permits.get(key)?.resolve === finish) {
-      opts.permits.delete(key)
+    if (takePermit(opts.permits, key, finish)) {
       if (timer !== undefined) clearTimeout(timer)
       opts.signal.removeEventListener('abort', onAbort)
     }
