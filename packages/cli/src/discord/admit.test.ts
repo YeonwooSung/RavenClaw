@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { approvePairingCode, issueOrReusePending } from '../pairing'
 import { admitDiscordEvent } from './admit'
+import { normalizeDiscordMessage } from './normalize'
 import type { DiscordConfig, DiscordInbound } from './types'
 
 function home(): string {
@@ -64,5 +65,19 @@ describe('admitDiscordEvent', () => {
         { home: h },
       ),
     ).toBe('ok')
+  })
+})
+
+describe('normalizeDiscordMessage identity', () => {
+  test('discord normalize uses author.id and ignores d.user_id', () => {
+    const inbound = normalizeDiscordMessage({
+      author: { id: 'D_REAL' },
+      channel_id: 'C1',
+      id: 'M1',
+      content: 'hi',
+      user_id: 'D_FORGED',
+      userId: 'D_FORGED',
+    })
+    expect(inbound?.userId).toBe('D_REAL')
   })
 })

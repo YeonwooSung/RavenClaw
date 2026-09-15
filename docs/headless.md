@@ -71,3 +71,13 @@ A cron job may set `verifyOnStop: true` in `~/.ravenclaw/cron/jobs.json` (or pas
 ## Host delivery policy
 
 Slack, Discord, and `raven serve` serialize inbound with `singleFlight` (`turnPolicy: queue`). They do not abort a live turn. The TUI queues composer input while busy; `/steer` aborts the live turn. Permission answers never steer.
+
+## raven serve bind and token
+
+`raven serve` exits 1 without `GATEWAY_SECRET` / `RAVEN_SERVE_SECRET`.
+`--listen` must be loopback (`127.0.0.1`, `localhost`, `::1`).
+`POST /v1/turn` requires `Authorization: Bearer <secret>` (`timingSafeEqual`).
+Webhooks verify `X-Raven-Signature` over the raw body.
+Slack uses Socket Mode (app token); there is no Slack signing-secret HMAC.
+Discord identity is Gateway `author.id` plus the pairing ledger.
+Never trust a JSON `userId` / `principalId` the body claims.

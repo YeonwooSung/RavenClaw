@@ -2,6 +2,7 @@ import { describe, expect, mock, test } from 'bun:test'
 import { createMemoryStore, type UserSubmitInput } from '@ravenclaw/core'
 import { admitSlackEvent } from './admit'
 import { permissionBlocks, runSlackAdapter, tryResolvePermit } from './adapter'
+import { normalizeSlackEnvelope } from './normalize'
 import { slackEventIsDm, slackSessionKey, slackUserText } from './session-key'
 import type {
   SlackApi,
@@ -726,5 +727,27 @@ describe('runSlackAdapter', () => {
     await running
     expect(applied).toEqual([{ callId: 'call_1', answer: 'allow' }])
     expect(submitted).toEqual(['hello after crash'])
+  })
+})
+
+describe('normalizeSlackEnvelope identity', () => {
+  test('slack events_api ignores a forged top-level user field', () => {
+    const inbound = normalizeSlackEnvelope({
+      type: 'events_api',
+      payload: {
+        team_id: 'T1',
+        event: {
+          type: 'app_mention',
+          user: 'U_REAL',
+          channel: 'C1',
+          ts: '1.0',
+          text: 'hi',
+        },
+        user: 'U_FORGED',
+        userId: 'U_FORGED',
+        principalId: 'U_FORGED',
+      },
+    })
+    expect(inbound?.userId).toBe('U_REAL')
   })
 })

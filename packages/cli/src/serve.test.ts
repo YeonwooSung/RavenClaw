@@ -14,6 +14,11 @@ describe('parseListen', () => {
     expect(parseListen()).toEqual({ host: '127.0.0.1', port: 8787 })
     expect(parseListen('127.0.0.1:9000')).toEqual({ host: '127.0.0.1', port: 9000 })
   })
+
+  test('parses localhost and ::1 loopback hosts', () => {
+    expect(parseListen('localhost:9001')).toEqual({ host: 'localhost', port: 9001 })
+    expect(parseListen('::1:8787')).toEqual({ host: '::1', port: 8787 })
+  })
 })
 
 describe('gatewaySecret', () => {
