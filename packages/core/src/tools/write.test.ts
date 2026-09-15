@@ -1,9 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ToolContext, Turn } from '../types'
 import { decidePermission } from '../permissions/pipeline'
+import { recordReadFile } from './read-files'
 import { writeTool } from './write'
 
 const emptyRules = { session: [], user: [], project: [] }
@@ -107,12 +108,42 @@ describe('Write', () => {
 
   test('overwrites an existing file', async () => {
     const root = fixtureRoot()
-    writeFileSync(join(root, 'a.txt'), 'old\n')
+    const path = join(root, 'a.txt')
+    writeFileSync(path, 'old\n')
     const ctx = makeCtx(root)
+    recordReadFile(ctx.turn, path, statSync(path).mtimeMs)
     const out = await writeTool.execute({ path: 'a.txt', content: 'new\n' }, ctx)
     expect(typeof out).toBe('string')
     expect(out.toLowerCase()).not.toMatch(/fail|error|deny/)
     expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('new\n')
+  })
+
+  test('Write existing file without Read fails', async () => {
+    const cwd = fixtureRoot()
+    writeFileSync(join(cwd, 'a.txt'), 'old')
+    const ctx = makeCtx(cwd)
+    const out = await writeTool.execute({ path: 'a.txt', content: 'new' }, ctx)
+    expect(out).toContain('path must be Read first')
+    expect(readFileSync(join(cwd, 'a.txt'), 'utf8')).toBe('old')
+  })
+
+  test('Write new file does not require Read', async () => {
+    const cwd = fixtureRoot()
+    const ctx = makeCtx(cwd)
+    const out = await writeTool.execute({ path: 'b.txt', content: 'new' }, ctx)
+    expect(out).toContain('Wrote')
+    expect(readFileSync(join(cwd, 'b.txt'), 'utf8')).toBe('new')
+  })
+
+  test('Write after Read then external mtime change is stale', async () => {
+    const cwd = fixtureRoot()
+    const path = join(cwd, 'a.txt')
+    writeFileSync(path, 'old')
+    const ctx = makeCtx(cwd)
+    recordReadFile(ctx.turn, path, statSync(path).mtimeMs - 1)
+    const out = await writeTool.execute({ path: 'a.txt', content: 'new' }, ctx)
+    expect(out).toContain('changed since last Read')
+    expect(readFileSync(path, 'utf8')).toBe('old')
   })
 
   test('hard-denies /etc/shadow without writing', async () => {

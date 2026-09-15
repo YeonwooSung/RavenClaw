@@ -1,10 +1,10 @@
-import { readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type { Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
 import { appendLintBlock, lintWrittenFile } from './lint'
 import { isHardDeniedWritePath, resolveWritePath } from './write'
-import { isStaleSinceRead, markReadPath } from './read-files'
+import { isStaleSinceRead, markReadPath, wasRead } from './read-files'
 
 export interface EditInput {
   path: string
@@ -92,19 +92,6 @@ export const editTool: Tool<EditInput, string> = {
     markReadPath(ctx.turn, resolved)
     return appendLintBlock(`Updated ${input.path}`, [lintWrittenFile(resolved, ctx.turn.cwd)])
   },
-}
-
-function wasRead(readFiles: Set<string>, resolved: string, candidate: string): boolean {
-  if (readFiles.has(resolved) || readFiles.has(candidate)) return true
-  for (const seen of readFiles) {
-    if (seen === resolved || seen === candidate) return true
-    try {
-      if (realpathSync(seen) === resolved) return true
-    } catch {
-      // entry may no longer exist
-    }
-  }
-  return false
 }
 
 function resolveReplacement(

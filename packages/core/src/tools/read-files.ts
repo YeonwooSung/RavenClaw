@@ -17,6 +17,19 @@ export function markReadPath(turn: Turn, path: string): void {
   recordReadFile(turn, path, mtimeMs)
 }
 
+export function wasRead(readFiles: Set<string>, resolved: string, candidate: string): boolean {
+  if (readFiles.has(resolved) || readFiles.has(candidate)) return true
+  for (const seen of readFiles) {
+    if (seen === resolved || seen === candidate) return true
+    try {
+      if (realpathSync(seen) === resolved) return true
+    } catch {
+      // entry may no longer exist
+    }
+  }
+  return false
+}
+
 export function isStaleSinceRead(turn: Turn, resolved: string, candidate: string): boolean {
   const recorded = lookupReadMtime(turn, resolved, candidate)
   if (recorded === undefined) return false

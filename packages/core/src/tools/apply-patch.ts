@@ -1,10 +1,10 @@
-import { mkdirSync, readFileSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import type { Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
 import { appendLintBlock, lintWrittenFile } from './lint'
 import { isHardDeniedWritePath, resolveWritePath } from './write'
-import { isStaleSinceRead, markReadPath } from './read-files'
+import { isStaleSinceRead, markReadPath, wasRead } from './read-files'
 
 export type ApplyPatchOp =
   | { type: 'create_file'; path: string; diff: string }
@@ -299,19 +299,6 @@ function findBlock(lines: string[], expected: string[], from: number): number {
     if (linesMatch(lines, i, expected)) return i
   }
   return -1
-}
-
-function wasRead(readFiles: Set<string>, resolved: string, candidate: string): boolean {
-  if (readFiles.has(resolved) || readFiles.has(candidate)) return true
-  for (const seen of readFiles) {
-    if (seen === resolved || seen === candidate) return true
-    try {
-      if (realpathSync(seen) === resolved) return true
-    } catch {
-      // entry may no longer exist
-    }
-  }
-  return false
 }
 
 function normalizeNewlines(text: string): string {
