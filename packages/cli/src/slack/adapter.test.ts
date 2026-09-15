@@ -1,6 +1,8 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, mock, test } from 'bun:test'
+import { createMemoryStore, type UserSubmitInput } from '@ravenclaw/core'
 import { admitSlackEvent } from './admit'
-import { runSlackAdapter } from './adapter'
+import { permissionBlocks, runSlackAdapter, tryResolvePermit } from './adapter'
+import { normalizeSlackEnvelope } from './normalize'
 import { slackEventIsDm, slackSessionKey, slackUserText } from './session-key'
 import type {
   SlackApi,
@@ -134,6 +136,32 @@ function dmMessage(over: {
   }
 }
 
+function blockActions(over: {
+  actionId?: string
+  value?: string
+  user?: string
+  channel?: string
+  team?: string
+  envelopeId?: string
+}): SlackSocketEnvelope {
+  return {
+    envelope_id: over.envelopeId ?? 'env-action',
+    type: 'interactive',
+    payload: {
+      type: 'block_actions',
+      team: { id: over.team ?? 'T1' },
+      user: { id: over.user ?? 'U1' },
+      channel: { id: over.channel ?? 'D1' },
+      actions: [
+        {
+          action_id: over.actionId ?? 'raven_allow',
+          value: over.value ?? 'call_1',
+        },
+      ],
+    },
+  }
+}
+
 function channelMessage(over: {
   text?: string
   user?: string
@@ -177,6 +205,10 @@ async function runOnce(opts: {
   return api
 }
 
+function submitText(input: UserSubmitInput): string {
+  return typeof input === 'string' ? input : (input.text ?? '')
+}
+
 function recordingSession(
   submitted: string[],
   keys: string[],
@@ -187,7 +219,8 @@ function recordingSession(
     modes?.push(req.permissionMode)
     const session: SlackBoundSession = {
       sessionId: `sess-${keys.length}`,
-      async *submitMessage(text: string) {
+      async *submitMessage(input: UserSubmitInput) {
+        const text = submitText(input)
         submitted.push(text)
         yield { type: 'text_delta', text: `pong:${text}` }
       },
@@ -409,6 +442,8 @@ describe('runSlackAdapter', () => {
   test('overlapping turns on the same session do not call submitMessage concurrently', async () => {
     const socket = new FakeSlackSocket()
     const submitted: string[] = []
+    const policies: Array<string | undefined> = []
+    let abortCalls = 0
     let inFlight = 0
     let maxInFlight = 0
     let submits = 0
@@ -429,22 +464,25 @@ describe('runSlackAdapter', () => {
     const openSession: SlackOpenSession = async () => {
       opened += 1
       if (opened === 2) secondOpened()
-      const session: SlackBoundSession = {
+      return {
         sessionId: 'sess-shared',
-        async *submitMessage(text: string) {
+        abort() {
+          abortCalls += 1
+        },
+        async *submitMessage(input: UserSubmitInput) {
           submits += 1
           inFlight += 1
           maxInFlight = Math.max(maxInFlight, inFlight)
-          submitted.push(text)
+          submitted.push(submitText(input))
+          policies.push(typeof input === 'string' ? undefined : input.turnPolicy)
           if (submits === 1) {
             firstBegan()
             await firstHeld
           }
           inFlight -= 1
-          yield { type: 'text_delta', text: `pong:${text}` }
+          yield { type: 'text_delta', text: `pong:${submitText(input)}` }
         },
-      }
-      return session
+      } as SlackBoundSession
     }
 
     const running = runOnce({ socket, openSession })
@@ -462,5 +500,415 @@ describe('runSlackAdapter', () => {
     expect(submitted).toEqual(['first', 'second'])
     expect(submits).toBe(2)
     expect(maxInFlight).toBe(1)
+    expect(abortCalls).toBe(0)
+    expect(policies).toEqual(['queue', 'queue'])
+  })
+
+  test('tryResolvePermit does not call abort or enqueueSteer', () => {
+    const abort = mock(() => {})
+    const enqueueSteer = mock(() => {})
+    const permits = new Map<string, { resolve: (answer: 'allow' | 'deny' | 'allow_always') => void; callId: string }>()
+    let answered: 'allow' | 'deny' | 'allow_always' | undefined
+    permits.set('T1:D1:U1', {
+      callId: 'call_1',
+      resolve: (answer) => {
+        answered = answer
+      },
+    })
+    const resolved = tryResolvePermit(permits, {
+      kind: 'block_actions',
+      team: 'T1',
+      channel: 'D1',
+      userId: 'U1',
+      text: '',
+      ts: '1.0',
+      mentioned: false,
+      actionId: 'raven_allow',
+      actionValue: 'call_1',
+    })
+    expect(resolved).toBe(true)
+    expect(answered).toBe('allow')
+    expect(abort).not.toHaveBeenCalled()
+    expect(enqueueSteer).not.toHaveBeenCalled()
+  })
+
+  test('slack allow button value is the call id', () => {
+    const blocks = permissionBlocks('call_1', 'Bash', 'Allow Bash?')
+    const actions = (blocks[1] as { elements: Array<{ value: string; action_id: string }> }).elements
+    expect(actions[0]?.value).toBe('call_1')
+    expect(actions[0]?.action_id).toBe('raven_allow')
+  })
+
+  test('slack leftover-ask labels childSessionId', async () => {
+    const api = new FakeSlackApi()
+    const socket = new FakeSlackSocket()
+    let posted!: () => void
+    const sawAsk = new Promise<void>((resolve) => {
+      posted = resolve
+    })
+    const origPost = api.postMessage.bind(api)
+    api.postMessage = async (opts) => {
+      const result = await origPost(opts)
+      if (opts.text.includes('Allow')) posted()
+      return result
+    }
+    const running = runSlackAdapter({
+      config: slackConfig(),
+      socket,
+      api,
+      store: createMemoryStore(),
+      openSession: async (req) => ({
+        sessionId: 'sess_parent',
+        async *submitMessage() {
+          const ac = new AbortController()
+          await req.askUser(
+            {
+              id: 'call_child',
+              tool: 'Bash',
+              message: 'child bash?',
+              childSessionId: 'sess_child',
+            },
+            ac.signal,
+          )
+        },
+      }),
+    })
+    socket.push(dmMessage({ text: 'please', ts: '110.0' }))
+    await sawAsk
+    const prompt = api.posts.find((post) => post.text.includes('Allow'))
+    expect(prompt?.text).toContain('child sess_child')
+    socket.push(dmMessage({ text: 'deny', ts: '111.0' }))
+    socket.end()
+    await running
+  })
+
+  test('slack does not deny a durable pending row on timer', async () => {
+    const store = createMemoryStore()
+    const sessionId = 'sess_slack'
+    const socket = new FakeSlackSocket()
+    let answered: string | undefined
+    let askStarted!: () => void
+    const sawAsk = new Promise<void>((resolve) => {
+      askStarted = resolve
+    })
+    const running = runSlackAdapter({
+      config: slackConfig(),
+      socket,
+      api: new FakeSlackApi(),
+      permissionTimeoutMs: 5,
+      store,
+      openSession: async (req) => ({
+        sessionId,
+        async *submitMessage() {
+          await store.upsertPendingAsk({
+            callId: 'call_1',
+            sessionId,
+            kind: 'leftover',
+            tool: 'Bash',
+            message: 'Allow Bash?',
+            input: { command: 'ls' },
+            createdAt: 1,
+          })
+          const ac = new AbortController()
+          askStarted()
+          answered = await req.askUser({ id: 'call_1', tool: 'Bash', message: 'Allow Bash?' }, ac.signal)
+        },
+      }),
+    })
+    socket.push(dmMessage({ text: 'please', ts: '80.0' }))
+    await sawAsk
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(answered).toBeUndefined()
+    expect(await store.listPendingAsks(sessionId)).toHaveLength(1)
+    socket.push(dmMessage({ text: 'deny', ts: '81.0' }))
+    socket.end()
+    await running
+  })
+
+  test('failed slack permission post does not auto-deny the next ask', async () => {
+    const store = createMemoryStore()
+    const socket = new FakeSlackSocket()
+    const api = new FakeSlackApi()
+    const origPost = api.postMessage.bind(api)
+    let allowPosts = 0
+    api.postMessage = async (opts) => {
+      if (typeof opts.text === 'string' && opts.text.includes('Allow')) {
+        allowPosts += 1
+        if (allowPosts === 1) throw new Error('slack down')
+      }
+      return origPost(opts)
+    }
+    const answers: string[] = []
+    let asks = 0
+    let sawSecond!: () => void
+    const secondAsk = new Promise<void>((resolve) => {
+      sawSecond = resolve
+    })
+    const running = runSlackAdapter({
+      config: slackConfig(),
+      socket,
+      api,
+      store,
+      openSession: async (req) => ({
+        sessionId: 'sess_post_fail',
+        async *submitMessage() {
+          asks += 1
+          const ac = new AbortController()
+          if (asks === 2) sawSecond()
+          try {
+            answers.push(
+              await req.askUser({ id: `call_${asks}`, tool: 'Bash', message: 'Allow Bash?' }, ac.signal),
+            )
+          } catch {
+            answers.push('threw')
+          }
+        },
+      }),
+    })
+    socket.push(dmMessage({ text: 'first', ts: '200.0' }))
+    for (let i = 0; i < 40 && answers.length === 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    expect(answers).toEqual(['threw'])
+    socket.push(dmMessage({ text: 'second', ts: '201.0' }))
+    await secondAsk
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(answers).toEqual(['threw'])
+    socket.push(dmMessage({ text: 'allow', ts: '202.0' }))
+    socket.end()
+    await running
+    expect(answers).toEqual(['threw', 'allow'])
+  })
+
+  test('durable slack waiter abort does not deny the pending row', async () => {
+    const store = createMemoryStore()
+    const sessionId = 'sess_slack_abort'
+    const socket = new FakeSlackSocket()
+    const api = new FakeSlackApi()
+    let answered: string | undefined
+    let askError: unknown
+    let abortAsk!: () => void
+    let applied = 0
+    let askStarted!: () => void
+    const sawAsk = new Promise<void>((resolve) => {
+      askStarted = resolve
+    })
+    const running = runSlackAdapter({
+      config: slackConfig(),
+      socket,
+      api,
+      store,
+      openSession: async (req) => ({
+        sessionId,
+        async *submitMessage() {
+          await store.upsertPendingAsk({
+            callId: 'call_1',
+            sessionId,
+            kind: 'leftover',
+            tool: 'Bash',
+            message: 'Allow Bash?',
+            input: { command: 'ls' },
+            createdAt: 1,
+          })
+          const ac = new AbortController()
+          abortAsk = () => ac.abort()
+          const pending = req.askUser({ id: 'call_1', tool: 'Bash', message: 'Allow Bash?' }, ac.signal)
+          askStarted()
+          try {
+            answered = await pending
+          } catch (error) {
+            askError = error
+          }
+        },
+        async applyAskAnswer() {
+          applied += 1
+          return 'matched'
+        },
+      }),
+    })
+    socket.push(dmMessage({ text: 'please', ts: '90.0' }))
+    await sawAsk
+    for (let i = 0; i < 20 && !api.posts.some((post) => post.text.includes('Allow')); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    abortAsk()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(answered).toBeUndefined()
+    expect(askError).toBeInstanceOf(Error)
+    expect((askError as Error).name).toBe('AbortError')
+    expect(applied).toBe(0)
+    expect(await store.listPendingAsks(sessionId)).toHaveLength(1)
+    socket.end()
+    await running
+  })
+
+  test('non-allow/deny text does not submit while a pending row exists', async () => {
+    const store = createMemoryStore()
+    const sessionId = 'sess_stash'
+    const socket = new FakeSlackSocket()
+    const submitted: string[] = []
+    let releaseAsk!: (answer: 'allow' | 'deny') => void
+    const askHeld = new Promise<'allow' | 'deny'>((resolve) => {
+      releaseAsk = resolve
+    })
+    let askStarted!: () => void
+    const sawAsk = new Promise<void>((resolve) => {
+      askStarted = resolve
+    })
+    const running = runSlackAdapter({
+      config: slackConfig(),
+      socket,
+      api: new FakeSlackApi(),
+      store,
+      openSession: async (req) => ({
+        sessionId,
+        async *submitMessage(input: UserSubmitInput) {
+          const text = submitText(input)
+          submitted.push(text)
+          if (text !== 'please') return
+          await store.upsertPendingAsk({
+            callId: 'call_stash',
+            sessionId,
+            kind: 'leftover',
+            tool: 'Bash',
+            message: 'Allow Bash?',
+            input: { command: 'ls' },
+            createdAt: 1,
+          })
+          const ac = new AbortController()
+          askStarted()
+          const answer = await Promise.race([
+            req.askUser({ id: 'call_stash', tool: 'Bash', message: 'Allow Bash?' }, ac.signal),
+            askHeld,
+          ])
+          if (answer === 'allow' || answer === 'deny') {
+            await store.deletePendingAsk('call_stash')
+          }
+        },
+        async listPendingAsks() {
+          return store.listPendingAsks(sessionId)
+        },
+      }),
+    })
+    socket.push(dmMessage({ text: 'please', ts: '90.0' }))
+    await sawAsk
+    socket.push(dmMessage({ text: 'first extra', ts: '91.0' }))
+    socket.push(dmMessage({ text: 'second extra', ts: '92.0' }))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(submitted).toEqual(['please'])
+    releaseAsk('allow')
+    socket.end()
+    await running
+    expect(submitted).toEqual(['please', 'first extra'])
+  })
+
+  test('crash-resume allow button calls applyAskAnswer and does not submitMessage', async () => {
+    const store = createMemoryStore()
+    const sessionId = 'sess_resume'
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Allow Bash?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    const applied: Array<{ callId: string; answer: string }> = []
+    const submitted: string[] = []
+    const socket = new FakeSlackSocket()
+    const running = runSlackAdapter({
+      config: slackConfig(),
+      socket,
+      api: new FakeSlackApi(),
+      store,
+      openSession: async () => ({
+        sessionId,
+        async *submitMessage(input: UserSubmitInput) {
+          submitted.push(submitText(input))
+        },
+        async applyAskAnswer(callId, answer) {
+          applied.push({ callId, answer })
+          await store.deletePendingAsk(callId)
+          return 'matched'
+        },
+        listPendingAsks: () => store.listPendingAsks(sessionId),
+        getPendingAsk: (callId) => store.getPendingAsk(callId),
+      }),
+    })
+    socket.push(blockActions({ actionId: 'raven_allow', value: 'call_1' }))
+    socket.end()
+    await running
+    expect(applied).toEqual([{ callId: 'call_1', answer: 'allow' }])
+    expect(submitted).toEqual([])
+    expect(await store.listPendingAsks(sessionId)).toHaveLength(0)
+  })
+
+  test('crash-resume extra is stashed until applyAskAnswer', async () => {
+    const store = createMemoryStore()
+    const sessionId = 'sess_resume_stash'
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Allow Bash?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    const applied: Array<{ callId: string; answer: string }> = []
+    const submitted: string[] = []
+    const socket = new FakeSlackSocket()
+    const running = runSlackAdapter({
+      config: slackConfig(),
+      socket,
+      api: new FakeSlackApi(),
+      store,
+      openSession: async () => ({
+        sessionId,
+        async *submitMessage(input: UserSubmitInput) {
+          submitted.push(submitText(input))
+        },
+        async applyAskAnswer(callId, answer) {
+          applied.push({ callId, answer })
+          await store.deletePendingAsk(callId)
+          return 'matched'
+        },
+        listPendingAsks: () => store.listPendingAsks(sessionId),
+        getPendingAsk: (callId) => store.getPendingAsk(callId),
+      }),
+    })
+    socket.push(dmMessage({ text: 'hello after crash', ts: '100.0' }))
+    socket.push(dmMessage({ text: 'second extra', ts: '101.0' }))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(submitted).toEqual([])
+    socket.push(blockActions({ actionId: 'raven_allow', value: 'call_1', envelopeId: 'env-allow' }))
+    socket.end()
+    await running
+    expect(applied).toEqual([{ callId: 'call_1', answer: 'allow' }])
+    expect(submitted).toEqual(['hello after crash'])
+  })
+})
+
+describe('normalizeSlackEnvelope identity', () => {
+  test('slack events_api ignores a forged top-level user field', () => {
+    const inbound = normalizeSlackEnvelope({
+      type: 'events_api',
+      payload: {
+        team_id: 'T1',
+        event: {
+          type: 'app_mention',
+          user: 'U_REAL',
+          channel: 'C1',
+          ts: '1.0',
+          text: 'hi',
+        },
+        user: 'U_FORGED',
+        userId: 'U_FORGED',
+        principalId: 'U_FORGED',
+      },
+    })
+    expect(inbound?.userId).toBe('U_REAL')
   })
 })

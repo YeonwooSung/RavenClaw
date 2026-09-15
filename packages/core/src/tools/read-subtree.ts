@@ -1,8 +1,14 @@
-import { readFileSync, statSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { basename, join, resolve } from 'node:path'
 import type { Tool, ToolContext } from '../types'
-import { walkFiles } from './glob'
+import {
+  isIgnoredDirName,
+  posixRel,
+  WALK_MAX_DEPTH,
+  WALK_MAX_FILES,
+  type WalkFile,
+} from './glob'
 import { parseWithSchema } from './parse'
+import { workspaceFsFor, type WorkspaceFs } from './workspace-fs'
 
 export interface ReadSubtreeInput {
   path?: string
@@ -50,15 +56,17 @@ export const readSubtreeTool: Tool<ReadSubtreeInput, string> = {
     if (ctx.signal.aborted) throw abortError()
     const cwd = ctx.turn.cwd
     const searchRoot = resolve(cwd, input.path ?? '.')
+    const fs = workspaceFsFor(ctx.turn)
     try {
-      statSync(searchRoot)
+      const rootStat = fs.stat(searchRoot)
+      if (!rootStat.exists) return `ReadSubtree failed: file not found`
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return `ReadSubtree failed: ${message}`
     }
 
     const limit = Math.min(input.maxFiles ?? DEFAULT_MAX_FILES, MAX_FILES_CAP)
-    const files = walkFiles(searchRoot, cwd)
+    const files = walkWorkspace(fs, searchRoot, cwd)
       .slice()
       .sort((a, b) => a.relToCwd.localeCompare(b.relToCwd))
       .slice(0, limit)
@@ -71,18 +79,18 @@ export const readSubtreeTool: Tool<ReadSubtreeInput, string> = {
         blocks.push(header)
         continue
       }
-      let buf: Buffer
+      let text: string
       try {
-        buf = readFileSync(file.absPath)
+        text = fs.readFile(file.absPath)
       } catch {
         blocks.push(header)
         continue
       }
-      if (containsNul(buf.subarray(0, Math.min(buf.length, BINARY_SCAN)))) {
+      if (text.slice(0, BINARY_SCAN).includes('\0')) {
         blocks.push(header)
         continue
       }
-      const symbols = extractSymbols(buf.toString('utf8'))
+      const symbols = extractSymbols(text)
       if (symbols.length === 0) {
         blocks.push(header)
         continue
@@ -91,6 +99,63 @@ export const readSubtreeTool: Tool<ReadSubtreeInput, string> = {
     }
     return blocks.join('\n')
   },
+}
+
+function walkWorkspace(fs: WorkspaceFs, searchRoot: string, cwd: string): WalkFile[] {
+  const out: WalkFile[] = []
+  const rootStat = fs.stat(searchRoot)
+  if (!rootStat.exists) return out
+
+  if (rootStat.isFile) {
+    return [
+      {
+        absPath: searchRoot,
+        relToCwd: posixRel(cwd, searchRoot),
+        relToRoot: basename(searchRoot),
+        size: rootStat.size,
+      },
+    ]
+  }
+
+  if (!rootStat.isDir) return out
+
+  function visit(dir: string, depth: number): void {
+    if (out.length >= WALK_MAX_FILES) return
+    if (depth > WALK_MAX_DEPTH) return
+    let entries
+    try {
+      entries = fs.readdir(dir)
+    } catch {
+      return
+    }
+    for (const ent of entries) {
+      if (out.length >= WALK_MAX_FILES) return
+      const abs = join(dir, ent.name)
+      if (ent.isDir) {
+        if (isIgnoredDirName(ent.name)) continue
+        visit(abs, depth + 1)
+        continue
+      }
+      if (!ent.isFile) continue
+      let size = 0
+      try {
+        const st = fs.stat(abs)
+        if (!st.exists || !st.isFile) continue
+        size = st.size
+      } catch {
+        continue
+      }
+      out.push({
+        absPath: abs,
+        relToCwd: posixRel(cwd, abs),
+        relToRoot: posixRel(searchRoot, abs),
+        size,
+      })
+    }
+  }
+
+  visit(searchRoot, 0)
+  return out
 }
 
 export function extractSymbols(text: string): string[] {
@@ -107,13 +172,6 @@ export function extractSymbols(text: string): string[] {
     if (out.length >= SYMBOLS_PER_FILE) break
   }
   return out
-}
-
-function containsNul(buf: Uint8Array): boolean {
-  for (let i = 0; i < buf.length; i++) {
-    if (buf[i] === 0) return true
-  }
-  return false
 }
 
 function abortError(): Error {

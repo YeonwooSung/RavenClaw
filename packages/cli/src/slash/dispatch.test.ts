@@ -183,6 +183,23 @@ describe('dispatchSharedSlash', () => {
     expect(host.notices[0]).toBe('disabled missing-skill')
   })
 
+  test('steer enqueues and aborts the live turn', async () => {
+    const steered: string[] = []
+    let abortCalls = 0
+    const engine = fakeEngine(makeSession())
+    engine.enqueueSteer = (text) => {
+      steered.push(text)
+    }
+    engine.abort = () => {
+      abortCalls += 1
+    }
+    const host = fakeHost(fakeRuntime(engine))
+    expect(await dispatchSharedSlash(cmd('steer', 'keep going'), host)).toBe('handled')
+    expect(steered).toEqual(['keep going'])
+    expect(abortCalls).toBe(1)
+    expect(host.notices).toEqual(['steered (next round)'])
+  })
+
   test('unknown command is handled with a notice', async () => {
     const host = fakeHost(fakeRuntime(fakeEngine(makeSession())))
     expect(await dispatchSharedSlash(cmd('foo'), host)).toBe('handled')

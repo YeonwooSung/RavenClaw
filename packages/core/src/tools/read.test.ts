@@ -126,6 +126,15 @@ describe('Read', () => {
     expect(ctx.turn.readFiles.size).toBe(0)
   })
 
+  test('refuses a path outside cwd', async () => {
+    const root = fixtureRoot()
+    const ctx = makeCtx(root)
+    ctx.turn.terminalBackend = 'docker'
+    const out = await readTool.execute({ path: '/etc/passwd' }, ctx)
+    expect(String(out).toLowerCase()).toMatch(/outside workspace|denied|protected/)
+    expect(ctx.turn.readFiles.size).toBe(0)
+  })
+
   test('execute refuses when the signal is already aborted', async () => {
     const root = fixtureRoot()
     writeFileSync(join(root, 'a.txt'), 'ok\n')

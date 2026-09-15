@@ -84,6 +84,7 @@ export async function runDiscord(opts: { flags: ConfigFlags }): Promise<number> 
           pairingHome: home,
           turnFlights: host.turnFlights,
           signal: stop.signal,
+          store: shared.store,
         })
       } catch (error) {
         if (stop.signal.aborted) break

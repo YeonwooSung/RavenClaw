@@ -1,5 +1,6 @@
-import { realpathSync, statSync } from 'node:fs'
+import { realpathSync } from 'node:fs'
 import type { Turn } from '../types'
+import { createWorkspaceFs } from './workspace-fs'
 
 export function recordReadFile(turn: Turn, path: string, mtimeMs: number): void {
   turn.readFiles.add(path)
@@ -8,20 +9,38 @@ export function recordReadFile(turn: Turn, path: string, mtimeMs: number): void 
 }
 
 export function markReadPath(turn: Turn, path: string): void {
+  const fs = createWorkspaceFs({ cwd: turn.cwd, backend: turn.terminalBackend ?? 'local' })
   let mtimeMs = 0
   try {
-    mtimeMs = statSync(path).mtimeMs
+    const st = fs.stat(path)
+    mtimeMs = st.exists ? st.mtimeMs : Date.now()
   } catch {
     mtimeMs = Date.now()
   }
   recordReadFile(turn, path, mtimeMs)
 }
 
+export function wasRead(readFiles: Set<string>, resolved: string, candidate: string): boolean {
+  if (readFiles.has(resolved) || readFiles.has(candidate)) return true
+  for (const seen of readFiles) {
+    if (seen === resolved || seen === candidate) return true
+    try {
+      if (realpathSync(seen) === resolved) return true
+    } catch {
+      // entry may no longer exist
+    }
+  }
+  return false
+}
+
 export function isStaleSinceRead(turn: Turn, resolved: string, candidate: string): boolean {
   const recorded = lookupReadMtime(turn, resolved, candidate)
   if (recorded === undefined) return false
   try {
-    return statSync(resolved).mtimeMs !== recorded
+    const fs = createWorkspaceFs({ cwd: turn.cwd, backend: turn.terminalBackend ?? 'local' })
+    const st = fs.stat(resolved)
+    if (!st.exists) return false
+    return st.mtimeMs !== recorded
   } catch {
     return false
   }

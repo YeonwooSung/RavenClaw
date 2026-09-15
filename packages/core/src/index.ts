@@ -4,7 +4,7 @@ export { sessionKey } from './gateway/types'
 export type { InboundEvent, ChatType } from './gateway/types'
 export { loadSessionMap, saveSessionMap, resolveSessionId } from './gateway/session-map'
 export { isUserAllowed } from './gateway/authz'
-export { parseTurnRequest, checkBearer, webhookSafeTools } from './gateway/http'
+export { parseTurnRequest, parseResolveBody, checkBearer, webhookSafeTools } from './gateway/http'
 export { verifyWebhookSignature, safeWebhookToolNames } from './gateway/webhook'
 export {
   parseLoopArg,
@@ -36,6 +36,7 @@ export {
 } from './loop/repair'
 export { createMemoryStore } from './session/memory-store'
 export { createSqliteStore, searchSessionStore, sqliteStoreDatabase } from './session/sqlite-store'
+export type { PendingAsk, PendingAskAnswer, PendingAskKind } from './session/pending-asks'
 export { createMemoryDeliveries, createSqliteDeliveries, deliveryKey } from './session/deliveries'
 export type { DeliveryLedger } from './session/deliveries'
 export { resumeSession } from './session/resume'
@@ -104,6 +105,8 @@ export type { ToolCallInput } from './tools/tool-call'
 export { sleepTool } from './tools/sleep'
 export { thinkDeeplyTool } from './tools/think-deeply'
 export { addDirTool } from './tools/add-dir'
+export { createWorkspaceFs } from './tools/workspace-fs'
+export type { WorkspaceFs } from './tools/workspace-fs'
 export { createTaskV2Tools } from './tools/task-v2'
 export { createLspTool } from './tools/lsp'
 export { createStructuredOutputTool } from './tools/structured-output'
@@ -120,6 +123,7 @@ export { todoWriteTool, loadTodos, todosFromToolResult, todoJsonPath } from './t
 export type { TodoItem, TodoStatus, TodoWriteInput } from './tools/todo'
 export { partitionToolCalls } from './tools/partition'
 export {
+  COMPACTION_PROMPT_TOKENS,
   compactThreshold,
   defaultCompactPolicy,
   hardLimit,
@@ -274,4 +278,5 @@ export {
 } from './agent/definition'
 export { queryLoop } from './loop/query-loop'
 export { createSessionEngine } from './loop/session-engine'
+export { runEvalDir, DEFAULT_EVAL_FIXTURES_DIR } from './eval/run'
 

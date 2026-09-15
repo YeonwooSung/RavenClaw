@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { checkBearer, parseTurnRequest, webhookSafeTools } from './http'
+import { checkBearer, parseResolveBody, parseTurnRequest, webhookSafeTools } from './http'
 
 describe('parseTurnRequest', () => {
   test('requires a non-empty text string', () => {
@@ -39,6 +39,39 @@ describe('checkBearer', () => {
     expect(checkBearer('Bearer other', 's3cret')).toBe(false)
     expect(checkBearer('Basic s3cret', 's3cret')).toBe(false)
     expect(checkBearer('s3cret', 's3cret')).toBe(false)
+  })
+})
+
+describe('parseResolveBody', () => {
+  test('requires callId string and allow boolean', () => {
+    expect(parseResolveBody(null)).toEqual({ ok: false, error: 'body must be an object' })
+    expect(parseResolveBody([])).toEqual({ ok: false, error: 'body must be an object' })
+    expect(parseResolveBody({})).toEqual({ ok: false, error: 'callId is required' })
+    expect(parseResolveBody({ callId: '  ', allow: true })).toEqual({
+      ok: false,
+      error: 'callId is required',
+    })
+    expect(parseResolveBody({ callId: 'c1' })).toEqual({
+      ok: false,
+      error: 'allow must be a boolean',
+    })
+    expect(parseResolveBody({ callId: 'c1', allow: 'yes' })).toEqual({
+      ok: false,
+      error: 'allow must be a boolean',
+    })
+  })
+
+  test('returns trimmed callId and allow', () => {
+    expect(parseResolveBody({ callId: '  c1  ', allow: true })).toEqual({
+      ok: true,
+      callId: 'c1',
+      allow: true,
+    })
+    expect(parseResolveBody({ callId: 'c1', allow: false })).toEqual({
+      ok: true,
+      callId: 'c1',
+      allow: false,
+    })
   })
 })
 

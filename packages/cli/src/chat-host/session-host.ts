@@ -1,12 +1,12 @@
 import { AsyncLocalStorage } from 'node:async_hooks'
-import { loadSessionMap, resolveSessionId, saveSessionMap } from '@ravenclaw/core'
+import { loadSessionMap, resolveSessionId, saveSessionMap, type UserSubmitInput } from '@ravenclaw/core'
 import { openNewSession, resumeRuntime, type CliRuntime } from '../engine'
 import { singleFlight, startMailboxPoller } from '../serve'
 
 export type ChatPermissionAnswer = 'allow' | 'deny' | 'allow_always'
 
 export type ChatAsk = (
-  event: { id: string; tool: string; message: string },
+  event: { id: string; tool: string; message: string; childSessionId?: string },
   signal: AbortSignal,
 ) => Promise<ChatPermissionAnswer>
 
@@ -14,11 +14,18 @@ export interface ChatOpenSessionReq {
   sessionKey: string
   permissionMode: 'default' | 'dontAsk'
   askUser: ChatAsk
+  replayPending?: boolean
 }
 
 export interface ChatBoundSession {
   sessionId: string
-  submitMessage: (text: string) => AsyncGenerator<unknown, unknown>
+  submitMessage: (input: UserSubmitInput) => AsyncGenerator<unknown, unknown>
+  applyAskAnswer?: (
+    callId: string,
+    answer: ChatPermissionAnswer,
+  ) => Promise<'matched' | 'unmatched'>
+  listPendingAsks?: () => Promise<Array<{ callId: string }>>
+  getPendingAsk?: (callId: string) => Promise<{ callId: string } | undefined>
 }
 
 export interface ChatSessionHost {
@@ -40,6 +47,8 @@ export function createChatSessionHost(opts: {
   const engines = new Map<string, CliRuntime>()
   const opening = new Map<string, Promise<CliRuntime>>()
   const turnFlights = new Map<string, Promise<unknown>>()
+  const replayed = new Set<string>()
+  const replaying = new Set<string>()
   const askStore = new AsyncLocalStorage<ChatAsk>()
   const openNew = opts.openNewSession ?? openNewSession
   const resume = opts.resumeRuntime ?? resumeRuntime
@@ -48,7 +57,13 @@ export function createChatSessionHost(opts: {
   opts.shared.ask.bind(async (event, signal) => {
     const ask = askStore.getStore()
     if (!ask) return 'deny'
-    return ask({ id: event.id, tool: event.tool, message: event.message }, signal)
+    const forwarded: Parameters<ChatAsk>[0] = {
+      id: event.id,
+      tool: event.tool,
+      message: event.message,
+    }
+    if (event.childSessionId !== undefined) forwarded.childSessionId = event.childSessionId
+    return ask(forwarded, signal)
   })
 
   async function openSession(req: ChatOpenSessionReq): Promise<ChatBoundSession> {
@@ -70,10 +85,27 @@ export function createChatSessionHost(opts: {
       engines.set(resolvedId.id, opened)
       return opened
     })
-    return {
+    const sessionId = runtime.engine.session.id
+    if (req.replayPending !== false && !replayed.has(sessionId) && !replaying.has(sessionId)) {
+      replaying.add(sessionId)
+      try {
+        const replay = runtime.engine.replayPendingAsks
+        if (typeof replay === 'function') {
+          await askStore.run(req.askUser, async () => {
+            for await (const _event of replay.call(runtime.engine)) {
+              // Slack/Discord askUser re-posts the leftover prompt
+            }
+          })
+        }
+        replayed.add(sessionId)
+      } finally {
+        replaying.delete(sessionId)
+      }
+    }
+    const bound: ChatBoundSession = {
       sessionId: runtime.engine.session.id,
-      async *submitMessage(text: string) {
-        const gen = runtime.engine.submitMessage(text)
+      async *submitMessage(input: UserSubmitInput) {
+        const gen = runtime.engine.submitMessage(input)
         while (true) {
           const next = await askStore.run(req.askUser, () => gen.next())
           if (next.done) return next.value
@@ -81,6 +113,26 @@ export function createChatSessionHost(opts: {
         }
       },
     }
+    if (typeof runtime.engine.applyAskAnswer === 'function') {
+      bound.applyAskAnswer = (callId, answer) => runtime.engine.applyAskAnswer(callId, answer)
+    }
+    if (typeof runtime.store?.listPendingAsks === 'function') {
+      bound.listPendingAsks = async () => {
+        const parentId = runtime.engine.session.id
+        const own = await runtime.store.listPendingAsks(parentId)
+        if (typeof runtime.store.listSessions !== 'function') return own
+        const children = await runtime.store.listSessions({ parentSessionId: parentId })
+        const nested = []
+        for (const child of children) {
+          nested.push(...(await runtime.store.listPendingAsks(child.id)))
+        }
+        return [...own, ...nested]
+      }
+    }
+    if (typeof runtime.store?.getPendingAsk === 'function') {
+      bound.getPendingAsk = (callId) => runtime.store.getPendingAsk(callId)
+    }
+    return bound
   }
 
   let stopped = false

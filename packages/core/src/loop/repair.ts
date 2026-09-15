@@ -52,7 +52,7 @@ function joinAssistants(
   return out
 }
 
-function flushUnpaired(out: Message[]): void {
+function flushUnpaired(out: Message[], openCallIds?: Set<string>): void {
   let i = out.length - 1
   while (i >= 0 && out[i]?.role === 'tool') i -= 1
   const asst = i >= 0 ? out[i] : undefined
@@ -64,12 +64,13 @@ function flushUnpaired(out: Message[]): void {
   }
   for (const block of asst.blocks) {
     if (block.type === 'tool_use' && !existing.has(block.id)) {
+      if (openCallIds?.has(block.id)) continue
       out.push(makeToolMessage(block.id, false, INCOMPLETE_TEXT))
     }
   }
 }
 
-export function repairRoleAlternation(messages: Message[]): Message[] {
+export function repairRoleAlternation(messages: Message[], openCallIds?: Set<string>): Message[] {
   let start = 0
   while (start < messages.length && messages[start]?.role === 'tool') start += 1
   const out: Message[] = []
@@ -101,7 +102,7 @@ export function repairRoleAlternation(messages: Message[]): Message[] {
     }
 
     if (msg.role === 'user') {
-      flushUnpaired(out)
+      flushUnpaired(out, openCallIds)
       const last = out[out.length - 1]
       if (last?.role === 'user') {
         out[out.length - 1] = joinUsers(last, msg)
@@ -111,7 +112,7 @@ export function repairRoleAlternation(messages: Message[]): Message[] {
       continue
     }
 
-    flushUnpaired(out)
+    flushUnpaired(out, openCallIds)
     const last = out[out.length - 1]
     if (last?.role === 'assistant' && !hasToolUse(last) && !hasToolUse(msg)) {
       out[out.length - 1] = joinAssistants(last, msg)
@@ -120,7 +121,7 @@ export function repairRoleAlternation(messages: Message[]): Message[] {
     }
   }
 
-  flushUnpaired(out)
+  flushUnpaired(out, openCallIds)
   return out
 }
 

@@ -553,6 +553,7 @@ async function finishOpenEngine(
     maxRounds: opts.maxRounds ?? opts.config.maxRounds,
     askUser: opts.askUser,
     system,
+    terminalBackend: opts.config.terminal?.backend ?? 'local',
   }
   if (opts.messages) engineOpts.messages = opts.messages
   if (hooks.length > 0) engineOpts.hooks = hooks
@@ -1040,6 +1041,12 @@ function attachRavenclawLog(engine: SessionEngine, log: RavenclawLog): SessionEn
     },
     submitMessage(input) {
       return withPreventSleep(logSubmit(engine.submitMessage(input), engine.session.id, log))
+    },
+    applyAskAnswer(callId, answer) {
+      return engine.applyAskAnswer(callId, answer)
+    },
+    replayPendingAsks() {
+      return engine.replayPendingAsks()
     },
     enqueueSteer(text) {
       engine.enqueueSteer(text)

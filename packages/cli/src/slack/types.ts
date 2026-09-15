@@ -1,4 +1,4 @@
-import type { RavenClawConfig } from '@ravenclaw/core'
+import type { RavenClawConfig, UserSubmitInput } from '@ravenclaw/core'
 
 export type SlackConfig = NonNullable<RavenClawConfig['slack']>
 
@@ -68,14 +68,21 @@ export interface SlackOpenSessionOpts {
   userId: string
   threadTs?: string
   askUser: (
-    event: { id: string; tool: string; message: string },
+    event: { id: string; tool: string; message: string; childSessionId?: string },
     signal: AbortSignal,
   ) => Promise<SlackPermissionAnswer>
+  replayPending?: boolean
 }
 
 export interface SlackBoundSession {
   sessionId: string
-  submitMessage: (text: string) => AsyncGenerator<unknown, unknown>
+  submitMessage: (input: UserSubmitInput) => AsyncGenerator<unknown, unknown>
+  applyAskAnswer?: (
+    callId: string,
+    answer: SlackPermissionAnswer,
+  ) => Promise<'matched' | 'unmatched'>
+  listPendingAsks?: () => Promise<Array<{ callId: string }>>
+  getPendingAsk?: (callId: string) => Promise<{ callId: string } | undefined>
 }
 
 export type SlackOpenSession = (opts: SlackOpenSessionOpts) => Promise<SlackBoundSession>

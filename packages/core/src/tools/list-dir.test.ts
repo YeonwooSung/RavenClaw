@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ToolContext, Turn } from '../types'
@@ -111,5 +111,25 @@ describe('ListDir', () => {
     await expect(listDirTool.execute({}, makeCtx(root, ac.signal))).rejects.toMatchObject({
       name: 'AbortError',
     })
+  })
+
+  test('lists a symlink as a file even when it is neither file nor dir', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'target.txt'), 'x\n')
+    symlinkSync('target.txt', join(root, 'link'))
+    mkdirSync(join(root, 'subdir'))
+    symlinkSync('subdir', join(root, 'dirlink'))
+    const out = await listDirTool.execute({}, makeCtx(root))
+    expect(out).toBe(
+      ['dir   subdir', 'file  dirlink', 'file  link', 'file  target.txt'].join('\n'),
+    )
+  })
+
+  test('refuses a path outside cwd', async () => {
+    const root = fixtureRoot()
+    const ctx = makeCtx(root)
+    ctx.turn.terminalBackend = 'docker'
+    const out = await listDirTool.execute({ path: '/etc' }, ctx)
+    expect(String(out).toLowerCase()).toMatch(/outside workspace|denied|protected/)
   })
 })

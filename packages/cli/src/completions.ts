@@ -21,6 +21,7 @@ export const COMPLETION_COMMANDS = [
   'slack',
   'discord',
   'pairing',
+  'eval',
   'help',
   'version',
 ] as const

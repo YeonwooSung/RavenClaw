@@ -2,8 +2,9 @@ import { mkdtempSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, test } from 'bun:test'
+import { saveSessionMap } from '@ravenclaw/core'
 import { createChatSessionHost } from './session-host'
-import type { CliRuntime } from '../engine'
+import { createAskBridge, type CliRuntime } from '../engine'
 
 function fakeRuntime(id: string, mode: 'default' | 'dontAsk' = 'default'): CliRuntime {
   const session = { id, permissionMode: mode }
@@ -77,5 +78,184 @@ describe('createChatSessionHost', () => {
     expect(bound.sessionId).toBe('sess_mode')
     const cached = host.engines.get('sess_mode')
     expect(cached?.engine.session.permissionMode).toBe('dontAsk')
+  })
+
+  test('session host replays pending asks after resumeRuntime', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'raven-chat-host-replay-'))
+    const existingSessionId = 'sess_existing'
+    saveSessionMap({ 'resume-key': existingSessionId }, home)
+    let replayed = 0
+    const host = createChatSessionHost({
+      home,
+      shared: fakeRuntime('shared'),
+      resumeRuntime: async () => {
+        const runtime = fakeRuntime(existingSessionId)
+        runtime.engine.replayPendingAsks = async function* () {
+          replayed += 1
+        }
+        return runtime
+      },
+    })
+    await host.openSession({
+      sessionKey: 'resume-key',
+      permissionMode: 'default',
+      askUser: async () => 'deny',
+    })
+    expect(replayed).toBe(1)
+  })
+
+  test('overlapping openSession does not start a second leftover-ask replay', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'raven-chat-host-replay-overlap-'))
+    const existingSessionId = 'sess_replay_overlap'
+    saveSessionMap({ 'resume-key': existingSessionId }, home)
+    let replayed = 0
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let sawFirst!: () => void
+    const firstEntered = new Promise<void>((resolve) => {
+      sawFirst = resolve
+    })
+    const host = createChatSessionHost({
+      home,
+      shared: fakeRuntime('shared'),
+      resumeRuntime: async () => {
+        const runtime = fakeRuntime(existingSessionId)
+        runtime.engine.replayPendingAsks = async function* () {
+          replayed += 1
+          sawFirst()
+          await held
+        }
+        return runtime
+      },
+    })
+    const first = host.openSession({
+      sessionKey: 'resume-key',
+      permissionMode: 'default',
+      askUser: async () => 'allow',
+    })
+    await firstEntered
+    const second = host.openSession({
+      sessionKey: 'resume-key',
+      permissionMode: 'default',
+      askUser: async () => 'deny',
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(replayed).toBe(1)
+    release()
+    await first
+    await second
+    expect(replayed).toBe(1)
+  })
+
+  test('replay abort can re-ask on the next openSession', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'raven-chat-host-replay-abort-'))
+    const existingSessionId = 'sess_replay_abort'
+    saveSessionMap({ 'resume-key': existingSessionId }, home)
+    let replayed = 0
+    const host = createChatSessionHost({
+      home,
+      shared: fakeRuntime('shared'),
+      resumeRuntime: async () => {
+        const runtime = fakeRuntime(existingSessionId)
+        runtime.engine.replayPendingAsks = async function* () {
+          replayed += 1
+          if (replayed === 1) {
+            throw Object.assign(new Error('aborted'), { name: 'AbortError' })
+          }
+        }
+        return runtime
+      },
+    })
+    await expect(
+      host.openSession({
+        sessionKey: 'resume-key',
+        permissionMode: 'default',
+        askUser: async () => 'deny',
+      }),
+    ).rejects.toThrow('aborted')
+    await host.openSession({
+      sessionKey: 'resume-key',
+      permissionMode: 'default',
+      askUser: async () => 'deny',
+    })
+    expect(replayed).toBe(2)
+  })
+
+  test('listPendingAsks includes leftover-asks on child sessions', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'raven-chat-host-child-pending-'))
+    const host = createChatSessionHost({
+      home,
+      shared: fakeRuntime('shared'),
+      newId: () => 'sess_parent',
+      openNewSession: async () => {
+        const runtime = fakeRuntime('sess_parent')
+        runtime.store = {
+          async listPendingAsks(sessionId: string) {
+            if (sessionId === 'sess_parent') return []
+            if (sessionId === 'sess_child') return [{ callId: 'call_child' }]
+            return []
+          },
+          async listSessions(filter?: { parentSessionId?: string | null }) {
+            if (filter?.parentSessionId === 'sess_parent') return [{ id: 'sess_child' }]
+            return []
+          },
+        } as CliRuntime['store']
+        return runtime
+      },
+    })
+    const bound = await host.openSession({
+      sessionKey: 'slack:t:c:u',
+      permissionMode: 'default',
+      askUser: async () => 'deny',
+    })
+    expect(await bound.listPendingAsks?.()).toEqual([{ callId: 'call_child' }])
+  })
+
+  test('ask bind forwards childSessionId to the session askUser', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'raven-chat-host-child-ask-'))
+    const ask = createAskBridge()
+    const shared = fakeRuntime('shared')
+    shared.ask = ask
+    const seen: Array<string | undefined> = []
+    const host = createChatSessionHost({
+      home,
+      shared,
+      newId: () => 'sess_parent',
+      openNewSession: async () => {
+        const runtime = fakeRuntime('sess_parent')
+        runtime.ask = ask
+        runtime.engine.submitMessage = async function* () {
+          await ask.ask(
+            {
+              type: 'permission_ask',
+              id: 'call_1',
+              tool: 'Bash',
+              input: { command: 'ls' },
+              message: 'child bash?',
+              childSessionId: 'sess_child',
+            },
+            new AbortController().signal,
+          )
+          return { reason: 'completed' }
+        }
+        return runtime
+      },
+    })
+    const bound = await host.openSession({
+      sessionKey: 'k',
+      permissionMode: 'default',
+      askUser: async (event) => {
+        seen.push(event.childSessionId)
+        return 'deny'
+      },
+    })
+    const gen = bound.submitMessage('go')
+    while (!(await gen.next()).done) {
+      // drain
+    }
+    expect(seen).toEqual(['sess_child'])
   })
 })

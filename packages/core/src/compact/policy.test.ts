@@ -254,6 +254,21 @@ describe('shouldAutocompact', () => {
       }),
     ).toBe('compact')
   })
+
+  test('shouldAutocompact counts COMPACTION_PROMPT_TOKENS against the threshold', () => {
+    const dummyModel = model({ contextWindow: 10_000, reserveOutputTokens: 1_000 })
+    const compactPolicy = defaultCompactPolicy()
+    const threshold = compactThreshold(dummyModel, compactPolicy)
+    const decision = shouldAutocompact({
+      enabled: true,
+      estimatedTokens: threshold - 500,
+      anchoredTokens: threshold - 500,
+      model: dummyModel,
+      compact: compactPolicy,
+      consecutiveFailures: 0,
+    })
+    expect(decision).toBe('compact')
+  })
 })
 
 describe('nearCompact', () => {

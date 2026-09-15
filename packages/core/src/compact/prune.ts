@@ -30,9 +30,9 @@ function toolNameOf(messages: Message[], toolUseId: string): string | undefined 
   return undefined
 }
 
-function bashPreview(text: string): string {
-  const preview = text.slice(0, 400)
-  return `${preview}\n... [truncated Bash output: ${text.length} characters]`
+function headTailPreview(text: string, head = 400, tail = 400): string {
+  if (text.length <= head + tail) return text
+  return `${text.slice(0, head)}\n... [truncated ${text.length} characters] ...\n${text.slice(-tail)}`
 }
 
 function microcompactStub(name: string): string {
@@ -68,11 +68,9 @@ export function applyToolResultBudget(
 ): Message[] {
   return messages.map((msg) => {
     if (msg.role !== 'tool' || msg.persistPath) return msg
-    const name = toolNameOf(messages, msg.toolUseId)
-    if (name !== 'Bash') return msg
     const text = textOf(msg)
     if (text.length <= cap) return msg
-    return { ...msg, blocks: [{ type: 'text', text: bashPreview(text) }] }
+    return { ...msg, blocks: [{ type: 'text', text: headTailPreview(text) }] }
   })
 }
 

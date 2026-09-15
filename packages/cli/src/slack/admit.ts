@@ -14,7 +14,6 @@ export function admitSlackEvent(
   config: SlackConfig,
   botUserId?: string,
 ): SlackAdmit {
-  if (event.kind === 'block_actions') return 'ignore'
   if (event.botId !== undefined && event.botId !== '') return 'ignore'
   if (event.subtype !== undefined && event.subtype !== '') return 'ignore'
   if (botUserId !== undefined && event.userId === botUserId) return 'ignore'
@@ -24,6 +23,6 @@ export function admitSlackEvent(
   if (isDm) return 'ok'
   if (config.channels.length === 0) return 'ignore-channel'
   if (!config.channels.includes(event.channel)) return 'ignore-channel'
-  if (config.mentionOnly && !event.mentioned) return 'ignore-mention'
+  if (event.kind !== 'block_actions' && config.mentionOnly && !event.mentioned) return 'ignore-mention'
   return 'ok'
 }

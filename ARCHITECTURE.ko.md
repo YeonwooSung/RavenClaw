@@ -10,6 +10,8 @@ English: [ARCHITECTURE.md](ARCHITECTURE.md)
 - [SLASH_COMMANDS.ko.md](SLASH_COMMANDS.ko.md)
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [docs/headless.md](docs/headless.md)
+- 다음 로드맵: [2026-09-15-eve-inspired-roadmap.md](docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md)
+- eve 선행 분석: [eve-analysis.ko.md](docs/research/eve-analysis.ko.md)
 
 ---
 
@@ -112,7 +114,7 @@ flowchart TD
 엔트리는 `packages/cli/src/index.ts`의 `main`이다.
 
 1. `parseArgv` (`packages/cli/src/args.ts`)가 커맨드와 플래그를 읽는다.
-2. 키가 필요 없는 커맨드(`help`, `version`, `sessions`, `show`, `rm`, `search`, `export`, `title`, `doctor`, `config`, `init`, `completions`, `mcp`, `skills`, `pairing`, cron의 list/add/rm/on/off)는 `bootCli` 전에 처리한다.
+2. 키가 필요 없는 커맨드(`help`, `version`, `sessions`, `show`, `rm`, `search`, `export`, `title`, `doctor`, `config`, `init`, `setup`, `completions`, `mcp`, `skills`, `pairing`, cron의 list/add/rm/on/off)는 `bootCli` 전에 처리한다.
 3. 키가 필요한 경로(`interactive`, `resume`로 열기, `exec`, `acp`, `smoke`, `serve`, `slack`, `discord`, cron `tick`/`watch`)는 `ensureHomeDir` 후 `bootCli` (`packages/cli/src/engine.ts`)를 탄다.
 
 `bootCli`가 하는 일:
@@ -192,7 +194,7 @@ Socket Mode 봇이다. 공개 URL이 필요 없다. `config.yaml`의 `slack.enab
 - `mentionOnly` 기본값은 true다.
 - DM은 `default`(leftover-ask), 채널/스레드는 `dontAsk`다.
 - DM leftover-ask는 채널에 allow/deny를 묻고 120초 안에 답이 없으면 deny다. 채널 메시지의 leftover는 묻지 않고 deny다.
-- 세션 키: DM은 `raven:slack:<team>:<userId>`, 채널은 `raven:slack:<team>:<channel>`, 스레드는 `raven:slack:<team>:<channel>:<thread>`.
+- 세션 키: DM은 `raven:slack:<team>:<userId>`. 비-DM은 어댑터가 항상 `threadId`를 넘기므로 `raven:slack:<team>:<channel>:<threadTs||messageTs>`다. 3파트 채널 키 헬퍼는 있지만 라이브 경로에서는 쓰이지 않는다.
 - 인메모리 dedupe는 `team:channel:ts`다. Discord처럼 SQLite ledger를 쓰지 않는다.
 - `createChatSessionHost`로 serve와 같은 세션 맵/mailbox를 재사용한다. serve HTTP를 경유하지 않는다.
 
@@ -253,8 +255,8 @@ SDK `createRootTools`에 없는 CLI 루트 툴: `NotebookEdit`, `TaskSteer`, `Ad
 1. 세션 락을 renew하고 30초마다 갱신한다.
 2. 첫 호출에서 `SessionStart` 훅을 돌린다.
 3. `UserPromptSubmit`이 `preventContinuation`이면 그 턴을 멈춘다.
-4. user 메시지를 만들고 `persistUser`한다. persist 실패면 메시지를 되돌리고 던진다.
-5. agent mailbox를 drain해 user 텍스트 앞에 `[mailbox]`를 붙인다.
+4. agent mailbox를 drain해 user 텍스트 앞에 `[mailbox]`를 붙인다. drain 실패 시 메일을 다시 넣는다.
+5. user 메시지를 만들고 `persistUser`한다. persist 실패면 메시지를 되돌리고 던진다.
 6. 제목이 비어 있으면 첫 줄로 제목을 잡는다(최대 50자).
 7. `Turn`을 만들고 `queryLoop`에 넘긴다.
 8. 끝나면 usage, compact generation, permission mode, cwd를 세션에 다시 쓴다.
@@ -355,7 +357,7 @@ prefix freeze: `wireToolsForTurn`이 `frozenToolNames`를 한 번 찍고 그 이
 
 훅 파일은 `~/.ravenclaw/hooks.json`과 `<cwd>/.ravenclaw/hooks.json`이다. 라이프사이클: `PreToolUse`, `PostToolUse`, `UserPromptSubmit`, `SessionStart`, `SessionEnd`, `Stop`. `--bare`는 훅과 MEMORY/USER 로드를 건너뛴다.
 
-`/add-dir` 슬래시는 notice-only다. 루트를 추가하지 않는다. 실제 추가는 `AddDir` 툴 또는 `--add-dir`다.
+`/add-dir` 슬래시는 notice-only다. 루트를 추가하지 않는다. 실제 추가는 `AddDir` 툴 또는 `--add-dir`다. `/team-onboarding`(`/onboard`)은 고정 프롬프트와 `scanTeamOnboarding` JSON이다. `/interview`는 `INTERVIEW_PROMPT`를 넣는다. 둘 다 두 번째 루프가 아니다.
 
 ---
 
@@ -477,7 +479,7 @@ builtin 8개:
 | `context` | 프로젝트 파일, 파일 트리, memory snapshot, git snapshot, coding posture | breakpoint |
 | `volatile` | cwd, 현재 모드, locale, effort, 스킬 인덱스(이름 + 설명 60자) | 없음 |
 
-프로젝트 파일은 `AGENTS.md` / `RAVEN.md` / `CLAUDE.md`와 `.ravenclaw/RAVEN.md`다. 파일당 40k, 합 60k. `@path` include를 펼친다. vendor 프롬프트를 쓰지 않는다. 읽기만 한다.
+프로젝트 파일은 `AGENTS.md` / `RAVEN.md` / `CLAUDE.md`, `.ravenclaw/RAVEN.md`, `RAVEN.local.md`, `AGENTS.local.md`, `.ravenclaw/rules/*`다 (`packages/core/src/prompt/project-files.ts`). 파일당 40k, 합 60k. `@path` include를 펼친다. vendor 프롬프트를 쓰지 않는다. 읽기만 한다.
 
 memory snapshot (`packages/core/src/prompt/memory.ts`):
 
@@ -555,7 +557,7 @@ Provider 포트는 `packages/core/src/types.ts`의 `Provider`다. `stream(req, s
 | `openai_compat` | `OpenAICompatProvider` | `OPENAI_BASE_URL` 또는 OpenAI |
 | `ollama` | `OpenAICompatProvider` (`id: ollama`) | `http://127.0.0.1:11434/v1`, 모델 `llama3.2` |
 | `vllm` | `OpenAICompatProvider` (`id: vllm`) | `http://127.0.0.1:8000/v1`, 모델 `local-model` |
-| `openai_responses` | `OpenAIResponsesProvider` | Responses API. 호스트가 고를 때 |
+| `openai_responses` | `OpenAIResponsesProvider` | Responses API. `createProvider`가 테스트/내부용으로 만들 수 있다. `--provider` / `config.yaml` `provider:` 값은 아니다. |
 | `included` | included gateway | `included.gatewayUrl`. CLI만 |
 
 `--model`과 `config.yaml`의 `model:`은 provider에 그대로 간다. 원격 카탈로그로 rewrite하지 않는다. 역할 `default` / `strong` / `fast`는 코드의 `defaultModelId`에만 있다. config 키가 아니다.
@@ -638,7 +640,7 @@ fire는 새 `dontAsk` 세션을 연다. `lockHolder`는 `cron`이다. surface는
 
 **Included gateway**는 선택적 원격 모델 제공자다. `included.enabled: true`이고 `included.gatewayUrl`이 실제 URL이며 `GET /v1/entitlement`가 세션을 받아들일 때만 쓴다. 그때 `funding: included`가 찍히고 광고가 붙을 수 있다. probe가 거절하면 BYOK로 떨어진다.
 
-헤드리스(`exec`, `smoke`, `acp`, cron fire, serve)는 gateway가 `placementRequired`를 주면 신규 세션을 included로 열지 않는다. 이미 included로 찍힌 세션을 resume하면 gateway를 유지한다. gateway가 없으면 `IncludedResumeError`다. BYOK 키로 조용히 바꾸지 않는다.
+헤드리스(`exec`, `smoke`, `acp`, cron fire, serve, slack, discord)는 gateway가 `placementRequired`를 주면 신규 세션을 included로 열지 않는다. 이미 included로 찍힌 세션을 resume하면 gateway를 유지한다. gateway가 없으면 `IncludedResumeError`다. BYOK 키로 조용히 바꾸지 않는다.
 
 `hasPaidCapacityPlan`은 cap을 올린다. 광고를 끄지 않는다. Pro = no-ads가 아니다.
 

@@ -211,6 +211,14 @@ describe('port shapes', () => {
         }
       },
       async deleteSession() {},
+      async upsertPendingAsk() {},
+      async listPendingAsks() {
+        return []
+      },
+      async getPendingAsk() {
+        return undefined
+      },
+      async deletePendingAsk() {},
       async persistUser() {},
       async persistAssistant() {},
       async persistToolCalls() {},

@@ -78,6 +78,7 @@ export async function runSlack(opts: { flags: ConfigFlags }): Promise<number> {
         api,
         signal: stop.signal,
         turnFlights: host.turnFlights,
+        store: shared.store,
       }
       if (botUserId !== undefined) adapterOpts.botUserId = botUserId
       await runSlackAdapter(adapterOpts)

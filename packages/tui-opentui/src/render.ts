@@ -38,7 +38,10 @@ export function composerLine(draft = '', busy = false): string {
 export function permissionPromptLines(
   event: Extract<StreamEvent, { type: 'permission_ask' }>,
 ): string[] {
-  return [`Allow ${event.tool}?`, event.message, 'y allow   n deny   a always']
+  const title = event.childSessionId
+    ? `Allow ${event.tool}? (child ${event.childSessionId})`
+    : `Allow ${event.tool}?`
+  return [title, event.message, 'y allow   n deny   a always']
 }
 
 function applyEvent(rows: Row[], event: StreamEvent): Row[] {

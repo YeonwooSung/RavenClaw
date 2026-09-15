@@ -315,6 +315,15 @@ describe('parseArgv', () => {
     expect(parseArgv(['pairing', 'list'])).toEqual({ cmd: 'pairing', prompt: 'list', flags: {} })
   })
 
+  test('eval is a top-level command and takes an optional dir', () => {
+    expect(parseArgv(['eval'])).toEqual({ cmd: 'eval', flags: {} })
+    expect(parseArgv(['eval', 'packages/core/src/eval/fixtures'])).toEqual({
+      cmd: 'eval',
+      prompt: 'packages/core/src/eval/fixtures',
+      flags: {},
+    })
+  })
+
   test('--help and -h select the help command', () => {
     expect(parseArgv(['--help'])).toEqual({ cmd: 'help', flags: {} })
     expect(parseArgv(['-h'])).toEqual({ cmd: 'help', flags: {} })

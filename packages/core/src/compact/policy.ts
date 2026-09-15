@@ -18,6 +18,8 @@ export function defaultCompactPolicy(): CompactPolicy {
   }
 }
 
+export const COMPACTION_PROMPT_TOKENS = 1024
+
 export function compactThreshold(model: ModelProfile, compact: CompactPolicy): number {
   return model.contextWindow - model.reserveOutputTokens - compact.autoCompactBuffer
 }
@@ -62,7 +64,11 @@ export function shouldAutocompact(opts: {
     return opts.estimatedTokens >= limit ? 'context_full' : 'skip'
   }
 
-  if (opts.anchoredTokens >= compactThreshold(opts.model, opts.compact)) {
+  const threshold = compactThreshold(opts.model, opts.compact)
+  if (
+    opts.estimatedTokens + COMPACTION_PROMPT_TOKENS >= threshold ||
+    opts.anchoredTokens + COMPACTION_PROMPT_TOKENS >= threshold
+  ) {
     return 'compact'
   }
   return 'skip'

@@ -57,7 +57,7 @@ function session(over: Partial<SessionRecord> = {}): SessionRecord {
 }
 
 describe('createSqliteStore', () => {
-  test('fresh install uses WAL and schema_version 4', () => {
+  test('fresh install uses WAL and schema_version 5', () => {
     const path = tempDbPath()
     openStore(path)
     const db = new Database(path, { readonly: true })
@@ -67,7 +67,7 @@ describe('createSqliteStore', () => {
       const version = db
         .query("SELECT value FROM meta WHERE key = 'schema_version'")
         .get() as { value: string }
-      expect(version.value).toBe('4')
+      expect(version.value).toBe('5')
       expect(
         db
           .query("SELECT 1 AS ok FROM sqlite_master WHERE name = 'messages_fts'")
@@ -463,9 +463,20 @@ describe('createSqliteStore', () => {
       blocks: [{ type: 'text', text: 'hi' }],
       createdAt: 1,
     })
+    await store.upsertPendingAsk({
+      callId: 'call_keep',
+      sessionId: 's1',
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Bash?',
+      input: {},
+      createdAt: 1,
+    })
     await store.deleteSession('s1')
     await expect(store.loadSession('s1')).rejects.toBeInstanceOf(PersistError)
     await expect(store.loadSession('child')).rejects.toBeInstanceOf(PersistError)
     expect(await store.listSessions()).toEqual([])
+    expect(await store.listPendingAsks('s1')).toEqual([])
+    expect(await store.getPendingAsk('call_keep')).toBeUndefined()
   })
 })

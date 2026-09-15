@@ -4,7 +4,7 @@
 
 RavenClaw is a Bun/TypeScript coding agent that reads and edits a workspace, runs a shell, and resumes after crash. It is bring-your-own-key (BYOK): there is no RavenClaw company backend, and the first public tag is BYOK-only. Hosts (Ink TUI, OpenTUI, `exec`, ACP, `serve`, Slack, Discord, SDK) do not reimplement the agent loop. They construct a `SessionEngine` and call `submitMessage`. Licensed Apache-2.0.
 
-Related docs: [README.md](README.md), [SLASH_COMMANDS.md](SLASH_COMMANDS.md) ([한국어](SLASH_COMMANDS.ko.md)), [CONTRIBUTING.md](CONTRIBUTING.md), [docs/headless.md](docs/headless.md). Design notes live under `docs/superpowers/specs/`. Prior-art research is in `docs/research/`.
+Related docs: [README.md](README.md), [SLASH_COMMANDS.md](SLASH_COMMANDS.md) ([한국어](SLASH_COMMANDS.ko.md)), [CONTRIBUTING.md](CONTRIBUTING.md), [docs/headless.md](docs/headless.md). Design notes live under `docs/superpowers/specs/` (next horizon: [eve-inspired roadmap](docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md)). Prior-art research is in `docs/research/` ([eve](docs/research/eve-analysis.md)).
 
 ## Design invariants
 
@@ -22,7 +22,7 @@ These are product contracts. Do not soften them in hosts, tools, or docs.
 
 6. **Ads only on included-model sessions.** `@ravenclaw/ads` must not import `@ravenclaw/core`. The isolation test in `packages/ads/src/isolation.test.ts` forbids `@ravenclaw/core`, `ink`, and `react` in ads source. `hasPaidCapacityPlan` raises session caps; it does not silence ads.
 
-7. **Clean-room.** Steal *contracts* from Claude Code, Freebuff, and Hermes (one loop, adapters at the edge, leftover-ask). Never copy source or prompts. Builtin skills forbid the strings `Claude` and `Anthropic` (`packages/core/src/skills/builtin.test.ts`).
+7. **Clean-room.** Steal *contracts* from Claude Code, Freebuff, Hermes, and eve (one loop, adapters at the edge, leftover-ask, durable HITL / sandbox split). Never copy source or prompts. Builtin skills forbid the strings `Claude` and `Anthropic` (`packages/core/src/skills/builtin.test.ts`).
 
 ## Repository layout
 
@@ -104,7 +104,7 @@ Entry is `packages/cli/src/index.ts`. When `import.meta.main`, `main()` runs and
 
 1. **`parseArgv`** (`packages/cli/src/args.ts`) produces `{ cmd, flags, prompt, tui, json, … }`. `exec`, `smoke`, and `serve` force `flags.dontAsk = true`. Interactive default is Ink unless `--tui opentui`.
 
-2. **Key-free commands** return before `bootCli`: `help`, `version`, `sessions`, `show`, `rm`, `search`, `export`, `title`, `doctor`, `config`, `init`, `completions`, `mcp`, `skills`, `pairing`, and `cron` except `tick`/`watch`. See [CONTRIBUTING.md](CONTRIBUTING.md).
+2. **Key-free commands** return before `bootCli`: `help`, `version`, `sessions`, `show`, `rm`, `search`, `export`, `title`, `doctor`, `config`, `init`, `setup`, `completions`, `mcp`, `skills`, `pairing`, and `cron` except `tick`/`watch`. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 3. **Key-required commands** call `ensureHomeDir()` then `bootCli` (`packages/cli/src/engine.ts`):
    - Interactive / `resume` → `lockHolder: 'tui'`, `surface` defaults to `'interactive'`.
@@ -179,7 +179,7 @@ Mailbox poller every 15s wakes a live engine with `[mailbox]` if `peekAgentMail`
 
 ### `raven slack`
 
-`packages/cli/src/slack/run.ts`. Requires `slack.enabled: true` plus `appToken` (`xapp-`) and `botToken` (`xoxb-`) in `config.yaml` (or env refs). Socket Mode (`packages/cli/src/slack/socket.ts`) — no public URL. `admitSlackEvent` (`slack/admit.ts`): bots/subtypes ignored; `allowFrom` is a hard allowlist; DMs always ok if allowlisted; channels must be in `channels`; `mentionOnly` defaults true. Lock holder is `'slack'`. DMs use `default` (leftover-ask); channels use `dontAsk`. Shared `createChatSessionHost`.
+`packages/cli/src/slack/run.ts`. Requires `slack.enabled: true` plus `appToken` (`xapp-`) and `botToken` (`xoxb-`) in `config.yaml` (or env refs). Socket Mode (`packages/cli/src/slack/socket.ts`) — no public URL. `admitSlackEvent` (`slack/admit.ts`): bots/subtypes ignored; `allowFrom` is a hard allowlist; DMs always ok if allowlisted; channels must be in `channels`; `mentionOnly` defaults true. Lock holder is `'slack'`. DMs use `default` (leftover-ask: allow/deny buttons, `SLACK_PERMISSION_TIMEOUT_MS = 120_000`); channels use `dontAsk`. Shared `createChatSessionHost`. Inbound is Socket Mode (app token), not Slack signing-secret HMAC. Non-DM session keys are `raven:slack:<team>:<channel>:<threadTs||messageTs>` (the adapter always passes `threadId`).
 
 ### `raven discord`
 
@@ -387,10 +387,10 @@ sequenceDiagram
 
 | Reason | Constant | Text | When |
 |---|---|---|---|
-| `incomplete` | `INCOMPLETE_TEXT` | process ended before this tool result was saved; tool was not re-run | persist of real results failed; `loadSession` / `repairRoleAlternation` repair |
-| `tools_omitted` | `TOOLS_OMITTED_TEXT` | tools disabled on the final (grace) round | grace + pending tool_use |
-| `aborted` | `ABORTED_TEXT` | turn interrupted before this tool finished | abort / askUser throw / leftover after abortRest |
-| `persist_failed` | `PERSIST_FAILED_TEXT` | tool call could not be saved; it was not executed | `persistToolCalls` failed |
+| `incomplete` | `INCOMPLETE_TEXT` | `incomplete: the process ended before this tool result was saved. The tool was not re-run.` | persist of real results failed; `loadSession` / `repairRoleAlternation` repair |
+| `tools_omitted` | `TOOLS_OMITTED_TEXT` | `tools_omitted: tools were disabled on the final round; the call was not executed.` | grace + pending tool_use |
+| `aborted` | `ABORTED_TEXT` | `aborted: the turn was interrupted before this tool finished.` | abort / askUser throw / leftover after abortRest |
+| `persist_failed` | `PERSIST_FAILED_TEXT` | `persist_failed: the tool call could not be saved; it was not executed.` | `persistToolCalls` failed |
 
 `resumeSession` (`packages/core/src/session/resume.ts`) calls `loadSession` then **throws** if any unpaired `tool_use` remains. `loadSession` itself is the repair path (see Sessions).
 
@@ -451,6 +451,8 @@ These run after `checkPermissions` and cannot be allow-ruled away.
 
 **`/add-dir` is notice-only.** `packages/cli/src/slash/dispatch.ts` prints `this slash does not add a root; use the AddDir tool or --add-dir`. It does not call `addDirectory`.
 
+**`/team-onboarding` (`/onboard`)** runs a frozen prompt plus mechanical `scanTeamOnboarding` JSON (`packages/core/src/onboarding/scan.ts`). **`/interview`** injects `INTERVIEW_PROMPT`. Neither is a second loop.
+
 ### Hooks
 
 Two layers, both skipped when `--bare` / `engineOpts.bare`:
@@ -484,7 +486,7 @@ Registry: `createToolRegistry` (`packages/core/src/tools/registry.ts`) — last 
 | `Skill` | yes | yes | |
 | `Fetch` | yes | only if `tools.network` | else deferred |
 | `WebSearch` | yes | only if `tools.network` | else deferred |
-| `TodoWrite` | yes | yes | `.ravenclaw/todos.json` |
+| `TodoWrite` | yes | yes | `.ravenclaw/todo.json` |
 | `TaskOutput` / `TaskStop` / `TaskSteer` | yes | yes (CLI; SDK omits Steer) | Steer is Agent-only |
 | `AskUser` | yes | yes | Headless default deny |
 | `SessionSearch` | yes | yes | FTS5 |
@@ -492,9 +494,9 @@ Registry: `createToolRegistry` (`packages/core/src/tools/registry.ts`) — last 
 | `SetOutput` | yes | yes | Child structured result |
 | `AddDir` | yes | yes (CLI) | Not in SDK |
 | `ToolSearch` / `ToolCall` | yes | when anything is deferred | Frozen prefix; Call targets must be off-prefix |
-| `LSP` | yes | yes (CLI) | Not in SDK |
-| `EnterWorktree` / `ExitWorktree` | yes | yes (CLI) | Session-level worktree |
-| `CronCreate` / `CronList` / `CronDelete` / `CronSetEnabled` | yes | yes | |
+| `LSP` | yes | CLI pool; **off the wire** until `.ravenclaw/lsp.json` | Not in SDK |
+| `EnterWorktree` / `ExitWorktree` | yes | CLI pool; **off the wire** until git worktree / session worktree | Session-level worktree |
+| `CronCreate` / `CronList` / `CronDelete` / `CronSetEnabled` | yes | CLI pool; **off the wire** until `~/.ravenclaw/cron/jobs.json` | |
 | `Agent` | yes | yes | Nested `createSessionEngine` |
 | `EnterPlanMode` / `ExitPlanMode` | yes | yes | |
 
@@ -710,7 +712,7 @@ Three different “gateways” that must not be conflated:
 
 - `included.enabled !== true` → BYOK. First public release default.
 - Probe `GET {gateway}/v1/entitlement` (`packages/ads/src/entitlement.ts`, 2s timeout).
-- `placementRequired && surface === 'headless'` → not admitted (exec/cron/serve/slack/discord stay BYOK).
+- `placementRequired && surface === 'headless'` → not admitted (exec, smoke, acp, cron fire, serve, slack, discord stay BYOK).
 - Local ledger `$RAVENCLAW_HOME/included-usage.json` unless the probe returns `remainingSessions` (gateway-metered).
 - `hasPaidCapacityPlan` multiplies / replaces the cap; **does not silence ads** (comment in `engine.ts` and house copy in `packages/ads/src/house.ts`).
 - Resume of an `included` session **never falls back to BYOK** (`IncludedResumeError`). Re-run when the gateway is up, or start a new BYOK session.
@@ -751,7 +753,7 @@ Home is `$RAVENCLAW_HOME` or `~/.ravenclaw/`. Secrets belong in `~/.ravenclaw/.e
 | `$RAVENCLAW_HOME/tool-results/` | Large Bash / tool persist files |
 | `$RAVENCLAW_HOME/logs/ravenclaw.log` | Structured events, 5 MiB × 2 rotates |
 | `$RAVENCLAW_HOME/prompt-history.jsonl` | TUI ↑↓ history |
-| `<cwd>/.ravenclaw/` | Project `permissions.json`, `hooks.json`, `skills/`, `agents/`, `plugins/`, `rules/`, `plan.md`, `todos.json`, `tasks.json`, `MEMORY.md`/`USER.md`/`RAVEN.md`, `worktrees/` |
+| `<cwd>/.ravenclaw/` | Project `permissions.json`, `hooks.json`, `skills/`, `agents/`, `plugins/`, `rules/`, `plan.md`, `todo.json`, `tasks.json`, `MEMORY.md`/`USER.md`/`RAVEN.md`, `worktrees/` |
 | `<cwd>/AGENTS.md` (and CLAUDE.md / RAVEN.md) | Project instructions |
 
 ## Extension points

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -20,6 +20,7 @@ import { createSessionEngine } from './session-engine'
 import { resumeSession } from '../session/resume'
 import { unpairedToolUseIds } from './pairing'
 import { createMemoryStore } from '../session/memory-store'
+import { writeTool } from '../tools/write'
 import { skillTool } from '../tools/skill'
 import { toolCallTool } from '../tools/tool-call'
 import { GRACE_NOTICE } from './budget'
@@ -160,6 +161,12 @@ function createEcho(opts?: {
     },
   }
   return tool
+}
+
+function createAskEcho(): ReturnType<typeof createEcho> {
+  const echo = createEcho()
+  echo.checkPermissions = async () => ({ behavior: 'ask', message: 'Echo?' })
+  return echo
 }
 
 async function collect(
@@ -646,6 +653,552 @@ describe('queryLoop via SessionEngine', () => {
     const { result } = await collect(engine.submitMessage('continue'))
     expect(result).toEqual({ reason: 'completed' })
     expect(echo.executeCount).toBe(0)
+  })
+
+  test('leftover-ask writes a pending row before askUser resolves', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_park' })
+    await store.createSession(session)
+    let release!: (v: 'allow' | 'deny' | 'allow_always') => void
+    const held = new Promise<'allow' | 'deny' | 'allow_always'>((resolve) => {
+      release = resolve
+    })
+    const echo = createAskEcho()
+    const provider = createFakeProvider([
+      toolThenStop('call_park', 'Echo', { text: 'hi' }),
+      textThenStop('done'),
+    ])
+    const engine = createSessionEngine({
+      ...engineOpts({ provider, store, session, tools: [echo] }),
+      askUser: async () => held,
+    })
+    const gen = engine.submitMessage('go')
+    const events: StreamEvent[] = []
+    const first = await gen.next()
+    events.push(first.value as StreamEvent)
+    while (events.every((e) => e.type !== 'permission_ask')) {
+      const next = await gen.next()
+      if (next.done) break
+      events.push(next.value)
+    }
+    expect(await store.listPendingAsks(session.id)).toHaveLength(1)
+    expect((await store.listPendingAsks(session.id))[0]?.callId).toBe('call_park')
+    release('deny')
+    await gen.next() // drain
+  })
+
+  test('live allow then applyAskAnswer does not execute the tool twice', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_live_double' })
+    await store.createSession(session)
+    let releaseAsk!: (answer: 'allow' | 'deny' | 'allow_always') => void
+    const held = new Promise<'allow' | 'deny' | 'allow_always'>((resolve) => {
+      releaseAsk = resolve
+    })
+    let releaseExec!: () => void
+    const blocked = new Promise<void>((resolve) => {
+      releaseExec = resolve
+    })
+    let started!: () => void
+    const sawExecute = new Promise<void>((resolve) => {
+      started = resolve
+    })
+    const echo = createEcho({
+      async onExecute() {
+        started()
+        await blocked
+        return 'hi'
+      },
+    })
+    echo.checkPermissions = async () => ({ behavior: 'ask', message: 'Echo?' })
+    const engine = createSessionEngine({
+      ...engineOpts({
+        provider: createFakeProvider([
+          toolThenStop('call_live', 'Echo', { text: 'hi' }),
+          textThenStop('done'),
+        ]),
+        store,
+        session,
+        tools: [echo],
+      }),
+      askUser: async () => held,
+    })
+    const gen = engine.submitMessage('go')
+    const events: StreamEvent[] = []
+    while (events.every((e) => e.type !== 'permission_ask')) {
+      const next = await gen.next()
+      if (next.done) break
+      events.push(next.value)
+    }
+    expect(await store.listPendingAsks(session.id)).toHaveLength(1)
+    releaseAsk('allow')
+    await sawExecute
+    const settled = engine.applyAskAnswer('call_live', 'allow')
+    releaseExec()
+    await expect(settled).resolves.toBe('matched')
+    await collect(gen)
+    expect(echo.executeCount).toBe(1)
+  })
+
+  test('loadSession after pending row does not insert incomplete', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_crash' })
+    await store.createSession(session)
+    await store.persistUser(session.id, {
+      id: 'u1',
+      role: 'user',
+      blocks: [{ type: 'text', text: 'go' }],
+      createdAt: 1,
+    })
+    await store.persistToolCalls(session.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_1', name: 'Echo', input: { text: 'hi' } }],
+      createdAt: 2,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 3,
+    })
+    const loaded = await store.loadSession(session.id)
+    expect(loaded.messages.some((m) => m.role === 'tool')).toBe(false)
+    await expect(resumeSession(store, session.id)).resolves.toBeTruthy()
+  })
+
+  test('applyAskAnswer deny persists permission_denied and deletes the row', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_deny' })
+    await store.createSession(session)
+    await store.persistToolCalls(session.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_1', name: 'Echo', input: { text: 'hi' } }],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    const echo = createAskEcho()
+    const engine = createSessionEngine(
+      engineOpts({
+        provider: createFakeProvider([textThenStop('nope')]),
+        store,
+        session,
+        tools: [echo],
+      }),
+    )
+    expect(await engine.applyAskAnswer('call_1', 'deny')).toBe('matched')
+    expect(await engine.applyAskAnswer('missing', 'deny')).toBe('unmatched')
+    expect(await store.listPendingAsks(session.id)).toHaveLength(0)
+    const loaded = await store.loadSession(session.id)
+    const toolRow = loaded.messages.find((m) => m.role === 'tool')
+    expect(toolRow?.ok).toBe(false)
+    expect(toolRow && toolRow.role === 'tool' ? toolRow.blocks[0]?.text : '').toContain(
+      'permission_denied',
+    )
+    expect(echo.executeCount).toBe(0)
+  })
+
+  test('applyAskAnswer allow executes the tool and pairs', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_allow' })
+    await store.createSession(session)
+    await store.persistToolCalls(session.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_1', name: 'Echo', input: { text: 'hi' } }],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    const echo = createAskEcho()
+    const engine = createSessionEngine(
+      engineOpts({
+        provider: createFakeProvider([textThenStop('nope')]),
+        store,
+        session,
+        tools: [echo],
+      }),
+    )
+    expect(await engine.applyAskAnswer('call_1', 'allow')).toBe('matched')
+    expect(echo.executeCount).toBe(1)
+    expect(await store.listPendingAsks(session.id)).toHaveLength(0)
+  })
+
+  test('applyAskAnswer persist failure after execute pairs incomplete and does not re-execute', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_persist_fail' })
+    await store.createSession(session)
+    await store.persistToolCalls(session.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_1', name: 'Echo', input: { text: 'hi' } }],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    const inner = store.persistToolResults.bind(store)
+    let persistCalls = 0
+    store.persistToolResults = async (sessionId, messages) => {
+      persistCalls += 1
+      if (persistCalls === 1) throw new PersistError('busy', 'persist boom')
+      return inner(sessionId, messages)
+    }
+    const echo = createAskEcho()
+    const engine = createSessionEngine(
+      engineOpts({
+        provider: createFakeProvider([textThenStop('nope')]),
+        store,
+        session,
+        tools: [echo],
+      }),
+    )
+    expect(await engine.applyAskAnswer('call_1', 'allow')).toBe('matched')
+    expect(echo.executeCount).toBe(1)
+    expect(await store.listPendingAsks(session.id)).toHaveLength(0)
+    const loaded = await store.loadSession(session.id)
+    const toolRow = loaded.messages.find((m) => m.role === 'tool')
+    expect(toolRow?.ok).toBe(false)
+    expect(toolRow && toolRow.role === 'tool' ? toolRow.blocks[0]?.text : '').toBe(INCOMPLETE_TEXT)
+    expect(await engine.applyAskAnswer('call_1', 'allow')).toBe('matched')
+    expect(echo.executeCount).toBe(1)
+  })
+
+  test('applyAskAnswer persist failure on both attempts does not re-execute', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_persist_both' })
+    await store.createSession(session)
+    await store.persistToolCalls(session.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_1', name: 'Echo', input: { text: 'hi' } }],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    store.persistToolResults = async () => {
+      throw new PersistError('busy', 'persist boom')
+    }
+    const echo = createAskEcho()
+    const engine = createSessionEngine(
+      engineOpts({
+        provider: createFakeProvider([textThenStop('nope')]),
+        store,
+        session,
+        tools: [echo],
+      }),
+    )
+    await expect(engine.applyAskAnswer('call_1', 'allow')).rejects.toBeInstanceOf(PersistError)
+    expect(echo.executeCount).toBe(1)
+    expect(await store.listPendingAsks(session.id)).toHaveLength(1)
+    await expect(engine.applyAskAnswer('call_1', 'allow')).resolves.toBe('matched')
+    expect(echo.executeCount).toBe(1)
+  })
+
+  test('parent applyAskAnswer settles a child leftover-ask onto the child session', async () => {
+    const store = createMemoryStore()
+    const parent = makeSession({ id: 'sess_parent' })
+    const child = makeSession({ id: 'sess_child', parentSessionId: 'sess_parent' })
+    await store.createSession(parent)
+    await store.createSession(child)
+    await store.persistToolCalls(child.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_child', name: 'Echo', input: { text: 'hi' } }],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_child',
+      sessionId: child.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    const echo = createAskEcho()
+    const engine = createSessionEngine(
+      engineOpts({
+        provider: createFakeProvider([textThenStop('nope')]),
+        store,
+        session: parent,
+        tools: [echo],
+      }),
+    )
+    expect(await engine.applyAskAnswer('call_child', 'allow')).toBe('matched')
+    expect(echo.executeCount).toBe(1)
+    expect(await store.listPendingAsks(child.id)).toHaveLength(0)
+    const childLoaded = await store.loadSession(child.id)
+    const toolRow = childLoaded.messages.find((m) => m.role === 'tool')
+    expect(toolRow?.ok).toBe(true)
+    const parentLoaded = await store.loadSession(parent.id)
+    expect(parentLoaded.messages.some((m) => m.role === 'tool')).toBe(false)
+  })
+
+  test('applyAskAnswer allow of existing Write honors a prior Read in session messages', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'raven-apply-write-'))
+    writeFileSync(join(root, 'a.txt'), 'old\n')
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_write_read', cwd: root })
+    await store.createSession(session)
+    await store.persistToolCalls(session.id, {
+      id: 'a_read',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_read', name: 'Read', input: { path: 'a.txt' } }],
+      createdAt: 1,
+    })
+    await store.persistToolResults(session.id, [
+      {
+        id: 't_read',
+        role: 'tool',
+        toolUseId: 'call_read',
+        ok: true,
+        blocks: [{ type: 'text', text: 'old\n' }],
+        createdAt: 2,
+      },
+    ])
+    await store.persistToolCalls(session.id, {
+      id: 'a_write',
+      role: 'assistant',
+      blocks: [
+        {
+          type: 'tool_use',
+          id: 'call_write',
+          name: 'Write',
+          input: { path: 'a.txt', content: 'new\n' },
+        },
+      ],
+      createdAt: 3,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_write',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Write',
+      message: 'Write this file?',
+      input: { path: 'a.txt', content: 'new\n' },
+      createdAt: 3,
+    })
+    const loaded = await store.loadSession(session.id)
+    const engine = createSessionEngine(
+      engineOpts({
+        provider: createFakeProvider([textThenStop('nope')]),
+        store,
+        session,
+        messages: loaded.messages,
+        tools: [writeTool],
+      }),
+    )
+    expect(await engine.applyAskAnswer('call_write', 'allow')).toBe('matched')
+    const after = await store.loadSession(session.id)
+    const toolRow = after.messages.find(
+      (m): m is Extract<Message, { role: 'tool' }> =>
+        m.role === 'tool' && m.toolUseId === 'call_write',
+    )
+    expect(toolRow?.ok).toBe(true)
+    expect(toolRow?.blocks[0]?.text ?? '').not.toMatch(/must be Read first/)
+    expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('new\n')
+    rmSync(root, { recursive: true, force: true })
+  })
+
+  test('concurrent applyAskAnswer allow executes once and unblocks submitMessage', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_apply_once' })
+    await store.createSession(session)
+    await store.persistToolCalls(session.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_1', name: 'Echo', input: { text: 'hi' } }],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const echo = createEcho({
+      onExecute: async (input) => {
+        await held
+        return input.text
+      },
+    })
+    echo.checkPermissions = async () => ({ behavior: 'ask', message: 'Echo?' })
+    const engine = createSessionEngine(
+      engineOpts({
+        provider: createFakeProvider([textThenStop('next')]),
+        store,
+        session,
+        tools: [echo],
+      }),
+    )
+    const first = engine.applyAskAnswer('call_1', 'allow')
+    const second = engine.applyAskAnswer('call_1', 'allow')
+    release()
+    await expect(Promise.all([first, second])).resolves.toEqual(['matched', 'matched'])
+    expect(echo.executeCount).toBe(1)
+    expect(await store.listPendingAsks(session.id)).toHaveLength(0)
+    const loaded = await store.loadSession(session.id)
+    expect(loaded.messages.filter((m) => m.role === 'tool')).toHaveLength(1)
+    const { events, result } = await collect(engine.submitMessage('hello'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(events.some((e) => e.type === 'status' && e.message.includes('pending'))).toBe(false)
+  })
+
+  test('applyAskAnswer persist-ok delete-fail does not re-execute or brick submitMessage', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_delete_fail' })
+    await store.createSession(session)
+    await store.persistToolCalls(session.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_1', name: 'Echo', input: { text: 'hi' } }],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    const inner = store.deletePendingAsk.bind(store)
+    let deleteCalls = 0
+    store.deletePendingAsk = async (callId) => {
+      deleteCalls += 1
+      if (deleteCalls === 1) throw new Error('delete boom')
+      return inner(callId)
+    }
+    const echo = createAskEcho()
+    const engine = createSessionEngine(
+      engineOpts({
+        provider: createFakeProvider([textThenStop('next')]),
+        store,
+        session,
+        tools: [echo],
+      }),
+    )
+    await expect(engine.applyAskAnswer('call_1', 'allow')).resolves.toBe('matched')
+    expect(echo.executeCount).toBe(1)
+    expect(await store.listPendingAsks(session.id)).toHaveLength(1)
+    const { events, result } = await collect(engine.submitMessage('hello'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(events.some((e) => e.type === 'status' && e.message.includes('pending'))).toBe(false)
+    expect(echo.executeCount).toBe(1)
+  })
+
+  test('child persist-ok delete-fail does not brick parent submitMessage', async () => {
+    const store = createMemoryStore()
+    const parent = makeSession({ id: 'sess_parent_df' })
+    const child = makeSession({ id: 'sess_child_df', parentSessionId: parent.id })
+    await store.createSession(parent)
+    await store.createSession(child)
+    await store.persistToolCalls(child.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_child', name: 'Echo', input: { text: 'hi' } }],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_child',
+      sessionId: child.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    const inner = store.deletePendingAsk.bind(store)
+    let deleteCalls = 0
+    store.deletePendingAsk = async (callId) => {
+      deleteCalls += 1
+      if (deleteCalls === 1) throw new Error('delete boom')
+      return inner(callId)
+    }
+    const echo = createAskEcho()
+    const engine = createSessionEngine(
+      engineOpts({
+        provider: createFakeProvider([textThenStop('next')]),
+        store,
+        session: parent,
+        tools: [echo],
+      }),
+    )
+    await expect(engine.applyAskAnswer('call_child', 'allow')).resolves.toBe('matched')
+    expect(echo.executeCount).toBe(1)
+    expect(await store.listPendingAsks(child.id)).toHaveLength(1)
+    const { events, result } = await collect(engine.submitMessage('hello'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(events.some((e) => e.type === 'status' && e.message.includes('pending'))).toBe(false)
+    expect(echo.executeCount).toBe(1)
+  })
+
+  test('submitMessage while a pending ask exists does not append a user row', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_block' })
+    await store.createSession(session)
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    const engine = createSessionEngine(
+      engineOpts({
+        provider: createFakeProvider([textThenStop('nope')]),
+        store,
+        session,
+      }),
+    )
+    const { events, result } = await collect(engine.submitMessage('hello anyway'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(events.some((e) => e.type === 'status' && e.message.includes('pending'))).toBe(true)
+    const loaded = await store.loadSession(session.id)
+    expect(loaded.messages.filter((m) => m.role === 'user')).toHaveLength(0)
   })
 
   test('8. maxRounds: 2 with tool-use on round 2 → grace stream tools:[]', async () => {

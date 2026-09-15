@@ -43,7 +43,7 @@ raven exec --dont-ask --tools-preset ci "run bun test"
 
 ## Optional Docker sandbox
 
-The Docker terminal backend already exists. It does not change permission decisions; it only changes where allowed Bash runs.
+The Docker terminal backend runs allowed Bash in a container (`-v cwd:cwd -w cwd`) and jails Read/Write/Edit/ApplyPatch/ListDir/ReadSubtree to that same cwd bind. Grep/Glob still run on the host but refuse paths outside cwd. It is not a substitute for `dontAsk`.
 
 ```yaml
 # ~/.ravenclaw/config.yaml
@@ -67,3 +67,26 @@ raven exec --verify-on-stop "implement the fix"
 ```
 
 A cron job may set `verifyOnStop: true` in `~/.ravenclaw/cron/jobs.json` (or pass `--verify-on-stop` on `raven cron add`). The same nudge cap applies. Default for exec/cron remains false.
+
+## Host delivery policy
+
+Slack, Discord, and `raven serve` serialize inbound with `singleFlight` (`turnPolicy: queue`). They do not abort a live turn. The TUI queues composer input while busy; `/steer` aborts the live turn. Permission answers never steer.
+
+## raven serve bind and token
+
+`raven serve` exits 1 without `GATEWAY_SECRET` / `RAVEN_SERVE_SECRET`.
+`--listen` must be loopback (`127.0.0.1`, `localhost`, `::1`).
+`POST /v1/turn` requires `Authorization: Bearer <secret>` (`timingSafeEqual`).
+It stays dontAsk, one-shot JSON.
+
+Session routes use an engine that does **not** force `dontAsk`. All require the same Bearer token:
+
+- `GET /v1/session/:id/stream` — NDJSON `StreamEvent` live tail (no `?after=` cursor)
+- `POST /v1/session/:id/cancel` — `engine.abort()`
+- `POST /v1/session/:id/compact` — `engine.compactNow()`
+- `POST /v1/session/:id/resolve` — `{ callId, allow: boolean }` → `applyAskAnswer`; 200 `{ status }` or 404 if unmatched
+
+Webhooks verify `X-Raven-Signature` over the raw body.
+Slack uses Socket Mode (app token); there is no Slack signing-secret HMAC.
+Discord identity is Gateway `author.id` plus the pairing ledger.
+Never trust a JSON `userId` / `principalId` the body claims.

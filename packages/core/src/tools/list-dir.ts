@@ -1,7 +1,7 @@
-import { readdirSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type { Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
+import { workspaceFsFor } from './workspace-fs'
 
 export interface ListDirInput {
   path?: string
@@ -43,7 +43,7 @@ export const listDirTool: Tool<ListDirInput, string> = {
     const resolved = resolve(ctx.turn.cwd, input.path ?? '.')
     let entries
     try {
-      entries = readdirSync(resolved, { withFileTypes: true })
+      entries = workspaceFsFor(ctx.turn).readdir(resolved)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return `ListDir failed: ${message}`
@@ -52,7 +52,7 @@ export const listDirTool: Tool<ListDirInput, string> = {
     const dirs: string[] = []
     const files: string[] = []
     for (const ent of entries) {
-      if (ent.isDirectory()) dirs.push(ent.name)
+      if (ent.isDir) dirs.push(ent.name)
       else files.push(ent.name)
     }
     dirs.sort((a, b) => a.localeCompare(b))

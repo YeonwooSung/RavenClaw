@@ -1,3 +1,5 @@
+import type { UserSubmitInput } from '@ravenclaw/core'
+
 export const CHAT_STUB_TEXT = '…'
 export const CHAT_UPDATE_THROTTLE_MS = 1_000
 
@@ -7,7 +9,7 @@ export interface ChatTurnTransport {
 }
 
 export interface ChatBoundSubmit {
-  submitMessage: (text: string) => AsyncGenerator<unknown, unknown>
+  submitMessage: (input: UserSubmitInput) => AsyncGenerator<unknown, unknown>
 }
 
 export async function streamChatTurn(opts: {
@@ -62,7 +64,7 @@ export async function consumeSubmitDeltas(
   text: string,
   onDelta: (text: string) => Promise<void>,
 ): Promise<void> {
-  const gen = session.submitMessage(text)
+  const gen = session.submitMessage({ text, turnPolicy: 'queue' })
   while (true) {
     const next = await gen.next()
     if (next.done) return

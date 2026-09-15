@@ -247,6 +247,34 @@ describe('createAcpServer', () => {
     expect(resultOf(prompt)).toEqual({ stopReason: 'end_turn' })
   })
 
+  test('session/load drains replayPendingAsks', async () => {
+    let replayed = 0
+    const server = createAcpServer({
+      engineFactory: () => fakeEngine({}),
+      loadEngine: () => ({
+        ...fakeEngine({}),
+        async *replayPendingAsks() {
+          replayed += 1
+          yield {
+            type: 'permission_ask',
+            id: 'c1',
+            tool: 'Bash',
+            input: {},
+            message: 'Bash?',
+          }
+        },
+      }),
+    })
+    const load = await server.handle({
+      jsonrpc: '2.0',
+      id: 1,
+      method: ACP_METHODS.sessionLoad,
+      params: { sessionId: 'sess_parked' },
+    })
+    expect(resultOf(load)).toEqual({ sessionId: 'sess_parked' })
+    expect(replayed).toBe(1)
+  })
+
   test('session/load without a loader is method-not-found', async () => {
     const server = createAcpServer({ engineFactory: () => fakeEngine({}) })
     const response = await server.handle({

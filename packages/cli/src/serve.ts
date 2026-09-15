@@ -1,16 +1,24 @@
 import {
   checkBearer,
+  loadConfig,
   loadSessionMap,
+  parseResolveBody,
   parseTurnRequest,
+  PersistError,
   ravenclawHome,
   resolveSessionId,
   saveSessionMap,
+  SessionLockError,
   verifyWebhookSignature,
   safeWebhookToolNames,
+  type PendingAskAnswer,
+  type SessionEngine,
+  type StreamEvent,
+  type ConfigFlags,
+  type UserSubmitInput,
 } from '@ravenclaw/core'
 import { bootCli, openNewSession, resumeRuntime, type CliRuntime } from './engine'
 import { runExec } from './exec'
-import type { ConfigFlags } from '@ravenclaw/core'
 
 const DEFAULT_LISTEN = '127.0.0.1:8787'
 
@@ -19,7 +27,7 @@ export const MAILBOX_POLL_MS = 15_000
 export type MailboxLiveEngine = {
   engine: {
     session: { id: string }
-    submitMessage: (text: string) => AsyncGenerator<unknown, unknown>
+    submitMessage: (input: UserSubmitInput) => AsyncGenerator<unknown, unknown>
   }
   store: {
     peekAgentMail: (parentSessionId: string) => Promise<string[]>
@@ -119,6 +127,344 @@ export function gatewaySecret(env = process.env): string {
   return env.GATEWAY_SECRET ?? env.RAVEN_SERVE_SECRET ?? ''
 }
 
+export type ServeEngine = {
+  session: { id: string }
+  submitMessage: (input: UserSubmitInput) => AsyncGenerator<StreamEvent, unknown>
+  applyAskAnswer: (
+    callId: string,
+    answer: PendingAskAnswer,
+  ) => Promise<'matched' | 'unmatched'>
+  replayPendingAsks: () => AsyncGenerator<StreamEvent, void>
+  abort: () => void
+  compactNow: () => Promise<void>
+  close?: SessionEngine['close']
+}
+
+export type ServeRuntime = {
+  engine: ServeEngine
+  store?: {
+    listPendingAsks: (sessionId: string) => Promise<
+      Array<{
+        callId: string
+        sessionId: string
+        tool: string
+        message: string
+        input: unknown
+        saveAs?: string
+      }>
+    >
+    listSessions?: (filter?: { parentSessionId?: string | null }) => Promise<Array<{ id: string }>>
+  }
+}
+
+export type SessionEventSink = (event: StreamEvent) => void
+
+export type SessionEventHub = {
+  subscribe: (sessionId: string, sink: SessionEventSink) => () => void
+  publish: (sessionId: string, event: StreamEvent) => void
+}
+
+export type ServeRequestContext = {
+  secret: string
+  turnFlights: Map<string, Promise<unknown>>
+  hub: SessionEventHub
+  runtimeForTurn: (sessionKey: string | undefined, webhook: boolean) => Promise<ServeRuntime>
+  runtimeForSession: (sessionId: string) => Promise<ServeRuntime | undefined>
+}
+
+export function createSessionEventHub(): SessionEventHub {
+  const listeners = new Map<string, Set<SessionEventSink>>()
+  return {
+    subscribe(sessionId, sink) {
+      let set = listeners.get(sessionId)
+      if (!set) {
+        set = new Set()
+        listeners.set(sessionId, set)
+      }
+      set.add(sink)
+      return () => {
+        set.delete(sink)
+        if (set.size === 0) listeners.delete(sessionId)
+      }
+    },
+    publish(sessionId, event) {
+      const set = listeners.get(sessionId)
+      if (!set) return
+      for (const sink of set) sink(event)
+    },
+  }
+}
+
+async function* tapAsyncGen<T, R>(
+  gen: AsyncGenerator<T, R>,
+  onValue: (value: T) => void,
+): AsyncGenerator<T, R> {
+  while (true) {
+    const next = await gen.next()
+    if (next.done) return next.value
+    onValue(next.value)
+    yield next.value
+  }
+}
+
+export function tapEngineEvents<E extends ServeEngine>(engine: E, hub: SessionEventHub): E {
+  const sessionId = engine.session.id
+  return {
+    ...engine,
+    submitMessage(input: UserSubmitInput) {
+      return tapAsyncGen(engine.submitMessage(input), (event) => hub.publish(sessionId, event))
+    },
+    replayPendingAsks() {
+      return tapAsyncGen(engine.replayPendingAsks(), (event) => hub.publish(sessionId, event))
+    },
+  }
+}
+
+export type ServeRuntimeCaches = {
+  turnEngines: Map<string, CliRuntime>
+  sessionEngines: Map<string, CliRuntime>
+  runtimeForTurnId: (sessionId: string, open: () => Promise<CliRuntime>) => Promise<CliRuntime>
+  runtimeForSessionId: (sessionId: string, open: () => Promise<CliRuntime>) => Promise<CliRuntime>
+  liveEngines: () => Iterable<[string, CliRuntime]>
+  closeAll: () => Promise<void>
+}
+
+export function createServeRuntimeCaches(hub: SessionEventHub): ServeRuntimeCaches {
+  const turnEngines = new Map<string, CliRuntime>()
+  const sessionEngines = new Map<string, CliRuntime>()
+  const opening = new Map<string, Promise<CliRuntime>>()
+
+  const liveOf = (sessionId: string) => sessionEngines.get(sessionId) ?? turnEngines.get(sessionId)
+
+  const openInto = (
+    engines: Map<string, CliRuntime>,
+    sessionId: string,
+    open: () => Promise<CliRuntime>,
+  ) => {
+    const existing = liveOf(sessionId)
+    if (existing) return Promise.resolve(existing)
+    return singleFlight(opening, sessionId, async () => {
+      const hit = liveOf(sessionId)
+      if (hit) return hit
+      const opened = await open()
+      const live = { ...opened, engine: tapEngineEvents(opened.engine, hub) }
+      engines.set(sessionId, live)
+      return live
+    })
+  }
+
+  return {
+    turnEngines,
+    sessionEngines,
+    runtimeForTurnId: (sessionId, open) => openInto(turnEngines, sessionId, open),
+    runtimeForSessionId: (sessionId, open) => openInto(sessionEngines, sessionId, open),
+    liveEngines() {
+      return {
+        *[Symbol.iterator]() {
+          yield* turnEngines
+          yield* sessionEngines
+        },
+      }
+    },
+    async closeAll() {
+      for (const runtime of [...turnEngines.values(), ...sessionEngines.values()]) {
+        await runtime.engine.close?.()
+        await runtime.mcpCloser?.()
+      }
+    },
+  }
+}
+
+export function sessionOpenErrorResponse(error: unknown): Response {
+  if (isMissingSession(error)) {
+    return Response.json({ error: 'not found' }, { status: 404 })
+  }
+  if (error instanceof SessionLockError) {
+    return Response.json({ error: error.message }, { status: 409 })
+  }
+  return Response.json(
+    { error: error instanceof Error ? error.message : String(error) },
+    { status: 500 },
+  )
+}
+
+function isMissingSession(error: unknown): boolean {
+  if (error instanceof PersistError && error.message.startsWith('session not found')) return true
+  return error instanceof Error && error.message.startsWith('session not found')
+}
+
+async function publishParkedAsks(
+  runtime: ServeRuntime,
+  sessionId: string,
+  hub: SessionEventHub,
+): Promise<void> {
+  const store = runtime.store
+  if (!store?.listPendingAsks) return
+  const rows = [...(await store.listPendingAsks(sessionId))]
+  if (store.listSessions) {
+    const children = await store.listSessions({ parentSessionId: sessionId })
+    for (const child of children) {
+      for (const row of await store.listPendingAsks(child.id)) {
+        rows.push({ ...row, sessionId: child.id })
+      }
+    }
+  }
+  for (const row of rows) {
+    const event: Extract<StreamEvent, { type: 'permission_ask' }> = {
+      type: 'permission_ask',
+      id: row.callId,
+      tool: row.tool,
+      input: row.input,
+      message: row.message,
+    }
+    if (row.saveAs !== undefined) {
+      event.saveAs = row.saveAs as Extract<StreamEvent, { type: 'permission_ask' }>['saveAs']
+    }
+    if (row.sessionId !== sessionId) event.childSessionId = row.sessionId
+    hub.publish(sessionId, event)
+  }
+}
+
+function unauthorized(): Response {
+  return Response.json({ error: 'unauthorized' }, { status: 401 })
+}
+
+function requireBearer(req: Request, secret: string): boolean {
+  return checkBearer(req.headers.get('authorization') ?? undefined, secret)
+}
+
+async function readJsonBody(req: Request): Promise<{ ok: true; body: unknown } | { ok: false; res: Response }> {
+  try {
+    return { ok: true, body: await req.json() }
+  } catch {
+    return { ok: false, res: Response.json({ error: 'invalid json' }, { status: 400 }) }
+  }
+}
+
+const SESSION_PATH = /^\/v1\/session\/([^/]+)\/(stream|cancel|compact|resolve)$/
+
+async function loadSessionRuntime(
+  ctx: ServeRequestContext,
+  sessionId: string,
+): Promise<{ ok: true; runtime: ServeRuntime } | { ok: false; res: Response }> {
+  try {
+    const runtime = await ctx.runtimeForSession(sessionId)
+    if (!runtime) return { ok: false, res: Response.json({ error: 'not found' }, { status: 404 }) }
+    return { ok: true, runtime }
+  } catch (error) {
+    return { ok: false, res: sessionOpenErrorResponse(error) }
+  }
+}
+
+export async function handleServeRequest(req: Request, ctx: ServeRequestContext): Promise<Response> {
+  const url = new URL(req.url)
+  if (req.method === 'GET' && url.pathname === '/health') {
+    return Response.json({ ok: true })
+  }
+  if (req.method === 'POST' && url.pathname === '/v1/turn') {
+    if (!requireBearer(req, ctx.secret)) return unauthorized()
+    const parsedBody = await readJsonBody(req)
+    if (!parsedBody.ok) return parsedBody.res
+    const parsed = parseTurnRequest(parsedBody.body)
+    if (!parsed.ok) return Response.json({ error: parsed.error }, { status: 400 })
+    try {
+      const runtime = await ctx.runtimeForTurn(parsed.sessionKey, false)
+      const sessionId = runtime.engine.session.id
+      const result = await singleFlight(ctx.turnFlights, sessionId, () =>
+        runExec({
+          prompt: { text: parsed.text, turnPolicy: 'queue' },
+          engine: runtime.engine as SessionEngine,
+          closeEngine: false,
+          write: () => {},
+        }),
+      )
+      return Response.json({ text: result.text, end: result.end, sessionId })
+    } catch (error) {
+      return Response.json(
+        { error: error instanceof Error ? error.message : String(error) },
+        { status: 500 },
+      )
+    }
+  }
+
+  const sessionRoute = SESSION_PATH.exec(url.pathname)
+  if (sessionRoute) {
+    if (!requireBearer(req, ctx.secret)) return unauthorized()
+    const sessionId = sessionRoute[1] ?? ''
+    const action = sessionRoute[2]
+    if (req.method === 'GET' && action === 'stream') {
+      const loaded = await loadSessionRuntime(ctx, sessionId)
+      if (!loaded.ok) return loaded.res
+      const encoder = new TextEncoder()
+      let unsub = () => {}
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          unsub = ctx.hub.subscribe(sessionId, (event) => {
+            try {
+              controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`))
+            } catch {
+              unsub()
+            }
+          })
+          void publishParkedAsks(loaded.runtime, sessionId, ctx.hub)
+          const onAbort = () => {
+            unsub()
+            try {
+              controller.close()
+            } catch {
+              // already closed
+            }
+          }
+          req.signal.addEventListener('abort', onAbort)
+        },
+        cancel() {
+          unsub()
+        },
+      })
+      return new Response(stream, {
+        status: 200,
+        headers: {
+          'content-type': 'application/x-ndjson',
+          'cache-control': 'no-cache',
+        },
+      })
+    }
+    if (req.method === 'POST' && action === 'cancel') {
+      const loaded = await loadSessionRuntime(ctx, sessionId)
+      if (!loaded.ok) return loaded.res
+      loaded.runtime.engine.abort()
+      return Response.json({ ok: true })
+    }
+    if (req.method === 'POST' && action === 'compact') {
+      const loaded = await loadSessionRuntime(ctx, sessionId)
+      if (!loaded.ok) return loaded.res
+      try {
+        await singleFlight(ctx.turnFlights, sessionId, () => loaded.runtime.engine.compactNow())
+        return Response.json({ ok: true })
+      } catch (error) {
+        return Response.json(
+          { error: error instanceof Error ? error.message : String(error) },
+          { status: 500 },
+        )
+      }
+    }
+    if (req.method === 'POST' && action === 'resolve') {
+      const parsedBody = await readJsonBody(req)
+      if (!parsedBody.ok) return parsedBody.res
+      const parsed = parseResolveBody(parsedBody.body)
+      if (!parsed.ok) return Response.json({ error: parsed.error }, { status: 400 })
+      const loaded = await loadSessionRuntime(ctx, sessionId)
+      if (!loaded.ok) return loaded.res
+      const status = await loaded.runtime.engine.applyAskAnswer(parsed.callId, parsed.allow ? 'allow' : 'deny')
+      if (status === 'unmatched') return Response.json({ status }, { status: 404 })
+      return Response.json({ status })
+    }
+    return Response.json({ error: 'not found' }, { status: 404 })
+  }
+
+  return Response.json({ error: 'not found' }, { status: 404 })
+}
+
 export async function runServe(opts: { flags: ConfigFlags }): Promise<number> {
   const secret = gatewaySecret()
   if (secret === '') {
@@ -131,36 +477,46 @@ export async function runServe(opts: { flags: ConfigFlags }): Promise<number> {
     return 1
   }
 
-  const home = opts.flags.listen !== undefined ? ravenclawHome() : ravenclawHome()
+  const home = ravenclawHome()
   const map = loadSessionMap(home)
-  const engines = new Map<string, CliRuntime>()
-  const opening = new Map<string, Promise<CliRuntime>>()
   const turnFlights = new Map<string, Promise<unknown>>()
+  const hub = createSessionEventHub()
+  const caches = createServeRuntimeCaches(hub)
   const shared = await bootCli({
     flags: { ...opts.flags, dontAsk: true },
     createSession: false,
     surface: 'headless',
     lockHolder: 'serve',
   })
+  const sessionBoot = {
+    ...shared,
+    lockHolderId: shared.lockHolderId,
+    config: loadConfig({ home: shared.config.home, flags: { ...opts.flags, dontAsk: false } }),
+  }
 
-  const runtimeFor = async (sessionKey: string | undefined, webhook: boolean) => {
+  const runtimeForTurn = async (sessionKey: string | undefined, webhook: boolean) => {
     const key = sessionKey ?? 'http:dm:local'
     const resolved = resolveSessionId(map, key, () => crypto.randomUUID())
     if (resolved.created) saveSessionMap(map, home)
-    const existing = engines.get(resolved.id)
-    if (existing) return existing
     const boot = webhook
       ? { ...shared, config: { ...shared.config, allowedTools: safeWebhookToolNames() } }
       : shared
-    return singleFlight(opening, resolved.id, async () => {
-      const cached = engines.get(resolved.id)
-      if (cached) return cached
-      const opened = resolved.created
-        ? await openNewSession(boot, { sessionId: resolved.id })
-        : await resumeRuntime(boot, resolved.id)
-      engines.set(resolved.id, opened)
-      return opened
-    })
+    return caches.runtimeForTurnId(resolved.id, () =>
+      resolved.created
+        ? openNewSession(boot, { sessionId: resolved.id })
+        : resumeRuntime(boot, resolved.id),
+    )
+  }
+
+  const runtimeForSession = (sessionId: string) =>
+    caches.runtimeForSessionId(sessionId, () => resumeRuntime(sessionBoot, sessionId))
+
+  const serveCtx: ServeRequestContext = {
+    secret,
+    turnFlights,
+    hub,
+    runtimeForTurn,
+    runtimeForSession,
   }
 
   const server = Bun.serve({
@@ -168,38 +524,6 @@ export async function runServe(opts: { flags: ConfigFlags }): Promise<number> {
     port: listen.port,
     async fetch(req) {
       const url = new URL(req.url)
-      if (req.method === 'GET' && url.pathname === '/health') {
-        return Response.json({ ok: true })
-      }
-      if (req.method === 'POST' && url.pathname === '/v1/turn') {
-        if (!checkBearer(req.headers.get('authorization') ?? undefined, secret)) {
-          return Response.json({ error: 'unauthorized' }, { status: 401 })
-        }
-        let body: unknown
-        try {
-          body = await req.json()
-        } catch {
-          return Response.json({ error: 'invalid json' }, { status: 400 })
-        }
-        const parsed = parseTurnRequest(body)
-        if (!parsed.ok) return Response.json({ error: parsed.error }, { status: 400 })
-        try {
-          const runtime = await runtimeFor(parsed.sessionKey, false)
-          const result = await singleFlight(turnFlights, runtime.engine.session.id, () =>
-            runExec({
-              prompt: parsed.text,
-              engine: runtime.engine,
-              closeEngine: false,
-            }),
-          )
-          return Response.json({ text: result.text, end: result.end, sessionId: runtime.engine.session.id })
-        } catch (error) {
-          return Response.json(
-            { error: error instanceof Error ? error.message : String(error) },
-            { status: 500 },
-          )
-        }
-      }
       const hook = /^\/webhooks\/([^/]+)$/.exec(url.pathname)
       if (req.method === 'POST' && hook) {
         const raw = await req.text()
@@ -221,7 +545,10 @@ export async function runServe(opts: { flags: ConfigFlags }): Promise<number> {
               ...shared,
               config: { ...shared.config, allowedTools: safeWebhookToolNames() },
             })
-            await runExec({ prompt: parsed.text, engine: opened.engine })
+            await runExec({
+              prompt: { text: parsed.text, turnPolicy: 'queue' },
+              engine: opened.engine,
+            })
           } catch {
             // fire-and-forget
           } finally {
@@ -231,22 +558,21 @@ export async function runServe(opts: { flags: ConfigFlags }): Promise<number> {
         })()
         return Response.json({ accepted: true }, { status: 202 })
       }
-      return Response.json({ error: 'not found' }, { status: 404 })
+      return handleServeRequest(req, serveCtx)
     },
   })
 
   process.stdout.write(`raven serve ${server.hostname}:${server.port}\n`)
   process.stdout.write('POST /v1/turn  Authorization: Bearer <GATEWAY_SECRET>\n')
+  process.stdout.write('GET  /v1/session/:id/stream  NDJSON live tail\n')
+  process.stdout.write('POST /v1/session/:id/cancel|/compact|/resolve\n')
   process.stdout.write('POST /webhooks/<route>  X-Raven-Signature: t=<unix>,v1=<hmac>\n')
-  const stopMailbox = startMailboxPoller(engines, turnFlights)
+  const stopMailbox = startMailboxPoller(caches.liveEngines(), turnFlights)
   const shutdown = async () => {
     stopMailbox()
     server.stop()
     await Promise.allSettled([...turnFlights.values()])
-    for (const runtime of engines.values()) {
-      await runtime.engine.close?.()
-      await runtime.mcpCloser?.()
-    }
+    await caches.closeAll()
   }
   await new Promise<void>((resolve) => {
     const onStop = () => {

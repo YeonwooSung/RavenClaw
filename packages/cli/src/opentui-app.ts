@@ -85,13 +85,21 @@ export async function runOpenTuiApp(
     write(`${lines.join('\n')}\n`)
   }
 
+  const renderEvent = (event: StreamEvent) => {
+    view.apply(event)
+    flush()
+  }
+
   const bindHosts = () => {
     current.ask.bind(async (event, signal) => {
       for (const line of permissionPromptLines(event)) write(`${line}\n`)
-      if (signal.aborted) return 'deny'
-      const answer = await readLine()
-      if (answer === undefined || signal.aborted) return 'deny'
-      return parsePermissionAnswer(answer)
+      while (true) {
+        if (signal.aborted) throw abortError()
+        const answer = await readLine()
+        if (answer === undefined || signal.aborted) throw abortError()
+        const parsed = parsePermissionAnswer(answer)
+        if (parsed !== undefined) return parsed
+      }
     })
     current.askQuestions?.bind(async (input, signal) => {
       write(`${formatAskUserDialog(input)}\n`)
@@ -103,6 +111,18 @@ export async function runOpenTuiApp(
       return parseAskUserAnswer(input, line)
     })
   }
+
+  const replayPending = async () => {
+    try {
+      for await (const ev of current.engine.replayPendingAsks()) {
+        renderEvent(ev)
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      write(`${message}\n`)
+    }
+  }
+
   bindHosts()
   if (runtime.status !== undefined && runtime.status !== '') {
     write(`${runtime.status}\n`)
@@ -127,7 +147,11 @@ export async function runOpenTuiApp(
     let advanceLoop = false
     try {
       const payload = collectUserImages(expanded.text, current.cwd, readClipboardImage)
-      const gen = current.engine.submitMessage(payload)
+      const queued =
+        typeof payload === 'string'
+          ? { text: payload, turnPolicy: 'queue' as const }
+          : { ...payload, turnPolicy: 'queue' as const }
+      const gen = current.engine.submitMessage(queued)
       while (true) {
         const next = await gen.next()
         if (next.done) {
@@ -136,9 +160,7 @@ export async function runOpenTuiApp(
           advanceLoop = shouldAdvanceLoop(next.value.reason)
           break
         }
-        const event: StreamEvent = next.value
-        view.apply(event)
-        flush()
+        renderEvent(next.value)
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
@@ -227,6 +249,7 @@ export async function runOpenTuiApp(
 
   try {
     await writeIncludedAds(current)
+    await replayPending()
     while (true) {
       if (diffOpen) writeDiffPanel()
       write(`${composerLine()}\n`)
@@ -361,6 +384,7 @@ export async function runOpenTuiApp(
               bindHosts()
               write(`resumed ${shortSessionId(parsed.arg)}\n`)
               await writeIncludedAds(current)
+              await replayPending()
             } catch (error) {
               const message = error instanceof Error ? error.message : String(error)
               write(`${message}\n`)
@@ -399,12 +423,16 @@ function openInput(source?: AsyncIterable<string>): {
   return { input: rl, close: () => rl.close() }
 }
 
-function parsePermissionAnswer(line: string): 'allow' | 'deny' | 'allow_always' {
+function abortError(): Error {
+  return Object.assign(new Error('aborted'), { name: 'AbortError' })
+}
+
+function parsePermissionAnswer(line: string): 'allow' | 'deny' | 'allow_always' | undefined {
   const key = line.trim().toLowerCase()
-  if (key === 'y') return 'allow'
-  if (key === 'n') return 'deny'
-  if (key === 'a') return 'allow_always'
-  return 'deny'
+  if (key === 'y' || key === 'yes' || key === 'allow') return 'allow'
+  if (key === 'n' || key === 'no' || key === 'deny') return 'deny'
+  if (key === 'a' || key === 'always' || key === 'allow_always') return 'allow_always'
+  return undefined
 }
 
 function lineReader(source: AsyncIterable<string>): () => Promise<string | undefined> {

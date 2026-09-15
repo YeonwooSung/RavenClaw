@@ -31,6 +31,7 @@ Usage:
   raven slack
   raven discord
   raven pairing [list|approve <code>|revoke discord <userId>]
+  raven eval [dir]
   raven --help
   raven --version
 
@@ -54,10 +55,11 @@ Commands:
   mcp           List configured MCP servers (list) or spawn and list tool names (tools)
   skills        List skills; new writes SKILL.md, rm deletes, prune archives unused
   cron          List/add/remove local jobs; tick/watch fire due ones
-  serve         Local HTTP turn + HMAC webhook (dontAsk, loopback default)
+  serve         Local HTTP turn, session stream/resolve, HMAC webhook (loopback)
   slack         Slack Socket Mode bot (allowlist; no public URL)
   discord       Discord Gateway bot (allowlist + DM pairing)
   pairing       Approve or revoke Discord DM pairing (no API key)
+  eval          In-process fixture gates (no model; default core fixtures)
 
 Options:
   --provider <anthropic|openai_compat|ollama|vllm>

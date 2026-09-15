@@ -1,3 +1,5 @@
+import type { PendingAsk, PendingAskAnswer } from './session/pending-asks'
+
 export type ApiMode = 'openai_compat' | 'anthropic_messages' | 'openai_responses'
 export type SystemTier = 'stable' | 'context' | 'volatile'
 
@@ -111,6 +113,8 @@ export interface Turn {
   compactGeneration: number
   funding: Funding
   cwd: string
+  /** Terminal/workspace backend. Unset means local. Docker v1 is host fs + cwd jail. */
+  terminalBackend?: 'local' | 'docker'
   /** Project root for permissions/skills. Unset means `cwd`. Isolated worktrees set this to the parent. */
   projectCwd?: string
   /** Extra working roots for path checks (AddDir). Unset means cwd only. */
@@ -157,6 +161,7 @@ export type StreamEvent =
       input: unknown
       message: string
       saveAs?: PermissionScope
+      childSessionId?: string
     }
   | { type: 'error'; message: string; recoverable: boolean }
   | { type: 'usage'; usage: TokenUsage }
@@ -191,11 +196,14 @@ export interface UserImage {
   data: string
 }
 
+export type TurnPolicy = 'steer' | 'queue'
+
 export type UserSubmitInput =
   | string
   | {
       text?: string
       images?: UserImage[]
+      turnPolicy?: TurnPolicy
     }
 
 export interface ToolContext {
@@ -321,6 +329,10 @@ export interface SessionStore {
    */
   loadMessages?(sessionId: string): Promise<Message[]>
   deleteSession(sessionId: string): Promise<void>
+  upsertPendingAsk(row: PendingAsk): Promise<void>
+  listPendingAsks(sessionId: string): Promise<PendingAsk[]>
+  getPendingAsk(callId: string): Promise<PendingAsk | undefined>
+  deletePendingAsk(callId: string): Promise<void>
   persistUser(sessionId: string, message: Extract<Message, { role: 'user' }>): Promise<void>
   /**
    * Text-only assistant completions (no tool_use). Do not call for a tool-use round.
@@ -375,6 +387,8 @@ export interface SessionEngineOptions {
   jsonSchema?: unknown
   bare?: boolean
   additionalDirectories?: string[]
+  /** Copied onto each Turn. Unset means local. */
+  terminalBackend?: 'local' | 'docker'
   sessionLock?: {
     holderId: string
     ttlMs?: number
@@ -405,6 +419,11 @@ export interface SessionEngine {
   readonly tasks: import('./tasks/registry').TaskRegistry
   readonly fileHistory: import('./session/file-history').FileHistory
   submitMessage(input: UserSubmitInput): AsyncGenerator<StreamEvent, RoundEnd>
+  applyAskAnswer(
+    callId: string,
+    answer: PendingAskAnswer,
+  ): Promise<'matched' | 'unmatched'>
+  replayPendingAsks(): AsyncGenerator<StreamEvent, void>
   enqueueSteer(text: string): void
   drainSteering(): string[]
   /** Host `/queue` drain. Called after each tool round; one item per batch. */
@@ -429,6 +448,8 @@ export interface QueryLoopOptions {
   system?: SystemPart[]
   hooks?: SessionEngineOptions['hooks']
   askUser: SessionEngineOptions['askUser']
+  /** Present when this loop is a child session. */
+  parentSessionId?: string
   tasks?: import('./tasks/registry').TaskRegistry
   fileHistory?: import('./session/file-history').FileHistory
   drainSteering?: () => string[]

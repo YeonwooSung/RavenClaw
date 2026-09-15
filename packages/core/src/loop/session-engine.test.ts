@@ -96,6 +96,26 @@ function createFakeProvider(scripts: ProviderChunk[][]): Provider & {
   return provider
 }
 
+function engineOpts(over: {
+  provider: Provider
+  store: ReturnType<typeof createMemoryStore>
+  session: SessionRecord
+  tools?: Tool[]
+}) {
+  return {
+    session: over.session,
+    provider: over.provider,
+    store: over.store,
+    tools: over.tools ?? [],
+    compact: defaultCompact({ enabled: false }),
+    model: defaultModel(),
+    maxRounds: 8,
+    async askUser() {
+      return 'deny' as const
+    },
+  }
+}
+
 async function persistAll(
   store: ReturnType<typeof createMemoryStore>,
   sessionId: string,
@@ -300,6 +320,50 @@ describe('compactNow', () => {
     await engine.compactNow()
     expect(provider.streamCount).toBe(1)
     expect(recorded).toContain('old question')
+  })
+
+  test('compactNow during submitMessage does not rewrite messages until the turn ends', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_c' })
+    await store.createSession(session)
+    const history = [
+      user('u0', 'old question', 1),
+      asst('a0', 'old reply', 2),
+      user('u1', 'recent', 3),
+      asst('a1', 'recent reply', 4),
+    ]
+    await persistAll(store, session.id, history)
+
+    let compactCalls = 0
+    const orig = store.recordCompact.bind(store)
+    store.recordCompact = async (sessionId, generation, summary, inactivatedIds) => {
+      compactCalls += 1
+      return orig(sessionId, generation, summary, inactivatedIds)
+    }
+
+    const provider = createFakeProvider([
+      [
+        { type: 'text_delta', text: 'hi' },
+        { type: 'stop', reason: 'end' },
+      ],
+    ])
+    const engine = createSessionEngine({
+      ...engineOpts({ provider, store, session }),
+      messages: history,
+      compact: defaultCompact({ protectLastMessages: 2, llmSummarize: false }),
+    })
+    const gen = engine.submitMessage('hi')
+    await gen.next()
+    const before = (await store.loadSession(session.id)).messages.length
+    expect(compactCalls).toBe(0)
+    await engine.compactNow()
+    const mid = (await store.loadSession(session.id)).messages.length
+    expect(mid).toBe(before)
+    expect(compactCalls).toBe(0)
+    while (!(await gen.next()).done) {
+      // drain
+    }
+    expect(compactCalls).toBe(1)
   })
 })
 
@@ -547,6 +611,50 @@ describe('steering and image submit', () => {
         { type: 'text', text: 'see this' },
         { type: 'image', mediaType: 'image/png', data: 'abc' },
       ])
+    }
+  })
+
+  test('submitMessage turnPolicy does not abort or enqueueSteer', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_policy' })
+    await store.createSession(sess)
+    const engine = createSessionEngine({
+      session: sess,
+      provider: createFakeProvider([[{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: 'end' }]]),
+      store,
+      tools: [],
+      compact: defaultCompact({ enabled: false }),
+      model: defaultModel(),
+      maxRounds: 4,
+      async askUser() {
+        return 'deny'
+      },
+    })
+    let abortCalls = 0
+    const origAbort = engine.abort.bind(engine)
+    engine.abort = () => {
+      abortCalls += 1
+      origAbort()
+    }
+    const events: StreamEvent[] = []
+    const gen = engine.submitMessage({ text: 'hi', turnPolicy: 'steer' })
+    let end: { reason: string } | undefined
+    while (true) {
+      const next = await gen.next()
+      if (next.done) {
+        end = next.value
+        break
+      }
+      events.push(next.value)
+    }
+    expect(abortCalls).toBe(0)
+    expect(engine.drainSteering()).toEqual([])
+    expect(end?.reason).toBe('completed')
+    const loaded = await store.loadSession(sess.id)
+    const first = loaded.messages[0]
+    expect(first?.role).toBe('user')
+    if (first?.role === 'user') {
+      expect(first.blocks).toEqual([{ type: 'text', text: 'hi' }])
     }
   })
 })
@@ -1292,5 +1400,102 @@ describe('background review and nudges', () => {
     } finally {
       rmSync(cwd, { recursive: true, force: true })
     }
+  })
+})
+
+describe('replayPendingAsks', () => {
+  test('resume with a pending row replays permission_ask without submitMessage', async () => {
+    const asks: string[] = []
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_tui' })
+    await store.createSession(session)
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Run ls?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    const engine = createSessionEngine({
+      ...engineOpts({
+        provider: createFakeProvider([]),
+        store,
+        session,
+      }),
+      askUser: async (event) => {
+        asks.push(event.id)
+        return 'deny'
+      },
+    })
+    const events: StreamEvent[] = []
+    for await (const ev of engine.replayPendingAsks()) events.push(ev)
+    expect(asks).toEqual(['call_1'])
+    expect(events.some((e) => e.type === 'permission_ask' && e.id === 'call_1')).toBe(true)
+    expect(await store.listPendingAsks(session.id)).toHaveLength(0)
+  })
+
+  test('replayPendingAsks on a child session sets childSessionId', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_child', parentSessionId: 'sess_parent' })
+    await store.createSession(makeSession({ id: 'sess_parent' }))
+    await store.createSession(session)
+    await store.upsertPendingAsk({
+      callId: 'call_child',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Run ls?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    const engine = createSessionEngine({
+      ...engineOpts({
+        provider: createFakeProvider([]),
+        store,
+        session,
+      }),
+      askUser: async () => 'deny',
+    })
+    const events: StreamEvent[] = []
+    for await (const ev of engine.replayPendingAsks()) events.push(ev)
+    const ask = events.find((e) => e.type === 'permission_ask')
+    expect(ask && ask.type === 'permission_ask' ? ask.childSessionId : undefined).toBe('sess_child')
+  })
+
+  test('parent replayPendingAsks yields child leftover-asks with childSessionId', async () => {
+    const store = createMemoryStore()
+    const parent = makeSession({ id: 'sess_parent' })
+    const child = makeSession({ id: 'sess_child', parentSessionId: 'sess_parent' })
+    await store.createSession(parent)
+    await store.createSession(child)
+    await store.upsertPendingAsk({
+      callId: 'call_child',
+      sessionId: child.id,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Run ls?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    const seen: string[] = []
+    const engine = createSessionEngine({
+      ...engineOpts({
+        provider: createFakeProvider([]),
+        store,
+        session: parent,
+      }),
+      askUser: async (event) => {
+        seen.push(event.childSessionId ?? '')
+        return 'deny'
+      },
+    })
+    const events: StreamEvent[] = []
+    for await (const ev of engine.replayPendingAsks()) events.push(ev)
+    expect(seen).toEqual(['sess_child'])
+    const ask = events.find((e) => e.type === 'permission_ask')
+    expect(ask && ask.type === 'permission_ask' ? ask.id : undefined).toBe('call_child')
+    expect(await store.listPendingAsks(child.id)).toHaveLength(0)
   })
 })

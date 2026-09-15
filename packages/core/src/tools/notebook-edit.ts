@@ -1,4 +1,4 @@
-import { readFileSync, realpathSync, writeFileSync } from 'node:fs'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type { Tool, ToolContext } from '../types'
 import {
@@ -9,6 +9,7 @@ import {
 } from './notebook-format'
 import { parseWithSchema } from './parse'
 import { isHardDeniedWritePath, resolveWritePath } from './write'
+import { wasRead } from './read-files'
 
 export interface NotebookEditInput {
   path: string
@@ -94,19 +95,6 @@ function statusLine(mode: NotebookEditMode, path: string): string {
   if (mode === 'insert') return `Inserted cell in ${path}`
   if (mode === 'delete') return `Deleted cell in ${path}`
   return `Replaced cell in ${path}`
-}
-
-function wasRead(readFiles: Set<string>, resolved: string, candidate: string): boolean {
-  if (readFiles.has(resolved) || readFiles.has(candidate)) return true
-  for (const seen of readFiles) {
-    if (seen === resolved || seen === candidate) return true
-    try {
-      if (realpathSync(seen) === resolved) return true
-    } catch {
-      // entry may no longer exist
-    }
-  }
-  return false
 }
 
 function errorMessage(error: unknown): string {

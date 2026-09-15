@@ -439,7 +439,8 @@ If `included.gatewayUrl` is a real URL and `GET /v1/entitlement` admits the sess
 - [GitHub Action (`raven-exec`)](.github/actions/raven-exec/README.md)
 - [System design](docs/superpowers/specs/2026-09-08-ravenclaw-coding-agent-design.md)
 - [Cron / scheduler](docs/superpowers/specs/2026-09-12-ravenclaw-cron-scheduler-design.md)
-- Prior art notes: [Hermes](docs/research/hermes-agent-analysis.md), [Freebuff](docs/research/freebuff-analysis.md), [Claude Code loop](docs/research/claude-code-analysis.md)
+- Prior art notes: [Hermes](docs/research/hermes-agent-analysis.md), [Freebuff](docs/research/freebuff-analysis.md), [Claude Code loop](docs/research/claude-code-analysis.md), [eve](docs/research/eve-analysis.md) ([한국어](docs/research/eve-analysis.ko.md))
+- Next-horizon roadmap (durable HITL, sandbox port, session HTTP): [2026-09-15-eve-inspired-roadmap.md](docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md)
 
 ## Develop
 

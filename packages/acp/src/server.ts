@@ -35,6 +35,7 @@ import {
 export type AcpEngine = {
   submitMessage(input: UserSubmitInput): AsyncGenerator<unknown, unknown>
   abort(): void
+  replayPendingAsks?: () => AsyncGenerator<unknown, void>
 }
 
 export type AcpSessionNewOptions = SessionNewParams
@@ -75,6 +76,7 @@ export function createAcpServer(opts: AcpServerOptions): AcpServer {
   const sessions = new Map<string, AcpEngine>()
   const notify = opts.notify
   const answered = new Map<string, AcpPermissionAnswer>()
+  const permissionFlights = new Map<string, Promise<AcpPermissionAnswer>>()
   let nextRequestId = 1
   // Inline ACP image blocks map onto UserSubmitInput.images (mediaType + data).
   const capabilities: AgentCapabilities = {
@@ -105,11 +107,28 @@ export function createAcpServer(opts: AcpServerOptions): AcpServer {
   ): Promise<AcpPermissionAnswer> {
     const cached = answered.get(event.id)
     if (cached) return cached
+    const inflight = permissionFlights.get(event.id)
+    if (inflight) return inflight
 
     if (!opts.request || signal?.aborted) {
       answered.set(event.id, 'deny')
       return 'deny'
     }
+
+    const flight = askPermissionOnce(sessionId, event, signal)
+    permissionFlights.set(event.id, flight)
+    try {
+      return await flight
+    } finally {
+      if (permissionFlights.get(event.id) === flight) permissionFlights.delete(event.id)
+    }
+  }
+
+  async function askPermissionOnce(
+    sessionId: string,
+    event: AcpPermissionAsk,
+    signal?: AbortSignal,
+  ): Promise<AcpPermissionAnswer> {
 
     const proposal = editProposalFromInput(event.tool, event.input)
     const sensitive = isSensitiveEditInput(event.tool, event.input)
@@ -141,9 +160,14 @@ export function createAcpServer(opts: AcpServerOptions): AcpServer {
       params,
     }
 
+    const request = opts.request
+    if (!request) {
+      answered.set(event.id, 'deny')
+      return 'deny'
+    }
     const timeoutMs = opts.permissionTimeoutMs ?? PERMISSION_TIMEOUT_MS
     const wait = opts.wait ?? defaultWait
-    const answer = await racePermission(opts.request(req), wait(timeoutMs), signal)
+    const answer = await racePermission(request(req), wait(timeoutMs), signal)
     const resolved = sensitive && answer === 'allow_always' ? 'allow' : answer
     answered.set(event.id, resolved)
     return resolved
@@ -220,10 +244,13 @@ export function createAcpServer(opts: AcpServerOptions): AcpServer {
       return jsonRpcError(id, JSON_RPC_METHOD_NOT_FOUND, 'Method not found')
     }
     try {
-      sessions.set(
-        parsed.sessionId,
-        await opts.loadEngine(parsed.sessionId, factoryOpts(parsed.sessionId)),
-      )
+      const engine = await opts.loadEngine(parsed.sessionId, factoryOpts(parsed.sessionId))
+      sessions.set(parsed.sessionId, engine)
+      if (typeof engine.replayPendingAsks === 'function') {
+        for await (const _event of engine.replayPendingAsks()) {
+          // engine askUser already requests permission
+        }
+      }
       return jsonRpcResult(id, { sessionId: parsed.sessionId })
     } catch (error) {
       return jsonRpcError(

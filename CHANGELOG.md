@@ -4,6 +4,8 @@
 
 ### Added
 - Architecture and slash-command references: [ARCHITECTURE.md](ARCHITECTURE.md) / [ARCHITECTURE.ko.md](ARCHITECTURE.ko.md), [SLASH_COMMANDS.md](SLASH_COMMANDS.md) / [SLASH_COMMANDS.ko.md](SLASH_COMMANDS.ko.md).
+- Implementation plan for the eve-inspired horizon (15 TDD tasks, Waves E1–E4, source-reviewed): [docs/superpowers/plans/2026-09-15-eve-inspired-implementation.md](docs/superpowers/plans/2026-09-15-eve-inspired-implementation.md).
+- Prior-art note for Vercel eve (filesystem-first durable agents) and the next-horizon roadmap that steals HITL parking, sandbox-port, session HTTP, and eval contracts only: [docs/research/eve-analysis.md](docs/research/eve-analysis.md) ([한국어](docs/research/eve-analysis.ko.md)), [docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md](docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md). Source-reviewed: leftover-ask **decisions** are RAM-only (resume pair-repairs to `incomplete`); serve already has `POST /v1/turn`; Edit/ApplyPatch already have this-turn read/mtime checks; Slack is Socket Mode not HMAC.
 
 ### Changed
 - Built-in model catalog now matches the current Claude and OpenAI flagship lineups (`claude-sonnet-5`, `claude-opus-5`, `claude-fable-5-1`, `claude-haiku-4-5`, `gpt-6-astra`, `gpt-5.6-sol` / `gpt-5.6`, `gpt-5.6-terra`, `gpt-5.6-luna`). Defaults go through `defaultModelId(family, role)` so generation bumps touch one table. Vendor-prefixed and dated aliases still resolve. README Models section and CONTRIBUTING catalog-update steps document the pattern.

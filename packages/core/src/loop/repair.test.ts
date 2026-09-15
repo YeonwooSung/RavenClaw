@@ -188,4 +188,28 @@ describe('repairRoleAlternation', () => {
       expect(built[0].blocks[0]?.text).toBe('SUMMARY')
     }
   })
+
+  test('repairRoleAlternation leaves unpaired tool_use when call is a pending ask', () => {
+    const input = [
+      user('u1', 'run'),
+      assistant('a1', [{ type: 'tool_use', id: 'call_1', name: 'Echo', input: { text: 'hi' } }]),
+    ]
+    const out = repairRoleAlternation(input, new Set(['call_1']))
+    expect(out.some((m) => m.role === 'tool')).toBe(false)
+    expect(out).toHaveLength(2)
+  })
+
+  test('repairRoleAlternation still inserts incomplete when not pending', () => {
+    const input = [
+      user('u1', 'run'),
+      assistant('a1', [{ type: 'tool_use', id: 'call_1', name: 'Echo', input: { text: 'hi' } }]),
+    ]
+    const out = repairRoleAlternation(input)
+    const last = out.at(-1)
+    expect(last?.role).toBe('tool')
+    if (last?.role === 'tool') {
+      expect(last.toolUseId).toBe('call_1')
+      expect(last.blocks[0]?.text).toBe(INCOMPLETE_TEXT)
+    }
+  })
 })

@@ -188,6 +188,16 @@ describe('composer and permission helpers', () => {
         message: 'run ls in /tmp',
       }),
     ).toEqual(['Allow Bash?', 'run ls in /tmp', 'y allow   n deny   a always'])
+    expect(
+      permissionPromptLines({
+        type: 'permission_ask',
+        id: 'p2',
+        tool: 'Bash',
+        input: { command: 'ls' },
+        message: 'run ls',
+        childSessionId: 'sess_child',
+      }),
+    ).toEqual(['Allow Bash? (child sess_child)', 'run ls', 'y allow   n deny   a always'])
   })
 })
 

@@ -2,7 +2,13 @@ import { describe, expect, test } from 'bun:test'
 import { mkdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { createMemoryDeliveries, SessionLockError, sessionLockedMessage } from '@ravenclaw/core'
+import {
+  createMemoryDeliveries,
+  createMemoryStore,
+  SessionLockError,
+  sessionLockedMessage,
+  type UserSubmitInput,
+} from '@ravenclaw/core'
 import { runDiscordAdapter } from './adapter'
 import type {
   DiscordApi,
@@ -148,6 +154,10 @@ async function runOnce(opts: {
   return api
 }
 
+function submitText(input: UserSubmitInput): string {
+  return typeof input === 'string' ? input : (input.text ?? '')
+}
+
 function recordingSession(
   submitted: string[],
   keys: string[],
@@ -158,7 +168,8 @@ function recordingSession(
     modes?.push(req.permissionMode)
     const session: DiscordBoundSession = {
       sessionId: `sess-${keys.length}`,
-      async *submitMessage(text: string) {
+      async *submitMessage(input: UserSubmitInput) {
+        const text = submitText(input)
         submitted.push(text)
         yield { type: 'text_delta', text: `pong:${text}` }
       },
@@ -346,5 +357,367 @@ describe('runDiscordAdapter', () => {
     gateway.end()
     await running
     expect(answer).toBe('deny')
+  })
+
+  test('discord does not deny a durable pending row on timer', async () => {
+    const store = createMemoryStore()
+    const sessionId = 'sess_discord'
+    let answered: string | undefined
+    let askStarted!: () => void
+    const sawAsk = new Promise<void>((resolve) => {
+      askStarted = resolve
+    })
+    const gateway = new FakeDiscordGateway()
+    const running = runDiscordAdapter({
+      config: cfg({ allowFrom: ['U1'] }),
+      pairingHome: home(),
+      ledger: createMemoryDeliveries(),
+      permissionTimeoutMs: 5,
+      store,
+      openSession: async (req) => ({
+        sessionId,
+        async *submitMessage() {
+          await store.upsertPendingAsk({
+            callId: 'call_1',
+            sessionId,
+            kind: 'leftover',
+            tool: 'Bash',
+            message: 'Allow Bash?',
+            input: { command: 'ls' },
+            createdAt: 1,
+          })
+          const ac = new AbortController()
+          askStarted()
+          answered = await req.askUser({ id: 'call_1', tool: 'Bash', message: 'Allow Bash?' }, ac.signal)
+        },
+      }),
+      gateway,
+      api: new FakeDiscordApi(),
+    })
+    gateway.push(dmPayload({ id: 'm-durable', authorId: 'U1', content: 'please' }))
+    await sawAsk
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(answered).toBeUndefined()
+    expect(await store.listPendingAsks(sessionId)).toHaveLength(1)
+    gateway.push(dmPayload({ id: 'm-deny', authorId: 'U1', content: 'deny' }))
+    gateway.end()
+    await running
+  })
+
+  test('discord leftover-ask labels childSessionId', async () => {
+    const api = new FakeDiscordApi()
+    const gateway = new FakeDiscordGateway()
+    let askStarted!: () => void
+    const sawAsk = new Promise<void>((resolve) => {
+      askStarted = resolve
+    })
+    const running = runDiscordAdapter({
+      config: cfg({ allowFrom: ['U1'] }),
+      pairingHome: home(),
+      ledger: createMemoryDeliveries(),
+      store: createMemoryStore(),
+      botUserId: 'BOT',
+      openSession: async (req) => ({
+        sessionId: 'sess_parent',
+        async *submitMessage() {
+          const ac = new AbortController()
+          askStarted()
+          await req.askUser(
+            {
+              id: 'call_child',
+              tool: 'Bash',
+              message: 'child bash?',
+              childSessionId: 'sess_child',
+            },
+            ac.signal,
+          )
+        },
+      }),
+      gateway,
+      api,
+    })
+    gateway.push(dmPayload({ id: 'm-child', authorId: 'U1', content: 'please' }))
+    await sawAsk
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const prompt = api.posts.find((post) => post.content.includes('Allow'))
+    expect(prompt?.content).toContain('child sess_child')
+    gateway.push(dmPayload({ id: 'm-child-deny', authorId: 'U1', content: 'deny' }))
+    gateway.end()
+    await running
+  })
+
+  test('failed discord permission post does not auto-deny the next ask', async () => {
+    const store = createMemoryStore()
+    const gateway = new FakeDiscordGateway()
+    const api = new FakeDiscordApi()
+    const orig = api.createMessage.bind(api)
+    let allowPosts = 0
+    api.createMessage = async (opts) => {
+      if (opts.content.includes('Allow')) {
+        allowPosts += 1
+        if (allowPosts === 1) throw new Error('discord down')
+      }
+      return orig(opts)
+    }
+    const answers: string[] = []
+    let asks = 0
+    let sawSecond!: () => void
+    const secondAsk = new Promise<void>((resolve) => {
+      sawSecond = resolve
+    })
+    const running = runDiscordAdapter({
+      config: cfg({ allowFrom: ['U1'] }),
+      pairingHome: home(),
+      ledger: createMemoryDeliveries(),
+      store,
+      openSession: async (req) => ({
+        sessionId: 'sess_post_fail',
+        async *submitMessage() {
+          asks += 1
+          const ac = new AbortController()
+          if (asks === 2) sawSecond()
+          try {
+            answers.push(
+              await req.askUser({ id: `call_${asks}`, tool: 'Bash', message: 'Allow Bash?' }, ac.signal),
+            )
+          } catch {
+            answers.push('threw')
+          }
+        },
+      }),
+      gateway,
+      api,
+    })
+    gateway.push(dmPayload({ id: 'm-fail-1', authorId: 'U1', content: 'first' }))
+    for (let i = 0; i < 40 && answers.length === 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    expect(answers).toEqual(['threw'])
+    gateway.push(dmPayload({ id: 'm-fail-2', authorId: 'U1', content: 'second' }))
+    await secondAsk
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(answers).toEqual(['threw'])
+    gateway.push(dmPayload({ id: 'm-fail-allow', authorId: 'U1', content: 'allow' }))
+    gateway.end()
+    await running
+    expect(answers).toEqual(['threw', 'allow'])
+  })
+
+  test('durable discord waiter abort does not deny the pending row', async () => {
+    const store = createMemoryStore()
+    const sessionId = 'sess_discord_abort'
+    let answered: string | undefined
+    let askError: unknown
+    let abortAsk!: () => void
+    let applied = 0
+    let askStarted!: () => void
+    const sawAsk = new Promise<void>((resolve) => {
+      askStarted = resolve
+    })
+    const gateway = new FakeDiscordGateway()
+    const api = new FakeDiscordApi()
+    const running = runDiscordAdapter({
+      config: cfg({ allowFrom: ['U1'] }),
+      pairingHome: home(),
+      ledger: createMemoryDeliveries(),
+      store,
+      openSession: async (req) => ({
+        sessionId,
+        async *submitMessage() {
+          await store.upsertPendingAsk({
+            callId: 'call_1',
+            sessionId,
+            kind: 'leftover',
+            tool: 'Bash',
+            message: 'Allow Bash?',
+            input: { command: 'ls' },
+            createdAt: 1,
+          })
+          const ac = new AbortController()
+          abortAsk = () => ac.abort()
+          const pending = req.askUser({ id: 'call_1', tool: 'Bash', message: 'Allow Bash?' }, ac.signal)
+          askStarted()
+          try {
+            answered = await pending
+          } catch (error) {
+            askError = error
+          }
+        },
+        async applyAskAnswer() {
+          applied += 1
+          return 'matched'
+        },
+      }),
+      gateway,
+      api,
+    })
+    gateway.push(dmPayload({ id: 'm-abort', authorId: 'U1', content: 'please' }))
+    await sawAsk
+    for (let i = 0; i < 20 && !api.posts.some((post) => post.content.includes('Allow')); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    abortAsk()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(answered).toBeUndefined()
+    expect(askError).toBeInstanceOf(Error)
+    expect((askError as Error).name).toBe('AbortError')
+    expect(applied).toBe(0)
+    expect(await store.listPendingAsks(sessionId)).toHaveLength(1)
+    gateway.end()
+    await running
+  })
+
+  test('non-allow/deny text does not submit while a pending row exists', async () => {
+    const store = createMemoryStore()
+    const sessionId = 'sess_stash'
+    const submitted: string[] = []
+    let releaseAsk!: (answer: 'allow' | 'deny') => void
+    const askHeld = new Promise<'allow' | 'deny'>((resolve) => {
+      releaseAsk = resolve
+    })
+    let askStarted!: () => void
+    const sawAsk = new Promise<void>((resolve) => {
+      askStarted = resolve
+    })
+    const gateway = new FakeDiscordGateway()
+    const running = runDiscordAdapter({
+      config: cfg({ allowFrom: ['U1'] }),
+      pairingHome: home(),
+      ledger: createMemoryDeliveries(),
+      store,
+      openSession: async (req) => ({
+        sessionId,
+        async *submitMessage(input: UserSubmitInput) {
+          const text = submitText(input)
+          submitted.push(text)
+          if (text !== 'please') return
+          await store.upsertPendingAsk({
+            callId: 'call_stash',
+            sessionId,
+            kind: 'leftover',
+            tool: 'Bash',
+            message: 'Allow Bash?',
+            input: { command: 'ls' },
+            createdAt: 1,
+          })
+          const ac = new AbortController()
+          askStarted()
+          const answer = await Promise.race([
+            req.askUser({ id: 'call_stash', tool: 'Bash', message: 'Allow Bash?' }, ac.signal),
+            askHeld,
+          ])
+          if (answer === 'allow' || answer === 'deny') {
+            await store.deletePendingAsk('call_stash')
+          }
+        },
+        async listPendingAsks() {
+          return store.listPendingAsks(sessionId)
+        },
+      }),
+      gateway,
+      api: new FakeDiscordApi(),
+    })
+    gateway.push(dmPayload({ id: 'm-please', authorId: 'U1', content: 'please' }))
+    await sawAsk
+    gateway.push(dmPayload({ id: 'm-first', authorId: 'U1', content: 'first extra' }))
+    gateway.push(dmPayload({ id: 'm-second', authorId: 'U1', content: 'second extra' }))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(submitted).toEqual(['please'])
+    releaseAsk('allow')
+    gateway.end()
+    await running
+    expect(submitted).toEqual(['please', 'first extra'])
+  })
+
+  test('crash-resume allow text calls applyAskAnswer and does not submitMessage', async () => {
+    const store = createMemoryStore()
+    const sessionId = 'sess_resume'
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Allow Bash?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    const applied: Array<{ callId: string; answer: string }> = []
+    const submitted: string[] = []
+    const gateway = new FakeDiscordGateway()
+    const running = runDiscordAdapter({
+      config: cfg({ allowFrom: ['U1'] }),
+      pairingHome: home(),
+      ledger: createMemoryDeliveries(),
+      store,
+      openSession: async () => ({
+        sessionId,
+        async *submitMessage(input: UserSubmitInput) {
+          submitted.push(submitText(input))
+        },
+        async applyAskAnswer(callId, answer) {
+          applied.push({ callId, answer })
+          await store.deletePendingAsk(callId)
+          return 'matched'
+        },
+        listPendingAsks: () => store.listPendingAsks(sessionId),
+        getPendingAsk: (callId) => store.getPendingAsk(callId),
+      }),
+      gateway,
+      api: new FakeDiscordApi(),
+    })
+    gateway.push(dmPayload({ id: 'm-allow', authorId: 'U1', content: 'allow' }))
+    gateway.end()
+    await running
+    expect(applied).toEqual([{ callId: 'call_1', answer: 'allow' }])
+    expect(submitted).toEqual([])
+    expect(await store.listPendingAsks(sessionId)).toHaveLength(0)
+  })
+
+  test('crash-resume extra is stashed until applyAskAnswer', async () => {
+    const store = createMemoryStore()
+    const sessionId = 'sess_resume_stash'
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Allow Bash?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    const applied: Array<{ callId: string; answer: string }> = []
+    const submitted: string[] = []
+    const gateway = new FakeDiscordGateway()
+    const running = runDiscordAdapter({
+      config: cfg({ allowFrom: ['U1'] }),
+      pairingHome: home(),
+      ledger: createMemoryDeliveries(),
+      store,
+      openSession: async () => ({
+        sessionId,
+        async *submitMessage(input: UserSubmitInput) {
+          submitted.push(submitText(input))
+        },
+        async applyAskAnswer(callId, answer) {
+          applied.push({ callId, answer })
+          await store.deletePendingAsk(callId)
+          return 'matched'
+        },
+        listPendingAsks: () => store.listPendingAsks(sessionId),
+        getPendingAsk: (callId) => store.getPendingAsk(callId),
+      }),
+      gateway,
+      api: new FakeDiscordApi(),
+    })
+    gateway.push(dmPayload({ id: 'm-hello', authorId: 'U1', content: 'hello after crash' }))
+    gateway.push(dmPayload({ id: 'm-second', authorId: 'U1', content: 'second extra' }))
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(submitted).toEqual([])
+    gateway.push(dmPayload({ id: 'm-allow', authorId: 'U1', content: 'allow' }))
+    gateway.end()
+    await running
+    expect(applied).toEqual([{ callId: 'call_1', answer: 'allow' }])
+    expect(submitted).toEqual(['hello after crash'])
   })
 })
