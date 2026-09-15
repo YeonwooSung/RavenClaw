@@ -232,19 +232,19 @@ export type ServeRuntimeCaches = {
 export function createServeRuntimeCaches(hub: SessionEventHub): ServeRuntimeCaches {
   const turnEngines = new Map<string, CliRuntime>()
   const sessionEngines = new Map<string, CliRuntime>()
-  const turnOpening = new Map<string, Promise<CliRuntime>>()
-  const sessionOpening = new Map<string, Promise<CliRuntime>>()
+  const opening = new Map<string, Promise<CliRuntime>>()
 
-  const cached = (
+  const liveOf = (sessionId: string) => sessionEngines.get(sessionId) ?? turnEngines.get(sessionId)
+
+  const openInto = (
     engines: Map<string, CliRuntime>,
-    opening: Map<string, Promise<CliRuntime>>,
     sessionId: string,
     open: () => Promise<CliRuntime>,
   ) => {
-    const existing = engines.get(sessionId)
+    const existing = liveOf(sessionId)
     if (existing) return Promise.resolve(existing)
     return singleFlight(opening, sessionId, async () => {
-      const hit = engines.get(sessionId)
+      const hit = liveOf(sessionId)
       if (hit) return hit
       const opened = await open()
       const live = { ...opened, engine: tapEngineEvents(opened.engine, hub) }
@@ -256,16 +256,8 @@ export function createServeRuntimeCaches(hub: SessionEventHub): ServeRuntimeCach
   return {
     turnEngines,
     sessionEngines,
-    runtimeForTurnId: (sessionId, open) => {
-      const liveSession = sessionEngines.get(sessionId)
-      if (liveSession) return Promise.resolve(liveSession)
-      return cached(turnEngines, turnOpening, sessionId, open)
-    },
-    runtimeForSessionId: (sessionId, open) => {
-      const liveTurn = turnEngines.get(sessionId)
-      if (liveTurn) return Promise.resolve(liveTurn)
-      return cached(sessionEngines, sessionOpening, sessionId, open)
-    },
+    runtimeForTurnId: (sessionId, open) => openInto(turnEngines, sessionId, open),
+    runtimeForSessionId: (sessionId, open) => openInto(sessionEngines, sessionId, open),
     liveEngines() {
       return {
         *[Symbol.iterator]() {

@@ -117,7 +117,17 @@ export function createChatSessionHost(opts: {
       bound.applyAskAnswer = (callId, answer) => runtime.engine.applyAskAnswer(callId, answer)
     }
     if (typeof runtime.store?.listPendingAsks === 'function') {
-      bound.listPendingAsks = () => runtime.store.listPendingAsks(runtime.engine.session.id)
+      bound.listPendingAsks = async () => {
+        const parentId = runtime.engine.session.id
+        const own = await runtime.store.listPendingAsks(parentId)
+        if (typeof runtime.store.listSessions !== 'function') return own
+        const children = await runtime.store.listSessions({ parentSessionId: parentId })
+        const nested = []
+        for (const child of children) {
+          nested.push(...(await runtime.store.listPendingAsks(child.id)))
+        }
+        return [...own, ...nested]
+      }
     }
     if (typeof runtime.store?.getPendingAsk === 'function') {
       bound.getPendingAsk = (callId) => runtime.store.getPendingAsk(callId)

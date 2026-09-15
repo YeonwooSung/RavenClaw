@@ -590,4 +590,32 @@ describe('createServeRuntimeCaches', () => {
     expect(caches.turnEngines.has('s2')).toBe(false)
     expect(caches.sessionEngines.get('s2')).toBe(first)
   })
+
+  test('concurrent turn and session open mint one engine', async () => {
+    const hub = createSessionEventHub()
+    const caches = createServeRuntimeCaches(hub)
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let opens = 0
+    const turnP = caches.runtimeForTurnId('s4', async () => {
+      opens += 1
+      await held
+      return stubRuntime('turn') as never
+    })
+    const sessionP = caches.runtimeForSessionId('s4', async () => {
+      opens += 1
+      await held
+      return stubRuntime('session') as never
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(opens).toBe(1)
+    release()
+    const [turn, session] = await Promise.all([turnP, sessionP])
+    expect(session).toBe(turn)
+    expect(opens).toBe(1)
+    expect(caches.turnEngines.has('s4') !== caches.sessionEngines.has('s4')).toBe(true)
+  })
 })

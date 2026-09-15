@@ -184,6 +184,36 @@ describe('createChatSessionHost', () => {
     expect(replayed).toBe(2)
   })
 
+  test('listPendingAsks includes leftover-asks on child sessions', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'raven-chat-host-child-pending-'))
+    const host = createChatSessionHost({
+      home,
+      shared: fakeRuntime('shared'),
+      newId: () => 'sess_parent',
+      openNewSession: async () => {
+        const runtime = fakeRuntime('sess_parent')
+        runtime.store = {
+          async listPendingAsks(sessionId: string) {
+            if (sessionId === 'sess_parent') return []
+            if (sessionId === 'sess_child') return [{ callId: 'call_child' }]
+            return []
+          },
+          async listSessions(filter?: { parentSessionId?: string | null }) {
+            if (filter?.parentSessionId === 'sess_parent') return [{ id: 'sess_child' }]
+            return []
+          },
+        } as CliRuntime['store']
+        return runtime
+      },
+    })
+    const bound = await host.openSession({
+      sessionKey: 'slack:t:c:u',
+      permissionMode: 'default',
+      askUser: async () => 'deny',
+    })
+    expect(await bound.listPendingAsks?.()).toEqual([{ callId: 'call_child' }])
+  })
+
   test('ask bind forwards childSessionId to the session askUser', async () => {
     const home = mkdtempSync(join(tmpdir(), 'raven-chat-host-child-ask-'))
     const ask = createAskBridge()
