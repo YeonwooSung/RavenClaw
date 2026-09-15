@@ -31,6 +31,7 @@ Usage:
   raven slack
   raven discord
   raven pairing [list|approve <code>|revoke discord <userId>]
+  raven eval [dir]
   raven --help
   raven --version
 
@@ -58,6 +59,7 @@ Commands:
   slack         Slack Socket Mode bot (allowlist; no public URL)
   discord       Discord Gateway bot (allowlist + DM pairing)
   pairing       Approve or revoke Discord DM pairing (no API key)
+  eval          In-process fixture gates (no model; default core fixtures)
 
 Options:
   --provider <anthropic|openai_compat|ollama|vllm>

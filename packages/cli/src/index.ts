@@ -37,6 +37,7 @@ import { runServe } from './serve'
 import { runSlack } from './slack'
 import { runDiscord } from './discord/run'
 import { handlePairingCli } from './pairing'
+import { runEvalCmd } from './eval-cmd'
 
 export { parseArgv } from './args'
 export { CLI_VERSION, HELP_TEXT, formatVersion } from './help'
@@ -258,6 +259,10 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
 
   if (parsed.cmd === 'pairing') {
     return handlePairingCli((parsed.prompt ?? '').split(/\s+/).filter(Boolean))
+  }
+
+  if (parsed.cmd === 'eval') {
+    return runEvalCmd(parsed.prompt)
   }
 
   if (

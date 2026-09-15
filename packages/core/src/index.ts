@@ -278,4 +278,5 @@ export {
 } from './agent/definition'
 export { queryLoop } from './loop/query-loop'
 export { createSessionEngine } from './loop/session-engine'
+export { runEvalDir, DEFAULT_EVAL_FIXTURES_DIR } from './eval/run'
 

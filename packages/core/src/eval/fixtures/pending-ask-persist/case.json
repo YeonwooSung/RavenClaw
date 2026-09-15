@@ -1,0 +1,8 @@
+{
+  "prompt": "echo hi",
+  "expect": {
+    "pendingAskPersists": true,
+    "noIncomplete": true,
+    "pairing": true
+  }
+}
