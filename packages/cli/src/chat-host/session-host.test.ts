@@ -104,6 +104,40 @@ describe('createChatSessionHost', () => {
     expect(replayed).toBe(1)
   })
 
+  test('replay abort can re-ask on the next openSession', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'raven-chat-host-replay-abort-'))
+    const existingSessionId = 'sess_replay_abort'
+    saveSessionMap({ 'resume-key': existingSessionId }, home)
+    let replayed = 0
+    const host = createChatSessionHost({
+      home,
+      shared: fakeRuntime('shared'),
+      resumeRuntime: async () => {
+        const runtime = fakeRuntime(existingSessionId)
+        runtime.engine.replayPendingAsks = async function* () {
+          replayed += 1
+          if (replayed === 1) {
+            throw Object.assign(new Error('aborted'), { name: 'AbortError' })
+          }
+        }
+        return runtime
+      },
+    })
+    await expect(
+      host.openSession({
+        sessionKey: 'resume-key',
+        permissionMode: 'default',
+        askUser: async () => 'deny',
+      }),
+    ).rejects.toThrow('aborted')
+    await host.openSession({
+      sessionKey: 'resume-key',
+      permissionMode: 'default',
+      askUser: async () => 'deny',
+    })
+    expect(replayed).toBe(2)
+  })
+
   test('ask bind forwards childSessionId to the session askUser', async () => {
     const home = mkdtempSync(join(tmpdir(), 'raven-chat-host-child-ask-'))
     const ask = createAskBridge()

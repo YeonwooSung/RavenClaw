@@ -344,6 +344,77 @@ describe('runOpenTuiApp', () => {
     expect(out).toContain('Run ls?')
   })
 
+  test('first-paint replay abort is caught and does not tear down the app', async () => {
+    const submitted: string[] = []
+    const event: Extract<StreamEvent, { type: 'permission_ask' }> = {
+      type: 'permission_ask',
+      id: 'call_1',
+      tool: 'Bash',
+      input: { command: 'ls' },
+      message: 'Run ls?',
+    }
+    const engine = fakeEngine(makeSession(), async function* (text) {
+      submitted.push(text)
+      return { reason: 'completed' }
+    })
+    engine.replayPendingAsks = async function* () {
+      yield event
+      throw Object.assign(new Error('aborted'), { name: 'AbortError' })
+    }
+    const written: string[] = []
+    const code = await runOpenTuiApp(fakeRuntime(engine), {
+      input: asyncLines('/quit'),
+      write: (chunk) => {
+        written.push(chunk)
+      },
+    })
+    expect(code).toBe(0)
+    expect(submitted).toEqual([])
+    const out = written.join('')
+    expect(out).toContain('permission_ask  Bash')
+    expect(out).toContain('aborted')
+  })
+
+  test('/resume replay abort is caught and does not tear down the app', async () => {
+    const submitted: string[] = []
+    const event: Extract<StreamEvent, { type: 'permission_ask' }> = {
+      type: 'permission_ask',
+      id: 'call_1',
+      tool: 'Bash',
+      input: { command: 'ls' },
+      message: 'Run ls?',
+    }
+    const original = fakeEngine(makeSession(), async function* (text) {
+      submitted.push(`original:${text}`)
+      return { reason: 'completed' }
+    })
+    const resumed = fakeEngine(
+      makeSession({ id: 'abcdef12-9999-0000' }),
+      async function* (text) {
+        submitted.push(`resumed:${text}`)
+        return { reason: 'completed' }
+      },
+    )
+    resumed.replayPendingAsks = async function* () {
+      yield event
+      throw Object.assign(new Error('aborted'), { name: 'AbortError' })
+    }
+    const written: string[] = []
+    const code = await runOpenTuiApp(fakeRuntime(original, { store: fakeStore() }), {
+      input: asyncLines('/resume abcdef12-9999-0000', '/quit'),
+      write: (chunk) => {
+        written.push(chunk)
+      },
+      resumeRuntime: async (runtime) => ({ ...runtime, engine: resumed }),
+    })
+    expect(code).toBe(0)
+    expect(submitted).toEqual([])
+    const out = written.join('')
+    expect(out).toContain('resumed abcdef12')
+    expect(out).toContain('permission_ask  Bash')
+    expect(out).toContain('aborted')
+  })
+
   test('first paint replays permission_ask without submitMessage', async () => {
     const submitted: string[] = []
     const answers: Array<'allow' | 'deny' | 'allow_always'> = []

@@ -85,7 +85,6 @@ export function createChatSessionHost(opts: {
       return opened
     })
     if (req.replayPending !== false && !replayed.has(runtime.engine.session.id)) {
-      replayed.add(runtime.engine.session.id)
       const replay = runtime.engine.replayPendingAsks
       if (typeof replay === 'function') {
         await askStore.run(req.askUser, async () => {
@@ -94,6 +93,7 @@ export function createChatSessionHost(opts: {
           }
         })
       }
+      replayed.add(runtime.engine.session.id)
     }
     const bound: ChatBoundSession = {
       sessionId: runtime.engine.session.id,

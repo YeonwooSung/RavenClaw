@@ -99,6 +99,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
   let userTurns = 0
   let cancelBackgroundReview: (() => void) | undefined
   let replayAbort: AbortController | undefined
+  const applyFlights = new Map<string, Promise<unknown>>()
   const lifecycle = opts.bare
     ? { run: async () => undefined }
     : loadLifecycleHooks(session.cwd)
@@ -111,16 +112,42 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
     if (liveTurn) liveTurn.messages = [...liveTurn.messages, row]
   }
 
-  async function applyAskAnswer(
+  async function dropPendingAsk(callId: string): Promise<void> {
+    try {
+      await opts.store.deletePendingAsk(callId)
+    } catch {
+      // persist already won; a later apply deletes the leftover row
+    }
+  }
+
+  function hasToolResult(callId: string, rows: Message[]): boolean {
+    return rows.some((msg) => msg.role === 'tool' && msg.toolUseId === callId)
+  }
+
+  async function isCallPaired(callId: string): Promise<boolean> {
+    if (hasToolResult(callId, messages)) return true
+    if (opts.store.loadMessages === undefined) return false
+    try {
+      return hasToolResult(callId, await opts.store.loadMessages(session.id))
+    } catch {
+      return false
+    }
+  }
+
+  async function applyAskAnswerOnce(
     callId: string,
     answer: PendingAskAnswer,
   ): Promise<'matched' | 'unmatched'> {
+    if (await isCallPaired(callId)) {
+      await dropPendingAsk(callId)
+      return 'matched'
+    }
     const row = await opts.store.getPendingAsk(callId)
     if (!row || row.sessionId !== session.id) return 'unmatched'
 
     if (answer === 'deny') {
       await persistSettledTool(makeToolMessage(callId, false, denyText(row.message)))
-      await opts.store.deletePendingAsk(callId)
+      await dropPendingAsk(callId)
       return 'matched'
     }
 
@@ -138,14 +165,14 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
     const tool = opts.tools.find((item) => item.name === row.tool)
     if (!tool) {
       await persistSettledTool(makeToolMessage(callId, false, unknownToolText(row.tool)))
-      await opts.store.deletePendingAsk(callId)
+      await dropPendingAsk(callId)
       return 'matched'
     }
 
     const parsed = tool.parse(row.input)
     if (!parsed.ok) {
       await persistSettledTool(makeToolMessage(callId, false, parseFailedText(parsed.message)))
-      await opts.store.deletePendingAsk(callId)
+      await dropPendingAsk(callId)
       return 'matched'
     }
 
@@ -186,8 +213,31 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       toolRow = makeToolMessage(callId, false, text)
     }
     await persistSettledTool(toolRow)
-    await opts.store.deletePendingAsk(callId)
+    await dropPendingAsk(callId)
     return 'matched'
+  }
+
+  function applyAskAnswer(
+    callId: string,
+    answer: PendingAskAnswer,
+  ): Promise<'matched' | 'unmatched'> {
+    const existing = applyFlights.get(callId)
+    const task = (async () => {
+      try {
+        if (existing) {
+          try {
+            await existing
+          } catch {
+            // prior flight owns its error
+          }
+        }
+        return await applyAskAnswerOnce(callId, answer)
+      } finally {
+        if (applyFlights.get(callId) === task) applyFlights.delete(callId)
+      }
+    })()
+    applyFlights.set(callId, task)
+    return task
   }
 
   async function runCompactNow(): Promise<void> {

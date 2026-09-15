@@ -93,9 +93,9 @@ export async function runOpenTuiApp(
   const bindHosts = () => {
     current.ask.bind(async (event, signal) => {
       for (const line of permissionPromptLines(event)) write(`${line}\n`)
-      if (signal.aborted) return 'deny'
+      if (signal.aborted) throw abortError()
       const answer = await readLine()
-      if (answer === undefined || signal.aborted) return 'deny'
+      if (answer === undefined || signal.aborted) throw abortError()
       return parsePermissionAnswer(answer)
     })
     current.askQuestions?.bind(async (input, signal) => {
@@ -110,8 +110,13 @@ export async function runOpenTuiApp(
   }
 
   const replayPending = async () => {
-    for await (const ev of current.engine.replayPendingAsks()) {
-      renderEvent(ev)
+    try {
+      for await (const ev of current.engine.replayPendingAsks()) {
+        renderEvent(ev)
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      write(`${message}\n`)
     }
   }
 
@@ -413,6 +418,10 @@ function openInput(source?: AsyncIterable<string>): {
   if (source) return { input: source, close() {} }
   const rl = createInterface({ input: process.stdin, crlfDelay: Infinity })
   return { input: rl, close: () => rl.close() }
+}
+
+function abortError(): Error {
+  return Object.assign(new Error('aborted'), { name: 'AbortError' })
 }
 
 function parsePermissionAnswer(line: string): 'allow' | 'deny' | 'allow_always' {

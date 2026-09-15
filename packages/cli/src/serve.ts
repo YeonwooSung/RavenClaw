@@ -444,6 +444,7 @@ export async function runServe(opts: { flags: ConfigFlags }): Promise<number> {
   })
   const sessionBoot = {
     ...shared,
+    lockHolderId: crypto.randomUUID(),
     config: loadConfig({ home: shared.config.home, flags: { ...opts.flags, dontAsk: false } }),
   }
 

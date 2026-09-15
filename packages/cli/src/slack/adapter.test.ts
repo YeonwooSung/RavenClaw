@@ -625,6 +625,68 @@ describe('runSlackAdapter', () => {
     await running
   })
 
+  test('durable slack waiter abort does not deny the pending row', async () => {
+    const store = createMemoryStore()
+    const sessionId = 'sess_slack_abort'
+    const socket = new FakeSlackSocket()
+    const api = new FakeSlackApi()
+    let answered: string | undefined
+    let askError: unknown
+    let abortAsk!: () => void
+    let applied = 0
+    let askStarted!: () => void
+    const sawAsk = new Promise<void>((resolve) => {
+      askStarted = resolve
+    })
+    const running = runSlackAdapter({
+      config: slackConfig(),
+      socket,
+      api,
+      store,
+      openSession: async (req) => ({
+        sessionId,
+        async *submitMessage() {
+          await store.upsertPendingAsk({
+            callId: 'call_1',
+            sessionId,
+            kind: 'leftover',
+            tool: 'Bash',
+            message: 'Allow Bash?',
+            input: { command: 'ls' },
+            createdAt: 1,
+          })
+          const ac = new AbortController()
+          abortAsk = () => ac.abort()
+          const pending = req.askUser({ id: 'call_1', tool: 'Bash', message: 'Allow Bash?' }, ac.signal)
+          askStarted()
+          try {
+            answered = await pending
+          } catch (error) {
+            askError = error
+          }
+        },
+        async applyAskAnswer() {
+          applied += 1
+          return 'matched'
+        },
+      }),
+    })
+    socket.push(dmMessage({ text: 'please', ts: '90.0' }))
+    await sawAsk
+    for (let i = 0; i < 20 && !api.posts.some((post) => post.text.includes('Allow')); i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+    abortAsk()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(answered).toBeUndefined()
+    expect(askError).toBeInstanceOf(Error)
+    expect((askError as Error).name).toBe('AbortError')
+    expect(applied).toBe(0)
+    expect(await store.listPendingAsks(sessionId)).toHaveLength(1)
+    socket.end()
+    await running
+  })
+
   test('non-allow/deny text does not submit while a pending row exists', async () => {
     const store = createMemoryStore()
     const sessionId = 'sess_stash'

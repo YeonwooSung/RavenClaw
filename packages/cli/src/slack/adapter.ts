@@ -369,8 +369,10 @@ async function askSlackPermission(opts: {
     : `Allow \`${opts.event.tool}\`${child}? Reply *allow* or *deny* (${Math.round(opts.timeoutMs / 1000)}s).`
 
   let settle!: (answer: SlackPermissionAnswer) => void
-  const waiter = new Promise<SlackPermissionAnswer>((resolve) => {
+  let fail!: (error: Error) => void
+  const waiter = new Promise<SlackPermissionAnswer>((resolve, reject) => {
     settle = resolve
+    fail = reject
   })
   let timer: ReturnType<typeof setTimeout> | undefined
   const finish = (answer: SlackPermissionAnswer) => {
@@ -380,14 +382,24 @@ async function askSlackPermission(opts: {
     opts.signal.removeEventListener('abort', onAbort)
     settle(answer)
   }
-  const onAbort = () => finish('deny')
+  const abortWaiter = () => {
+    if (!opts.permits.has(key)) return
+    opts.permits.delete(key)
+    if (timer !== undefined) clearTimeout(timer)
+    opts.signal.removeEventListener('abort', onAbort)
+    fail(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+  }
+  const onAbort = () => {
+    if (durable) abortWaiter()
+    else finish('deny')
+  }
   opts.permits.set(key, { resolve: finish, callId: opts.event.id })
   if (!durable) {
     timer = setTimeout(() => finish('deny'), opts.timeoutMs)
     timer.unref?.()
   }
   if (opts.signal.aborted) {
-    finish('deny')
+    onAbort()
     return waiter
   }
   opts.signal.addEventListener('abort', onAbort)
