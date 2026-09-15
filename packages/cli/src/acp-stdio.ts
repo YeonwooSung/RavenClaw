@@ -271,6 +271,11 @@ function wrapBoot(booted: Promise<AcpEngine>): AcpEngine {
     abort() {
       void ready.then((engine) => engine.abort()).catch(() => {})
     },
+    async *replayPendingAsks() {
+      const engine = await ready
+      if (typeof engine.replayPendingAsks !== 'function') return
+      yield* engine.replayPendingAsks()
+    },
   }
 }
 

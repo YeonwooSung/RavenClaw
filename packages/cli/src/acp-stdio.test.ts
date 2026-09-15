@@ -289,6 +289,80 @@ describe('runAcpStdio', () => {
     expect(JSON.stringify(messages)).toContain('from load')
   })
 
+  test('session/load drains leftover-ask through wrapBoot as request_permission', async () => {
+    const input = new PassThrough()
+    const output = new PassThrough()
+    const { messages, waitFor } = jsonLines(output)
+    let decided: string | undefined
+    let replayed = 0
+
+    const running = runAcpStdio({
+      input,
+      output,
+      boot: async () => ({
+        load: async (_sessionId, opts) => ({
+          async *submitMessage() {
+            return { reason: 'completed' }
+          },
+          abort() {},
+          async *replayPendingAsks() {
+            replayed += 1
+            decided = await opts?.requestPermission?.({
+              id: 'c1',
+              tool: 'Bash',
+              input: { command: 'ls' },
+              message: 'run ls',
+            })
+          },
+        }),
+      }),
+    })
+
+    writeJson(input, {
+      jsonrpc: '2.0',
+      id: 0,
+      method: 'initialize',
+      params: { protocolVersion: PROTOCOL_VERSION },
+    })
+    await waitFor(1)
+
+    writeJson(input, {
+      jsonrpc: '2.0',
+      id: 1,
+      method: 'session/load',
+      params: { sessionId: 'sess_parked' },
+    })
+    const afterAsk = await waitFor(2)
+    const perm = afterAsk.find(
+      (msg) =>
+        typeof msg === 'object' &&
+        msg !== null &&
+        (msg as { method?: string }).method === 'session/request_permission',
+    ) as { id?: string | number } | undefined
+    expect(replayed).toBe(1)
+    expect(perm?.id).toBeDefined()
+
+    writeJson(input, {
+      jsonrpc: '2.0',
+      id: perm?.id,
+      result: { outcome: { outcome: 'selected', optionId: 'allow' } },
+    })
+    const afterLoad = await waitFor(3)
+    input.end()
+    await running
+
+    expect(decided).toBe('allow')
+    expect(afterLoad).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: 1,
+          result: { sessionId: 'sess_parked' },
+        }),
+      ]),
+    )
+    expect(JSON.stringify(messages)).toContain('request_permission')
+  })
+
   test('permission_ask writes session/request_permission and waits for the editor', async () => {
     const input = new PassThrough()
     const output = new PassThrough()
