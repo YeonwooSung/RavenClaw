@@ -32,7 +32,7 @@ import {
   parseFailedText,
   unknownToolText,
 } from './pairing'
-import { markReadPath } from '../tools/read-files'
+import { markReadPath, recordReadFile, stampReadMtime } from '../tools/read-files'
 import { rewindLastTurn } from '../session/rewind'
 import { getSessionWorktree } from '../tools/session-worktree'
 import { applyPermissionMode } from '../prompt/builder'
@@ -66,7 +66,9 @@ function restoreReadFilesFromMessages(turn: Turn, rows: Message[]): void {
     if (msg.role === 'tool' && msg.ok) {
       const path = paths.get(msg.toolUseId)
       if (path === undefined) continue
-      markReadPath(turn, resolve(turn.cwd, path))
+      const resolved = resolve(turn.cwd, path)
+      if (msg.readMtimeMs !== undefined) recordReadFile(turn, resolved, msg.readMtimeMs)
+      else markReadPath(turn, resolved)
     }
   }
 }
@@ -336,6 +338,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       const output = await tool.execute(parsed.value, ctx)
       const formatted = formatSettledOutput(tool, output)
       toolRow = makeToolMessage(callId, true, formatted.content, formatted.persistPath)
+      stampReadMtime(turn, row.tool, parsed.value, toolRow)
     } catch (error) {
       const text = executeFailedText(error instanceof Error ? error.message : String(error))
       toolRow = makeToolMessage(callId, false, text)

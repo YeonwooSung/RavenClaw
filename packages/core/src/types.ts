@@ -97,6 +97,8 @@ export type Message =
       blocks: UserOrToolBlock[]
       persistPath?: string
       createdAt: number
+      /** mtimeMs of a successful Read, used to restore stale checks after crash. */
+      readMtimeMs?: number
     }
 
 export interface Turn {

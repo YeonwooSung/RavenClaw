@@ -1,11 +1,25 @@
 import { realpathSync } from 'node:fs'
-import type { Turn } from '../types'
+import { resolve } from 'node:path'
+import type { Message, Turn } from '../types'
 import { createWorkspaceFs } from './workspace-fs'
 
 export function recordReadFile(turn: Turn, path: string, mtimeMs: number): void {
   turn.readFiles.add(path)
   if (!turn.readFileMtimes) turn.readFileMtimes = new Map()
   turn.readFileMtimes.set(path, mtimeMs)
+}
+
+export function stampReadMtime(
+  turn: Turn,
+  toolName: string,
+  input: unknown,
+  msg: Extract<Message, { role: 'tool' }>,
+): void {
+  if (toolName !== 'Read' || !msg.ok) return
+  const path = (input as { path?: unknown } | undefined)?.path
+  if (typeof path !== 'string' || path.length === 0) return
+  const recorded = lookupReadMtime(turn, resolve(turn.cwd, path), path)
+  if (recorded !== undefined) msg.readMtimeMs = recorded
 }
 
 export function markReadPath(turn: Turn, path: string): void {
