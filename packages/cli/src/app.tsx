@@ -241,9 +241,11 @@ export function App(props: AppProps) {
   }, [])
 
   const replayPending = useCallback(async () => {
-    for await (const ev of runtimeRef.current.engine.replayPendingAsks()) {
-      applyLiveEvent(ev)
-    }
+    const message = await replayPendingAsksTo(
+      () => runtimeRef.current.engine.replayPendingAsks(),
+      applyLiveEvent,
+    )
+    if (message !== undefined) setNotice(message)
   }, [applyLiveEvent])
 
   useEffect(() => {
@@ -742,6 +744,18 @@ export function App(props: AppProps) {
       />
     </Box>
   )
+}
+
+export async function replayPendingAsksTo(
+  replay: () => AsyncGenerator<StreamEvent, void>,
+  apply: (event: StreamEvent) => void,
+): Promise<string | undefined> {
+  try {
+    for await (const ev of replay()) apply(ev)
+    return undefined
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error)
+  }
 }
 
 function lastToolId(rows: TranscriptRow[]): string | undefined {

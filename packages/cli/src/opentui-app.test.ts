@@ -297,8 +297,16 @@ describe('runOpenTuiApp', () => {
   })
 
   test('resume with a pending row replays permission_ask without submitMessage', async () => {
-    const replayed: string[] = []
     const submitted: string[] = []
+    const answers: Array<'allow' | 'deny' | 'allow_always'> = []
+    const ask = createAskBridge()
+    const event: Extract<StreamEvent, { type: 'permission_ask' }> = {
+      type: 'permission_ask',
+      id: 'call_1',
+      tool: 'Bash',
+      input: { command: 'ls' },
+      message: 'Run ls?',
+    }
     const original = fakeEngine(makeSession(), async function* (text) {
       submitted.push(`original:${text}`)
       return { reason: 'completed' }
@@ -311,20 +319,60 @@ describe('runOpenTuiApp', () => {
       },
     )
     resumed.replayPendingAsks = async function* () {
-      replayed.push('call_1')
+      yield event
+      answers.push(await ask.ask(event, new AbortController().signal))
     }
     const written: string[] = []
-    const code = await runOpenTuiApp(fakeRuntime(original, { store: fakeStore() }), {
-      input: asyncLines('/resume abcdef12-9999-0000', '/quit'),
+    const code = await runOpenTuiApp(fakeRuntime(original, { ask, store: fakeStore() }), {
+      input: asyncLines('/resume abcdef12-9999-0000', 'n', '/quit'),
       write: (chunk) => {
         written.push(chunk)
       },
       resumeRuntime: async (runtime) => ({ ...runtime, engine: resumed }),
     })
     expect(code).toBe(0)
-    expect(replayed).toEqual(['call_1'])
+    expect(answers).toEqual(['deny'])
     expect(submitted).toEqual([])
-    expect(written.join('')).toContain('resumed abcdef12')
+    const out = written.join('')
+    expect(out).toContain('resumed abcdef12')
+    expect(out).toContain('permission_ask  Bash')
+    expect(out).toContain('Allow Bash?')
+    expect(out).toContain('Run ls?')
+  })
+
+  test('first paint replays permission_ask without submitMessage', async () => {
+    const submitted: string[] = []
+    const answers: Array<'allow' | 'deny' | 'allow_always'> = []
+    const ask = createAskBridge()
+    const event: Extract<StreamEvent, { type: 'permission_ask' }> = {
+      type: 'permission_ask',
+      id: 'call_1',
+      tool: 'Bash',
+      input: { command: 'ls' },
+      message: 'Run ls?',
+    }
+    const engine = fakeEngine(makeSession(), async function* (text) {
+      submitted.push(text)
+      return { reason: 'completed' }
+    })
+    engine.replayPendingAsks = async function* () {
+      yield event
+      answers.push(await ask.ask(event, new AbortController().signal))
+    }
+    const written: string[] = []
+    const code = await runOpenTuiApp(fakeRuntime(engine, { ask }), {
+      input: asyncLines('n', '/quit'),
+      write: (chunk) => {
+        written.push(chunk)
+      },
+    })
+    expect(code).toBe(0)
+    expect(answers).toEqual(['deny'])
+    expect(submitted).toEqual([])
+    const out = written.join('')
+    expect(out).toContain('permission_ask  Bash')
+    expect(out).toContain('Allow Bash?')
+    expect(out).toContain('Run ls?')
   })
 
   test('/resume <id> prints the error when resume fails', async () => {
