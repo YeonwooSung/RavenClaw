@@ -130,6 +130,10 @@ function stubEngine(sessionId: string, end: RoundEnd, events: StreamEvent[] = []
       for (const event of events) yield event
       return end
     },
+    async applyAskAnswer() {
+      return 'unmatched'
+    },
+    async *replayPendingAsks() {},
     enqueueSteer() {},
     drainSteering() {
       return []

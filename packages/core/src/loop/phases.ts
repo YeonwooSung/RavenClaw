@@ -44,6 +44,7 @@ import {
 import { repairRoleAlternation, selectProtectedTail } from './repair'
 import { loadNearestSubdirAgents } from '../prompt/subdir-agents'
 import { injectMidTurnHint } from '../prompt/cache'
+import type { PendingAsk } from '../session/pending-asks'
 
 export interface LoopState extends QueryLoopOptions {
   lastHadToolUse: boolean
@@ -212,12 +213,22 @@ export function buildAssistantMessage(
   return msg
 }
 
+async function deletePendingForResults(
+  state: LoopState,
+  results: Array<Extract<Message, { role: 'tool' }>>,
+): Promise<void> {
+  for (const row of results) {
+    await state.store.deletePendingAsk(row.toolUseId)
+  }
+}
+
 export async function persistResultsWithRetry(
   state: LoopState,
   results: Array<Extract<Message, { role: 'tool' }>>,
 ): Promise<RoundEnd | undefined> {
   try {
     await state.store.persistToolResults(state.turn.sessionId, results)
+    await deletePendingForResults(state, results)
     return undefined
   } catch (first) {
     const incomplete = pairMissing(
@@ -226,6 +237,7 @@ export async function persistResultsWithRetry(
     )
     try {
       await state.store.persistToolResults(state.turn.sessionId, incomplete)
+      await deletePendingForResults(state, incomplete)
     } catch (second) {
       return { reason: 'results_persist_failed', error: second }
     }
@@ -264,7 +276,11 @@ export async function* beginRound(state: LoopState): AsyncGenerator<StreamEvent,
 
 export async function prepareContext(state: LoopState): Promise<PhaseResult> {
   const before = new Set(state.turn.messages.map((msg) => msg.id))
-  const repaired = repairRoleAlternation(state.turn.messages)
+  const open = await state.store.listPendingAsks(state.turn.sessionId)
+  const repaired = repairRoleAlternation(
+    state.turn.messages,
+    new Set(open.map((row) => row.callId)),
+  )
   state.turn.messages = repaired
   const inserted = repaired.filter(
     (msg): msg is Extract<Message, { role: 'tool' }> =>
@@ -850,9 +866,12 @@ export async function* runToolRound(
       batch.length > 1
         ? mergeAbortSignals(state.turn.abort.signal, BATCH_TIMEOUT_MS)
         : state.turn.abort.signal
-    const settled = await Promise.all(
-      batch.map((call) => executeOneCall(state, call, box, serializedAsk, signal)),
+    const live = createLiveEvents()
+    const work = Promise.all(
+      batch.map((call) => executeOneCall(state, call, box, serializedAsk, signal, live.emit)),
     )
+    yield* live.drain(work.then(() => undefined))
+    const settled = await work
     for (const item of settled) {
       results.push(...item.messages)
       for (const event of item.events) yield event
@@ -1135,12 +1154,51 @@ function mergeAbortSignals(parent: AbortSignal, timeoutMs: number): AbortSignal 
 
 type SerializedAsk = <T>(fn: () => Promise<T>) => Promise<T>
 
+function createLiveEvents(): {
+  emit: (event: StreamEvent) => void
+  drain: (done: Promise<void>) => AsyncGenerator<StreamEvent, void>
+} {
+  const queue: StreamEvent[] = []
+  let notify: (() => void) | undefined
+  return {
+    emit(event) {
+      queue.push(event)
+      notify?.()
+    },
+    async *drain(done) {
+      let settled = false
+      const finished = done.then(() => {
+        settled = true
+        notify?.()
+      })
+      try {
+        while (true) {
+          if (queue.length > 0) {
+            const next = queue.shift()
+            if (next) yield next
+            continue
+          }
+          if (settled) return
+          await new Promise<void>((resolve) => {
+            notify = resolve
+            if (queue.length > 0 || settled) resolve()
+          })
+          notify = undefined
+        }
+      } finally {
+        await finished
+      }
+    },
+  }
+}
+
 async function executeOneCall(
   state: LoopState,
   call: { id: string; name: string; input: unknown },
   box: { rules: PermissionRuleSet },
   serializedAsk: SerializedAsk,
   signal: AbortSignal,
+  emit: (event: StreamEvent) => void,
 ): Promise<{
   messages: Array<Extract<Message, { role: 'tool' }>>
   events: StreamEvent[]
@@ -1233,9 +1291,25 @@ async function executeOneCall(
         message: decision.message,
       }
       if (decision.saveAs !== undefined) event.saveAs = decision.saveAs
-      events.push(event)
       try {
-        const answer = await serializedAsk(() => state.askUser(event, signal))
+        const answer = await serializedAsk(async () => {
+          const pending: PendingAsk = {
+            callId: call.id,
+            sessionId: state.turn.sessionId,
+            kind: tool.name === 'AskUser' ? 'ask_user' : 'leftover',
+            tool: tool.name,
+            message: decision.message ?? '',
+            input: call.input,
+            createdAt: Date.now(),
+          }
+          if (decision.saveAs !== undefined) pending.saveAs = decision.saveAs
+          if (state.assistantMessage?.id !== undefined) {
+            pending.withheldAssistantId = state.assistantMessage.id
+          }
+          await state.store.upsertPendingAsk(pending)
+          emit(event)
+          return state.askUser(event, signal)
+        })
         if (answer === 'deny') {
           return {
             messages: [makeToolMessage(call.id, false, denyText(decision.message))],

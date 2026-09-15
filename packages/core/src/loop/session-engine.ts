@@ -13,6 +13,8 @@ import {
   type SessionEngineOptions,
   type StreamEvent,
   type SystemPart,
+  type Tool,
+  type ToolContext,
   type Turn,
   type UserOrToolBlock,
   type UserSubmitInput,
@@ -20,11 +22,20 @@ import {
 import { abortTurn } from './abort'
 import { queryLoop } from './query-loop'
 import { selectProtectedTail } from './repair'
+import {
+  denyText,
+  executeFailedText,
+  makeToolMessage,
+  parseFailedText,
+  unknownToolText,
+} from './pairing'
 import { rewindLastTurn } from '../session/rewind'
 import { getSessionWorktree } from '../tools/session-worktree'
 import { applyPermissionMode } from '../prompt/builder'
 import { injectMidTurnHint } from '../prompt/cache'
 import { createMemoryStore } from '../session/memory-store'
+import { commandOrPath, persistAllowAlways } from '../permissions/rules'
+import type { PendingAskAnswer } from '../session/pending-asks'
 import {
   BACKGROUND_REVIEW_PROMPT,
   backgroundReviewSession,
@@ -45,6 +56,31 @@ function titleFromUserText(text: string): string | undefined {
   return line.length <= TITLE_MAX ? line : line.slice(0, TITLE_MAX)
 }
 
+function formatSettledOutput(
+  tool: Tool,
+  output: unknown,
+): { content: string; persistPath?: string } {
+  const persistPath =
+    output &&
+    typeof output === 'object' &&
+    'persistPath' in output &&
+    typeof (output as { persistPath?: unknown }).persistPath === 'string' &&
+    (output as { persistPath: string }).persistPath.length > 0
+      ? (output as { persistPath: string }).persistPath
+      : undefined
+  let content: string
+  if (typeof output === 'string') content = output
+  else if (tool.renderResult) content = tool.renderResult(output)
+  else if (output === undefined || output === null) content = ''
+  else if (typeof output === 'object') {
+    const body = (output as { content?: unknown }).content
+    content = typeof body === 'string' ? body : JSON.stringify(output)
+  } else {
+    content = String(output)
+  }
+  return persistPath !== undefined ? { content, persistPath } : { content }
+}
+
 export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
   const session = { ...opts.session }
   let messages: Message[] = opts.messages ? [...opts.messages] : []
@@ -61,9 +97,117 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
   let sessionStartDone = false
   let userTurns = 0
   let cancelBackgroundReview: (() => void) | undefined
+  let replayAbort: AbortController | undefined
   const lifecycle = opts.bare
     ? { run: async () => undefined }
     : loadLifecycleHooks(session.cwd)
+
+  async function persistSettledTool(
+    row: Extract<Message, { role: 'tool' }>,
+  ): Promise<void> {
+    await opts.store.persistToolResults(session.id, [row])
+    messages = [...messages, row]
+    if (liveTurn) liveTurn.messages = [...liveTurn.messages, row]
+  }
+
+  async function applyAskAnswer(
+    callId: string,
+    answer: PendingAskAnswer,
+  ): Promise<'matched' | 'unmatched'> {
+    const row = await opts.store.getPendingAsk(callId)
+    if (!row || row.sessionId !== session.id) return 'unmatched'
+
+    if (answer === 'deny') {
+      await persistSettledTool(makeToolMessage(callId, false, denyText(row.message)))
+      await opts.store.deletePendingAsk(callId)
+      return 'matched'
+    }
+
+    if (answer === 'allow_always') {
+      await persistAllowAlways({
+        store: opts.store,
+        sessionId: session.id,
+        cwd: session.cwd,
+        scope: row.saveAs ?? 'session',
+        tool: row.tool,
+        spec: commandOrPath(row.input) ?? {},
+      })
+    }
+
+    const tool = opts.tools.find((item) => item.name === row.tool)
+    if (!tool) {
+      await persistSettledTool(makeToolMessage(callId, false, unknownToolText(row.tool)))
+      await opts.store.deletePendingAsk(callId)
+      return 'matched'
+    }
+
+    const parsed = tool.parse(row.input)
+    if (!parsed.ok) {
+      await persistSettledTool(makeToolMessage(callId, false, parseFailedText(parsed.message)))
+      await opts.store.deletePendingAsk(callId)
+      return 'matched'
+    }
+
+    const turn: Turn = {
+      id: crypto.randomUUID(),
+      sessionId: session.id,
+      messages,
+      round: 0,
+      maxRounds: opts.maxRounds,
+      graceUsed: false,
+      abort: new AbortController(),
+      permissionMode: session.permissionMode,
+      usage: { ...session.usage },
+      compactGeneration: session.compactGeneration,
+      funding: session.funding,
+      cwd: session.cwd,
+      model: session.model,
+      readFiles: new Set(),
+    }
+    if (session.prePlanMode !== undefined) turn.prePlanMode = session.prePlanMode
+    const ctx: ToolContext = {
+      turn,
+      signal: turn.abort.signal,
+      onProgress: () => {},
+      store: opts.store,
+      tasks,
+      fileHistory,
+    }
+
+    try {
+      const output = await tool.execute(parsed.value, ctx)
+      const formatted = formatSettledOutput(tool, output)
+      await persistSettledTool(
+        makeToolMessage(callId, true, formatted.content, formatted.persistPath),
+      )
+    } catch (error) {
+      const text = executeFailedText(error instanceof Error ? error.message : String(error))
+      await persistSettledTool(makeToolMessage(callId, false, text))
+    }
+    await opts.store.deletePendingAsk(callId)
+    return 'matched'
+  }
+
+  async function* replayPendingAsks(): AsyncGenerator<StreamEvent, void> {
+    replayAbort = new AbortController()
+    try {
+      for (const row of await opts.store.listPendingAsks(session.id)) {
+        const event: Extract<StreamEvent, { type: 'permission_ask' }> = {
+          type: 'permission_ask',
+          id: row.callId,
+          tool: row.tool,
+          input: row.input,
+          message: row.message,
+        }
+        if (row.saveAs !== undefined) event.saveAs = row.saveAs
+        yield event
+        const answer = await opts.askUser(event, replayAbort.signal)
+        await applyAskAnswer(row.callId, answer)
+      }
+    } finally {
+      replayAbort = undefined
+    }
+  }
 
   return {
     get session() {
@@ -75,6 +219,9 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
     get fileHistory() {
       return fileHistory
     },
+
+    applyAskAnswer,
+    replayPendingAsks,
 
     enqueueSteer(text: string) {
       const trimmed = text.trim()
@@ -116,6 +263,10 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       }
       const stopLockRenew = lock ? startLockRenew(opts.store, session.id, lock) : undefined
       try {
+      if ((await opts.store.listPendingAsks(session.id)).length > 0) {
+        yield { type: 'status', message: 'pending permission ask' }
+        return { reason: 'completed' as const }
+      }
       const { text, blocks } = userSubmitToBlocks(input)
       if (!sessionStartDone) {
         sessionStartDone = true
@@ -333,6 +484,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
     abort() {
       cancelBackgroundReview?.()
       cancelBackgroundReview = undefined
+      replayAbort?.abort()
       if (liveTurn) abortTurn(liveTurn.abort)
     },
 

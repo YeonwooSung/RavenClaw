@@ -111,4 +111,36 @@ describe('resumeSession', () => {
     } as SessionStore
     await expect(resumeSession(store, 's1')).rejects.toBeInstanceOf(Error)
   })
+
+  test('resumeSession allows unpaired tool_use that is a pending ask', async () => {
+    const store = {
+      async loadSession() {
+        return {
+          session: session(),
+          messages: [
+            {
+              id: 'a1',
+              role: 'assistant',
+              blocks: [{ type: 'tool_use', id: 'c1', name: 'Bash', input: {} }],
+              createdAt: 1,
+            },
+          ] satisfies Message[],
+        }
+      },
+      async listPendingAsks() {
+        return [
+          {
+            callId: 'c1',
+            sessionId: 's1',
+            kind: 'leftover' as const,
+            tool: 'Bash',
+            message: 'Bash?',
+            input: {},
+            createdAt: 1,
+          },
+        ]
+      },
+    } as SessionStore
+    await expect(resumeSession(store, 's1')).resolves.toBeTruthy()
+  })
 })

@@ -162,6 +162,12 @@ function createEcho(opts?: {
   return tool
 }
 
+function createAskEcho(): ReturnType<typeof createEcho> {
+  const echo = createEcho()
+  echo.checkPermissions = async () => ({ behavior: 'ask', message: 'Echo?' })
+  return echo
+}
+
 async function collect(
   gen: AsyncGenerator<StreamEvent, import('../types').RoundEnd>,
 ): Promise<{ events: StreamEvent[]; result: import('../types').RoundEnd }> {
@@ -646,6 +652,168 @@ describe('queryLoop via SessionEngine', () => {
     const { result } = await collect(engine.submitMessage('continue'))
     expect(result).toEqual({ reason: 'completed' })
     expect(echo.executeCount).toBe(0)
+  })
+
+  test('leftover-ask writes a pending row before askUser resolves', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_park' })
+    await store.createSession(session)
+    let release!: (v: 'allow' | 'deny' | 'allow_always') => void
+    const held = new Promise<'allow' | 'deny' | 'allow_always'>((resolve) => {
+      release = resolve
+    })
+    const echo = createAskEcho()
+    const provider = createFakeProvider([
+      toolThenStop('call_park', 'Echo', { text: 'hi' }),
+      textThenStop('done'),
+    ])
+    const engine = createSessionEngine({
+      ...engineOpts({ provider, store, session, tools: [echo] }),
+      askUser: async () => held,
+    })
+    const gen = engine.submitMessage('go')
+    const events: StreamEvent[] = []
+    const first = await gen.next()
+    events.push(first.value as StreamEvent)
+    while (events.every((e) => e.type !== 'permission_ask')) {
+      const next = await gen.next()
+      if (next.done) break
+      events.push(next.value)
+    }
+    expect(await store.listPendingAsks(session.id)).toHaveLength(1)
+    expect((await store.listPendingAsks(session.id))[0]?.callId).toBe('call_park')
+    release('deny')
+    await gen.next() // drain
+  })
+
+  test('loadSession after pending row does not insert incomplete', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_crash' })
+    await store.createSession(session)
+    await store.persistUser(session.id, {
+      id: 'u1',
+      role: 'user',
+      blocks: [{ type: 'text', text: 'go' }],
+      createdAt: 1,
+    })
+    await store.persistToolCalls(session.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_1', name: 'Echo', input: { text: 'hi' } }],
+      createdAt: 2,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 3,
+    })
+    const loaded = await store.loadSession(session.id)
+    expect(loaded.messages.some((m) => m.role === 'tool')).toBe(false)
+    await expect(resumeSession(store, session.id)).resolves.toBeTruthy()
+  })
+
+  test('applyAskAnswer deny persists permission_denied and deletes the row', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_deny' })
+    await store.createSession(session)
+    await store.persistToolCalls(session.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_1', name: 'Echo', input: { text: 'hi' } }],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    const echo = createAskEcho()
+    const engine = createSessionEngine(
+      engineOpts({
+        provider: createFakeProvider([textThenStop('nope')]),
+        store,
+        session,
+        tools: [echo],
+      }),
+    )
+    expect(await engine.applyAskAnswer('call_1', 'deny')).toBe('matched')
+    expect(await engine.applyAskAnswer('missing', 'deny')).toBe('unmatched')
+    expect(await store.listPendingAsks(session.id)).toHaveLength(0)
+    const loaded = await store.loadSession(session.id)
+    const toolRow = loaded.messages.find((m) => m.role === 'tool')
+    expect(toolRow?.ok).toBe(false)
+    expect(toolRow && toolRow.role === 'tool' ? toolRow.blocks[0]?.text : '').toContain(
+      'permission_denied',
+    )
+    expect(echo.executeCount).toBe(0)
+  })
+
+  test('applyAskAnswer allow executes the tool and pairs', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_allow' })
+    await store.createSession(session)
+    await store.persistToolCalls(session.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_1', name: 'Echo', input: { text: 'hi' } }],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    const echo = createAskEcho()
+    const engine = createSessionEngine(
+      engineOpts({
+        provider: createFakeProvider([textThenStop('nope')]),
+        store,
+        session,
+        tools: [echo],
+      }),
+    )
+    expect(await engine.applyAskAnswer('call_1', 'allow')).toBe('matched')
+    expect(echo.executeCount).toBe(1)
+    expect(await store.listPendingAsks(session.id)).toHaveLength(0)
+  })
+
+  test('submitMessage while a pending ask exists does not append a user row', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_block' })
+    await store.createSession(session)
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    const engine = createSessionEngine(
+      engineOpts({
+        provider: createFakeProvider([textThenStop('nope')]),
+        store,
+        session,
+      }),
+    )
+    const { events, result } = await collect(engine.submitMessage('hello anyway'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(events.some((e) => e.type === 'status' && e.message.includes('pending'))).toBe(true)
+    const loaded = await store.loadSession(session.id)
+    expect(loaded.messages.filter((m) => m.role === 'user')).toHaveLength(0)
   })
 
   test('8. maxRounds: 2 with tool-use on round 2 → grace stream tools:[]', async () => {

@@ -6,7 +6,9 @@ export async function resumeSession(
   sessionId: string,
 ): Promise<{ session: SessionRecord; messages: Message[] }> {
   const loaded = await store.loadSession(sessionId)
-  const unpaired = unpairedToolUseIds(loaded.messages)
+  const pending = (await store.listPendingAsks?.(sessionId)) ?? []
+  const pendingIds = new Set(pending.map((row) => row.callId))
+  const unpaired = unpairedToolUseIds(loaded.messages).filter((id) => !pendingIds.has(id))
   if (unpaired.length > 0) {
     throw new Error(`resumeSession: unpaired tool_use: ${unpaired.join(', ')}`)
   }

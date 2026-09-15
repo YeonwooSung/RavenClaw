@@ -71,6 +71,12 @@ export function wrapSessionEngineLog(
     submitMessage(input) {
       return logSubmit(engine.submitMessage(input), engine.session.id, log)
     },
+    applyAskAnswer(callId, answer) {
+      return engine.applyAskAnswer(callId, answer)
+    },
+    replayPendingAsks() {
+      return engine.replayPendingAsks()
+    },
     enqueueSteer(text) {
       engine.enqueueSteer(text)
     },

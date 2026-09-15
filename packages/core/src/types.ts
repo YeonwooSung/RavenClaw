@@ -1,4 +1,4 @@
-import type { PendingAsk } from './session/pending-asks'
+import type { PendingAsk, PendingAskAnswer } from './session/pending-asks'
 
 export type ApiMode = 'openai_compat' | 'anthropic_messages' | 'openai_responses'
 export type SystemTier = 'stable' | 'context' | 'volatile'
@@ -411,6 +411,11 @@ export interface SessionEngine {
   readonly tasks: import('./tasks/registry').TaskRegistry
   readonly fileHistory: import('./session/file-history').FileHistory
   submitMessage(input: UserSubmitInput): AsyncGenerator<StreamEvent, RoundEnd>
+  applyAskAnswer(
+    callId: string,
+    answer: PendingAskAnswer,
+  ): Promise<'matched' | 'unmatched'>
+  replayPendingAsks(): AsyncGenerator<StreamEvent, void>
   enqueueSteer(text: string): void
   drainSteering(): string[]
   /** Host `/queue` drain. Called after each tool round; one item per batch. */
