@@ -6,9 +6,9 @@ Source: https://github.com/anthropics/skills (`main` @ `34040c9`, 2026-09-10)
 
 ## Finding
 
-**None of the 19 official `anthropics/skills` names are RavenClaw builtins.** Name overlap is 0/19.
+**Name overlap is 2/19 (`frontend-design`, `mcp-builder`).** Both are clean-room RavenClaw prose, not copies of official skill bodies. The other 17 official names are not RavenClaw builtins.
 
-RavenClaw ships a different set: coding-loop skills, not Claude.ai document/example plugins. Two optional clean-room skills share names with the official example set (`frontend-design`, `mcp-builder`) but are original RavenClaw prose.
+RavenClaw ships a different set: coding-loop skills, not Claude.ai document/example plugins. The official 19-skill catalog is not a RavenClaw builtin checklist.
 
 ## Official inventory (19)
 

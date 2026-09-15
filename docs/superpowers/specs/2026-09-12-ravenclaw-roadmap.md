@@ -2,8 +2,9 @@
 
 Date: 2026-09-12  
 Status: historical (H0 + harness-honesty done at `5629c82`)  
-Remaining H1/H2 and honesty leftovers: **`2026-09-12-ravenclaw-remaining-roadmap.md`**.  
-Sources: current tree at `d4c018e`+, Hermes (`/Users/yeonwoosung/Desktop/hermes-agent`), original design `2026-09-08-ravenclaw-coding-agent-design.md`.
+Remaining H1/H2 and honesty leftovers: **`2026-09-12-ravenclaw-remaining-roadmap.md`** (implemented).  
+Next horizon: **`2026-09-15-eve-inspired-roadmap.md`**.  
+Sources: current tree at `d4c018e`+, Hermes (`/Users/yeonwoosung/Desktop/hermes-agent`), eve ([eve-analysis.md](../../research/eve-analysis.md)), original design `2026-09-08-ravenclaw-coding-agent-design.md`.
 
 Steal contracts. Do not copy Claude or Hermes source.
 
@@ -28,7 +29,7 @@ Hermes’s lesson (and Freebuff’s): **one loop, adapters at the edge, new work
 
 RavenClaw should be the agent you leave running **all day in a repo**, not a smaller Claude Code clone and not a smaller Hermes.
 
-1. **The waist stays sacred.** One `queryLoop`. Hosts (TUI, exec, ACP, serve, later Slack) only call `submitMessage`.
+1. **The waist stays sacred.** One `queryLoop`. Hosts (TUI, exec, ACP, serve, Slack, Discord) only call `submitMessage`.
 2. **Default prefix stays small and frozen.** Mid-session skill/tool/memory changes wait for the next session unless `/reload`.
 3. **Unattended is explicit.** `dontAsk` never becomes `bypass`. Headless Bash needs project rules or a sandbox, not yolo.
 4. **BYOK is the product.** Included gateway stays off until admission + spend caps are real. Ads never touch BYOK.
@@ -96,7 +97,7 @@ One polished host beats three half hosts.
 
 ### H3 — Explicitly later / other products
 
-- Second chat network, pairing CLI, delivery ledger
+- Third chat network (Telegram etc.). Slack/Discord + pairing + ledger shipped in `2026-09-12-ravenclaw-discord-pairing-ledger.md`.
 - Real LSP handshake (or remove from default pool — prefer H0.5 gate)
 - Streaming tool executor
 - Background skill curator (easy to poison)

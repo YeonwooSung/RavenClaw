@@ -8,6 +8,8 @@ Supersedes remaining H1/H2 of `2026-09-12-ravenclaw-roadmap.md`. H0 and harness-
 
 Steal contracts. Do not copy Claude, Hermes, or Freebuff source.
 
+Next horizon (durable HITL, sandbox port, session HTTP, evals): **`2026-09-15-eve-inspired-roadmap.md`**. Prior-art: [eve-analysis.md](../../research/eve-analysis.md).
+
 ---
 
 ## Where we are
@@ -20,13 +22,13 @@ The coding-agent waist is shipped:
 - Durable mailbox + session locks. Children go through `SessionEngine`.
 - H1.1–H1.3, H1.7 (subdir AGENTS.md, verify-on-stop, coding posture, stall) are in.
 
-What is left is **not** “missing a loop.” It is daily quality, one polished TUI, then one or two honest hosts, then an install path.
+Waves 1–4 are on `main`. Next horizon: **`2026-09-15-eve-inspired-roadmap.md`**.
 
 ---
 
 ## Constraints (unchanged)
 
-1. One `queryLoop`. Every host (Ink, OpenTUI, exec, ACP, serve, Slack, GH Action) only calls `submitMessage`.
+1. One `queryLoop`. Every host (Ink, OpenTUI, exec, ACP, serve, Slack, Discord, GH Action) only calls `submitMessage`.
 2. Default prefix stays small and frozen. New tools are `isEnabled`, deferred (`ToolSearch`/`ToolCall`), or a skill — not a new always-on schema unless this doc says so.
 3. `dontAsk` never becomes `bypass`. Headless Bash needs a project rule or Docker backend.
 4. BYOK is the product. Ads never touch BYOK. Included resume stays fail-closed.
@@ -37,7 +39,7 @@ What is left is **not** “missing a loop.” It is daily quality, one polished 
 ## Do not build (still)
 
 - `bypass` / auto-allow classifier / `execute_code`
-- Second chat network, Discord, Telegram, pairing CLI, delivery ledger
+- Telegram and any third chat network (Slack and Discord + pairing + delivery ledger already shipped; see `2026-09-12-ravenclaw-discord-pairing-ledger.md`)
 - Electron, pets, voice, marketplace, computer-use
 - Streaming tool executor, background skill curator, real LSP handshake
 - Pro = no ads
@@ -307,7 +309,7 @@ One honest host at a time. Slack is **one** adapter, not a gateway product.
 
 ### R3.2 Slack Socket Mode (H2.2)
 
-**Contract.** One adapter. No Discord. No pairing CLI in v1 of this wave (allowlist only).
+**Contract.** One adapter. No Discord. No pairing CLI in v1 of this wave (allowlist only). *(v1 of this wave; Discord + pairing + ledger shipped later in `2026-09-12-ravenclaw-discord-pairing-ledger.md`.)*
 
 - New optional dependency / thin module under `packages/cli/src/slack/` or `packages/gateway/src/slack.ts`.
 - Config:
@@ -427,4 +429,4 @@ Then R3.1, then R3.2+R3.3, then Wave 4. R1.11 can ride with any included-session
 
 ## Out of this closeout
 
-`execute_code`, Discord, Electron, pairing CLI, delivery ledger, streaming executor, curator, LSP handshake, second chat network. If a later product wants them, write a new spec. Do not extend this file.
+`execute_code`, Electron, streaming executor, curator, real LSP handshake. Slack/Discord + pairing + ledger already shipped. If a later product wants a web UI or eve-style durable HITL, use **`2026-09-15-eve-inspired-roadmap.md`**. Do not extend this file.
