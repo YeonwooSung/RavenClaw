@@ -4,7 +4,7 @@ export { sessionKey } from './gateway/types'
 export type { InboundEvent, ChatType } from './gateway/types'
 export { loadSessionMap, saveSessionMap, resolveSessionId } from './gateway/session-map'
 export { isUserAllowed } from './gateway/authz'
-export { parseTurnRequest, checkBearer, webhookSafeTools } from './gateway/http'
+export { parseTurnRequest, parseResolveBody, checkBearer, webhookSafeTools } from './gateway/http'
 export { verifyWebhookSignature, safeWebhookToolNames } from './gateway/webhook'
 export {
   parseLoopArg,

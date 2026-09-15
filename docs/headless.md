@@ -77,6 +77,15 @@ Slack, Discord, and `raven serve` serialize inbound with `singleFlight` (`turnPo
 `raven serve` exits 1 without `GATEWAY_SECRET` / `RAVEN_SERVE_SECRET`.
 `--listen` must be loopback (`127.0.0.1`, `localhost`, `::1`).
 `POST /v1/turn` requires `Authorization: Bearer <secret>` (`timingSafeEqual`).
+It stays dontAsk, one-shot JSON.
+
+Session routes use an engine that does **not** force `dontAsk`. All require the same Bearer token:
+
+- `GET /v1/session/:id/stream` — NDJSON `StreamEvent` live tail (no `?after=` cursor)
+- `POST /v1/session/:id/cancel` — `engine.abort()`
+- `POST /v1/session/:id/compact` — `engine.compactNow()`
+- `POST /v1/session/:id/resolve` — `{ callId, allow: boolean }` → `applyAskAnswer`; 200 `{ status }` or 404 if unmatched
+
 Webhooks verify `X-Raven-Signature` over the raw body.
 Slack uses Socket Mode (app token); there is no Slack signing-secret HMAC.
 Discord identity is Gateway `author.id` plus the pairing ledger.

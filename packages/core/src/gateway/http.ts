@@ -24,6 +24,24 @@ export function parseTurnRequest(body: unknown): TurnRequest {
   return { ok: true, text, sessionKey: key }
 }
 
+export function parseResolveBody(
+  body: unknown,
+): { ok: true; callId: string; allow: boolean } | { ok: false; error: string } {
+  if (body === null || typeof body !== 'object' || Array.isArray(body)) {
+    return { ok: false, error: 'body must be an object' }
+  }
+  const rec = body as Record<string, unknown>
+  if (typeof rec.callId !== 'string') {
+    return { ok: false, error: 'callId is required' }
+  }
+  const callId = rec.callId.trim()
+  if (callId === '') return { ok: false, error: 'callId is required' }
+  if (typeof rec.allow !== 'boolean') {
+    return { ok: false, error: 'allow must be a boolean' }
+  }
+  return { ok: true, callId, allow: rec.allow }
+}
+
 export function checkBearer(authHeader: string | undefined, secret: string): boolean {
   if (authHeader === undefined || secret === '') return false
   const trimmed = authHeader.trim()

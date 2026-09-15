@@ -1042,6 +1042,12 @@ function attachRavenclawLog(engine: SessionEngine, log: RavenclawLog): SessionEn
     submitMessage(input) {
       return withPreventSleep(logSubmit(engine.submitMessage(input), engine.session.id, log))
     },
+    applyAskAnswer(callId, answer) {
+      return engine.applyAskAnswer(callId, answer)
+    },
+    replayPendingAsks() {
+      return engine.replayPendingAsks()
+    },
     enqueueSteer(text) {
       engine.enqueueSteer(text)
     },

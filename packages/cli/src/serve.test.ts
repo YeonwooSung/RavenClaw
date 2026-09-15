@@ -1,12 +1,17 @@
 import { describe, expect, test } from 'bun:test'
+import { createMemoryStore, type PendingAsk, type StreamEvent } from '@ravenclaw/core'
 import {
+  createSessionEventHub,
   gatewaySecret,
+  handleServeRequest,
   MAILBOX_POLL_MS,
   parseListen,
   singleFlight,
   startMailboxPoller,
+  tapEngineEvents,
   tickMailbox,
   type MailboxLiveEngine,
+  type ServeRequestContext,
 } from './serve'
 
 describe('parseListen', () => {
@@ -187,5 +192,229 @@ describe('startMailboxPoller', () => {
     expect(scheduled).toEqual([15_000])
     stop()
     expect(cleared).toBe(1)
+  })
+})
+
+function makeServeCtx(secret = ''): ServeRequestContext & {
+  store: ReturnType<typeof createMemoryStore>
+  abortCalls: number
+  compactCalls: number
+  submitEvents: StreamEvent[]
+  replayEvents: StreamEvent[]
+} {
+  const store = createMemoryStore()
+  const submitEvents: StreamEvent[] = []
+  const replayEvents: StreamEvent[] = []
+  const state = { abortCalls: 0, compactCalls: 0 }
+  const engine = {
+    session: { id: 's1' },
+    async applyAskAnswer(callId: string, _answer: 'allow' | 'deny' | 'allow_always') {
+      const row = await store.getPendingAsk(callId)
+      if (!row || row.sessionId !== engine.session.id) return 'unmatched' as const
+      await store.deletePendingAsk(callId)
+      return 'matched' as const
+    },
+    abort() {
+      state.abortCalls += 1
+    },
+    async compactNow() {
+      state.compactCalls += 1
+    },
+    async *submitMessage() {
+      for (const event of submitEvents) yield event
+    },
+    async *replayPendingAsks() {
+      for (const event of replayEvents) yield event
+    },
+  }
+  const hub = createSessionEventHub()
+  const runtime = { engine: tapEngineEvents(engine, hub), store }
+  return {
+    secret,
+    store,
+    turnFlights: new Map(),
+    hub,
+    runtimeForTurn: async () => runtime,
+    runtimeForSession: async (sessionId) => (sessionId === engine.session.id ? runtime : undefined),
+    get abortCalls() {
+      return state.abortCalls
+    },
+    get compactCalls() {
+      return state.compactCalls
+    },
+    submitEvents,
+    replayEvents,
+  }
+}
+
+async function readFirstJsonLine(res: Response): Promise<unknown> {
+  const reader = res.body?.getReader()
+  if (!reader) throw new Error('missing body')
+  const dec = new TextDecoder()
+  let buf = ''
+  try {
+    while (true) {
+      const next = await reader.read()
+      if (next.done) throw new Error('stream ended before a line')
+      buf += dec.decode(next.value, { stream: true })
+      const nl = buf.indexOf('\n')
+      if (nl !== -1) return JSON.parse(buf.slice(0, nl)) as unknown
+    }
+  } finally {
+    await reader.cancel()
+  }
+}
+
+describe('handleServeRequest', () => {
+  test('POST /v1/session/:id/resolve without Bearer is 401', async () => {
+    const ctx = makeServeCtx()
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/resolve', {
+        method: 'POST',
+        body: JSON.stringify({ callId: 'c1', allow: true }),
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(401)
+  })
+
+  test('POST /v1/turn without Bearer is 401', async () => {
+    const ctx = makeServeCtx()
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/turn', { method: 'POST', body: JSON.stringify({ text: 'hi' }) }),
+      ctx,
+    )
+    expect(res.status).toBe(401)
+  })
+
+  test('resolve allow deletes the pending row', async () => {
+    const ctx = makeServeCtx()
+    const ctxWithSecret = { ...ctx, secret: gatewaySecret({ GATEWAY_SECRET: 'secret' }) }
+    await ctx.store.upsertPendingAsk({
+      callId: 'c1',
+      sessionId: 's1',
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    } satisfies PendingAsk)
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/resolve', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+        body: JSON.stringify({ callId: 'c1', allow: false }),
+      }),
+      ctxWithSecret,
+    )
+    expect(res.status).toBe(200)
+    expect(await ctx.store.listPendingAsks('s1')).toHaveLength(0)
+  })
+
+  test('resolve unmatched pending ask is 404', async () => {
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/resolve', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+        body: JSON.stringify({ callId: 'missing', allow: true }),
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual({ status: 'unmatched' })
+  })
+
+  test('GET /v1/session/:id/stream without Bearer is 401', async () => {
+    const ctx = makeServeCtx()
+    const res = await handleServeRequest(new Request('http://127.0.0.1/v1/session/s1/stream'), ctx)
+    expect(res.status).toBe(401)
+  })
+
+  test('GET /v1/session/:id/stream tails live submitMessage events as NDJSON', async () => {
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    ctx.submitEvents.push({ type: 'text_delta', text: 'hi' })
+    const streamRes = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/stream', {
+        headers: { authorization: 'Bearer secret' },
+      }),
+      ctx,
+    )
+    expect(streamRes.status).toBe(200)
+    const firstLine = readFirstJsonLine(streamRes)
+    const turnRes = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/turn', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+        body: JSON.stringify({ text: 'hi' }),
+      }),
+      ctx,
+    )
+    expect(turnRes.status).toBe(200)
+    expect(await firstLine).toEqual({ type: 'text_delta', text: 'hi' })
+  })
+
+  test('GET /v1/session/:id/stream tails replayPendingAsks events as NDJSON', async () => {
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    ctx.replayEvents.push({
+      type: 'permission_ask',
+      id: 'c1',
+      tool: 'Echo',
+      input: { text: 'hi' },
+      message: 'Echo?',
+    })
+    const streamRes = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/stream', {
+        headers: { authorization: 'Bearer secret' },
+      }),
+      ctx,
+    )
+    expect(streamRes.status).toBe(200)
+    const firstLine = readFirstJsonLine(streamRes)
+    const runtime = await ctx.runtimeForSession('s1')
+    for await (const _event of runtime!.engine.replayPendingAsks()) {
+      // drain so the hub publishes
+    }
+    expect(await firstLine).toEqual({
+      type: 'permission_ask',
+      id: 'c1',
+      tool: 'Echo',
+      input: { text: 'hi' },
+      message: 'Echo?',
+    })
+  })
+
+  test('POST /v1/session/:id/cancel and compact require Bearer and call the engine', async () => {
+    const unauthorized = makeServeCtx()
+    const cancel401 = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/cancel', { method: 'POST' }),
+      unauthorized,
+    )
+    const compact401 = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/compact', { method: 'POST' }),
+      unauthorized,
+    )
+    expect(cancel401.status).toBe(401)
+    expect(compact401.status).toBe(401)
+
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const cancel = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/cancel', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+      }),
+      ctx,
+    )
+    const compact = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/compact', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+      }),
+      ctx,
+    )
+    expect(cancel.status).toBe(200)
+    expect(compact.status).toBe(200)
+    expect(ctx.abortCalls).toBe(1)
+    expect(ctx.compactCalls).toBe(1)
   })
 })
