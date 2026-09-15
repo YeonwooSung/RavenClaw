@@ -8,6 +8,7 @@ import type {
   Provider,
   SessionRecord,
   StreamEvent,
+  SystemPart,
   TokenUsage,
 } from '../types'
 import { clearLastRequestAt, markLastRequestAt } from './last-request'
@@ -94,6 +95,7 @@ async function makeState(over: {
   model?: ModelProfile
   compactFailures?: number
   persist?: boolean
+  system?: SystemPart[]
 }): Promise<LoopState> {
   const store = createMemoryStore()
   const sess = session()
@@ -153,6 +155,7 @@ async function makeState(over: {
     mutatedThisTurn: false,
     sawVerifyCommand: false,
   }
+  if (over.system !== undefined) state.system = over.system
   return state
 }
 
@@ -259,5 +262,40 @@ describe('maybeCompact', () => {
     expect(events).toEqual([])
     expect(state.turn.compactGeneration).toBe(0)
     expect(state.turn.messages.map((msg) => msg.id)).toEqual(['u0', 'a0', 'u1', 'a1'])
+  })
+
+  test('compact leaves MEMORY system snapshot untouched', async () => {
+    const memoryPart: SystemPart = {
+      tier: 'stable',
+      text: 'MEMORY.md unique-bytes-xyz',
+    }
+    const messages = [
+      user('u0', 'old', 1),
+      asstText('a0', 'old reply', 2),
+      user('u1', 'recent', 3),
+      asstText('a1', 'recent reply', 4, {
+        input: 200,
+        output: 20,
+        cacheRead: 10,
+        cacheWrite: 0,
+      }),
+    ]
+    const state = await makeState({
+      system: [memoryPart],
+      messages,
+      compact: compact({ autoCompactBuffer: 13 }),
+      model: model({ contextWindow: 200, reserveOutputTokens: 20 }),
+    })
+    const before = JSON.stringify(state.system)
+    const { events, result } = await drain(state)
+    expect(result).toEqual({ action: 'continue' })
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({ type: 'compact', generation: 1 })
+    expect(JSON.stringify(state.system)).toBe(before)
+    expect(state.system?.some((p) => 'text' in p && p.text.includes('unique-bytes-xyz'))).toBe(
+      true,
+    )
+    const blob = JSON.stringify(state.turn.messages)
+    expect(blob.includes('unique-bytes-xyz') && state.system === undefined).toBe(false)
   })
 })
