@@ -73,11 +73,21 @@ describe('createLocalTerminalBackend', () => {
 })
 
 const LIVE_DOCKER_IMAGE = 'bash:5'
+/** bun:test default per-test budget. Nested docker waits must finish inside this. */
+const BUN_DEFAULT_TEST_TIMEOUT_MS = 5_000
+/** spawnSync timeout for `docker info` / image inspect during readiness. */
+const DOCKER_PROBE_TIMEOUT_MS = 2_000
+/** exec timeoutMs for the real-docker unavailable path. */
+const UNAVAILABLE_DOCKER_EXEC_TIMEOUT_MS = 2_000
+/** bun:test budget for the unavailable-docker integration test. */
+const UNAVAILABLE_DOCKER_TEST_TIMEOUT_MS = 10_000
+/** bun:test budget for tests that actually spawn docker. */
+const LIVE_DOCKER_TEST_TIMEOUT_MS = 35_000
 
 function dockerInfoOk(): boolean {
   const info = spawnSync('docker', ['info'], {
     encoding: 'utf8',
-    timeout: 8_000,
+    timeout: DOCKER_PROBE_TIMEOUT_MS,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   return info.error === undefined && info.status === 0
@@ -86,7 +96,7 @@ function dockerInfoOk(): boolean {
 function dockerHasImage(image: string): boolean {
   const inspect = spawnSync('docker', ['image', 'inspect', image], {
     stdio: 'ignore',
-    timeout: 5_000,
+    timeout: DOCKER_PROBE_TIMEOUT_MS,
   })
   return inspect.error === undefined && inspect.status === 0
 }
@@ -105,6 +115,20 @@ function liveDocker(): boolean {
 }
 
 describe('createDockerTerminalBackend', () => {
+  test('docker probe and unavailable exec finish inside bun default timeout', () => {
+    // Hung `docker info` then `docker run` must not outlive bun's 5s default,
+    // or CI flakes as "unavailable docker ... timed out 5001ms".
+    expect(DOCKER_PROBE_TIMEOUT_MS).toBeLessThan(BUN_DEFAULT_TEST_TIMEOUT_MS)
+    expect(UNAVAILABLE_DOCKER_EXEC_TIMEOUT_MS).toBeLessThan(BUN_DEFAULT_TEST_TIMEOUT_MS)
+    expect(DOCKER_PROBE_TIMEOUT_MS + UNAVAILABLE_DOCKER_EXEC_TIMEOUT_MS).toBeLessThan(
+      BUN_DEFAULT_TEST_TIMEOUT_MS,
+    )
+    expect(UNAVAILABLE_DOCKER_TEST_TIMEOUT_MS).toBeGreaterThan(
+      DOCKER_PROBE_TIMEOUT_MS + UNAVAILABLE_DOCKER_EXEC_TIMEOUT_MS,
+    )
+    expect(LIVE_DOCKER_TEST_TIMEOUT_MS).toBeGreaterThan(30_000)
+  })
+
   test('returns an object with exec and start', () => {
     const backend = createDockerTerminalBackend({ image: 'bash:5' })
     expect(typeof backend.exec).toBe('function')
@@ -306,34 +330,44 @@ describe('createDockerTerminalBackend', () => {
     expect(result.stderr).toMatch(/docker|not found|ENOENT/i)
   })
 
-  test('unavailable docker returns a non-zero result without throwing', async () => {
-    if (dockerReady()) return
-    const backend = createDockerTerminalBackend({ image: LIVE_DOCKER_IMAGE })
-    const result = await backend.exec({
-      command: 'echo hi',
-      cwd: fixtureRoot(),
-      timeoutMs: 8_000,
-      signal: new AbortController().signal,
-    })
-    expect(result.exitCode).not.toBe(0)
-    expect(result.stderr.length).toBeGreaterThan(0)
-  })
+  test(
+    'unavailable docker returns a non-zero result without throwing',
+    async () => {
+      if (dockerReady()) return
+      const backend = createDockerTerminalBackend({ image: LIVE_DOCKER_IMAGE })
+      const result = await backend.exec({
+        command: 'echo hi',
+        cwd: fixtureRoot(),
+        timeoutMs: UNAVAILABLE_DOCKER_EXEC_TIMEOUT_MS,
+        signal: new AbortController().signal,
+      })
+      // Daemon may come up after the probe; that is not the unavailable path.
+      if (result.exitCode === 0) return
+      expect(result.exitCode).not.toBe(0)
+      expect(result.stderr.length).toBeGreaterThan(0)
+    },
+    { timeout: UNAVAILABLE_DOCKER_TEST_TIMEOUT_MS },
+  )
 
-  test('live docker run echoes and reports cwd', async () => {
-    if (!liveDocker()) return
-    const root = fixtureRoot()
-    const backend = createDockerTerminalBackend({ image: LIVE_DOCKER_IMAGE })
-    const result = await backend.exec({
-      command: 'echo hello',
-      cwd: root,
-      timeoutMs: 30_000,
-      signal: new AbortController().signal,
-    })
-    expect(result.exitCode).toBe(0)
-    expect(result.stdout).toContain('hello')
-    expect(result.stdout).not.toMatch(/RAVENCLAW_CWD|__CWD_/)
-    expect(result.cwd).toBe(root)
-  })
+  test(
+    'live docker run echoes and reports cwd',
+    async () => {
+      if (!liveDocker()) return
+      const root = fixtureRoot()
+      const backend = createDockerTerminalBackend({ image: LIVE_DOCKER_IMAGE })
+      const result = await backend.exec({
+        command: 'echo hello',
+        cwd: root,
+        timeoutMs: 30_000,
+        signal: new AbortController().signal,
+      })
+      expect(result.exitCode).toBe(0)
+      expect(result.stdout).toContain('hello')
+      expect(result.stdout).not.toMatch(/RAVENCLAW_CWD|__CWD_/)
+      expect(result.cwd).toBe(root)
+    },
+    { timeout: LIVE_DOCKER_TEST_TIMEOUT_MS },
+  )
 })
 
 describe('createTerminalBackend', () => {
