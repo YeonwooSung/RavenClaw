@@ -1,0 +1,4 @@
+{
+  "prompt": "compact me",
+  "expect": { "memoryStaysSystem": true }
+}

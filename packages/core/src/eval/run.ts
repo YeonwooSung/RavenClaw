@@ -1,8 +1,10 @@
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { INCOMPLETE_TEXT, unpairedToolUseIds } from '../loop/pairing'
 import { createSessionEngine } from '../loop/session-engine'
 import { createMemoryStore } from '../session/memory-store'
+import { writeTool } from '../tools/write'
 import type {
   CompactPolicy,
   Message,
@@ -13,6 +15,7 @@ import type {
   SessionRecord,
   SessionStore,
   StreamEvent,
+  SystemPart,
   Tool,
   ToolContext,
 } from '../types'
@@ -23,6 +26,8 @@ type EvalExpect = {
   pendingAskPersists?: boolean
   noIncomplete?: boolean
   pairing?: boolean
+  writeOutsideCwdDenied?: boolean
+  memoryStaysSystem?: boolean
 }
 
 type EvalCase = {
@@ -37,6 +42,14 @@ export async function runEvalDir(dir: string): Promise<void> {
     const spec = readCase(join(dir, name, 'case.json'))
     if (name === 'pending-ask-persist') {
       await runPendingAskPersist(spec)
+      continue
+    }
+    if (name === 'sandbox-cwd') {
+      await runSandboxCwd(spec)
+      continue
+    }
+    if (name === 'compact-memory-prefix') {
+      await runCompactMemoryPrefix(spec)
       continue
     }
     throw new Error(`unknown eval fixture: ${name}`)
@@ -152,6 +165,141 @@ async function runPendingAskPersist(spec: EvalCase): Promise<void> {
   await resumed.close()
 }
 
+async function runSandboxCwd(spec: EvalCase): Promise<void> {
+  const cwd = mkdtempSync(join(tmpdir(), 'raven-eval-sandbox-'))
+  const outside = join(tmpdir(), `raven-eval-outside-${crypto.randomUUID()}.txt`)
+  try {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_eval_sandbox_cwd', cwd })
+    await store.createSession(session)
+    const provider = createFakeProvider([
+      toolThenStop('call_eval', 'Write', { path: outside, content: 'x' }),
+      textThenStop('done'),
+    ])
+    const engine = createSessionEngine({
+      session,
+      provider,
+      store,
+      tools: [writeTool],
+      compact: defaultCompact(),
+      model: defaultModel(),
+      maxRounds: 8,
+      bare: true,
+      terminalBackend: 'docker',
+      askUser: async () => 'allow',
+    })
+    await drain(engine.submitMessage(spec.prompt))
+    const loaded = await store.loadSession(session.id)
+    const writeText = toolResultText(loaded.messages)
+    if (spec.expect.writeOutsideCwdDenied === true) {
+      if (!/outside workspace|must be Read first|Write failed/.test(writeText)) {
+        throw new Error(
+          `sandbox-cwd: expected Write to deny outside cwd, got ${JSON.stringify(writeText)}`,
+        )
+      }
+      if (existsSync(outside) || existsSync('/tmp/raven-eval-outside.txt')) {
+        throw new Error('sandbox-cwd: write created a file outside cwd')
+      }
+    }
+    await engine.close()
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+    rmSync(outside, { force: true })
+  }
+}
+
+async function runCompactMemoryPrefix(spec: EvalCase): Promise<void> {
+  const store = createMemoryStore()
+  const session = makeSession({ id: 'sess_eval_compact_memory' })
+  await store.createSession(session)
+  const memoryPart: SystemPart = {
+    tier: 'stable',
+    text: 'MEMORY.md unique-bytes-xyz',
+  }
+  const history: Message[] = [
+    { id: 'u0', role: 'user', blocks: [{ type: 'text', text: 'old' }], createdAt: 1 },
+    { id: 'a0', role: 'assistant', blocks: [{ type: 'text', text: 'old reply' }], createdAt: 2 },
+    { id: 'u1', role: 'user', blocks: [{ type: 'text', text: 'recent' }], createdAt: 3 },
+    {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'text', text: 'recent reply' }],
+      createdAt: 4,
+      usage: { input: 200, output: 20, cacheRead: 10, cacheWrite: 0 },
+    },
+  ]
+  for (const msg of history) {
+    if (msg.role === 'user') await store.persistUser(session.id, msg)
+    else await store.persistAssistant(session.id, msg)
+  }
+
+  const seen: ProviderRequest[] = []
+  const provider = createFakeProvider([textThenStop('after compact')])
+  const orig = provider.stream.bind(provider)
+  provider.stream = async function* (req: ProviderRequest, signal: AbortSignal) {
+    seen.push(req)
+    yield* orig(req, signal)
+  }
+
+  const engine = createSessionEngine({
+    session,
+    messages: history,
+    provider,
+    store,
+    tools: [],
+    compact: {
+      ...defaultCompact(),
+      autoCompactBuffer: 13,
+      protectLastMessages: 2,
+      llmSummarize: false,
+    },
+    model: { ...defaultModel(), contextWindow: 200, reserveOutputTokens: 20 },
+    maxRounds: 8,
+    bare: true,
+    system: [memoryPart],
+    askUser: async () => 'deny',
+  })
+
+  const before = JSON.stringify([memoryPart])
+  await engine.compactNow()
+  if (engine.session.compactGeneration < 1) {
+    throw new Error('compact-memory-prefix: compactNow did not compact')
+  }
+
+  if (spec.expect.memoryStaysSystem === true) {
+    await drain(engine.submitMessage(spec.prompt))
+    const system = seen[0]?.system
+    if (JSON.stringify(system) !== before) {
+      throw new Error(
+        `compact-memory-prefix: system snapshot changed: ${JSON.stringify(system)}`,
+      )
+    }
+    if (!system?.some((part) => 'text' in part && part.text.includes('unique-bytes-xyz'))) {
+      throw new Error('compact-memory-prefix: MEMORY left the system snapshot')
+    }
+    const loaded = await store.loadSession(session.id)
+    const blob = JSON.stringify(loaded.messages)
+    if (blob.includes('unique-bytes-xyz') && system === undefined) {
+      throw new Error('compact-memory-prefix: MEMORY moved into messages and system was dropped')
+    }
+    const prefix = system[0]?.text ?? ''
+    if (prefix !== 'MEMORY.md unique-bytes-xyz') {
+      throw new Error('compact-memory-prefix: compact summary is the new system prefix')
+    }
+  }
+
+  await engine.close()
+}
+
+function toolResultText(messages: Message[]): string {
+  return messages
+    .filter((msg): msg is Extract<Message, { role: 'tool' }> => msg.role === 'tool')
+    .flatMap((msg) => msg.blocks)
+    .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
+    .map((block) => block.text)
+    .join('\n')
+}
+
 async function waitForPendingAsks(
   store: SessionStore,
   sessionId: string,
@@ -201,7 +349,7 @@ function hasIncompleteToolRow(messages: Message[]): boolean {
   )
 }
 
-function makeSession(): SessionRecord {
+function makeSession(over: Partial<SessionRecord> = {}): SessionRecord {
   return {
     id: 'sess_eval_pending_ask',
     createdAt: 1,
@@ -212,6 +360,7 @@ function makeSession(): SessionRecord {
     compactGeneration: 0,
     usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     funding: 'byok',
+    ...over,
   }
 }
 
