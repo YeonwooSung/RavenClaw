@@ -5,9 +5,11 @@ import {
   SessionLockError,
   type PendingAsk,
   type StreamEvent,
+  type UserSubmitInput,
 } from '@ravenclaw/core'
 import { IncludedResumeError } from './engine'
 import {
+  createServeAskHost,
   createServeRuntimeCaches,
   createSessionEventHub,
   gatewaySecret,
@@ -208,16 +210,25 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
   store: ReturnType<typeof createMemoryStore>
   abortCalls: number
   compactCalls: number
+  applyCalls: Array<{ callId: string; answer: 'allow' | 'deny' | 'allow_always' }>
+  submitted: UserSubmitInput[]
   submitEvents: StreamEvent[]
   replayEvents: StreamEvent[]
+  submitHold?: Promise<void>
 } {
   const store = createMemoryStore()
   const submitEvents: StreamEvent[] = []
   const replayEvents: StreamEvent[] = []
-  const state = { abortCalls: 0, compactCalls: 0 }
+  const submitted: UserSubmitInput[] = []
+  const applyCalls: Array<{ callId: string; answer: 'allow' | 'deny' | 'allow_always' }> = []
+  const state: { abortCalls: number; compactCalls: number; submitHold?: Promise<void> } = {
+    abortCalls: 0,
+    compactCalls: 0,
+  }
   const engine = {
     session: { id: 's1' },
-    async applyAskAnswer(callId: string, _answer: 'allow' | 'deny' | 'allow_always') {
+    async applyAskAnswer(callId: string, answer: 'allow' | 'deny' | 'allow_always') {
+      applyCalls.push({ callId, answer })
       const row = await store.getPendingAsk(callId)
       if (!row || row.sessionId !== engine.session.id) return 'unmatched' as const
       await store.deletePendingAsk(callId)
@@ -229,8 +240,10 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
     async compactNow() {
       state.compactCalls += 1
     },
-    async *submitMessage() {
+    async *submitMessage(input: UserSubmitInput) {
+      submitted.push(input)
       for (const event of submitEvents) yield event
+      if (state.submitHold) await state.submitHold
     },
     async *replayPendingAsks() {
       for (const event of replayEvents) yield event
@@ -238,7 +251,7 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
   }
   const hub = createSessionEventHub()
   const runtime = { engine: tapEngineEvents(engine, hub), store }
-  return {
+  const ctx = {
     secret,
     store,
     turnFlights: new Map(),
@@ -251,9 +264,15 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
     get compactCalls() {
       return state.compactCalls
     },
+    applyCalls,
+    submitted,
     submitEvents,
     replayEvents,
+    set submitHold(value: Promise<void> | undefined) {
+      state.submitHold = value
+    },
   }
+  return ctx
 }
 
 async function readFirstJsonLine(res: Response): Promise<unknown> {
@@ -504,6 +523,166 @@ describe('handleServeRequest', () => {
     })
     expect(failed.status).toBe(500)
     expect(await failed.json()).toEqual({ error: new IncludedResumeError().message })
+  })
+
+  test('POST /v1/session/:id/submit without Bearer is 401', async () => {
+    const ctx = makeServeCtx()
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/submit', {
+        method: 'POST',
+        body: JSON.stringify({ text: 'hi' }),
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(401)
+    expect(ctx.submitted).toEqual([])
+  })
+
+  test('POST /v1/session/:id/submit rejects empty text', async () => {
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/submit', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+        body: JSON.stringify({ text: '   ' }),
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: 'text is required' })
+    expect(ctx.submitted).toEqual([])
+  })
+
+  test('POST /v1/session/:id/submit missing session is 404', async () => {
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/missing/submit', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+        body: JSON.stringify({ text: 'hi' }),
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(404)
+    expect(ctx.submitted).toEqual([])
+  })
+
+  test('POST /v1/session/:id/submit creates a missing session when createSession is set', async () => {
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const created: string[] = []
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/new1/submit', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+        body: JSON.stringify({ text: 'hi' }),
+      }),
+      {
+        ...ctx,
+        runtimeForSession: async () => undefined,
+        createSession: async (id) => {
+          created.push(id)
+          const runtime = await ctx.runtimeForSession('s1')
+          if (!runtime) throw new Error('expected fixture runtime')
+          return runtime
+        },
+      },
+    )
+    expect(res.status).toBe(202)
+    expect(created).toEqual(['new1'])
+    expect(ctx.submitted).toEqual([{ text: 'hi', turnPolicy: 'queue' }])
+  })
+
+  test('POST /v1/session/:id/submit accepts and submits with turnPolicy queue', async () => {
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/submit', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+        body: JSON.stringify({ text: '  write a.txt  ' }),
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(202)
+    expect(await res.json()).toEqual({ accepted: true, sessionId: 's1' })
+    expect(ctx.submitted).toEqual([{ text: 'write a.txt', turnPolicy: 'queue' }])
+  })
+
+  test('POST /v1/session/:id/submit mints leftover-ask onto the live stream', async () => {
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    let release!: () => void
+    ctx.submitHold = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    ctx.submitEvents.push({
+      type: 'permission_ask',
+      id: 'c1',
+      tool: 'Write',
+      input: { path: 'a.txt', contents: 'x' },
+      message: 'Write a.txt?',
+    })
+    const streamRes = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/stream', {
+        headers: { authorization: 'Bearer secret' },
+      }),
+      ctx,
+    )
+    expect(streamRes.status).toBe(200)
+    const firstLine = readFirstJsonLine(streamRes)
+    const submitRes = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/submit', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+        body: JSON.stringify({ text: 'write a.txt' }),
+      }),
+      ctx,
+    )
+    expect(submitRes.status).toBe(202)
+    expect(await firstLine).toEqual({
+      type: 'permission_ask',
+      id: 'c1',
+      tool: 'Write',
+      input: { path: 'a.txt', contents: 'x' },
+      message: 'Write a.txt?',
+    })
+    expect(ctx.turnFlights.size).toBe(1)
+    release()
+    await Promise.all([...ctx.turnFlights.values()])
+  })
+
+  test('POST resolve settles a live leftover-ask without applyAskAnswer', async () => {
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const host = createServeAskHost()
+    const pending = host.askUser(
+      { type: 'permission_ask', id: 'c1', tool: 'Write', input: {}, message: 'Write?' },
+      new AbortController().signal,
+    )
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/resolve', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+        body: JSON.stringify({ callId: 'c1', allow: true }),
+      }),
+      { ...ctx, settleAsk: (callId, answer) => host.settle(callId, answer) },
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ status: 'matched' })
+    await expect(pending).resolves.toBe('allow')
+    expect(ctx.applyCalls).toEqual([])
+  })
+})
+
+describe('createServeAskHost', () => {
+  test('parks askUser until settle and ignores unknown callIds', async () => {
+    const host = createServeAskHost()
+    const signal = new AbortController().signal
+    const pending = host.askUser(
+      { type: 'permission_ask', id: 'c1', tool: 'Bash', input: { command: 'ls' }, message: 'Bash?' },
+      signal,
+    )
+    expect(host.settle('missing', 'allow')).toBe(false)
+    expect(host.settle('c1', 'deny')).toBe(true)
+    expect(host.settle('c1', 'allow')).toBe(false)
+    await expect(pending).resolves.toBe('deny')
   })
 })
 
