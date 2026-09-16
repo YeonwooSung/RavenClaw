@@ -32,7 +32,7 @@ import {
   parseFailedText,
   unknownToolText,
 } from './pairing'
-import { markReadPath, recordReadFile, stampReadMtime } from '../tools/read-files'
+import { forgetReadsNotInTail, markReadPath, recordReadFile, stampReadMtime } from '../tools/read-files'
 import { rewindLastTurn } from '../session/rewind'
 import { getSessionWorktree } from '../tools/session-worktree'
 import { applyPermissionMode } from '../prompt/builder'
@@ -380,6 +380,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
     messages = result.messages
     if (liveTurn) {
       liveTurn.messages = result.messages
+      forgetReadsNotInTail(liveTurn, result.messages)
       liveTurn.compactGeneration = result.generation
     }
     session.compactGeneration = result.generation

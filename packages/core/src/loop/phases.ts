@@ -30,7 +30,7 @@ import { isAbortError, nextOrAbort } from './abort'
 import { formatSettledOutput } from './format-output'
 import { partitionToolCalls } from '../tools/partition'
 import { toolCallTool } from '../tools/tool-call'
-import { stampReadMtime } from '../tools/read-files'
+import { forgetReadsNotInTail, stampReadMtime } from '../tools/read-files'
 import { filterToolsForTurn } from '../tools/skill'
 import { appendDeferredMcpTools } from '../mcp/tools'
 import { estimateTokens, shouldEnterGrace, suffixGraceNotice } from './budget'
@@ -339,6 +339,7 @@ export async function* maybeCompact(
       cwd: state.turn.projectCwd ?? state.turn.cwd,
     })
     state.turn.messages = result.messages
+    forgetReadsNotInTail(state.turn, result.messages)
     state.turn.compactGeneration = result.generation
     state.compactFailures = 0
     state.overflowCompacted = true
