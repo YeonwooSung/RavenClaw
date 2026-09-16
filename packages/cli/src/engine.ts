@@ -802,6 +802,7 @@ export async function bootCli(
     const entered = enterSessionWorktree(engine.session.id, cwd, name)
     if (entered.ok) {
       engine.session.cwd = entered.cwd
+      if (entered.job) engine.session.job = entered.job
       await store.upsertSession(engine.session)
       return {
         engine,

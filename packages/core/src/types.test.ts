@@ -208,6 +208,13 @@ describe('port shapes', () => {
             usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
             funding: 'byok',
             todos: [{ text: 'ship', status: 'pending' }],
+            job: {
+              baseBranch: 'main',
+              shadowBranch: 'raven/sess_1',
+              baseCommitSha: 'abc123',
+              worktreePath: '/tmp/worktree',
+            },
+            jobAutoCommit: false,
           },
           messages: [],
         }

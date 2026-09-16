@@ -34,6 +34,7 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
   { name: 'undo', usage: '/undo', summary: 'restore files from the last edit checkpoint' },
   { name: 'rewind', usage: '/rewind', summary: 'undo last turn files and drop that conversation turn' },
   { name: 'diff', usage: '/diff [n|close]', summary: 'open working-tree git diff panel' },
+  { name: 'job', usage: '/job [name]', summary: 'enter a named raven/* job worktree' },
   { name: 'steer', usage: '/steer <text>', summary: 'inject text into the live turn (next tool round)' },
   {
     name: 'add-dir',

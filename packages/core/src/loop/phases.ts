@@ -1250,6 +1250,7 @@ async function executeOneCall(
   if (state.tasks) ctx.tasks = state.tasks
   if (state.fileHistory) ctx.fileHistory = state.fileHistory
   if (state.store) ctx.store = state.store
+  if (state.session) ctx.session = state.session
 
   let allowed = false
   try {

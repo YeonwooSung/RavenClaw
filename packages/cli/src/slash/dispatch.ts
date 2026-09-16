@@ -10,6 +10,8 @@ import {
   ravenclawHome,
   scanTeamOnboarding,
   setSkillDisabled,
+  enterSessionWorktree,
+  getSessionWorktree,
 } from '@ravenclaw/core'
 import {
   INTERVIEW_PROMPT,
@@ -200,6 +202,27 @@ export async function dispatchSharedSlash(
     case 'cron':
       host.notice(applyCronMutate(parsed.arg, runtime.cwd, runtime.config.home).text)
       return 'handled'
+    case 'job': {
+      const arg = parsed.arg?.trim() ?? ''
+      if (arg === 'commit on' || arg === 'commit off') {
+        host.notice('usage: /job [name]')
+        return 'handled'
+      }
+      const session = runtime.engine.session
+      const parent = getSessionWorktree(session.id)?.originalCwd ?? runtime.cwd
+      const name = arg === '' ? undefined : arg
+      const entered = enterSessionWorktree(session.id, parent, name)
+      if (!entered.ok) {
+        host.notice(entered.error ?? 'job failed')
+        return 'handled'
+      }
+      if (entered.job) session.job = entered.job
+      session.cwd = entered.cwd
+      runtime.cwd = entered.cwd
+      await runtime.store.upsertSession(session)
+      host.notice(`job ${entered.job?.shadowBranch ?? entered.cwd}`)
+      return 'handled'
+    }
     case 'copy':
       await dispatchCopy(host, runtime)
       return 'handled'

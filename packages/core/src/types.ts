@@ -215,6 +215,7 @@ export interface ToolContext {
   tasks?: import('./tasks/registry').TaskRegistry
   fileHistory?: import('./session/file-history').FileHistory
   store?: SessionStore
+  session?: SessionRecord
 }
 
 export interface ToolResult {
@@ -274,6 +275,15 @@ export interface TodoItem {
   status: TodoStatus
 }
 
+export type SessionJob = {
+  baseBranch: string
+  shadowBranch: string
+  baseCommitSha: string
+  worktreePath: string
+  prNumber?: number
+  prUrl?: string
+}
+
 export interface SessionRecord {
   id: string
   createdAt: number
@@ -288,6 +298,8 @@ export interface SessionRecord {
   parentSessionId?: string
   funding: Funding
   todos?: TodoItem[]
+  job?: SessionJob
+  jobAutoCommit?: boolean
 }
 
 export interface SessionListFilter {

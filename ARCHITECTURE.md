@@ -620,7 +620,7 @@ Threshold = `contextWindow - reserveOutputTokens - autoCompactBuffer`. Hard limi
 
 ## Sessions
 
-SQLite WAL at `$RAVENCLAW_HOME/state.db` (`PRAGMA journal_mode = WAL`, `busy_timeout = 5000`, `foreign_keys = ON` in `packages/core/src/session/sqlite-store.ts`). Schema version **7**:
+SQLite WAL at `$RAVENCLAW_HOME/state.db` (`PRAGMA journal_mode = WAL`, `busy_timeout = 5000`, `foreign_keys = ON` in `packages/core/src/session/sqlite-store.ts`). Schema version **8**:
 
 | Version | File | Adds |
 |---|---|---|
@@ -631,6 +631,7 @@ SQLite WAL at `$RAVENCLAW_HOME/state.db` (`PRAGMA journal_mode = WAL`, `busy_tim
 | 5 | `005_pending_asks.sql` | `pending_asks` (one row per `call_id`) |
 | 6 | `006_read_mtime.sql` | `messages.read_mtime_ms` |
 | 7 | `007_session_todos.sql` | `sessions.todos_json` |
+| 8 | `008_session_job.sql` | `sessions.job_json`, `sessions.job_auto_commit`, `messages.checkpoint_json` |
 
 `applyAskAnswer(callId, allow|deny|allow_always)` is the only non-`submitMessage` host entry. It pairs a parked leftover-ask and does not start a model turn. `resumeSession` treats pending `callId`s as paired-for-resume.
 

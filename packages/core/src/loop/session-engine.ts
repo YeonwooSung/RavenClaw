@@ -312,6 +312,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       tasks,
       fileHistory,
     }
+    if (target.sessionId === session.id) ctx.session = session
 
     let toolRow: Extract<Message, { role: 'tool' }>
     try {

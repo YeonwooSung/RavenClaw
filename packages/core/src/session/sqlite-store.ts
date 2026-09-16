@@ -10,6 +10,7 @@ import type {
   Message,
   PermissionMode,
   PermissionRule,
+  SessionJob,
   SessionListFilter,
   SessionRecord,
   SessionStore,
@@ -46,6 +47,8 @@ type SessionRow = {
   parent_session_id: string | null
   funding: string
   todos_json: string | null
+  job_json: string | null
+  job_auto_commit: number
 }
 
 type MessageRow = {
@@ -147,7 +150,36 @@ function sessionFromRow(row: SessionRow): SessionRecord {
   if (row.parent_session_id != null) session.parentSessionId = row.parent_session_id
   const todos = todosFromJson(row.todos_json)
   if (todos !== undefined) session.todos = todos
+  const job = jobFromJson(row.job_json)
+  if (job !== undefined) session.job = job
+  if (row.job_auto_commit === 1) session.jobAutoCommit = true
   return session
+}
+
+function jobFromJson(raw: string | null): SessionJob | undefined {
+  if (raw == null) return undefined
+  try {
+    const parsed = JSON.parse(raw) as Partial<SessionJob>
+    if (
+      typeof parsed.baseBranch !== 'string' ||
+      typeof parsed.shadowBranch !== 'string' ||
+      typeof parsed.baseCommitSha !== 'string' ||
+      typeof parsed.worktreePath !== 'string'
+    ) {
+      return undefined
+    }
+    const job: SessionJob = {
+      baseBranch: parsed.baseBranch,
+      shadowBranch: parsed.shadowBranch,
+      baseCommitSha: parsed.baseCommitSha,
+      worktreePath: parsed.worktreePath,
+    }
+    if (typeof parsed.prNumber === 'number') job.prNumber = parsed.prNumber
+    if (typeof parsed.prUrl === 'string') job.prUrl = parsed.prUrl
+    return job
+  } catch {
+    return undefined
+  }
 }
 
 function todosFromJson(raw: string | null): TodoItem[] | undefined {
@@ -216,6 +248,8 @@ function sessionBind(session: SessionRecord) {
     $parent_session_id: session.parentSessionId ?? null,
     $funding: session.funding,
     $todos_json: session.todos !== undefined ? JSON.stringify(session.todos) : null,
+    $job_json: session.job !== undefined ? JSON.stringify(session.job) : null,
+    $job_auto_commit: session.jobAutoCommit === true ? 1 : 0,
   }
 }
 
@@ -275,19 +309,23 @@ export function createSqliteStore(dbPath: string): SessionStore {
   const insertSession = db.query(
     `INSERT INTO sessions (
        id, created_at, updated_at, cwd, model, permission_mode, pre_plan_mode,
-       compact_generation, usage_json, title, parent_session_id, funding, todos_json
+       compact_generation, usage_json, title, parent_session_id, funding, todos_json,
+       job_json, job_auto_commit
      ) VALUES (
        $id, $created_at, $updated_at, $cwd, $model, $permission_mode, $pre_plan_mode,
-       $compact_generation, $usage_json, $title, $parent_session_id, $funding, $todos_json
+       $compact_generation, $usage_json, $title, $parent_session_id, $funding, $todos_json,
+       $job_json, $job_auto_commit
      )`,
   )
   const upsertSessionSql = db.query(
     `INSERT INTO sessions (
        id, created_at, updated_at, cwd, model, permission_mode, pre_plan_mode,
-       compact_generation, usage_json, title, parent_session_id, funding, todos_json
+       compact_generation, usage_json, title, parent_session_id, funding, todos_json,
+       job_json, job_auto_commit
      ) VALUES (
        $id, $created_at, $updated_at, $cwd, $model, $permission_mode, $pre_plan_mode,
-       $compact_generation, $usage_json, $title, $parent_session_id, $funding, $todos_json
+       $compact_generation, $usage_json, $title, $parent_session_id, $funding, $todos_json,
+       $job_json, $job_auto_commit
      )
      ON CONFLICT(id) DO UPDATE SET
        created_at = excluded.created_at,
@@ -301,7 +339,9 @@ export function createSqliteStore(dbPath: string): SessionStore {
        title = excluded.title,
        parent_session_id = excluded.parent_session_id,
        funding = excluded.funding,
-       todos_json = excluded.todos_json`,
+       todos_json = excluded.todos_json,
+       job_json = excluded.job_json,
+       job_auto_commit = excluded.job_auto_commit`,
   )
   const updateSessionTodosSql = db.query(
     `UPDATE sessions SET todos_json = ?, updated_at = ? WHERE id = ?`,

@@ -3,7 +3,8 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { ToolContext, Turn } from '../types'
+import type { SessionRecord, ToolContext, Turn } from '../types'
+import { createMemoryStore } from '../session/memory-store'
 import { decidePermission } from '../permissions/pipeline'
 import { enterWorktreeTool } from './enter-worktree'
 import { exitSessionWorktree } from './session-worktree'
@@ -60,6 +61,20 @@ function makeTurn(cwd: string): Turn {
     cwd,
     model: 'dummy',
     readFiles: new Set(),
+  }
+}
+
+function sessionRecord(id: string, cwd: string): SessionRecord {
+  return {
+    id,
+    createdAt: 1,
+    updatedAt: 1,
+    cwd,
+    model: 'dummy',
+    permissionMode: 'default',
+    compactGeneration: 0,
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    funding: 'byok',
   }
 }
 
@@ -126,6 +141,25 @@ describe('EnterWorktree', () => {
     expect(out.toLowerCase()).not.toMatch(/fail|error|deny/)
     expect(ctx.turn.projectCwd).toBe(project)
     expect(ctx.turn.cwd).toBe(join(project, '.ravenclaw', 'worktrees', 'child'))
+  })
+
+  test('persists base/shadow/baseSha on the session', async () => {
+    const root = fixtureRoot()
+    initGitRepo(root)
+    const store = createMemoryStore()
+    const ctx = makeCtx(root)
+    const session = sessionRecord(ctx.turn.sessionId, root)
+    await store.createSession(session)
+    ctx.store = store
+    ctx.session = session
+    const out = await enterWorktreeTool.execute({ name: 'iso' }, ctx)
+    expect(out.toLowerCase()).not.toMatch(/fail|error|deny/)
+    expect(session.job?.shadowBranch).toBe('raven/iso')
+    const loaded = await store.loadSession(session.id)
+    expect(loaded.session.job?.baseBranch).toBe(session.job?.baseBranch)
+    expect(loaded.session.job?.shadowBranch).toBe('raven/iso')
+    expect(loaded.session.job?.baseCommitSha).toBe(session.job?.baseCommitSha)
+    expect(loaded.session.job?.worktreePath).toBe(ctx.turn.cwd)
   })
 
   test('returns EnterWorktree failed when the cwd is not a git repo', async () => {

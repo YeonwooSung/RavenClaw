@@ -98,7 +98,13 @@ export { applyPatchTool } from './tools/apply-patch'
 export { notebookEditTool } from './tools/notebook-edit'
 export { enterWorktreeTool } from './tools/enter-worktree'
 export { exitWorktreeTool } from './tools/exit-worktree'
-export { enterSessionWorktree, exitSessionWorktree, getSessionWorktree } from './tools/session-worktree'
+export {
+  enterSessionWorktree,
+  exitSessionWorktree,
+  getSessionWorktree,
+  shadowBranchName,
+  jobFromSessionWorktree,
+} from './tools/session-worktree'
 export { createToolSearchTool } from './tools/tool-search'
 export { toolCallTool } from './tools/tool-call'
 export type { ToolCallInput } from './tools/tool-call'

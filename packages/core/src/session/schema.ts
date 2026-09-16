@@ -37,6 +37,11 @@ export const SESSION_TODOS_SQL = readFileSync(
   'utf8',
 )
 
+export const SESSION_JOB_SQL = readFileSync(
+  join(import.meta.dir, '../migrations/008_session_job.sql'),
+  'utf8',
+)
+
 const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: 1, sql: INIT_SQL },
   { version: 2, sql: FTS5_SQL },
@@ -45,6 +50,7 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: 5, sql: PENDING_ASKS_SQL },
   { version: 6, sql: READ_MTIME_SQL },
   { version: 7, sql: SESSION_TODOS_SQL },
+  { version: 8, sql: SESSION_JOB_SQL },
 ]
 
 function currentSchemaVersion(db: Database): number {
