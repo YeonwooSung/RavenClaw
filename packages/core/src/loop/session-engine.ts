@@ -85,18 +85,6 @@ function sessionTodosOf(session: { todos?: TodoItem[] }): TodoItem[] | undefined
   return session.todos
 }
 
-async function syncSessionTodos(
-  store: SessionStore,
-  session: { id: string; todos?: TodoItem[] },
-): Promise<void> {
-  try {
-    const loaded = await store.loadSession(session.id)
-    session.todos = loaded.session.todos
-  } catch {
-    // keep the in-memory list
-  }
-}
-
 export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
   const session = { ...opts.session }
   let messages: Message[] = opts.messages ? [...opts.messages] : []
@@ -379,7 +367,6 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
     const cut = source.length - tail.length
     if (cut <= 0) return
 
-    await syncSessionTodos(opts.store, session)
     const todos = sessionTodosOf(session)
     const result = await runAutocompact({
       messages: source,
@@ -616,6 +603,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         if (opts.jsonSchema !== undefined) loopOpts.jsonSchema = opts.jsonSchema
         if (opts.verifyOnStop === true) loopOpts.verifyOnStop = true
         if (opts.refreshTools !== undefined) loopOpts.refreshTools = opts.refreshTools
+        loopOpts.session = session
         const todos = sessionTodosOf(session)
         if (todos !== undefined) loopOpts.todos = todos
         userTurns += 1
@@ -623,19 +611,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
           turn.messages = injectMidTurnHint(turn.messages, MEMORY_NUDGE)
           messages = turn.messages
         }
-        const end = yield* (async function* () {
-          const gen = queryLoop(loopOpts)
-          let step = await gen.next()
-          while (!step.done) {
-            if (step.value.type === 'tool_result') {
-              await syncSessionTodos(opts.store, session)
-            }
-            yield step.value
-            step = await gen.next()
-          }
-          return step.value
-        })()
-        await syncSessionTodos(opts.store, session)
+        const end = yield* queryLoop(loopOpts)
         messages = turn.messages
         if (end.reason === 'completed' && shouldNudgeLearn(turn.round)) {
           messages = injectMidTurnHint(messages, LEARN_NUDGE)

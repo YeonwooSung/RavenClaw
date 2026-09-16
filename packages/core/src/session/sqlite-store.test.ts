@@ -84,6 +84,28 @@ describe('createSqliteStore', () => {
     }
   })
 
+  test('updateSessionTodos writes todos without pairing messages', async () => {
+    const store = openStore()
+    await store.createSession(session())
+    await store.persistUser('s1', {
+      id: 'u1',
+      role: 'user',
+      blocks: [{ type: 'text', text: 'todos' }],
+      createdAt: 1,
+    })
+    await store.persistToolCalls('s1', {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'td', name: 'TodoWrite', input: { items: [] } }],
+      createdAt: 2,
+    })
+    await store.updateSessionTodos('s1', [{ text: 'alpha', status: 'pending' }])
+    const raw = store.loadMessages ? await store.loadMessages('s1') : []
+    expect(raw.filter((msg) => msg.role === 'tool')).toEqual([])
+    const listed = (await store.listSessions()).find((row) => row.id === 's1')
+    expect(listed?.todos).toEqual([{ text: 'alpha', status: 'pending' }])
+  })
+
   test('session todos_json round-trips through create, upsert, and load', async () => {
     const store = openStore()
     await store.createSession(

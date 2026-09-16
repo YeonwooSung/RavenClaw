@@ -31,6 +31,7 @@ import { formatSettledOutput } from './format-output'
 import { partitionToolCalls } from '../tools/partition'
 import { toolCallTool } from '../tools/tool-call'
 import { forgetReadsNotInTail, stampReadMtime } from '../tools/read-files'
+import { normalizeTodoWriteItems, type TodoWriteInput } from '../tools/todo'
 import { filterToolsForTurn } from '../tools/skill'
 import { appendDeferredMcpTools } from '../mcp/tools'
 import { estimateTokens, shouldEnterGrace, suffixGraceNotice } from './budget'
@@ -1367,7 +1368,7 @@ async function executeOneCall(
     events.push(...progress)
     const formatted = formatSettledOutput(tool, output)
     noteToolSideEffects(state, callName, input)
-    if (callName === 'TodoWrite') await refreshLoopTodos(state)
+    if (callName === 'TodoWrite') applyWrittenTodos(state, input)
     const content = appendSubdirAgents(state, input, formatted.content, formatted.persistPath)
     recordStall(state, callName, input, content)
     if (state.lifecycle) {
@@ -1445,13 +1446,10 @@ function noteToolSideEffects(state: LoopState, name: string, input: unknown): vo
   }
 }
 
-async function refreshLoopTodos(state: LoopState): Promise<void> {
-  try {
-    const loaded = await state.store.loadSession(state.turn.sessionId)
-    state.todos = loaded.session.todos
-  } catch {
-    // keep the compact snapshot
-  }
+function applyWrittenTodos(state: LoopState, input: unknown): void {
+  const items = normalizeTodoWriteItems((input as TodoWriteInput).items ?? [])
+  state.todos = items
+  if (state.session) state.session.todos = items
 }
 
 function appendSubdirAgents(

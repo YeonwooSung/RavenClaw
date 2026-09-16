@@ -1,15 +1,9 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import type { Tool, ToolContext } from '../types'
+import type { TodoItem, TodoStatus, Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
 
-export type TodoStatus = 'pending' | 'in_progress' | 'done'
-
-export interface TodoItem {
-  id?: string
-  text: string
-  status: TodoStatus
-}
+export type { TodoItem, TodoStatus }
 
 export interface TodoWriteInput {
   items: TodoItem[]
@@ -36,6 +30,14 @@ export function loadTodos(root: string): TodoItem[] {
     return []
   }
   return parseTodoItems(parsed)
+}
+
+export function normalizeTodoWriteItems(items: TodoItem[]): TodoItem[] {
+  return items.map((item, index) => ({
+    id: item.id !== undefined && item.id !== '' ? item.id : `todo_${index + 1}`,
+    text: item.text,
+    status: item.status,
+  }))
 }
 
 /** Parse a JSON value into checklist items. Non-arrays become `[]`. */
@@ -115,16 +117,9 @@ export const todoWriteTool: Tool<TodoWriteInput, string> = {
     if (ctx.signal.aborted) throw abortError()
     const store = ctx.store
     if (!store) return 'TodoWrite failed: session store is required'
-    const items = input.items.map((item, index) => ({
-      id: item.id !== undefined && item.id !== '' ? item.id : `todo_${index + 1}`,
-      text: item.text,
-      status: item.status,
-    }))
+    const items = normalizeTodoWriteItems(input.items)
     try {
-      const loaded = await store.loadSession(ctx.turn.sessionId)
-      loaded.session.todos = items
-      loaded.session.updatedAt = Date.now()
-      await store.upsertSession(loaded.session)
+      await store.updateSessionTodos(ctx.turn.sessionId, items)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return `TodoWrite failed: ${message}`

@@ -266,6 +266,14 @@ export interface AgentDefinition {
   outputMode: 'last_message' | 'all_messages'
 }
 
+export type TodoStatus = 'pending' | 'in_progress' | 'done'
+
+export interface TodoItem {
+  id?: string
+  text: string
+  status: TodoStatus
+}
+
 export interface SessionRecord {
   id: string
   createdAt: number
@@ -279,7 +287,7 @@ export interface SessionRecord {
   title?: string
   parentSessionId?: string
   funding: Funding
-  todos?: import('./tools/todo').TodoItem[]
+  todos?: TodoItem[]
 }
 
 export interface SessionListFilter {
@@ -324,6 +332,8 @@ export function sessionLockedMessage(holderName: string | undefined, expiresAt: 
 export interface SessionStore {
   createSession(session: SessionRecord): Promise<void>
   upsertSession(session: SessionRecord): Promise<void>
+  /** Non-repairing session-row write. Must not load or pair messages. */
+  updateSessionTodos(sessionId: string, todos: TodoItem[]): Promise<void>
   listSessions(filter?: SessionListFilter): Promise<SessionRecord[]>
   loadSession(sessionId: string): Promise<{ session: SessionRecord; messages: Message[] }>
   /**
@@ -463,8 +473,10 @@ export interface QueryLoopOptions {
   verifyOnStop?: boolean
   /** After a tool batch, return newly ready deferred tools (MCP). Prefix stays unchanged. */
   refreshTools?: () => Promise<Tool[] | undefined> | Tool[] | undefined
+  /** Live session record. TodoWrite mutates `todos` in place for mid-turn compact/TUI. */
+  session?: SessionRecord
   /** Session todos for compact restore. Unset until the engine has a session list. */
-  todos?: import('./tools/todo').TodoItem[]
+  todos?: TodoItem[]
   lifecycle?: {
     run(
       event: string,

@@ -191,6 +191,7 @@ describe('port shapes', () => {
     const store = {
       async createSession() {},
       async upsertSession() {},
+      async updateSessionTodos() {},
       async listSessions() {
         return []
       },

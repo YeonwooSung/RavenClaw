@@ -120,7 +120,7 @@ export { createAskUserTool, askUserTool, formatAskUserPrompt } from './tools/ask
 export type { AskUserInput, AskUserFn } from './tools/ask-user'
 export { setOutputTool, setChildOutput, takeChildOutput } from './tools/set-output'
 export { todoWriteTool, loadTodos, todosFromToolResult, todoJsonPath } from './tools/todo'
-export type { TodoItem, TodoStatus, TodoWriteInput } from './tools/todo'
+export type { TodoWriteInput } from './tools/todo'
 export { partitionToolCalls } from './tools/partition'
 export {
   COMPACTION_PROMPT_TOKENS,

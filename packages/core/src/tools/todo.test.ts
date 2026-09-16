@@ -129,6 +129,51 @@ describe('TodoWrite', () => {
     expect(existsSync(join(worktree, '.ravenclaw', 'todo.json'))).toBe(false)
   })
 
+  test('fails closed without a session store and does not write todo.json', async () => {
+    const root = fixtureRoot()
+    const out = await todoWriteTool.execute(
+      { items: [{ text: 'orphan', status: 'pending' }] },
+      makeCtx(root),
+    )
+    expect(String(out).toLowerCase()).toMatch(/fail|store/)
+    expect(existsSync(todoJsonPath(root))).toBe(false)
+  })
+
+  test('persist-before-execute TodoWrite does not insert an incomplete tool row', async () => {
+    const root = fixtureRoot()
+    const store = createMemoryStore()
+    await store.createSession(sessionRecord('s1', root))
+    await store.persistUser('s1', {
+      id: 'u1',
+      role: 'user',
+      blocks: [{ type: 'text', text: 'todos' }],
+      createdAt: 1,
+    })
+    await store.persistToolCalls('s1', {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [
+        {
+          type: 'tool_use',
+          id: 'td',
+          name: 'TodoWrite',
+          input: { items: [{ text: 'alpha', status: 'pending' }] },
+        },
+      ],
+      createdAt: 2,
+    })
+    const out = await todoWriteTool.execute(
+      { items: [{ text: 'alpha', status: 'pending' }] },
+      makeCtx(root, 's1', store),
+    )
+    expect(String(out).toLowerCase()).not.toMatch(/fail|error|deny/)
+    const raw = store.loadMessages ? await store.loadMessages('s1') : []
+    expect(raw.filter((msg) => msg.role === 'tool')).toEqual([])
+    expect((await store.listSessions()).find((row) => row.id === 's1')?.todos?.map((t) => t.text)).toEqual([
+      'alpha',
+    ])
+  })
+
   test('two sessions in one cwd keep independent todo lists', async () => {
     const root = fixtureRoot()
     const store = createMemoryStore()

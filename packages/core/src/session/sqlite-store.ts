@@ -303,6 +303,9 @@ export function createSqliteStore(dbPath: string): SessionStore {
        funding = excluded.funding,
        todos_json = excluded.todos_json`,
   )
+  const updateSessionTodosSql = db.query(
+    `UPDATE sessions SET todos_json = ?, updated_at = ? WHERE id = ?`,
+  )
   const selectSession = db.query(`SELECT * FROM sessions WHERE id = ?`)
   const insertMessage = db.query(
     `INSERT INTO messages (
@@ -508,6 +511,15 @@ export function createSqliteStore(dbPath: string): SessionStore {
     async upsertSession(session) {
       await withWrite(async () => {
         upsertSessionSql.run(sessionBind(session))
+      })
+    },
+
+    async updateSessionTodos(sessionId, todos) {
+      await withWrite(async () => {
+        const result = updateSessionTodosSql.run(JSON.stringify(todos), Date.now(), sessionId)
+        if (result.changes === 0) {
+          throw new PersistError('unknown', `session not found: ${sessionId}`)
+        }
       })
     },
 

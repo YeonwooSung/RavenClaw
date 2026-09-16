@@ -32,6 +32,7 @@ import { writeTool } from '../tools/write'
 import { readTool } from '../tools/read'
 import { skillTool } from '../tools/skill'
 import { toolCallTool } from '../tools/tool-call'
+import { todoWriteTool } from '../tools/todo'
 import { GRACE_NOTICE } from './budget'
 
 const INCOMPLETE_TEXT =
@@ -347,6 +348,36 @@ describe('queryLoop via SessionEngine', () => {
     expect(toolMsg).toBeDefined()
     expect(toolMsg?.ok).toBe(true)
     expect(toolMsg?.blocks[0]?.text).toBe('ping')
+  })
+
+  test('persist-before-execute TodoWrite does not insert incomplete for the live call', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-todo-pair-'))
+    try {
+      const store = createMemoryStore()
+      const session = makeSession({ id: 'sess_todo_pair', cwd })
+      await store.createSession(session)
+      const provider = createFakeProvider([
+        toolThenStop('td', 'TodoWrite', { items: [{ text: 'alpha', status: 'pending' }] }),
+        textThenStop('ok'),
+      ])
+      const engine = createSessionEngine(
+        engineOpts({ provider, store, session, tools: [todoWriteTool] }),
+      )
+      const { result } = await collect(engine.submitMessage('todos'))
+      expect(result).toEqual({ reason: 'completed' })
+      const raw = store.loadMessages ? await store.loadMessages(session.id) : []
+      const toolRows = raw.filter(
+        (msg): msg is Extract<Message, { role: 'tool' }> =>
+          msg.role === 'tool' && msg.toolUseId === 'td',
+      )
+      expect(toolRows).toHaveLength(1)
+      expect(toolRows[0]?.ok).toBe(true)
+      expect(toolRows[0]?.blocks[0]?.text).not.toMatch(/incomplete/i)
+      expect(pairingHolds(raw)).toBe(true)
+      expect(engine.session.todos?.map((item) => item.text)).toEqual(['alpha'])
+    } finally {
+      rmSync(cwd, { recursive: true, force: true })
+    }
   })
 
   test('3. abort mid-stream returns aborted and does not execute', async () => {

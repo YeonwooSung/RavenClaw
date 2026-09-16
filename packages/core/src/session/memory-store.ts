@@ -144,6 +144,17 @@ export function createMemoryStore(): SessionStore {
       })
     },
 
+    async updateSessionTodos(sessionId, todos) {
+      await withWrite(async () => {
+        const sess = sessions.get(sessionId)
+        if (!sess) {
+          throw new PersistError('unknown', `session not found: ${sessionId}`)
+        }
+        sess.todos = todos
+        sess.updatedAt = Date.now()
+      })
+    },
+
     async listSessions(filter?: SessionListFilter) {
       let rows = [...sessions.values()].map((row) => ({ ...row }))
       if (filter?.cwd !== undefined) {
