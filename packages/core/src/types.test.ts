@@ -206,6 +206,7 @@ describe('port shapes', () => {
             compactGeneration: 0,
             usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
             funding: 'byok',
+            todos: [{ text: 'ship', status: 'pending' }],
           },
           messages: [],
         }
@@ -254,6 +255,7 @@ describe('port shapes', () => {
         compactGeneration: 0,
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         funding: 'byok',
+        todos: [{ text: 'ship', status: 'pending' }],
       },
       provider,
       store,

@@ -35,9 +35,14 @@ export function loadTodos(root: string): TodoItem[] {
   } catch {
     return []
   }
-  if (!Array.isArray(parsed)) return []
+  return parseTodoItems(parsed)
+}
+
+/** Parse a JSON value into checklist items. Non-arrays become `[]`. */
+export function parseTodoItems(value: unknown): TodoItem[] {
+  if (!Array.isArray(value)) return []
   const items: TodoItem[] = []
-  for (const entry of parsed) {
+  for (const entry of value) {
     const item = parseTodoItem(entry)
     if (item !== undefined) items.push(item)
   }
@@ -108,12 +113,23 @@ export const todoWriteTool: Tool<TodoWriteInput, string> = {
   },
   async execute(input: TodoWriteInput, ctx: ToolContext) {
     if (ctx.signal.aborted) throw abortError()
-    const root = ctx.turn.projectCwd ?? ctx.turn.cwd
+    const store = ctx.store
+    if (!store) return 'TodoWrite failed: session store is required'
     const items = input.items.map((item, index) => ({
       id: item.id !== undefined && item.id !== '' ? item.id : `todo_${index + 1}`,
       text: item.text,
       status: item.status,
     }))
+    try {
+      const loaded = await store.loadSession(ctx.turn.sessionId)
+      loaded.session.todos = items
+      loaded.session.updatedAt = Date.now()
+      await store.upsertSession(loaded.session)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return `TodoWrite failed: ${message}`
+    }
+    const root = ctx.turn.projectCwd ?? ctx.turn.cwd
     const path = todoJsonPath(root)
     try {
       mkdirSync(dirname(path), { recursive: true })

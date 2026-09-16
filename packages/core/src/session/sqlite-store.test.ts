@@ -57,7 +57,7 @@ function session(over: Partial<SessionRecord> = {}): SessionRecord {
 }
 
 describe('createSqliteStore', () => {
-  test('fresh install uses WAL and schema_version 6', () => {
+  test('fresh install uses WAL and schema_version 7', () => {
     const path = tempDbPath()
     openStore(path)
     const db = new Database(path, { readonly: true })
@@ -67,7 +67,7 @@ describe('createSqliteStore', () => {
       const version = db
         .query("SELECT value FROM meta WHERE key = 'schema_version'")
         .get() as { value: string }
-      expect(version.value).toBe('6')
+      expect(version.value).toBe('7')
       expect(
         db
           .query("SELECT 1 AS ok FROM sqlite_master WHERE name = 'messages_fts'")
@@ -82,6 +82,19 @@ describe('createSqliteStore', () => {
     } finally {
       db.close()
     }
+  })
+
+  test('session todos_json round-trips through create, upsert, and load', async () => {
+    const store = openStore()
+    await store.createSession(
+      session({ todos: [{ id: 't1', text: 'alpha', status: 'pending' }] }),
+    )
+    const created = await store.loadSession('s1')
+    expect(created.session.todos).toEqual([{ id: 't1', text: 'alpha', status: 'pending' }])
+    created.session.todos = [{ text: 'beta', status: 'done' }]
+    await store.upsertSession(created.session)
+    const loaded = await store.loadSession('s1')
+    expect(loaded.session.todos).toEqual([{ text: 'beta', status: 'done' }])
   })
 
   test('persistAssistant rejects tool_use; persistToolCalls rejects text-only', async () => {

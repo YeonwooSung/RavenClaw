@@ -26,13 +26,13 @@ describe('createMemoryDeliveries', () => {
 })
 
 describe('createSqliteDeliveries', () => {
-  test('persists across instances and migrates to schema 6', () => {
+  test('persists across instances and migrates to schema 7', () => {
     const db = new Database(':memory:')
     applyMigrations(db)
     const version = db.query("SELECT value FROM meta WHERE key = 'schema_version'").get() as {
       value: string
     }
-    expect(version.value).toBe('6')
+    expect(version.value).toBe('7')
     const first = createSqliteDeliveries(db)
     expect(first.seen('discord:abc')).toBe(true)
     expect(first.seen('discord:abc')).toBe(false)

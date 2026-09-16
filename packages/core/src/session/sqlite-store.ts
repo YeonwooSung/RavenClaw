@@ -17,6 +17,7 @@ import type {
 } from '../types'
 import { clipAgentMailBody } from '../tasks/mailbox'
 import { repairRoleAlternation } from '../loop/repair'
+import { parseTodoItems, type TodoItem } from '../tools/todo'
 import { applyMigrations } from './schema'
 import {
   deletePendingAskRow,
@@ -44,6 +45,7 @@ type SessionRow = {
   title: string | null
   parent_session_id: string | null
   funding: string
+  todos_json: string | null
 }
 
 type MessageRow = {
@@ -143,7 +145,20 @@ function sessionFromRow(row: SessionRow): SessionRecord {
   if (row.pre_plan_mode != null) session.prePlanMode = row.pre_plan_mode as PermissionMode
   if (row.title != null) session.title = row.title
   if (row.parent_session_id != null) session.parentSessionId = row.parent_session_id
+  const todos = todosFromJson(row.todos_json)
+  if (todos !== undefined) session.todos = todos
   return session
+}
+
+function todosFromJson(raw: string | null): TodoItem[] | undefined {
+  if (raw == null) return undefined
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return undefined
+    return parseTodoItems(parsed)
+  } catch {
+    return undefined
+  }
 }
 
 function messageFromRow(row: MessageRow): Message {
@@ -200,6 +215,7 @@ function sessionBind(session: SessionRecord) {
     $title: session.title ?? null,
     $parent_session_id: session.parentSessionId ?? null,
     $funding: session.funding,
+    $todos_json: session.todos !== undefined ? JSON.stringify(session.todos) : null,
   }
 }
 
@@ -259,19 +275,19 @@ export function createSqliteStore(dbPath: string): SessionStore {
   const insertSession = db.query(
     `INSERT INTO sessions (
        id, created_at, updated_at, cwd, model, permission_mode, pre_plan_mode,
-       compact_generation, usage_json, title, parent_session_id, funding
+       compact_generation, usage_json, title, parent_session_id, funding, todos_json
      ) VALUES (
        $id, $created_at, $updated_at, $cwd, $model, $permission_mode, $pre_plan_mode,
-       $compact_generation, $usage_json, $title, $parent_session_id, $funding
+       $compact_generation, $usage_json, $title, $parent_session_id, $funding, $todos_json
      )`,
   )
   const upsertSessionSql = db.query(
     `INSERT INTO sessions (
        id, created_at, updated_at, cwd, model, permission_mode, pre_plan_mode,
-       compact_generation, usage_json, title, parent_session_id, funding
+       compact_generation, usage_json, title, parent_session_id, funding, todos_json
      ) VALUES (
        $id, $created_at, $updated_at, $cwd, $model, $permission_mode, $pre_plan_mode,
-       $compact_generation, $usage_json, $title, $parent_session_id, $funding
+       $compact_generation, $usage_json, $title, $parent_session_id, $funding, $todos_json
      )
      ON CONFLICT(id) DO UPDATE SET
        created_at = excluded.created_at,
@@ -284,7 +300,8 @@ export function createSqliteStore(dbPath: string): SessionStore {
        usage_json = excluded.usage_json,
        title = excluded.title,
        parent_session_id = excluded.parent_session_id,
-       funding = excluded.funding`,
+       funding = excluded.funding,
+       todos_json = excluded.todos_json`,
   )
   const selectSession = db.query(`SELECT * FROM sessions WHERE id = ?`)
   const insertMessage = db.query(

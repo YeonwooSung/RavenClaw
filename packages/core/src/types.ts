@@ -279,6 +279,7 @@ export interface SessionRecord {
   title?: string
   parentSessionId?: string
   funding: Funding
+  todos?: import('./tools/todo').TodoItem[]
 }
 
 export interface SessionListFilter {

@@ -1367,6 +1367,7 @@ async function executeOneCall(
     events.push(...progress)
     const formatted = formatSettledOutput(tool, output)
     noteToolSideEffects(state, callName, input)
+    if (callName === 'TodoWrite') await refreshLoopTodos(state)
     const content = appendSubdirAgents(state, input, formatted.content, formatted.persistPath)
     recordStall(state, callName, input, content)
     if (state.lifecycle) {
@@ -1441,6 +1442,15 @@ function noteToolSideEffects(state: LoopState, name: string, input: unknown): vo
   if (name === 'Bash') {
     const command = input && typeof input === 'object' ? (input as { command?: unknown }).command : undefined
     if (typeof command === 'string' && VERIFY_COMMAND.test(command)) state.sawVerifyCommand = true
+  }
+}
+
+async function refreshLoopTodos(state: LoopState): Promise<void> {
+  try {
+    const loaded = await state.store.loadSession(state.turn.sessionId)
+    state.todos = loaded.session.todos
+  } catch {
+    // keep the compact snapshot
   }
 }
 
