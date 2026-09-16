@@ -27,6 +27,7 @@ import {
   persistAllowAlways,
 } from '../permissions/rules'
 import { isAbortError, nextOrAbort } from './abort'
+import { formatSettledOutput } from './format-output'
 import { partitionToolCalls } from '../tools/partition'
 import { toolCallTool } from '../tools/tool-call'
 import { stampReadMtime } from '../tools/read-files'
@@ -161,31 +162,6 @@ function isRetryable(error: unknown): boolean {
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-function persistPathOf(output: unknown): string | undefined {
-  if (!output || typeof output !== 'object') return undefined
-  if (!('persistPath' in output)) return undefined
-  const path = (output as { persistPath?: unknown }).persistPath
-  return typeof path === 'string' && path.length > 0 ? path : undefined
-}
-
-function formatOutput(
-  tool: Tool,
-  output: unknown,
-): { content: string; persistPath?: string } {
-  const persistPath = persistPathOf(output)
-  let content: string
-  if (typeof output === 'string') content = output
-  else if (tool.renderResult) content = tool.renderResult(output)
-  else if (output === undefined || output === null) content = ''
-  else if (typeof output === 'object') {
-    const body = (output as { content?: unknown }).content
-    content = typeof body === 'string' ? body : JSON.stringify(output)
-  } else {
-    content = String(output)
-  }
-  return persistPath !== undefined ? { content, persistPath } : { content }
 }
 
 export function buildAssistantMessage(
@@ -1383,7 +1359,7 @@ async function executeOneCall(
   try {
     const output = await tool.execute(input, executeCtx)
     events.push(...progress)
-    const formatted = formatOutput(tool, output)
+    const formatted = formatSettledOutput(tool, output)
     noteToolSideEffects(state, callName, input)
     const content = appendSubdirAgents(state, input, formatted.content, formatted.persistPath)
     recordStall(state, callName, input, content)

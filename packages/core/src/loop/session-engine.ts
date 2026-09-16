@@ -15,7 +15,6 @@ import {
   type SessionStore,
   type StreamEvent,
   type SystemPart,
-  type Tool,
   type ToolContext,
   type Turn,
   type UserOrToolBlock,
@@ -24,6 +23,7 @@ import {
 import { abortTurn } from './abort'
 import { queryLoop } from './query-loop'
 import { selectProtectedTail } from './repair'
+import { formatSettledOutput } from './format-output'
 import {
   denyText,
   executeFailedText,
@@ -78,31 +78,6 @@ function titleFromUserText(text: string): string | undefined {
   const line = first.replace(/\s+/g, ' ').trim()
   if (line === '') return undefined
   return line.length <= TITLE_MAX ? line : line.slice(0, TITLE_MAX)
-}
-
-function formatSettledOutput(
-  tool: Tool,
-  output: unknown,
-): { content: string; persistPath?: string } {
-  const persistPath =
-    output &&
-    typeof output === 'object' &&
-    'persistPath' in output &&
-    typeof (output as { persistPath?: unknown }).persistPath === 'string' &&
-    (output as { persistPath: string }).persistPath.length > 0
-      ? (output as { persistPath: string }).persistPath
-      : undefined
-  let content: string
-  if (typeof output === 'string') content = output
-  else if (tool.renderResult) content = tool.renderResult(output)
-  else if (output === undefined || output === null) content = ''
-  else if (typeof output === 'object') {
-    const body = (output as { content?: unknown }).content
-    content = typeof body === 'string' ? body : JSON.stringify(output)
-  } else {
-    content = String(output)
-  }
-  return persistPath !== undefined ? { content, persistPath } : { content }
 }
 
 export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {

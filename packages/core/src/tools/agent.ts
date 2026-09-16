@@ -1,5 +1,6 @@
 import { createSessionEngine } from '../loop/session-engine'
 import { openRavenclawLog, wrapSessionEngineLog } from '../log'
+import { formatSettledOutput } from '../loop/format-output'
 import { ABORTED_TEXT, INCOMPLETE_TEXT, PERSIST_FAILED_TEXT, makeToolMessage } from '../loop/pairing'
 import { isAbortError } from '../loop/abort'
 import { getAgentDefinition } from '../agent/catalog'
@@ -659,7 +660,7 @@ async function maybeRunCommandRunner(
     signal: childTurn.abort.signal,
     onProgress: ctx.onProgress,
   })
-  const text = formatToolOutput(bash, output)
+  const text = formatSettledOutput(bash, output).content
   try {
     await opts.store.persistToolResults(childTurn.sessionId, [makeToolMessage(toolUseId, true, text)])
   } catch {
@@ -722,14 +723,3 @@ function commandInput(
   return { command }
 }
 
-function formatToolOutput(tool: Tool, output: unknown): string {
-  if (typeof output === 'string') return output
-  if (tool.renderResult) return tool.renderResult(output)
-  if (output === undefined || output === null) return ''
-  if (typeof output === 'object' && output !== null && 'content' in output) {
-    const content = (output as { content?: unknown }).content
-    if (typeof content === 'string') return content
-  }
-  if (typeof output === 'object') return JSON.stringify(output)
-  return String(output)
-}
