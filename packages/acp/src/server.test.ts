@@ -1,5 +1,16 @@
 import { describe, expect, test } from 'bun:test'
-import type { UserSubmitInput } from '@ravenclaw/core'
+import {
+  createMemoryStore,
+  createSessionEngine,
+  type CompactPolicy,
+  type ModelProfile,
+  type Provider,
+  type ProviderChunk,
+  type ProviderRequest,
+  type Tool,
+  type ToolContext,
+  type UserSubmitInput,
+} from '@ravenclaw/core'
 import {
   ACP_METHODS,
   AGENT_INFO,
@@ -13,7 +24,6 @@ import {
   createAcpServer,
   type AcpEngine,
   type AcpEngineFactoryOpts,
-  type AcpPermissionAsk,
 } from './server'
 
 function resultOf(response: { result?: unknown; error?: unknown }): Record<string, unknown> {
@@ -36,6 +46,93 @@ function fakeEngine(opts: {
     },
     abort() {
       opts.onAbort?.()
+    },
+  }
+}
+
+function defaultModel(id = 'dummy'): ModelProfile {
+  return {
+    id,
+    contextWindow: 32_000,
+    reserveOutputTokens: 3_200,
+    inputUsdPerMTok: 0,
+    outputUsdPerMTok: 0,
+    cacheReadUsdPerMTok: 0,
+    cacheWriteUsdPerMTok: 0,
+    supportsThinking: false,
+  }
+}
+
+function defaultCompact(): CompactPolicy {
+  return {
+    enabled: true,
+    autoCompactBuffer: 13_000,
+    blockingBufferWhenManual: 3_000,
+    protectLastMessages: 20,
+    keepRecentFiles: 5,
+    maxCharsPerRestoredFile: 5_000,
+    maxCharsRestoredFilesTotal: 50_000,
+    maxCharsPerRestoredSkill: 5_000,
+    maxCharsRestoredSkillsTotal: 25_000,
+    maxConsecutiveFailures: 3,
+    llmSummarize: false,
+  }
+}
+
+function createFakeProvider(scripts: ProviderChunk[][]): Provider {
+  const queue = [...scripts]
+  return {
+    id: 'fake',
+    apiMode: 'openai_compat',
+    profile(model: string) {
+      return defaultModel(model)
+    },
+    async *stream(_req: ProviderRequest, signal: AbortSignal) {
+      const script = queue.shift() ?? [{ type: 'stop' as const, reason: null }]
+      for (const chunk of script) {
+        if (signal.aborted) return
+        yield chunk
+      }
+    },
+  }
+}
+
+function textThenStop(text: string): ProviderChunk[] {
+  return [
+    { type: 'text_delta', text },
+    { type: 'stop', reason: 'end' },
+  ]
+}
+
+function toolThenStop(id: string, name: string, input: unknown): ProviderChunk[] {
+  return [
+    { type: 'tool_call', id, name, input },
+    { type: 'stop', reason: 'tool_use' },
+  ]
+}
+
+function createAskEcho(): Tool<{ text: string }, string> {
+  return {
+    name: 'Echo',
+    description: 'echo',
+    inputSchema: { type: 'object', properties: { text: { type: 'string' } } },
+    parse(input: unknown) {
+      if (
+        !input ||
+        typeof input !== 'object' ||
+        typeof (input as { text?: unknown }).text !== 'string'
+      ) {
+        return { ok: false as const, message: 'expected { text: string }' }
+      }
+      return { ok: true as const, value: { text: (input as { text: string }).text } }
+    },
+    isConcurrencySafe: () => true,
+    isReadOnly: () => true,
+    async checkPermissions() {
+      return { behavior: 'ask' as const, message: 'Echo?' }
+    },
+    async execute(input: { text: string }, _ctx: ToolContext) {
+      return input.text
     },
   }
 }
@@ -713,32 +810,21 @@ describe('createAcpServer', () => {
     })
   })
 
-  test('timeout with no editor answer denies and the tool does not execute', async () => {
-    let executed = false
+  test('timeout with no editor answer does not deny', async () => {
     let decided: string | undefined
+    let threw: string | undefined
     const server = createAcpServer({
       engineFactory: (_sessionId, opts) => ({
         async *submitMessage() {
-          const answer = await opts?.requestPermission?.({
-            id: 'c-timeout',
-            tool: 'Bash',
-            input: { command: 'rm -rf /' },
-            message: 'dangerous',
-          } satisfies AcpPermissionAsk)
-          decided = answer
-          if (answer !== 'deny') {
-            executed = true
-            yield {
-              type: 'tool_result',
+          try {
+            decided = await opts?.requestPermission?.({
               id: 'c-timeout',
-              result: { toolUseId: 'c-timeout', ok: true, content: 'ran' },
-            }
-          } else {
-            yield {
-              type: 'tool_result',
-              id: 'c-timeout',
-              result: { toolUseId: 'c-timeout', ok: false, content: 'denied' },
-            }
+              tool: 'Bash',
+              input: { command: 'rm -rf /' },
+              message: 'dangerous',
+            })
+          } catch (error) {
+            threw = error instanceof Error ? error.name : String(error)
           }
           return { reason: 'completed' }
         },
@@ -762,9 +848,76 @@ describe('createAcpServer', () => {
       method: ACP_METHODS.sessionPrompt,
       params: { sessionId, prompt: 'rm' },
     })
-    expect(resultOf(prompt)).toEqual({ stopReason: 'end_turn' })
-    expect(decided).toBe('deny')
-    expect(executed).toBe(false)
+    expect(resultOf(prompt)).toEqual({ stopReason: 'cancelled' })
+    expect(decided).toBeUndefined()
+    expect(threw).toBe('AskWaiterExpired')
+  })
+
+  test('timeout leaves pending_asks and does not persist a deny tool row', async () => {
+    const store = createMemoryStore()
+    const session = {
+      id: 'sess_eval_pending_ask',
+      createdAt: 1,
+      updatedAt: 1,
+      cwd: '/tmp',
+      model: 'dummy',
+      permissionMode: 'default' as const,
+      compactGeneration: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      funding: 'byok' as const,
+    }
+    await store.createSession(session)
+    const server = createAcpServer({
+      engineFactory: (_sessionId, opts) =>
+        createSessionEngine({
+          session,
+          provider: createFakeProvider([
+            toolThenStop('call_eval', 'Echo', { text: 'hi' }),
+            textThenStop('done'),
+          ]),
+          store,
+          tools: [createAskEcho()],
+          compact: defaultCompact(),
+          model: defaultModel(),
+          maxRounds: 8,
+          bare: true,
+          askUser: (event, signal) => {
+            if (!opts?.requestPermission) return Promise.resolve('deny')
+            return opts.requestPermission(event, signal)
+          },
+        }),
+      request: () => new Promise(() => {}),
+      permissionTimeoutMs: 120_000,
+      wait: async () => {},
+    })
+    const sessionId = resultOf(
+      await server.handle({
+        jsonrpc: '2.0',
+        id: 1,
+        method: ACP_METHODS.sessionNew,
+        params: { cwd: '/tmp' },
+      }),
+    ).sessionId
+    const prompt = await server.handle({
+      jsonrpc: '2.0',
+      id: 2,
+      method: ACP_METHODS.sessionPrompt,
+      params: { sessionId, prompt: 'rm' },
+    })
+    expect(resultOf(prompt)).toEqual({ stopReason: 'cancelled' })
+    const pending = await store.listPendingAsks(session.id)
+    expect(pending.map((row) => row.callId)).toEqual(['call_eval'])
+    const loaded = await store.loadSession(session.id)
+    expect(loaded.messages.filter((msg) => msg.role === 'tool')).toEqual([])
+    expect(
+      loaded.messages.some(
+        (msg) =>
+          msg.role === 'tool' &&
+          msg.blocks.some(
+            (block) => block.type === 'text' && block.text.includes('permission_denied'),
+          ),
+      ),
+    ).toBe(false)
   })
 
   test('session/load still attaches an existing engine after factory opts change', async () => {

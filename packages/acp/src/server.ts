@@ -77,6 +77,7 @@ export function createAcpServer(opts: AcpServerOptions): AcpServer {
   const notify = opts.notify
   const answered = new Map<string, AcpPermissionAnswer>()
   const permissionFlights = new Map<string, Promise<AcpPermissionAnswer>>()
+  const expiredSessions = new Set<string>()
   let nextRequestId = 1
   // Inline ACP image blocks map onto UserSubmitInput.images (mediaType + data).
   const capabilities: AgentCapabilities = {
@@ -110,15 +111,21 @@ export function createAcpServer(opts: AcpServerOptions): AcpServer {
     const inflight = permissionFlights.get(event.id)
     if (inflight) return inflight
 
-    if (!opts.request || signal?.aborted) {
+    if (!opts.request) {
       answered.set(event.id, 'deny')
       return 'deny'
+    }
+    if (signal?.aborted) {
+      throw Object.assign(new Error('The operation was aborted'), { name: 'AbortError' })
     }
 
     const flight = askPermissionOnce(sessionId, event, signal)
     permissionFlights.set(event.id, flight)
     try {
       return await flight
+    } catch (error) {
+      if (isAskWaiterExpired(error)) expiredSessions.add(sessionId)
+      throw error
     } finally {
       if (permissionFlights.get(event.id) === flight) permissionFlights.delete(event.id)
     }
@@ -206,8 +213,18 @@ export function createAcpServer(opts: AcpServerOptions): AcpServer {
     )
     const gen = engine.submitMessage(input)
     let end: unknown
+    expiredSessions.delete(parsed.sessionId)
     while (true) {
-      const next = await gen.next()
+      let next: IteratorResult<unknown, unknown>
+      try {
+        next = await gen.next()
+      } catch (error) {
+        if (isAskWaiterExpired(error)) {
+          expiredSessions.add(parsed.sessionId)
+          break
+        }
+        throw error
+      }
       if (next.done) {
         if (isRoundEnd(next.value)) end = next.value
         break
@@ -218,11 +235,21 @@ export function createAcpServer(opts: AcpServerOptions): AcpServer {
         continue
       }
       if (isPermissionAsk(event)) {
-        await askPermission(parsed.sessionId, event)
+        try {
+          await askPermission(parsed.sessionId, event)
+        } catch (error) {
+          if (isAskWaiterExpired(error)) break
+          throw error
+        }
         continue
       }
       const update = toSessionUpdate(event)
       if (update) emit(parsed.sessionId, update)
+    }
+    if (expiredSessions.has(parsed.sessionId)) {
+      expiredSessions.delete(parsed.sessionId)
+      emit(parsed.sessionId, { sessionUpdate: 'done', stopReason: 'cancelled' })
+      return jsonRpcResult(id, { stopReason: 'cancelled' })
     }
     const stopReason = roundEndToStopReason(end)
     emit(parsed.sessionId, { sessionUpdate: 'done', stopReason })
@@ -334,22 +361,36 @@ function defaultWait(ms: number): Promise<void> {
   })
 }
 
+function isAskWaiterExpired(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AskWaiterExpired'
+}
+
 async function racePermission(
   request: Promise<unknown>,
   timeout: Promise<void>,
   signal?: AbortSignal,
 ): Promise<AcpPermissionAnswer> {
-  return new Promise((resolve) => {
+  return new Promise((resolve, reject) => {
     let settled = false
     const finish = (answer: AcpPermissionAnswer) => {
       if (settled) return
       settled = true
       resolve(answer)
     }
+    const fail = (error: Error) => {
+      if (settled) return
+      settled = true
+      reject(error)
+    }
     void request.then((result) => finish(permissionOutcome(result))).catch(() => finish('deny'))
-    void timeout.then(() => finish('deny')).catch(() => finish('deny'))
+    void timeout
+      .then(() =>
+        fail(Object.assign(new Error('permission waiter expired'), { name: 'AskWaiterExpired' })),
+      )
+      .catch(() => finish('deny'))
     if (!signal) return
-    const onAbort = () => finish('deny')
+    const onAbort = () =>
+      fail(Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }))
     if (signal.aborted) onAbort()
     else signal.addEventListener('abort', onAbort, { once: true })
   })

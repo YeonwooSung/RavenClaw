@@ -1315,7 +1315,10 @@ async function executeOneCall(
           box.rules = appendPermissionRule(box.rules, saved, scope)
         }
         allowed = true
-      } catch {
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AskWaiterExpired') {
+          return { messages: [], events, abortRest: false }
+        }
         return {
           messages: pairMissing([call.id], 'aborted'),
           events,
