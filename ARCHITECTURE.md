@@ -4,7 +4,7 @@
 
 RavenClaw is a Bun/TypeScript coding agent that reads and edits a workspace, runs a shell, and resumes after crash. It is bring-your-own-key (BYOK): there is no RavenClaw company backend, and the first public tag is BYOK-only. Hosts (Ink TUI, OpenTUI, `exec`, ACP, `serve`, Slack, Discord, SDK) do not reimplement the agent loop. They construct a `SessionEngine` and call `submitMessage`. Licensed Apache-2.0.
 
-Related docs: [README.md](README.md), [SLASH_COMMANDS.md](SLASH_COMMANDS.md) ([한국어](SLASH_COMMANDS.ko.md)), [CONTRIBUTING.md](CONTRIBUTING.md), [docs/headless.md](docs/headless.md). Design notes live under `docs/superpowers/specs/` (next horizon: [eve-inspired roadmap](docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md)). Prior-art research is in `docs/research/` ([eve](docs/research/eve-analysis.md)).
+Related docs: [README.md](README.md), [SLASH_COMMANDS.md](SLASH_COMMANDS.md) ([한국어](SLASH_COMMANDS.ko.md)), [CONTRIBUTING.md](CONTRIBUTING.md), [docs/headless.md](docs/headless.md). Design notes live under `docs/superpowers/specs/` (next horizon: [session-as-job](docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md); previous: [eve-inspired](docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md) implemented). Prior-art research is in `docs/research/` ([eve](docs/research/eve-analysis.md), [y0](docs/research/y0-analysis.md)).
 
 ## Design invariants
 
@@ -165,7 +165,7 @@ Same `CliRuntime` and slash dispatch (`packages/cli/src/slash/dispatch.ts`). Ren
 
 ### `raven acp`
 
-`packages/cli/src/acp-stdio.ts` + `@ravenclaw/acp`. JSON-RPC 2.0 on stdin/stdout. Methods (`packages/acp/src/protocol.ts`): `initialize`, `session/new`, `session/load`, `session/prompt`, `session/cancel`, plus server→client `session/update` and `session/request_permission`. Permission timeout 120s. Interactive ACP defaults to editor ask (`askUserHost: true`); `--dont-ask` leaves leftover asks as denials. `session/new` can overlay MCP servers and cwd/model. ACP is a host: it still goes through `openNewSession` / `resumeRuntime` → `SessionEngine`.
+`packages/cli/src/acp-stdio.ts` + `@ravenclaw/acp`. JSON-RPC 2.0 on stdin/stdout. Methods (`packages/acp/src/protocol.ts`): `initialize`, `session/new`, `session/load`, `session/prompt`, `session/cancel`, plus server→client `session/update` and `session/request_permission`. Permission timeout stops the in-process waiter and **does not persist deny** (same law as Slack/Discord durable rows). Interactive ACP defaults to editor ask (`askUserHost: true`); `--dont-ask` leaves leftover asks as denials. `session/new` can overlay MCP servers and cwd/model. ACP is a host: it still goes through `openNewSession` / `resumeRuntime` → `SessionEngine`.
 
 ### `raven serve`
 
@@ -173,6 +173,12 @@ Same `CliRuntime` and slash dispatch (`packages/cli/src/slash/dispatch.ts`). Ren
 
 - `GET /health` → `{ ok: true }`
 - `POST /v1/turn` — `Authorization: Bearer <secret>` (`checkBearer` in `packages/core/src/gateway/http.ts`). Body `{ text, sessionKey? }`. Runs `runExec` with `closeEngine: false`. Session map is `$RAVENCLAW_HOME/gateway/sessions.json`.
+- `GET  /v1/session/:id/stream` — NDJSON live tail of `StreamEvent` (Bearer). Closing the stream is detach, not cancel.
+- `POST /v1/session/:id/submit` — `{ text }` → `submitMessage({ text, turnPolicy: 'queue' })`, **202** `{ accepted, sessionId }`. Missing sessions are created with the **default** permission mode (not `dontAsk`).
+- `POST /v1/session/:id/resolve` — `{ callId, allow }` settles a live waiter first, else `applyAskAnswer`. Crash-resolve **pairs only**.
+- `POST /v1/session/:id/cancel` — `engine.abort()`; parked leftover-ask rows stay.
+- `POST /v1/session/:id/compact` — `compactNow()` (queues if `liveTurn !== null`).
+- `POST /v1/turn` stays dontAsk one-shot. Opening a session via `/v1/turn` first stamps `dontAsk`, so leftover-ask on that session is deny.
 - `POST /webhooks/<route>` — `X-Raven-Signature: t=<unix>,v1=<hmac>` (`verifyWebhookSignature`, 300s skew). Fire-and-forget 202. Webhook sessions are restricted to `safeWebhookToolNames()`: `Read`, `Grep`, `Glob`, `Fetch`, `WebSearch` (`packages/core/src/gateway/webhook.ts`).
 
 Mailbox poller every 15s wakes a live engine with `[mailbox]` if `peekAgentMail` is non-empty. Slack and Discord are **not** serve adapters.
@@ -185,7 +191,7 @@ Mailbox poller every 15s wakes a live engine with `[mailbox]` if `peekAgentMail`
 
 `packages/cli/src/discord/run.ts`. Requires `discord.enabled: true` and `DISCORD_BOT_TOKEN`. Discord Gateway (`discord/gateway.ts`), not a webhook. Admit (`discord/admit.ts`): bots/empty ignored; allowlist **or** pairing-approved user; unapproved DMs return `pair-dm` (a 6-digit code, 10-minute TTL); channels must be listed; `mentionOnly` defaults true.
 
-Inbound delivery ledger (`packages/core/src/session/deliveries.ts`, migration `004_deliveries.sql`): `deliveryKey('discord', messageId)` is `INSERT OR IGNORE`; duplicates are dropped. GC TTL 24h. Lock holder `'discord'`. DMs `default`, guild channels `dontAsk`. Permission asks: guild `askUser` is immediate deny; DMs wait 120s then deny (`DISCORD_PERMISSION_TIMEOUT_MS`). Combined with channel `dontAsk`, leftover-ask never reaches a human in a guild.
+Inbound delivery ledger (`packages/core/src/session/deliveries.ts`, migration `004_deliveries.sql`): `deliveryKey('discord', messageId)` is `INSERT OR IGNORE`; duplicates are dropped. GC TTL 24h. Lock holder `'discord'`. DMs `default`, guild channels `dontAsk`. Permission asks: guild `askUser` is immediate deny; durable DMs do **not** timer-deny; the `pending_asks` row remains (`DISCORD_PERMISSION_TIMEOUT_MS` stops the in-process waiter only). Combined with channel `dontAsk`, leftover-ask never reaches a human in a guild.
 
 ### `raven pairing`
 
@@ -614,7 +620,7 @@ Threshold = `contextWindow - reserveOutputTokens - autoCompactBuffer`. Hard limi
 
 ## Sessions
 
-SQLite WAL at `$RAVENCLAW_HOME/state.db` (`PRAGMA journal_mode = WAL`, `busy_timeout = 5000`, `foreign_keys = ON` in `packages/core/src/session/sqlite-store.ts`). Schema version 4:
+SQLite WAL at `$RAVENCLAW_HOME/state.db` (`PRAGMA journal_mode = WAL`, `busy_timeout = 5000`, `foreign_keys = ON` in `packages/core/src/session/sqlite-store.ts`). Schema version **6**:
 
 | Version | File | Adds |
 |---|---|---|
@@ -622,6 +628,10 @@ SQLite WAL at `$RAVENCLAW_HOME/state.db` (`PRAGMA journal_mode = WAL`, `busy_tim
 | 2 | `002_fts5.sql` | `messages_fts` FTS5 — **always applied**, fail-open on query |
 | 3 | `003_agent_mail.sql` | `agent_mail` mailbox + `session_locks` |
 | 4 | `004_deliveries.sql` | inbound delivery ledger |
+| 5 | `005_pending_asks.sql` | `pending_asks` (one row per `call_id`) |
+| 6 | `006_read_mtime.sql` | `messages.read_mtime_ms` |
+
+`applyAskAnswer(callId, allow|deny|allow_always)` is the only non-`submitMessage` host entry. It pairs a parked leftover-ask and does not start a model turn. `resumeSession` treats pending `callId`s as paired-for-resume.
 
 `sessions.funding` is `'byok' | 'included'`. `messages.active` is 0 after compact/rewind. `persistAssistant` **refuses** rows that contain `tool_use` — those go through `persistToolCalls` only.
 

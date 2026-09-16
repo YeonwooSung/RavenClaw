@@ -10,8 +10,8 @@ English: [ARCHITECTURE.md](ARCHITECTURE.md)
 - [SLASH_COMMANDS.ko.md](SLASH_COMMANDS.ko.md)
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [docs/headless.md](docs/headless.md)
-- 다음 로드맵: [2026-09-15-eve-inspired-roadmap.md](docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md)
-- eve 선행 분석: [eve-analysis.ko.md](docs/research/eve-analysis.ko.md)
+- 다음 로드맵: [2026-09-16-session-as-job-roadmap.md](docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md) (이전: [eve-inspired](docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md), implemented)
+- 선행 분석: [eve-analysis.ko.md](docs/research/eve-analysis.ko.md), [y0-analysis.ko.md](docs/research/y0-analysis.ko.md)
 
 ---
 
@@ -168,7 +168,7 @@ flowchart TD
 
 `packages/cli/src/acp-stdio.ts`가 stdin/stdout JSON-RPC를 `@ravenclaw/acp`의 `createAcpServer`에 넘긴다. `bootCli({ createSession: false, surface: 'headless', lockHolder: 'acp' })` 후 에디터의 `session/new` / `session/load`마다 `openNewSession` / `resumeRuntime`을 연다.
 
-`--dont-ask`가 없으면 `askUserHost: true`다. leftover-ask는 에디터 permission 요청으로 간다. `--dont-ask`면 leftover는 거절이다. 어느 쪽이든 bypass가 아니다.
+`--dont-ask`가 없으면 `askUserHost: true`다. leftover-ask는 에디터 permission 요청으로 간다. `--dont-ask`면 leftover는 거절이다. 어느 쪽이든 bypass가 아니다. permission timeout은 in-process waiter만 끊고 **deny를 persist하지 않는다** (Slack/Discord durable row와 같은 법칙).
 
 ACP `session/new`는 cwd, model, MCP 서버 목록을 overlay할 수 있다. 이미지 블록은 `UserSubmitInput.images`로 매핑한다.
 
@@ -178,8 +178,14 @@ ACP `session/new`는 cwd, model, MCP 서버 목록을 overlay할 수 있다. 이
 
 - `GATEWAY_SECRET` 또는 `RAVEN_SERVE_SECRET`이 필요하다.
 - bind는 `127.0.0.1` / `localhost` / `::1`만 허용한다. 기본은 `127.0.0.1:8787`.
-- `dontAsk`를 강제하고 `lockHolder: 'serve'`다.
+- `dontAsk`를 강제하고 `lockHolder: 'serve'`다. (`/v1/turn` 경로. 아래 세션 라우트는 다름.)
 - `POST /v1/turn`은 `Authorization: Bearer <secret>`이 필요하다. body는 `{ text, sessionKey? }`다. 같은 `sessionKey`는 `~/.ravenclaw/gateway/sessions.json`에 세션 id를 고정한다.
+- `GET  /v1/session/:id/stream` — `StreamEvent` NDJSON live tail (Bearer). 스트림을 닫는 것은 detach이며 cancel이 아니다.
+- `POST /v1/session/:id/submit` — `{ text }` → `submitMessage({ text, turnPolicy: 'queue' })`, **202** `{ accepted, sessionId }`. 없는 세션은 **default** permission mode로 만든다 (`dontAsk` 아님).
+- `POST /v1/session/:id/resolve` — `{ callId, allow }`가 먼저 live waiter를 처리하고, 없으면 `applyAskAnswer`. crash-resolve는 **pair only**.
+- `POST /v1/session/:id/cancel` — `engine.abort()`; parked leftover-ask 행은 남는다.
+- `POST /v1/session/:id/compact` — `compactNow()` (`liveTurn !== null`이면 큐).
+- `POST /v1/turn`은 dontAsk one-shot으로 남는다. `/v1/turn`으로 연 세션은 `dontAsk`가 찍히므로 leftover-ask는 deny다.
 - `POST /webhooks/<route>`는 `X-Raven-Signature: t=<unix>,v1=<hmac-sha256 of t.body>`다. skew는 5분. 각 delivery는 새 세션이다. 툴은 `Read` / `Grep` / `Glob` / `Fetch` / `WebSearch`만.
 - `GET /health`는 `{ ok: true }`.
 - 세션당 single-flight다. 15초 mailbox poller가 child Agent mail을 `[mailbox]` 턴으로 깨운다.
@@ -205,7 +211,7 @@ Gateway 봇이다. `discord.enabled: true`와 `DISCORD_BOT_TOKEN`이 필요하�
 - `lockHolder`는 `discord`다.
 - allowlist + DM pairing. `allowFrom`에 없거나 pairing되지 않은 DM은 `pair-dm`이 된다. 봇이 `pair with: raven pairing approve <code>`를 보낸다.
 - 길드 채널은 `channels`에 있어야 하고, `mentionOnly`면 멘션이 필요하다.
-- DM은 `default`, 길드/스레드는 `dontAsk`다. leftover-ask는 120초 후 deny다. 길드 메시지의 leftover는 묻지 않고 deny다.
+- DM은 `default`, 길드/스레드는 `dontAsk`다. durable DM은 timer-deny하지 않는다. `pending_asks` 행이 남는다 (timeout은 in-process waiter만 끊음). 길드 메시지의 leftover는 묻지 않고 deny다.
 - 세션 키: DM은 `raven:discord:dm:<channelId>`, 길드는 `raven:discord:<guildId>:<channelId>`, 스레드는 `raven:discord:<guildId>:<channelId>:<thread>`.
 - inbound ledger는 `state.db`의 `deliveries` 테이블이다. 키는 `discord:<messageId>`. TTL 24시간. 같은 메시지를 두 번 돌리지 않는다.
 
@@ -509,7 +515,7 @@ TUI 트랜스크립트 창은 `TRANSCRIPT_WINDOW = 200`이다. compact의 `prote
 - config의 `compact.llmSummarize` 기본은 true. 코드 default policy의 `llmSummarize`는 false이고, CLI가 config로 덮어쓴다
 - cache expiry 1시간, 최소 2k 토큰이면 compact
 
-라운드 전 `maybeCompact`는 먼저 tool-result budget과 microcompact(`Read`/`Grep`/`Glob`/`Bash`/`Agent` 결과를 stub)를 한다. 그래도 임계를 넘으면 중간을 요약하고 `runAutocompact`가 옛 메시지를 `active=0`으로 내린다. `/compact`는 `compactNow`로 같은 경로를 탄다. 라이브 턴이 있으면 그 메시지에, 없으면 엔진 버퍼에 적용한다.
+라운드 전 `maybeCompact`는 먼저 tool-result budget과 microcompact(`Read`/`Grep`/`Glob`/`Bash`/`Agent` 결과를 stub)를 한다. 그래도 임계를 넘으면 중간을 요약하고 `runAutocompact`가 옛 메시지를 `active=0`으로 내린다. `/compact`는 `compactNow`로 같은 경로를 탄다. `liveTurn !== null`이면 한 슬롯 플래그만 세우고, `liveTurn`이 null이 된 뒤에 돌린다 (라이브 transcript를 splice하지 않음).
 
 모델이 413을 주면 reactive compact를 한 번 시도한다. 이미 overflow compact를 했으면 `context_full`이다.
 
@@ -517,18 +523,18 @@ TUI 트랜스크립트 창은 `TRANSCRIPT_WINDOW = 200`이다. compact의 `prote
 
 ## Sessions
 
-SQLite WAL, `$RAVENCLAW_HOME/state.db`. `PRAGMA journal_mode = WAL`, `busy_timeout = 5000`, `foreign_keys = ON`.
-
-마이그레이션 (`packages/core/src/session/schema.ts`):
+SQLite WAL, `$RAVENCLAW_HOME/state.db`. `PRAGMA journal_mode = WAL`, `busy_timeout = 5000`, `foreign_keys = ON` (`packages/core/src/session/sqlite-store.ts`). Schema version **6**:
 
 | version | SQL | 내용 |
 |---|---|---|
-| 1 | `001_init.sql` | sessions, messages, rules, compact boundaries |
-| 2 | `002_fts5.sql` | FTS5 |
-| 3 | `003_agent_mail.sql` | child → parent mailbox |
-| 4 | `004_deliveries.sql` | Discord inbound ledger |
+| 1 | `migrations/001_init.sql` | `meta`, `sessions`, `messages`, `compact_boundaries`, `permission_rules` |
+| 2 | `002_fts5.sql` | `messages_fts` FTS5 — **always applied**, fail-open on query |
+| 3 | `003_agent_mail.sql` | `agent_mail` mailbox + `session_locks` |
+| 4 | `004_deliveries.sql` | inbound delivery ledger |
+| 5 | `005_pending_asks.sql` | `pending_asks` (one row per `call_id`) |
+| 6 | `006_read_mtime.sql` | `messages.read_mtime_ms` |
 
-`schema_version`은 4다.
+`applyAskAnswer(callId, allow|deny|allow_always)`는 `submitMessage`가 아닌 유일한 호스트 진입점이다. parked leftover-ask를 pair하고 모델 턴을 시작하지 않는다. `resumeSession`은 pending `callId`를 paired-for-resume으로 취급한다.
 
 `loadSession`은 순수 read가 아니다. active 메시지를 읽은 뒤 `repairRoleAlternation`을 돌리고, 삽입된 incomplete 툴 행을 `persistToolResults`한다. `loadMessages`는 optional pure read다. 짝을 고치지 않고 persist하지 않는다. onboarding scan처럼 부작용이 없어야 하는 경로가 쓴다.
 

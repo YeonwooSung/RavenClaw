@@ -188,4 +188,4 @@ RavenClaw `MEMORY.md`는 기본 문서로 남긴다. 훔칠 것은 **compact 샌
 
 웹/풀스택을 나중에 붙이면 **eve 세션 API가 허리**다. y0의 Socket.IO+Prisma Task가 아니다. 루프는 하나, leftover-ask는 디스크에, 스트림은 `sessionId` NDJSON, 멀티테넌트면 파일+bash는 샌드박스.
 
-로드맵: `docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md`.
+그 eve 호라이즌은 구현됐다. 다음: `docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md` (y0 세션-을-잡으로 + 남은 eve 허리: 재접속 스트림, cancel ≠ fail, compact/todo 진실).

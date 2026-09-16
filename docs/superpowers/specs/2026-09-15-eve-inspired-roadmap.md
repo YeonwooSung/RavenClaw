@@ -1,7 +1,8 @@
 # RavenClaw next-horizon roadmap (eve-inspired)
 
 Date: 2026-09-15  
-Status: not implemented (per-slice board below; several items are already partial or test-only)  
+Status: **implemented** on `main` at `d4c73d4` (Waves E1–E4 + leftover-ask hole PRs #2–#8). Per-slice board below is the pre-ship audit, kept for history.  
+Next horizon: [`2026-09-16-session-as-job-roadmap.md`](2026-09-16-session-as-job-roadmap.md).  
 Reviewed against tree at `f64779f` (`f64779f82cfb54e2a4324e1f0f6fcce88bc5cdc9`).  
 Supersedes nothing already shipped. Successor to `2026-09-12-ravenclaw-remaining-roadmap.md` (Status: implemented).
 
@@ -9,7 +10,7 @@ Sources: current tree, [eve analysis](../../research/eve-analysis.md) (`/Users/y
 
 Steal contracts. Do not copy eve, y0, Claude, Hermes, or Freebuff source. Do not become an agent framework.
 
-Implementation plan: [2026-09-15-eve-inspired-implementation.md](../plans/2026-09-15-eve-inspired-implementation.md) (15 TDD tasks; source-reviewed 2026-09-15). Binding plan rulings live at the top of that file (one row per `call_id`, `applyAskAnswer` is the only non-`submitMessage` entry, `/v1/turn` stays dontAsk, docker v1 = cwd bind jail, no `ignored`, no stream `?after=`).
+Implementation plan: [2026-09-15-eve-inspired-implementation.md](../plans/2026-09-15-eve-inspired-implementation.md) (15 TDD tasks; source-reviewed 2026-09-15). Binding plan rulings live at the top of that file (one row per `call_id`, `applyAskAnswer` is the only non-`submitMessage` entry, `/v1/turn` stays dontAsk, docker v1 = cwd bind jail, no `ignored`, no stream `?after=`). Stream `?after=` was deferred there; [session-as-job](2026-09-16-session-as-job-roadmap.md) adds seq and amends that ruling.
 
 ---
 

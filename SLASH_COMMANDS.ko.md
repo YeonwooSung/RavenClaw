@@ -74,7 +74,7 @@ Ink의 frozen prompt는 `void runTurn(...)`이라 fire-and-forget이다. OpenTUI
 | name | 분류 | idle | mid-turn | 주 부작용 |
 |---|---|---|---|---|
 | `resume` | host | 피커/목록 또는 id로 복원 | Ink는 입력 가능. 복원 시 엔진을 갈아끼움 | `resumeRuntime`; 툴을 다시 실행하지 않음 |
-| `compact` | shared | `compactNow()` | live turn 메시지에도 적용 | `compact requested` |
+| `compact` | shared | `compactNow()` | 한 슬롯 플래그; `liveTurn` null 뒤에 실행 (라이브 transcript splice 안 함) | `compact requested` |
 | `cost` | shared | 추정 한 줄 | 세션 usage 스냅샷 | `CostTracker.display()` |
 | `search` | shared | 현재 세션 검색 | 동일 | FTS, 최대 8건 |
 | `mode` | shared | `setPermissionMode` | liveTurn에도 즉시 반영 | `mode ${next}` |
@@ -163,8 +163,9 @@ Ink status line은 모델·mode·usage·`shortSessionId`·funding·near-compact�
 
 - 분류: shared
 - `engine.compactNow()`. notice `compact requested`
+- `liveTurn !== null`이면 한 슬롯 플래그만 **queues**하고 라이브 transcript를 splice하지 않는다. `liveTurn`이 null이 된 뒤에 실행한다
 - protect-last 꼬리를 남기고 앞을 접는다. `compact.llmSummarize`가 true면 LLM 요약, 실패 시 mechanical. false면 mechanical만
-- live turn이 있으면 그 메시지에 적용하고 `compactGeneration`을 올린다
+- 실행 후 `compactGeneration`을 올린다
 - 관련: 자동 compact(`maybeCompact`), `/context`
 
 ### `/cost`
@@ -547,7 +548,7 @@ disable 목록: `~/.ravenclaw/skills-disabled.json`. `/reload`와 disable/enable
 |---|---|---|---|---|
 | `/undo` | 마지막 닫힌 generation 복원/삭제 | 유지 | 유지 | 열려 있으면 block |
 | `/rewind` | 그 generation undo | 마지막 user부터 drop | 유지 | `a turn is in progress` |
-| `/compact` | 없음 | 앞부분 요약/접기 | 유지, `compactGeneration++` | live 메시지에 적용 가능 |
+| `/compact` | 없음 | 앞부분 요약/접기 | 유지, `compactGeneration++` | mid-turn은 큐; live splice 안 함 |
 | `/clear` | 새 id의 빈 history | 빈 transcript | **새 id** | 이전 엔진 close |
 | `/resume` | 대상 세션 history | 저장된 메시지 로드 | **대상 id** | 엔진 교체 |
 | `/stop` | 없음 | 유지 | 유지 | abort |
