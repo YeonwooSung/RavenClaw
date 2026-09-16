@@ -164,12 +164,56 @@ export type SessionEventHub = {
   publish: (sessionId: string, event: StreamEvent) => void
 }
 
+export type ServeAskHost = {
+  askUser: (
+    event: Extract<StreamEvent, { type: 'permission_ask' }>,
+    signal: AbortSignal,
+  ) => Promise<PendingAskAnswer>
+  settle: (callId: string, answer: PendingAskAnswer) => boolean
+}
+
+export function createServeAskHost(): ServeAskHost {
+  const waiters = new Map<string, (answer: PendingAskAnswer) => void>()
+  return {
+    askUser(event, signal) {
+      return new Promise((resolve, reject) => {
+        const finish = (answer: PendingAskAnswer) => {
+          if (waiters.get(event.id) !== finish) return
+          waiters.delete(event.id)
+          signal.removeEventListener('abort', onAbort)
+          resolve(answer)
+        }
+        const onAbort = () => {
+          if (waiters.get(event.id) !== finish) return
+          waiters.delete(event.id)
+          signal.removeEventListener('abort', onAbort)
+          reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+        }
+        waiters.set(event.id, finish)
+        if (signal.aborted) {
+          onAbort()
+          return
+        }
+        signal.addEventListener('abort', onAbort)
+      })
+    },
+    settle(callId, answer) {
+      const finish = waiters.get(callId)
+      if (!finish) return false
+      finish(answer)
+      return true
+    },
+  }
+}
+
 export type ServeRequestContext = {
   secret: string
   turnFlights: Map<string, Promise<unknown>>
   hub: SessionEventHub
   runtimeForTurn: (sessionKey: string | undefined, webhook: boolean) => Promise<ServeRuntime>
   runtimeForSession: (sessionId: string) => Promise<ServeRuntime | undefined>
+  createSession?: (sessionId: string) => Promise<ServeRuntime>
+  settleAsk?: (callId: string, answer: PendingAskAnswer) => boolean
 }
 
 export function createSessionEventHub(): SessionEventHub {
@@ -341,7 +385,7 @@ async function readJsonBody(req: Request): Promise<{ ok: true; body: unknown } |
   }
 }
 
-const SESSION_PATH = /^\/v1\/session\/([^/]+)\/(stream|cancel|compact|resolve)$/
+const SESSION_PATH = /^\/v1\/session\/([^/]+)\/(stream|cancel|compact|resolve|submit)$/
 
 async function loadSessionRuntime(
   ctx: ServeRequestContext,
@@ -453,11 +497,41 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
       if (!parsedBody.ok) return parsedBody.res
       const parsed = parseResolveBody(parsedBody.body)
       if (!parsed.ok) return Response.json({ error: parsed.error }, { status: 400 })
+      const answer = parsed.allow ? 'allow' : 'deny'
+      if (ctx.settleAsk?.(parsed.callId, answer)) {
+        return Response.json({ status: 'matched' })
+      }
       const loaded = await loadSessionRuntime(ctx, sessionId)
       if (!loaded.ok) return loaded.res
-      const status = await loaded.runtime.engine.applyAskAnswer(parsed.callId, parsed.allow ? 'allow' : 'deny')
+      const status = await loaded.runtime.engine.applyAskAnswer(parsed.callId, answer)
       if (status === 'unmatched') return Response.json({ status }, { status: 404 })
       return Response.json({ status })
+    }
+    if (req.method === 'POST' && action === 'submit') {
+      const parsedBody = await readJsonBody(req)
+      if (!parsedBody.ok) return parsedBody.res
+      const parsed = parseTurnRequest(parsedBody.body)
+      if (!parsed.ok) return Response.json({ error: parsed.error }, { status: 400 })
+      let loaded = await loadSessionRuntime(ctx, sessionId)
+      if (!loaded.ok && loaded.res.status === 404 && ctx.createSession) {
+        try {
+          loaded = { ok: true, runtime: await ctx.createSession(sessionId) }
+        } catch (error) {
+          return sessionOpenErrorResponse(error)
+        }
+      }
+      if (!loaded.ok) return loaded.res
+      const sid = loaded.runtime.engine.session.id
+      void singleFlight(ctx.turnFlights, sid, async () => {
+        try {
+          await consumeSubmit(
+            loaded.runtime.engine.submitMessage({ text: parsed.text, turnPolicy: 'queue' }),
+          )
+        } catch {
+          // session submit is fire-and-forget; the stream carries errors
+        }
+      })
+      return Response.json({ accepted: true, sessionId: sid }, { status: 202 })
     }
     return Response.json({ error: 'not found' }, { status: 404 })
   }
@@ -482,12 +556,14 @@ export async function runServe(opts: { flags: ConfigFlags }): Promise<number> {
   const turnFlights = new Map<string, Promise<unknown>>()
   const hub = createSessionEventHub()
   const caches = createServeRuntimeCaches(hub)
+  const asks = createServeAskHost()
   const shared = await bootCli({
     flags: { ...opts.flags, dontAsk: true },
     createSession: false,
     surface: 'headless',
     lockHolder: 'serve',
   })
+  shared.ask.bind(asks.askUser)
   const sessionBoot = {
     ...shared,
     lockHolderId: shared.lockHolderId,
@@ -511,12 +587,17 @@ export async function runServe(opts: { flags: ConfigFlags }): Promise<number> {
   const runtimeForSession = (sessionId: string) =>
     caches.runtimeForSessionId(sessionId, () => resumeRuntime(sessionBoot, sessionId))
 
+  const createSession = (sessionId: string) =>
+    caches.runtimeForSessionId(sessionId, () => openNewSession(sessionBoot, { sessionId }))
+
   const serveCtx: ServeRequestContext = {
     secret,
     turnFlights,
     hub,
     runtimeForTurn,
     runtimeForSession,
+    createSession,
+    settleAsk: (callId, answer) => asks.settle(callId, answer),
   }
 
   const server = Bun.serve({
@@ -565,7 +646,7 @@ export async function runServe(opts: { flags: ConfigFlags }): Promise<number> {
   process.stdout.write(`raven serve ${server.hostname}:${server.port}\n`)
   process.stdout.write('POST /v1/turn  Authorization: Bearer <GATEWAY_SECRET>\n')
   process.stdout.write('GET  /v1/session/:id/stream  NDJSON live tail\n')
-  process.stdout.write('POST /v1/session/:id/cancel|/compact|/resolve\n')
+  process.stdout.write('POST /v1/session/:id/submit|/cancel|/compact|/resolve\n')
   process.stdout.write('POST /webhooks/<route>  X-Raven-Signature: t=<unix>,v1=<hmac>\n')
   const stopMailbox = startMailboxPoller(caches.liveEngines(), turnFlights)
   const shutdown = async () => {

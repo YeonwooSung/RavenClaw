@@ -55,7 +55,7 @@ Commands:
   mcp           List configured MCP servers (list) or spawn and list tool names (tools)
   skills        List skills; new writes SKILL.md, rm deletes, prune archives unused
   cron          List/add/remove local jobs; tick/watch fire due ones
-  serve         Local HTTP turn, session stream/resolve, HMAC webhook (loopback)
+  serve         Local HTTP turn, session submit/stream/resolve, HMAC webhook (loopback)
   slack         Slack Socket Mode bot (allowlist; no public URL)
   discord       Discord Gateway bot (allowlist + DM pairing)
   pairing       Approve or revoke Discord DM pairing (no API key)
