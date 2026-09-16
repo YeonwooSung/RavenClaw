@@ -428,6 +428,145 @@ describe('runAutocompact', () => {
     }
   })
 
+  test('compact injects a todos restore-note when TodoWrite left the tail', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ravenclaw-todo-restore-'))
+    try {
+      const store = createMemoryStore()
+      const sess = session({ cwd: root })
+      await store.createSession(sess)
+      mkdirSync(join(root, '.ravenclaw'), { recursive: true })
+      writeFileSync(
+        join(root, '.ravenclaw', 'todo.json'),
+        JSON.stringify([
+          { id: 't1', text: 'one', status: 'pending' },
+          { id: 't2', text: 'two', status: 'in_progress' },
+          { id: 't3', text: 'three', status: 'done' },
+        ]),
+      )
+      const messages = [
+        user('u0', 'old', 1),
+        asstTools('a0', [{ id: 'td', name: 'TodoWrite', input: { items: [] } }], 2),
+        tool('t0', 'td', 'Wrote 3', 3),
+        user('u1', 'recent', 4),
+        asstText('a1', 'ok', 5),
+      ]
+      await persistAll(store, sess.id, messages)
+      const out = await runAutocompact({
+        messages,
+        compact: compact({ protectLastMessages: 2 }),
+        model: model(),
+        store,
+        sessionId: sess.id,
+        generation: 0,
+        summary: 'sum',
+        cwd: root,
+      })
+      const blob = out.messages.map(textOf).join('\n')
+      expect(blob).toContain('one')
+      expect(blob).toContain('two')
+      expect(blob).toContain('three')
+      expect(blob).toContain('Todos:\n- [pending] one\n- [in_progress] two\n- [done] three')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test('skips todos restore-note when the list is empty or missing', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ravenclaw-todo-empty-'))
+    try {
+      const store = createMemoryStore()
+      await store.createSession(session({ cwd: root }))
+      const messages = [
+        user('u0', 'old', 1),
+        asstText('a0', 'old reply', 2),
+        user('u1', 'recent', 3),
+        asstText('a1', 'ok', 4),
+      ]
+      await persistAll(store, 's1', messages)
+      const missing = await runAutocompact({
+        messages,
+        compact: compact({ protectLastMessages: 2 }),
+        model: model(),
+        store,
+        sessionId: 's1',
+        generation: 0,
+        summary: 'sum',
+        cwd: root,
+      })
+      expect(missing.messages.map(textOf).join('\n')).not.toContain('Todos:')
+
+      mkdirSync(join(root, '.ravenclaw'), { recursive: true })
+      writeFileSync(join(root, '.ravenclaw', 'todo.json'), '[]')
+      const emptyFile = await runAutocompact({
+        messages,
+        compact: compact({ protectLastMessages: 2 }),
+        model: model(),
+        store,
+        sessionId: 's1',
+        generation: 0,
+        summary: 'sum',
+        cwd: root,
+      })
+      expect(emptyFile.messages.map(textOf).join('\n')).not.toContain('Todos:')
+
+      writeFileSync(
+        join(root, '.ravenclaw', 'todo.json'),
+        JSON.stringify([{ id: 't1', text: 'cwd-only', status: 'pending' }]),
+      )
+      const emptyOpt = await runAutocompact({
+        messages,
+        compact: compact({ protectLastMessages: 2 }),
+        model: model(),
+        store,
+        sessionId: 's1',
+        generation: 0,
+        summary: 'sum',
+        cwd: root,
+        todos: [],
+      })
+      expect(emptyOpt.messages.map(textOf).join('\n')).not.toContain('Todos:')
+      expect(emptyOpt.messages.map(textOf).join('\n')).not.toContain('cwd-only')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  test('explicit todos option is restored instead of cwd todo.json', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'ravenclaw-todo-opt-'))
+    try {
+      mkdirSync(join(root, '.ravenclaw'), { recursive: true })
+      writeFileSync(
+        join(root, '.ravenclaw', 'todo.json'),
+        JSON.stringify([{ id: 't1', text: 'cwd-item', status: 'pending' }]),
+      )
+      const store = createMemoryStore()
+      await store.createSession(session({ cwd: root }))
+      const messages = [
+        user('u0', 'old', 1),
+        asstText('a0', 'old reply', 2),
+        user('u1', 'recent', 3),
+        asstText('a1', 'ok', 4),
+      ]
+      await persistAll(store, 's1', messages)
+      const out = await runAutocompact({
+        messages,
+        compact: compact({ protectLastMessages: 2 }),
+        model: model(),
+        store,
+        sessionId: 's1',
+        generation: 0,
+        summary: 'sum',
+        cwd: root,
+        todos: [{ text: 'session-item', status: 'done' }],
+      })
+      const blob = out.messages.map(textOf).join('\n')
+      expect(blob).toContain('Todos:\n- [done] session-item')
+      expect(blob).not.toContain('cwd-item')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   test('skips plan.md restore when the file is missing', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-plan-missing-'))
     try {

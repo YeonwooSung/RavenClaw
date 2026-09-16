@@ -33,6 +33,7 @@ import {
   unknownToolText,
 } from './pairing'
 import { forgetReadsNotInTail, markReadPath, recordReadFile, stampReadMtime } from '../tools/read-files'
+import type { TodoItem } from '../tools/todo'
 import { rewindLastTurn } from '../session/rewind'
 import { getSessionWorktree } from '../tools/session-worktree'
 import { applyPermissionMode } from '../prompt/builder'
@@ -78,6 +79,10 @@ function titleFromUserText(text: string): string | undefined {
   const line = first.replace(/\s+/g, ' ').trim()
   if (line === '') return undefined
   return line.length <= TITLE_MAX ? line : line.slice(0, TITLE_MAX)
+}
+
+function sessionTodosOf(session: { todos?: TodoItem[] }): TodoItem[] | undefined {
+  return session.todos
 }
 
 export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
@@ -362,6 +367,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
     const cut = source.length - tail.length
     if (cut <= 0) return
 
+    const todos = sessionTodosOf(session)
     const result = await runAutocompact({
       messages: source,
       compact: opts.compact,
@@ -370,6 +376,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       sessionId: session.id,
       generation: liveTurn?.compactGeneration ?? session.compactGeneration,
       cwd: liveTurn?.projectCwd ?? liveTurn?.cwd ?? session.cwd,
+      ...(todos !== undefined ? { todos } : {}),
       ...(opts.compact.llmSummarize
         ? {
             provider: opts.provider,
@@ -596,6 +603,8 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         if (opts.jsonSchema !== undefined) loopOpts.jsonSchema = opts.jsonSchema
         if (opts.verifyOnStop === true) loopOpts.verifyOnStop = true
         if (opts.refreshTools !== undefined) loopOpts.refreshTools = opts.refreshTools
+        const todos = sessionTodosOf(session)
+        if (todos !== undefined) loopOpts.todos = todos
         userTurns += 1
         if (shouldNudgeMemory(userTurns)) {
           turn.messages = injectMidTurnHint(turn.messages, MEMORY_NUDGE)

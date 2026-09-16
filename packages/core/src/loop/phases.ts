@@ -337,6 +337,7 @@ export async function* maybeCompact(
       generation: state.turn.compactGeneration,
       summary,
       cwd: state.turn.projectCwd ?? state.turn.cwd,
+      ...(state.todos !== undefined ? { todos: state.todos } : {}),
     })
     state.turn.messages = result.messages
     forgetReadsNotInTail(state.turn, result.messages)
@@ -663,6 +664,7 @@ async function* reactiveCompact(
       generation: state.turn.compactGeneration,
       summary,
       cwd: state.turn.projectCwd ?? state.turn.cwd,
+      ...(state.todos !== undefined ? { todos: state.todos } : {}),
     })
     state.turn.messages = result.messages
     state.turn.compactGeneration = result.generation

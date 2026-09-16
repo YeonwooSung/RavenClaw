@@ -462,6 +462,8 @@ export interface QueryLoopOptions {
   verifyOnStop?: boolean
   /** After a tool batch, return newly ready deferred tools (MCP). Prefix stays unchanged. */
   refreshTools?: () => Promise<Tool[] | undefined> | Tool[] | undefined
+  /** Session todos for compact restore. Unset until the engine has a session list. */
+  todos?: import('./tools/todo').TodoItem[]
   lifecycle?: {
     run(
       event: string,

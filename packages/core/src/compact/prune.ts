@@ -1,6 +1,7 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { buildPostCompactMessages, selectProtectedTail } from '../loop/repair'
 import { planFilePath } from '../tools/plan-file'
+import { loadTodos, type TodoItem } from '../tools/todo'
 import type { CompactPolicy, Message, ModelProfile, Provider, SessionStore } from '../types'
 import { compactSummary, mechanicalSummary } from './summarize'
 
@@ -90,6 +91,7 @@ function collectRestoredNotes(
   tailIds: Set<string>,
   compact: CompactPolicy,
   cwd?: string,
+  todos?: TodoItem[],
 ): string[] {
   const tailPaths = new Set<string>()
   const tailSkills = new Set<string>()
@@ -154,7 +156,19 @@ function collectRestoredNotes(
     compact.maxCharsPerRestoredSkill,
     compact.maxCharsRestoredSkillsTotal,
   )
-  return [...restoredFiles, ...restoredSkills, ...collectPlanNote(cwd, compact, seenFiles, tailPaths)]
+  return [
+    ...restoredFiles,
+    ...restoredSkills,
+    ...collectPlanNote(cwd, compact, seenFiles, tailPaths),
+    ...collectTodoNote(todos, cwd),
+  ]
+}
+
+function collectTodoNote(todos: TodoItem[] | undefined, cwd?: string): string[] {
+  const items = todos ?? (cwd ? loadTodos(cwd) : [])
+  if (items.length === 0) return []
+  const lines = items.map((item) => `- [${item.status}] ${item.text}`)
+  return [`Todos:\n${lines.join('\n')}`]
 }
 
 function collectPlanNote(
@@ -218,6 +232,7 @@ export async function runAutocompact(opts: {
   provider?: Provider
   signal?: AbortSignal
   cwd?: string
+  todos?: TodoItem[]
 }): Promise<{ messages: Message[]; generation: number; inactivatedIds: string[] }> {
   const tail = selectProtectedTail(opts.messages, opts.compact.protectLastMessages)
   const cut = opts.messages.length - tail.length
@@ -225,7 +240,13 @@ export async function runAutocompact(opts: {
   const inactivatedIds = middle.map((msg) => msg.id)
   const tailIds = new Set(tail.map((msg) => msg.id))
   const summary = await resolveCompactSummary(opts, middle)
-  const restored = collectRestoredNotes(opts.messages, tailIds, opts.compact, opts.cwd)
+  const restored = collectRestoredNotes(
+    opts.messages,
+    tailIds,
+    opts.compact,
+    opts.cwd,
+    opts.todos,
+  )
   const messages = appendUserNotes(buildPostCompactMessages(summary, tail), restored)
   const generation = opts.generation + 1
   await opts.store.recordCompact(opts.sessionId, generation, summary, inactivatedIds)
