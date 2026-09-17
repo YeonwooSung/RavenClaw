@@ -11,9 +11,11 @@ import {
   scanTeamOnboarding,
   setSkillDisabled,
   applySessionDraftPr,
+  clearSessionJobError,
   enterSessionWorktree,
   getSessionWorktree,
   setJobAutoCommit,
+  setSessionJobError,
 } from '@ravenclaw/core'
 import {
   INTERVIEW_PROMPT,
@@ -220,12 +222,18 @@ export async function dispatchSharedSlash(
       const name = arg === '' ? undefined : arg
       const entered = enterSessionWorktree(session.id, parent, name)
       if (!entered.ok) {
-        host.notice(entered.error ?? 'job failed')
+        const notice = entered.error ?? 'job failed'
+        setSessionJobError(session, notice)
+        session.updatedAt = Date.now()
+        await runtime.store.upsertSession(session)
+        host.notice(notice)
         return 'handled'
       }
       if (entered.job) session.job = entered.job
       session.cwd = entered.cwd
       runtime.cwd = entered.cwd
+      clearSessionJobError(session)
+      session.updatedAt = Date.now()
       await runtime.store.upsertSession(session)
       host.notice(`job ${entered.job?.shadowBranch ?? entered.cwd}`)
       return 'handled'
@@ -247,11 +255,11 @@ export async function dispatchSharedSlash(
         persistAssistant: (sessionId, message) => runtime.store.persistAssistant(sessionId, message),
         persistToolCalls: (sessionId, message) => runtime.store.persistToolCalls(sessionId, message),
       })
-      if (out.job) {
-        session.job = out.job
-        session.updatedAt = Date.now()
-        await runtime.store.upsertSession(session)
-      }
+      if (out.job) session.job = out.job
+      if (out.ok) clearSessionJobError(session)
+      else setSessionJobError(session, out.notice)
+      session.updatedAt = Date.now()
+      await runtime.store.upsertSession(session)
       host.notice(out.notice)
       return 'handled'
     }

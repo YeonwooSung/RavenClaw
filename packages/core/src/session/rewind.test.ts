@@ -456,8 +456,42 @@ describe('rewindToCheckpoint', () => {
     expect(inactivated).toEqual([])
     expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).toBe(headBefore)
     expect(sess.todos).toEqual([{ text: 'keep', status: 'pending' }])
+    expect(sess.jobError?.startsWith('rewind reset failed:')).toBe(true)
     const loaded = await store.loadSession(id)
     expect(loaded.messages.map((msg) => msg.id)).toEqual(['u1', 'a1'])
+    expect(loaded.session.jobError?.startsWith('rewind reset failed:')).toBe(true)
+  })
+
+  test('successful rewind clears session.jobError', async () => {
+    const cwd = tempDir('ravenclaw-rewind-clear-err-')
+    initGitRepo(cwd)
+    const id = nextSession()
+    const entered = enterSessionWorktree(id, cwd)
+    expect(entered.ok).toBe(true)
+    const job = entered.job!
+    writeFileSync(join(job.worktreePath, 'extra.txt'), 'later\n')
+    expect(spawnSync('git', ['add', '-A'], { cwd: job.worktreePath, encoding: 'utf8' }).status).toBe(0)
+    expect(
+      spawnSync('git', ['commit', '-m', 'later'], { cwd: job.worktreePath, encoding: 'utf8' }).status,
+    ).toBe(0)
+    const store = createMemoryStore()
+    const sess = sessionRecord({
+      id,
+      cwd: job.worktreePath,
+      job,
+      jobError: 'prior rewind fail',
+      todos: [{ text: 'gone', status: 'pending' }],
+    })
+    await store.createSession(sess)
+    const messages: Message[] = [user('u1', 'only', 1), assistant('a1', 'ok', 2)]
+    await store.persistUser(id, messages[0] as Extract<Message, { role: 'user' }>)
+    await store.persistAssistant(id, messages[1] as Extract<Message, { role: 'assistant' }>)
+
+    const result = await rewindToCheckpoint({ session: sess, messages, store })
+    expect(result.ok).toBe(true)
+    expect(sess.jobError).toBeUndefined()
+    const loaded = await store.loadSession(id)
+    expect(loaded.session.jobError).toBeUndefined()
   })
 
   test('persistAssistant and persistToolCalls write checkpoint_json', async () => {

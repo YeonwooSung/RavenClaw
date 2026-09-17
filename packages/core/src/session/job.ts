@@ -250,6 +250,14 @@ export function setJobAutoCommit(session: SessionRecord, on: boolean): void {
   session.jobAutoCommit = on
 }
 
+export function setSessionJobError(session: SessionRecord, notice: string): void {
+  session.jobError = notice
+}
+
+export function clearSessionJobError(session: SessionRecord): void {
+  delete session.jobError
+}
+
 export function maybeCommitJob(opts: {
   job: SessionJob
   turnId: string

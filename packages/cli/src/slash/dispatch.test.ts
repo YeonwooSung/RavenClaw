@@ -304,5 +304,34 @@ describe('dispatchSharedSlash', () => {
     expect(host.ghCalls).toEqual([])
     expect(host.turns).toEqual([])
   })
+
+  test('/pr failure sets jobError; success clears it', async () => {
+    const dirty = tempGitRepo(true)
+    const failSession = makeSession({ cwd: dirty, job: jobAt(dirty) })
+    const failRuntime = fakeRuntime(fakeEngine(failSession))
+    failRuntime.cwd = dirty
+    const failUpserted: SessionRecord[] = []
+    failRuntime.store.upsertSession = async (next) => {
+      failUpserted.push({ ...next })
+    }
+    const failHost = fakeHost(failRuntime)
+    expect(await dispatchSharedSlash(cmd('pr'), failHost)).toBe('handled')
+    expect(failSession.jobError).toBe('worktree is dirty')
+    expect(failUpserted[0]?.jobError).toBe('worktree is dirty')
+
+    const clean = tempGitRepo(false)
+    const okSession = makeSession({ cwd: clean, job: jobAt(clean), jobError: 'worktree is dirty' })
+    const okRuntime = fakeRuntime(fakeEngine(okSession))
+    okRuntime.cwd = clean
+    const okUpserted: SessionRecord[] = []
+    okRuntime.store.upsertSession = async (next) => {
+      okUpserted.push({ ...next })
+    }
+    const okHost = fakeHost(okRuntime)
+    expect(await dispatchSharedSlash(cmd('pr'), okHost)).toBe('handled')
+    expect(okSession.jobError).toBeUndefined()
+    expect(okUpserted.some((row) => row.jobError === undefined)).toBe(true)
+    expect(okHost.ghCalls.length).toBeGreaterThan(0)
+  })
 })
 

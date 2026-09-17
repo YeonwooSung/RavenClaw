@@ -119,9 +119,11 @@ export { createStructuredOutputTool } from './tools/structured-output'
 export { rewindLastTurn, rewindToCheckpoint, dropLastUserTurn, formatRewindNotice } from './session/rewind'
 export {
   applySessionDraftPr,
+  clearSessionJobError,
   maybeCommitJob,
   openDraftPr,
   setJobAutoCommit,
+  setSessionJobError,
   stampCheckpoint,
 } from './session/job'
 export type { DraftPrSnapshot, GhRunner } from './session/job'

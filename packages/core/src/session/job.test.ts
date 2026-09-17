@@ -5,7 +5,15 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Message, SessionJob, SessionRecord } from '../types'
 import { enterSessionWorktree, exitSessionWorktree } from '../tools/session-worktree'
-import { annotateDraftPr, maybeCommitJob, openDraftPr, setJobAutoCommit, stampCheckpoint } from './job'
+import {
+  annotateDraftPr,
+  clearSessionJobError,
+  maybeCommitJob,
+  openDraftPr,
+  setJobAutoCommit,
+  setSessionJobError,
+  stampCheckpoint,
+} from './job'
 
 const tempDirs: string[] = []
 const sessionIds: string[] = []
@@ -154,6 +162,31 @@ describe('setJobAutoCommit', () => {
     expect(session.jobAutoCommit).toBe(true)
     setJobAutoCommit(session, false)
     expect(session.jobAutoCommit).toBe(false)
+  })
+})
+
+describe('session jobError helpers', () => {
+  test('setSessionJobError writes and clearSessionJobError deletes', () => {
+    const session = { id: 's', jobError: undefined } as SessionRecord
+    setSessionJobError(session, 'gh missing')
+    expect(session.jobError).toBe('gh missing')
+    clearSessionJobError(session)
+    expect(session.jobError).toBeUndefined()
+  })
+
+  test('caller clears jobError after a successful openDraftPr', () => {
+    const cwd = tempDir('ravenclaw-job-pr-clear-err-')
+    initGitRepo(cwd)
+    const session = sessionRecord({ jobError: 'gh missing' })
+    const out = openDraftPr({
+      job: dummyJob(cwd),
+      cwd,
+      gh: () => ({ ok: true, stdout: 'https://github.com/o/r/pull/4\n', stderr: '' }),
+    })
+    expect(out.ok).toBe(true)
+    if (out.ok) clearSessionJobError(session)
+    else setSessionJobError(session, out.notice)
+    expect(session.jobError).toBeUndefined()
   })
 })
 

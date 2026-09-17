@@ -1,6 +1,7 @@
 import { runGit } from '../tools/session-worktree'
 import type { JobCheckpoint, Message, SessionRecord, SessionStore } from '../types'
 import { formatUndoNotice, type FileHistory, type UndoResult } from './file-history'
+import { clearSessionJobError, setSessionJobError } from './job'
 
 export function dropLastUserTurn(messages: Message[]): Message[] {
   let lastUser = -1
@@ -87,7 +88,15 @@ export async function rewindToCheckpoint(opts: {
   const reset = runGit(job.worktreePath, ['reset', '--hard', sha])
   if (!reset.ok) {
     const detail = reset.stderr.trim() || reset.stdout.trim() || 'git reset failed'
-    return { ok: false, notice: `rewind reset failed: ${detail}`, messages: opts.messages }
+    const notice = `rewind reset failed: ${detail}`
+    setSessionJobError(opts.session, notice)
+    opts.session.updatedAt = Date.now()
+    try {
+      await opts.store.upsertSession(opts.session)
+    } catch {
+      // surface the reset failure even if jobError persist fails
+    }
+    return { ok: false, notice, messages: opts.messages }
   }
 
   if (droppedIds.length > 0) {
@@ -106,6 +115,7 @@ export async function rewindToCheckpoint(opts: {
   opts.session.todos = checkpoint
     ? checkpoint.todoSnapshot.map((item) => ({ ...item }))
     : []
+  clearSessionJobError(opts.session)
   opts.session.updatedAt = Date.now()
   try {
     await opts.store.upsertSession(opts.session)
