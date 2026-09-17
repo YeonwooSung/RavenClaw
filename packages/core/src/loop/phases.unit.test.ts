@@ -247,11 +247,21 @@ describe('beginRound', () => {
     expect(next.value).toEqual({ action: 'return', end: { reason: 'aborted' } })
   })
 
+  test('returns cancelled when the turn was aborted as cancel', async () => {
+    const current = state()
+    current.turn.cancelKind = 'cancel'
+    current.turn.abort.abort()
+    const gen = beginRound(current)
+    const next = await gen.next()
+    expect(next.done).toBe(true)
+    expect(next.value).toEqual({ action: 'return', end: { reason: 'cancelled' } })
+  })
+
   test('increments the round and emits round_start', async () => {
     const current = state()
     const gen = beginRound(current)
     const start = await gen.next()
-    expect(start.value).toEqual({ type: 'round_start', round: 1 })
+    expect(start.value).toEqual({ type: 'round_start', round: 1, turnId: 't1' })
     const done = await gen.next()
     expect(done.done).toBe(true)
     expect(done.value).toEqual({ action: 'continue' })

@@ -289,7 +289,7 @@ export async function runOpenTuiApp(
         case 'quit':
           return 0
         case 'stop':
-          current.engine.abort()
+          current.engine.abort('cancel')
           if (abortGate.press() === 'kill_all') {
             const killed = current.engine.tasks.killAll()
             write(`${formatKilledBackgroundNotice(killed.length)}\n`)

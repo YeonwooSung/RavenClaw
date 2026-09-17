@@ -104,6 +104,10 @@ export type PhaseResult =
 
 const ZERO_USAGE: TokenUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
 
+function abortEnd(turn: Turn): RoundEnd {
+  return turn.cancelKind === 'cancel' ? { reason: 'cancelled' } : { reason: 'aborted' }
+}
+
 function resetPending(state: LoopState): void {
   state.pendingText = ''
   state.pendingThinking = ''
@@ -232,13 +236,13 @@ export async function persistResultsWithRetry(
 
 export async function* beginRound(state: LoopState): AsyncGenerator<StreamEvent, PhaseResult> {
   if (state.turn.abort.signal.aborted) {
-    return { action: 'return', end: { reason: 'aborted' } }
+    return { action: 'return', end: abortEnd(state.turn) }
   }
 
   if (shouldEnterGrace(state.turn, state.lastHadToolUse)) {
     state.turn.graceUsed = true
     resetPending(state)
-    yield { type: 'round_start', round: state.turn.round }
+    yield { type: 'round_start', round: state.turn.round, turnId: state.turn.id }
     return { action: 'continue' }
   }
 
@@ -248,7 +252,7 @@ export async function* beginRound(state: LoopState): AsyncGenerator<StreamEvent,
 
   state.turn.round += 1
   resetPending(state)
-  yield { type: 'round_start', round: state.turn.round }
+  yield { type: 'round_start', round: state.turn.round, turnId: state.turn.id }
   return { action: 'continue' }
 }
 
@@ -710,7 +714,7 @@ export async function* normalizeResponse(
       state.turn.messages.push(asst)
     }
     yield { type: 'status', message: 'interrupted' }
-    return { action: 'return', end: { reason: 'aborted' } }
+    return { action: 'return', end: abortEnd(state.turn) }
   }
 
   if (!hasTools) {
@@ -877,7 +881,7 @@ export async function* runToolRound(
     const fail = await persistResultsWithRetry(state, results)
     if (fail) return { action: 'return', end: fail }
     yield { type: 'status', message: 'interrupted' }
-    return { action: 'return', end: { reason: 'aborted' } }
+    return { action: 'return', end: abortEnd(state.turn) }
   }
 
   await applyRefreshTools(state)

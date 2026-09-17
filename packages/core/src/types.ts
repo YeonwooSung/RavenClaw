@@ -137,6 +137,8 @@ export interface Turn {
   frozenToolNames?: string[]
   /** Same tool+args+result repeats this turn. Key is name + args + result text. */
   stallCounts?: Record<string, number>
+  /** Set by `SessionEngine.abort`. `cancel` → `{ reason: 'cancelled' }`; default interrupt → `aborted`. */
+  cancelKind?: 'cancel' | 'interrupt'
 }
 
 export interface Round {
@@ -149,7 +151,7 @@ export interface Round {
 }
 
 export type StreamEvent =
-  | { type: 'round_start'; round: number }
+  | { type: 'round_start'; round: number; turnId: string }
   | { type: 'text_delta'; text: string }
   | { type: 'thinking_delta'; text: string }
   | { type: 'tool_call'; id: string; name: string; input: unknown }
@@ -175,6 +177,7 @@ export type RoundEnd =
   | { reason: 'hook_stopped' }
   | { reason: 'max_rounds'; round: number }
   | { reason: 'aborted' }
+  | { reason: 'cancelled' }
   | { reason: 'context_full' }
   | { reason: 'model_error'; error: unknown }
   | { reason: 'persist_failed'; error: unknown }
@@ -465,7 +468,8 @@ export interface SessionEngine {
   setModel(profile: ModelProfile): Promise<void>
   setPermissionMode(mode: PermissionMode): Promise<void>
   reloadSystem(system: SystemPart[]): void
-  abort(): void
+  abort(kind?: 'cancel' | 'interrupt'): void
+  liveTurnId(): string | null
   /** Fire SessionEnd once, then release the session lock. Safe to call more than once. */
   close(opts?: { releaseLock?: boolean }): Promise<void>
 }

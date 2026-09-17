@@ -1640,3 +1640,107 @@ describe('job auto-commit', () => {
     expect(git(job.worktreePath, ['status', '--porcelain'])).toContain('note.txt')
   })
 })
+
+describe('cancel', () => {
+  async function drain(gen: AsyncGenerator<StreamEvent, import('../types').RoundEnd>) {
+    const events: StreamEvent[] = []
+    while (true) {
+      const next = await gen.next()
+      if (next.done) return { events, result: next.value }
+      events.push(next.value)
+    }
+  }
+
+  test('host cancel yields cancelled and a later submit runs', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_host_cancel' })
+    await store.createSession(sess)
+    let streams = 0
+    let enteredFirst: () => void
+    const firstStreamEntered = new Promise<void>((resolve) => {
+      enteredFirst = resolve
+    })
+    const provider: Provider = {
+      id: 'fake',
+      apiMode: 'openai_compat',
+      profile(model: string) {
+        return defaultModel(model)
+      },
+      async *stream(_req, signal) {
+        streams += 1
+        if (streams === 1) {
+          enteredFirst()
+          await new Promise<void>((resolve) => {
+            if (signal.aborted) {
+              resolve()
+              return
+            }
+            signal.addEventListener('abort', () => resolve(), { once: true })
+          })
+          return
+        }
+        yield { type: 'text_delta', text: 'ok' }
+        yield { type: 'stop', reason: 'end' }
+      },
+    }
+    const engine = createSessionEngine({
+      ...engineOpts({ provider, store, session: sess }),
+    })
+    const gen = engine.submitMessage('hi')
+    const pending = drain(gen)
+    await firstStreamEntered
+    engine.abort('cancel')
+    const { result } = await pending
+    expect(result).toEqual({ reason: 'cancelled' })
+
+    const second = await drain(engine.submitMessage('again'))
+    expect(second.result).toEqual({ reason: 'completed' })
+    expect(streams).toBe(2)
+  })
+
+  test('cancel leaves a parked leftover-ask and yields a status line', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_cancel_ask' })
+    await store.createSession(sess)
+    const provider: Provider = {
+      id: 'fake',
+      apiMode: 'openai_compat',
+      profile(model: string) {
+        return defaultModel(model)
+      },
+      async *stream(_req, signal) {
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) {
+            resolve()
+            return
+          }
+          signal.addEventListener('abort', () => resolve(), { once: true })
+        })
+      },
+    }
+    const engine = createSessionEngine({
+      ...engineOpts({ provider, store, session: sess }),
+    })
+    const gen = engine.submitMessage('hi')
+    const first = await gen.next()
+    expect(first.done).toBe(false)
+    await store.upsertPendingAsk({
+      callId: 'parked_1',
+      sessionId: sess.id,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Run ls?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    engine.abort('cancel')
+    const { events, result } = await drain(gen)
+    expect(result).toEqual({ reason: 'cancelled' })
+    expect(
+      events.some(
+        (event) => event.type === 'status' && event.message === 'cancelled, ask still pending',
+      ),
+    ).toBe(true)
+    expect(await store.listPendingAsks(sess.id)).toHaveLength(1)
+  })
+})

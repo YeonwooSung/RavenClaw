@@ -221,9 +221,15 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
   const replayEvents: StreamEvent[] = []
   const submitted: UserSubmitInput[] = []
   const applyCalls: Array<{ callId: string; answer: 'allow' | 'deny' | 'allow_always' }> = []
-  const state: { abortCalls: number; compactCalls: number; submitHold?: Promise<void> } = {
+  const state: {
+    abortCalls: number
+    compactCalls: number
+    liveTurnId: string | null
+    submitHold?: Promise<void>
+  } = {
     abortCalls: 0,
     compactCalls: 0,
+    liveTurnId: 'live-1',
   }
   const engine = {
     session: { id: 's1' },
@@ -233,6 +239,9 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
       if (!row || row.sessionId !== engine.session.id) return 'unmatched' as const
       await store.deletePendingAsk(callId)
       return 'matched' as const
+    },
+    liveTurnId() {
+      return state.liveTurnId
     },
     abort() {
       state.abortCalls += 1
@@ -482,6 +491,21 @@ describe('handleServeRequest', () => {
     expect(compact.status).toBe(200)
     expect(ctx.abortCalls).toBe(1)
     expect(ctx.compactCalls).toBe(1)
+  })
+
+  test('POST cancel with stale turnId is a no-op', async () => {
+    const ctx = makeServeCtx('t')
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/cancel', {
+        method: 'POST',
+        headers: { authorization: 'Bearer t', 'content-type': 'application/json' },
+        body: JSON.stringify({ turnId: 'stale' }),
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true, status: 'no_active_turn' })
+    expect(ctx.abortCalls).toBe(0)
   })
 
   test('missing session is 404; lock is 409; other resume errors are 500', async () => {

@@ -2,6 +2,7 @@ import {
   checkBearer,
   loadConfig,
   loadSessionMap,
+  parseCancelBody,
   parseResolveBody,
   parseTurnRequest,
   PersistError,
@@ -135,7 +136,8 @@ export type ServeEngine = {
     answer: PendingAskAnswer,
   ) => Promise<'matched' | 'unmatched'>
   replayPendingAsks: () => AsyncGenerator<StreamEvent, void>
-  abort: () => void
+  abort: (kind?: 'cancel' | 'interrupt') => void
+  liveTurnId?: () => string | null
   compactNow: () => Promise<void>
   close?: SessionEngine['close']
 }
@@ -476,7 +478,25 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
     if (req.method === 'POST' && action === 'cancel') {
       const loaded = await loadSessionRuntime(ctx, sessionId)
       if (!loaded.ok) return loaded.res
-      loaded.runtime.engine.abort()
+      const raw = await req.text()
+      let parsed: ReturnType<typeof parseCancelBody>
+      if (raw.trim() === '') {
+        parsed = parseCancelBody(undefined)
+      } else {
+        let body: unknown
+        try {
+          body = JSON.parse(raw)
+        } catch {
+          return Response.json({ error: 'invalid json' }, { status: 400 })
+        }
+        parsed = parseCancelBody(body)
+      }
+      if (!parsed.ok) return Response.json({ error: parsed.error }, { status: 400 })
+      const live = loaded.runtime.engine.liveTurnId?.() ?? null
+      if (parsed.turnId !== undefined ? parsed.turnId !== live : live === null) {
+        return Response.json({ ok: true, status: 'no_active_turn' })
+      }
+      loaded.runtime.engine.abort('cancel')
       return Response.json({ ok: true })
     }
     if (req.method === 'POST' && action === 'compact') {

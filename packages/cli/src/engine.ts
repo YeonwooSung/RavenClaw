@@ -1078,8 +1078,11 @@ function attachRavenclawLog(engine: SessionEngine, log: RavenclawLog): SessionEn
     reloadSystem(system) {
       engine.reloadSystem(system)
     },
-    abort() {
-      engine.abort()
+    abort(kind) {
+      engine.abort(kind)
+    },
+    liveTurnId() {
+      return engine.liveTurnId()
     },
     async close(closeOpts) {
       try {

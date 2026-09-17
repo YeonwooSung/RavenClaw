@@ -640,6 +640,12 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
           messages = turn.messages
         }
         const end = yield* queryLoop(loopOpts)
+        if (end.reason === 'cancelled') {
+          const leftover = await opts.store.listPendingAsks(session.id)
+          if (leftover.length > 0) {
+            yield { type: 'status', message: 'cancelled, ask still pending' }
+          }
+        }
         messages = turn.messages
         if (end.reason === 'completed' && shouldNudgeLearn(turn.round)) {
           messages = injectMidTurnHint(messages, LEARN_NUDGE)
@@ -750,11 +756,18 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       if (system !== undefined) system = applyPermissionMode(system, mode)
     },
 
-    abort() {
+    liveTurnId() {
+      return liveTurn?.id ?? null
+    },
+
+    abort(kind?: 'cancel' | 'interrupt') {
       cancelBackgroundReview?.()
       cancelBackgroundReview = undefined
       replayAbort?.abort()
-      if (liveTurn) abortTurn(liveTurn.abort)
+      if (liveTurn) {
+        if (liveTurn.cancelKind === undefined) liveTurn.cancelKind = kind ?? 'interrupt'
+        abortTurn(liveTurn.abort)
+      }
     },
 
     async close(closeOpts) {

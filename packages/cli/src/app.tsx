@@ -403,7 +403,7 @@ export function App(props: AppProps) {
             exit()
             return
           case 'stop':
-            runtimeRef.current.engine.abort()
+            runtimeRef.current.engine.abort('cancel')
             setNotice(busyRef.current ? 'stopped' : 'nothing to stop')
             return
           case 'clear':
@@ -617,7 +617,7 @@ export function App(props: AppProps) {
       }
       const pending = askRef.current
       if (pending) pending.reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
-      runtimeRef.current.engine.abort()
+      runtimeRef.current.engine.abort('cancel')
       if (abortGateRef.current.press() === 'kill_all') {
         const killed = runtimeRef.current.engine.tasks.killAll()
         setNotice(formatKilledBackgroundNotice(killed.length))

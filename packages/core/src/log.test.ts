@@ -147,6 +147,9 @@ function stubEngine(sessionId: string, end: RoundEnd, events: StreamEvent[] = []
     async setPermissionMode() {},
     reloadSystem() {},
     abort() {},
+    liveTurnId() {
+      return null
+    },
     async close() {},
   }
 }
