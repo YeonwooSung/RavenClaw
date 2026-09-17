@@ -10,6 +10,8 @@ export interface WorktreeCleanupReport {
   path: string
   dirty: boolean
   pruned: boolean
+  /** Shadow branch left behind when a dirty worktree was kept. */
+  leftoverBranch?: string
 }
 
 export interface ChildWorktree {
@@ -45,10 +47,11 @@ export function prepareChildWorktree(
   }
 
   let job: SessionJob | undefined
+  let shadow: string | undefined
   let added: { ok: boolean; stdout: string }
   if (parentJob) {
     const baseSha = runGit(parentJob.worktreePath, ['rev-parse', 'HEAD']).stdout.trim()
-    const shadow = shadowBranchName(childSessionId)
+    shadow = shadowBranchName(childSessionId)
     added = runGit(toplevel, ['worktree', 'add', '-b', shadow, worktreePath, baseSha])
     if (added.ok) {
       job = {
@@ -57,6 +60,8 @@ export function prepareChildWorktree(
         baseCommitSha: baseSha,
         worktreePath,
       }
+    } else {
+      shadow = undefined
     }
   } else {
     added = runGit(toplevel, ['worktree', 'add', '--detach', worktreePath])
@@ -69,7 +74,12 @@ export function prepareChildWorktree(
     ...(job !== undefined ? { job } : {}),
     cleanup: () => {
       if (isWorktreeDirty(worktreePath)) {
-        return { path: worktreePath, dirty: true, pruned: false }
+        return {
+          path: worktreePath,
+          dirty: true,
+          pruned: false,
+          ...(shadow !== undefined ? { leftoverBranch: shadow } : {}),
+        }
       }
       const removed = runGit(toplevel, ['worktree', 'remove', worktreePath])
       if (!removed.ok && !isWorktreeDirty(worktreePath)) {
@@ -77,7 +87,15 @@ export function prepareChildWorktree(
       }
       // Path gone after prune: status fails and must not look dirty.
       if (existsSync(worktreePath) && isWorktreeDirty(worktreePath)) {
-        return { path: worktreePath, dirty: true, pruned: false }
+        return {
+          path: worktreePath,
+          dirty: true,
+          pruned: false,
+          ...(shadow !== undefined ? { leftoverBranch: shadow } : {}),
+        }
+      }
+      if (shadow !== undefined) {
+        runGit(toplevel, ['branch', '-D', shadow])
       }
       return { path: worktreePath, dirty: false, pruned: true }
     },

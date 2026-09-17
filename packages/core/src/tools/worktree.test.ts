@@ -111,6 +111,65 @@ describe('prepareChildWorktree', () => {
     })
     expect(existsSync(handle.cwd)).toBe(true)
   })
+
+  test('stacked child cleanup deletes raven/* branch when pruned', () => {
+    const cwd = tempDir('ravenclaw-wt-gc-clean-')
+    initGitRepo(cwd)
+    const initSha = git(cwd, ['rev-parse', 'HEAD'])
+    const parentPath = join(cwd, '.ravenclaw', 'worktrees', 'parent_gc')
+    mkdirSync(join(cwd, '.ravenclaw', 'worktrees'), { recursive: true })
+    expect(gitStatus(cwd, ['worktree', 'add', '-b', 'raven/parent_gc', parentPath, initSha])).toBe(0)
+    const parentJob: SessionJob = {
+      baseBranch: git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']) || 'HEAD',
+      shadowBranch: 'raven/parent_gc',
+      baseCommitSha: initSha,
+      worktreePath: parentPath,
+    }
+    const childId = 'sess_child_gc_clean'
+    const shadow = shadowBranchName(childId)
+    const handle = prepareChildWorktree(cwd, childId, 'worktree', parentJob)
+    expect(handle.created).toBe(true)
+    expect(handle.job?.shadowBranch).toBe(shadow)
+    expect(gitStatus(cwd, ['show-ref', '--verify', `refs/heads/${shadow}`])).toBe(0)
+
+    const report = handle.cleanup()
+    expect(report).toEqual({ path: handle.cwd, dirty: false, pruned: true })
+    expect(existsSync(handle.cwd)).toBe(false)
+    expect(git(cwd, ['branch', '--list', shadow])).toBe('')
+    expect(gitStatus(cwd, ['show-ref', '--verify', `refs/heads/${shadow}`])).not.toBe(0)
+  })
+
+  test('stacked child dirty cleanup keeps path and leftoverBranch', () => {
+    const cwd = tempDir('ravenclaw-wt-gc-dirty-')
+    initGitRepo(cwd)
+    const initSha = git(cwd, ['rev-parse', 'HEAD'])
+    const parentPath = join(cwd, '.ravenclaw', 'worktrees', 'parent_gc_dirty')
+    mkdirSync(join(cwd, '.ravenclaw', 'worktrees'), { recursive: true })
+    expect(
+      gitStatus(cwd, ['worktree', 'add', '-b', 'raven/parent_gc_dirty', parentPath, initSha]),
+    ).toBe(0)
+    const parentJob: SessionJob = {
+      baseBranch: git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']) || 'HEAD',
+      shadowBranch: 'raven/parent_gc_dirty',
+      baseCommitSha: initSha,
+      worktreePath: parentPath,
+    }
+    const childId = 'sess_child_gc_dirty'
+    const shadow = shadowBranchName(childId)
+    const handle = prepareChildWorktree(cwd, childId, 'worktree', parentJob)
+    expect(handle.created).toBe(true)
+    writeFileSync(join(handle.cwd, 'scratch.txt'), 'keep me\n')
+
+    const report = handle.cleanup()
+    expect(report).toEqual({
+      path: handle.cwd,
+      dirty: true,
+      pruned: false,
+      leftoverBranch: shadow,
+    })
+    expect(existsSync(handle.cwd)).toBe(true)
+    expect(gitStatus(cwd, ['show-ref', '--verify', `refs/heads/${shadow}`])).toBe(0)
+  })
 })
 
 describe('isWorktreeDirty', () => {
