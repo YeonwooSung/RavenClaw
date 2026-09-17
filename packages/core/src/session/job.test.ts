@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Message, SessionJob, SessionRecord } from '../types'
 import { enterSessionWorktree, exitSessionWorktree } from '../tools/session-worktree'
-import { maybeCommitJob, openDraftPr, setJobAutoCommit, stampCheckpoint } from './job'
+import { annotateDraftPr, maybeCommitJob, openDraftPr, setJobAutoCommit, stampCheckpoint } from './job'
 
 const tempDirs: string[] = []
 const sessionIds: string[] = []
@@ -58,6 +58,15 @@ function dummyJob(cwd: string): SessionJob {
     shadowBranch: 'raven/x',
     baseCommitSha: 'abc',
     worktreePath: cwd,
+  }
+}
+
+function assistantMessage(): Extract<Message, { role: 'assistant' }> {
+  return {
+    id: 'a1',
+    role: 'assistant',
+    blocks: [{ type: 'text', text: 'ok' }],
+    createdAt: 1,
   }
 }
 
@@ -310,5 +319,115 @@ describe('openDraftPr', () => {
     expect(calls[1]?.slice(0, 3)).toEqual(['pr', 'edit', '4'])
     expect(calls[1]).not.toContain('--body')
     expect(calls[1]).not.toContain('--title')
+  })
+
+  test('openDraftPr with a stub gh puts a draft_pr block matching the snapshot', () => {
+    const cwd = tempDir('ravenclaw-job-pr-snapshot-')
+    initGitRepo(cwd)
+    const job = dummyJob(cwd)
+    job.baseCommitSha = git(cwd, ['rev-parse', 'HEAD'])
+    writeFileSync(join(cwd, 'note.txt'), 'hello\n')
+    git(cwd, ['add', 'note.txt'])
+    git(cwd, ['commit', '-m', 'note'])
+    const message = assistantMessage()
+    const out = openDraftPr({
+      job,
+      cwd,
+      title: 'feat: note',
+      body: 'adds note',
+      gh: () => ({ ok: true, stdout: 'https://github.com/o/r/pull/4\n', stderr: '' }),
+      message,
+    })
+    expect(out.ok).toBe(true)
+    const prs = message.blocks.filter((block) => block.type === 'draft_pr')
+    expect(prs).toHaveLength(1)
+    expect(prs[0]).toEqual({
+      type: 'draft_pr',
+      title: 'feat: note',
+      body: 'adds note',
+      url: 'https://github.com/o/r/pull/4',
+      sha: out.snapshot?.sha,
+      files: out.snapshot?.files,
+      plus: out.snapshot?.plus,
+      minus: out.snapshot?.minus,
+    })
+    expect(out.snapshot).toMatchObject({
+      title: 'feat: note',
+      body: 'adds note',
+      url: 'https://github.com/o/r/pull/4',
+      files: 1,
+      plus: 1,
+      minus: 0,
+    })
+    expect(out.snapshot?.sha).toBe(git(cwd, ['rev-parse', 'HEAD']))
+    expect(
+      message.blocks.some(
+        (block) => block.type === 'text' && block.text === 'Draft PR: https://github.com/o/r/pull/4',
+      ),
+    ).toBe(true)
+  })
+})
+
+describe('annotateDraftPr', () => {
+  test('stores a draft_pr block whose fields match the snapshot', () => {
+    const message = assistantMessage()
+    const snapshot = {
+      title: 'feat: note',
+      body: 'adds note',
+      url: 'https://github.com/o/r/pull/4',
+      sha: 'deadbeef',
+      files: 2,
+      plus: 10,
+      minus: 3,
+    }
+    annotateDraftPr(message, snapshot)
+    const prs = message.blocks.filter((block) => block.type === 'draft_pr')
+    expect(prs).toHaveLength(1)
+    expect(prs[0]).toEqual({ type: 'draft_pr', ...snapshot })
+    expect(message.blocks).toContainEqual({
+      type: 'text',
+      text: 'Draft PR: https://github.com/o/r/pull/4',
+    })
+  })
+
+  test('second annotate on the same message updates the same draft_pr block', () => {
+    const message = assistantMessage()
+    annotateDraftPr(message, {
+      title: 'first',
+      body: 'keep?',
+      url: 'https://github.com/o/r/pull/4',
+      sha: 'aaa',
+      files: 1,
+      plus: 2,
+      minus: 0,
+    })
+    annotateDraftPr(message, {
+      title: 'second',
+      body: 'updated',
+      url: 'https://github.com/o/r/pull/9',
+      sha: 'bbb',
+      files: 3,
+      plus: 8,
+      minus: 1,
+    })
+    const prs = message.blocks.filter((block) => block.type === 'draft_pr')
+    expect(prs).toHaveLength(1)
+    expect(prs[0]).toEqual({
+      type: 'draft_pr',
+      title: 'second',
+      body: 'updated',
+      url: 'https://github.com/o/r/pull/9',
+      sha: 'bbb',
+      files: 3,
+      plus: 8,
+      minus: 1,
+    })
+    expect(
+      message.blocks.filter((block) => block.type === 'text' && block.text.startsWith('Draft PR:')),
+    ).toHaveLength(1)
+    expect(message.blocks).toContainEqual({
+      type: 'text',
+      text: 'Draft PR: https://github.com/o/r/pull/9',
+    })
   })
 })

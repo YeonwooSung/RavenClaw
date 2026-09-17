@@ -1,6 +1,6 @@
 import { spawnSync } from 'node:child_process'
 import { runGit } from '../tools/session-worktree'
-import type { Message, SessionJob, SessionRecord, TodoItem } from '../types'
+import type { ContentBlock, Message, SessionJob, SessionRecord, TodoItem } from '../types'
 
 export type DraftPrSnapshot = {
   title: string
@@ -110,7 +110,26 @@ export function annotateDraftPr(
   snapshot: DraftPrSnapshot,
 ): void {
   const line = snapshot.url !== undefined ? `Draft PR: ${snapshot.url}` : `Draft PR: ${snapshot.title}`
-  message.blocks.push({ type: 'text', text: line })
+  const prBlock: Extract<ContentBlock, { type: 'draft_pr' }> = {
+    type: 'draft_pr',
+    title: snapshot.title,
+    body: snapshot.body,
+    sha: snapshot.sha,
+    files: snapshot.files,
+    plus: snapshot.plus,
+    minus: snapshot.minus,
+    ...(snapshot.url !== undefined ? { url: snapshot.url } : {}),
+  }
+  const prIndex = message.blocks.findIndex((block) => block.type === 'draft_pr')
+  if (prIndex >= 0) message.blocks[prIndex] = prBlock
+  else message.blocks.push(prBlock)
+
+  const textIndex = message.blocks.findIndex(
+    (block) => block.type === 'text' && block.text.startsWith('Draft PR:'),
+  )
+  const textBlock = { type: 'text' as const, text: line }
+  if (textIndex >= 0) message.blocks[textIndex] = textBlock
+  else message.blocks.push(textBlock)
 }
 
 export function lastAssistantForPr(
