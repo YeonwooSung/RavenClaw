@@ -461,17 +461,59 @@ Does **not** drop conversation messages. That is `/rewind`.
 `engine.rewindLast()`:
 
 1. If `liveTurn` or a running `type === 'agent'` task: `{ ok: false, notice: 'a turn is in progress' }`
-2. If the last file-history generation is still open: `a turn is in progress`
-3. Drop messages from the last user turn onward (`dropLastUserTurn`)
-4. Persist via `store.recordCompact(..., 'rewind', droppedIds)`. Failure: `rewind persist failed` (messages unchanged)
-5. Then `fileHistory.undo()`
-6. Notice (`formatRewindNotice`):
+2. **Job session** (`session.job`): `rewindToCheckpoint` — drop the last user turn, `git reset --hard` in the job worktree to the nearest earlier assistant checkpoint sha (or `job.baseCommitSha`), restore that todo snapshot, persist compact `rewind`. Failure notices: `rewind reset failed: …` / `rewind persist failed` / `nothing to rewind`.
+3. **No-job session:** if the last file-history generation is still open → `a turn is in progress`; else drop messages from the last user turn onward (`dropLastUserTurn`), persist via `store.recordCompact(..., 'rewind', droppedIds)` (failure: `rewind persist failed`, messages unchanged), then `fileHistory.undo()`.
+4. Notice (`formatRewindNotice`):
    - no file change and no drop: `nothing to rewind`
    - files only: same as `/undo`
    - messages only: `dropped 1 message` / `dropped N messages`
    - both: `undo: …; dropped N messages`
 
-Related: `/undo` (files only), `/clear` (new session).
+Related: `/undo` (files only), `/job` (enters a job so rewind becomes checkpoint-based), `/clear` (new session).
+
+---
+
+### `/job [name]` / `/job commit on|off`
+
+- **Aliases:** none
+- **Kind:** shared
+- **When:** idle or mid-turn (host epilogue / session cwd change; not a model turn)
+
+Catalog: `/job [name] | /job commit on|off` — enter a named `raven/*` job worktree; flip opt-in turn-end commit.
+
+| Arg | Action |
+|---|---|
+| missing / empty | Enter a job worktree with a default `raven/<slug>` shadow branch |
+| `<name>` | Enter a job worktree named from that slug |
+| `commit on` | Set `session.jobAutoCommit = true` and upsert (opt-in turn-end commit epilogue) |
+| `commit off` | Set `session.jobAutoCommit = false` and upsert |
+
+Enter path (`enterSessionWorktree`):
+
+- Cuts a worktree from the session’s original cwd (or current cwd), creates a **named** shadow branch (not detached-only).
+- Persists `session.job = { baseBranch, shadowBranch, baseCommitSha, worktreePath }`, updates `session.cwd` / host cwd, upserts.
+- Notice: `job ${shadowBranch}` on success; `job failed` / enter error string on failure.
+- Does **not** start a model turn. Auto-commit stays **off** until `/job commit on` (or equivalent config).
+
+Related: `/pr` (draft PR from the shadow), `/rewind` (checkpoint path once a job exists), CLI `--worktree`.
+
+---
+
+### `/pr [title]`
+
+- **Aliases:** none
+- **Kind:** shared
+- **When:** idle or mid-turn (host epilogue; never a model turn)
+
+Catalog: `/pr [title]` — open or update a draft PR from the session shadow branch.
+
+- No `session.job` → notice `no job record` (no `gh`).
+- Otherwise `openDraftPr` / `applySessionDraftPr` via `gh` if present: draft `shadow → base`. Optional arg is the PR title.
+- Preconditions: job record, clean worktree, authenticated `gh`. Dirty tree / missing `gh` → notice only (not a thrown turn, not 5xx on serve).
+- Updates `session.job` PR fields in place when a number/url is recorded; may annotate the last assistant message.
+- Default **off** — never auto-runs at turn end. Serve twin: `POST /v1/session/:id/pr`.
+
+Related: `/job`, `docs/headless.md` serve `/pr`.
 
 ---
 
@@ -1028,7 +1070,9 @@ Discovery order (later wins on name): builtin → `~/.ravenclaw/skills` → `<cw
 | Command | Files | Transcript | Session id |
 |---|---|---|---|
 | `/undo` | Restore last **closed** edit checkpoint | Unchanged | Same |
-| `/rewind` | Same undo, plus drop last user turn (persisted compact `rewind`) | Truncated | Same |
+| `/rewind` | Job: `git reset --hard` + todo snapshot + drop last user turn. No-job: file-history undo + drop last user turn (persisted compact `rewind`) | Truncated | Same |
+| `/job` | Enter `raven/*` worktree + job record; `/job commit on\|off` flips auto-commit | Unchanged | Same (cwd → worktree) |
+| `/pr` | Draft PR from shadow (notice-only if no job / dirty) | May annotate last assistant | Same |
 | `/compact` | Unchanged | Prefix summarized; `compactGeneration++` | Same |
 | `/clear` / `/new` | Unchanged | Empty UI | **New** (`openNewSession`) |
 | `/resume [id]` | Unchanged | Load stored messages | **Other** (or list) |

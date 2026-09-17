@@ -1,9 +1,12 @@
 # RavenClaw next-horizon roadmap (session-as-job)
 
 Date: 2026-09-16  
-Status: not implemented  
-Reviewed against tree at `d4c73d4` (eve-inspired horizon + leftover-ask holes PRs #2–#8 on `main`).  
+Status: implemented  
+Shipped on `main` at `ea56edd` (merge of `feat/session-as-job`).  
+Reviewed against tree at `d4c73d4` before implementation (eve-inspired horizon + leftover-ask holes PRs #2–#8 on `main`).  
 Successor to `2026-09-15-eve-inspired-roadmap.md` (Status: implemented). Does not reopen that spec’s closed doors.
+
+Closeout in progress (this branch / `2026-09-17-session-as-job-closeout`): F4.1 PR snapshot annotation (`draft_pr` block) and F4.3 stacked-child `raven/*` branch GC on prune. Horizon contracts F0.1–F4.3 otherwise landed.
 
 Sources: current tree, [eve analysis](../../research/eve-analysis.md) (`/Users/yeonwoosung/Desktop/eve`, Apache-2.0, read-only), [y0 analysis](../../research/y0-analysis.md) (`/Users/yeonwoosung/Desktop/y0`, read-only).
 
@@ -15,14 +18,15 @@ Steal contracts. Do not copy eve, y0, Claude, Hermes, or Freebuff source. Do not
 
 ## Where we are
 
-The eve-inspired waves (durable leftover-ask, docker file jail, compact trim, child HITL, `raven serve` stream/resolve, `raven eval`) are on `main`. The waist is still:
+The eve-inspired waves and this session-as-job horizon are on `main` (`ea56edd`). The waist is:
 
 - One `queryLoop`. Hosts call `submitMessage`. The only other host entry is `applyAskAnswer`. Persist-before-execute. Pairing. No `bypass`.
 - `dontAsk` ≠ leftover-allow-all.
 - Frozen default prefix. Skills + MCP + `isEnabled` for growth.
 - Slack, Discord + pairing, ACP, `raven serve`, cron, children via `SessionEngine`.
+- Session-as-job: named `raven/*` shadow, opt-in turn-end commit, checkpoint rewind, optional `/pr`; serve `seq` / `?after=` / GET snapshot / cancel `turnId`.
 
-What is left is **not** “missing a loop” and **not** “add y0’s Next.js + Prisma Task.” It is making a session able to **own a git job** (named shadow branch, turn-end commit, rewindable checkpoint, optional PR) and making the serve waist **reconnectable and cancel-honest** so a job host does not invent a second stream.
+This horizon is **not** “missing a loop” and **not** “add y0’s Next.js + Prisma Task.” It made a session able to **own a git job** and the serve waist **reconnectable and cancel-honest** so a job host does not invent a second stream.
 
 eve’s leftover lesson: ID-addressed NDJSON with a cursor; cancel ≠ fail; compact re-injects todos and forgets summarized Reads.  
 y0’s lesson: Task-as-job UX — the job owns a branch; delivery is an epilogue; rewind is a checkpoint, not file-undo only.  
@@ -40,33 +44,35 @@ y0’s trap: Socket.IO + Prisma Task as the waist, isolation-trust instead of le
 | Compact: all-tool budget, queued `/compact`, `COMPACTION_PROMPT_TOKENS=1024` | `compact/` |
 | MEMORY stays out of the summary | `maybe-compact.test.ts` |
 | Child leftover-ask + `childSessionId` | `permission_ask`, hosts |
-| Serve: `/v1/session/:id/{stream,submit,cancel,compact,resolve}`; `/v1/turn` stays dontAsk | `cli/src/serve.ts`, `docs/headless.md` |
-| `raven eval` path-identity (one fixture: `pending-ask-persist`) | `packages/core/src/eval/` |
-| Session worktree (detached HEAD) + child `isolation: worktree` | `session-worktree.ts`, `worktree.ts` |
-| `rewindLastTurn` = last file-history undo + drop last user turn | `session/rewind.ts` |
-| `TodoWrite` → project `.ravenclaw/todo.json` | `tools/todo.ts` |
+| Serve: `GET /v1/session/:id`, stream `?after=`, `/submit|/cancel|/compact|/resolve|/pr`; `/v1/turn` stays dontAsk | `cli/src/serve.ts`, `docs/headless.md` |
+| `raven eval` path-identity (session-as-job fixtures + prior gates) | `packages/core/src/eval/` |
+| Session job worktree (`raven/*` shadow) + child stack on parent shadow | `session-worktree.ts`, `worktree.ts`, `session/job.ts` |
+| Job rewind = `rewindToCheckpoint`; no-job = file-history + drop last user turn | `session/rewind.ts` |
+| `TodoWrite` → session `todos_json` (+ cwd `todo.json` projection) | `tools/todo.ts` |
 | `formatSettledOutput` shared helper | `loop/format-output.ts` |
 
 ### Per-slice board
 
+Board as of `ea56edd` on `main`. Pre-ship “missing” rows are historical; do not treat them as current.
+
 | ID | Status vs tree |
 |---|---|
-| F0.1 docs match shipped waist | **stale** (`ARCHITECTURE.md` still says schema v4 / serve is `/v1/turn` only; eve-inspired spec still says “not implemented”) |
-| F0.2 ACP timeout must not persist deny | **missing** (Slack dropped timer-deny; ACP 120s still denies) |
-| F0.3 eval gates for sandbox-cwd + compact-MEMORY | **missing** (named last horizon; only `pending-ask-persist` exists) |
-| F1.1 compact resets this-turn `readFiles` | **missing** |
-| F1.2 todos restore-note after compact | **missing** (explicitly out of E3.1) |
-| F1.3 todos keyed by `sessionId` | **missing** (project `todo.json` is shared) |
-| F2.1 session `job` record | **missing** (worktree is detached, no `base`/`shadow`/`baseSha`) |
-| F2.2 named shadow branch on the worktree | **missing** |
-| F2.3 opt-in turn-end commit epilogue | **missing** |
-| F2.4 checkpoint `{ sha, todos }` + rewind to it | **partial** (file-history undo only) |
-| F3.1 cancel ≠ fail | **partial** (`abort` → `round_end` aborted; no `cancelled` vs `failed`; no `turnId` guard) |
-| F3.2 reconnectable stream (`seq` + `?after=`) | **missing** (live tail; last plan forbade `?after=` because there was no seq — this horizon **adds** seq) |
-| F3.3 `GET /v1/session/:id` snapshot | **missing** |
-| F4.1 optional `/pr` delivery, default off | **missing** |
-| F4.2 eval fixtures that lock F1–F3 | **missing** |
-| F4.3 stacked child `base = parent.shadow` | **missing** |
+| F0.1 docs match shipped waist | **shipped** (closeout Task 1 re-aligns docs to this waist) |
+| F0.2 ACP timeout must not persist deny | **shipped** (`AskWaiterExpired`; row stays; closeout may still harden ACP replay) |
+| F0.3 eval gates for sandbox-cwd + compact-MEMORY | **shipped** |
+| F1.1 compact resets this-turn `readFiles` | **shipped** (`forgetReadsNotInTail`) |
+| F1.2 todos restore-note after compact | **shipped** |
+| F1.3 todos keyed by `sessionId` | **shipped** (schema v7 `sessions.todos_json`) |
+| F2.1 session `job` record | **shipped** (schema v8 `sessions.job_json`) |
+| F2.2 named shadow branch on the worktree | **shipped** (`raven/<slug>`) |
+| F2.3 opt-in turn-end commit epilogue | **shipped** (`jobAutoCommit` / `/job commit on\|off`) |
+| F2.4 checkpoint `{ sha, todos }` + rewind to it | **shipped** (`rewindToCheckpoint`; no-job keeps file-history rewind) |
+| F3.1 cancel ≠ fail | **shipped** (`cancelled` vs `failed`; `turnId` → `no_active_turn`; parked asks stay) |
+| F3.2 reconnectable stream (`seq` + `?after=`) | **shipped** (schema v9 `stream_events`) |
+| F3.3 `GET /v1/session/:id` snapshot | **shipped** |
+| F4.1 optional `/pr` delivery, default off | **shipped** (route + slash); annotation shape closeout in progress |
+| F4.2 eval fixtures that lock F1–F3 | **shipped** |
+| F4.3 stacked child `base = parent.shadow` | **shipped** (spawn); branch GC on prune closeout in progress |
 
 ---
 

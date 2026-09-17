@@ -4,7 +4,7 @@
 
 RavenClaw is a Bun/TypeScript coding agent that reads and edits a workspace, runs a shell, and resumes after crash. It is bring-your-own-key (BYOK): there is no RavenClaw company backend, and the first public tag is BYOK-only. Hosts (Ink TUI, OpenTUI, `exec`, ACP, `serve`, Slack, Discord, SDK) do not reimplement the agent loop. They construct a `SessionEngine` and call `submitMessage`. Licensed Apache-2.0.
 
-Related docs: [README.md](README.md), [SLASH_COMMANDS.md](SLASH_COMMANDS.md) ([한국어](SLASH_COMMANDS.ko.md)), [CONTRIBUTING.md](CONTRIBUTING.md), [docs/headless.md](docs/headless.md). Design notes live under `docs/superpowers/specs/` (next horizon: [session-as-job](docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md); previous: [eve-inspired](docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md) implemented). Prior-art research is in `docs/research/` ([eve](docs/research/eve-analysis.md), [y0](docs/research/y0-analysis.md)).
+Related docs: [README.md](README.md), [SLASH_COMMANDS.md](SLASH_COMMANDS.md) ([한국어](SLASH_COMMANDS.ko.md)), [CONTRIBUTING.md](CONTRIBUTING.md), [docs/headless.md](docs/headless.md). Design notes live under `docs/superpowers/specs/` (implemented: [session-as-job](docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md) at `ea56edd`; previous: [eve-inspired](docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md)). Prior-art research is in `docs/research/` ([eve](docs/research/eve-analysis.md), [y0](docs/research/y0-analysis.md)).
 
 ## Design invariants
 
@@ -173,12 +173,14 @@ Same `CliRuntime` and slash dispatch (`packages/cli/src/slash/dispatch.ts`). Ren
 
 - `GET /health` → `{ ok: true }`
 - `POST /v1/turn` — `Authorization: Bearer <secret>` (`checkBearer` in `packages/core/src/gateway/http.ts`). Body `{ text, sessionKey? }`. Runs `runExec` with `closeEngine: false`. Session map is `$RAVENCLAW_HOME/gateway/sessions.json`.
-- `GET  /v1/session/:id/stream` — NDJSON live tail of `StreamEvent` (Bearer). Closing the stream is detach, not cancel.
+- `GET  /v1/session/:id` — reconnect snapshot `{ id, job?, pendingAsks, lastSeq, permissionMode, live }` (Bearer). 404 if unknown (does not create). `live` is true while a turn is in process.
+- `GET  /v1/session/:id/stream` — NDJSON `{ seq } & StreamEvent` (Bearer). Omit `after` for a live tail. `?after=<seq>` replays `seq > after` then tails. `after=0` replays from the start. Closing the stream is detach, not cancel.
 - `POST /v1/session/:id/submit` — `{ text }` → `submitMessage({ text, turnPolicy: 'queue' })`, **202** `{ accepted, sessionId }`. Missing sessions are created with the **default** permission mode (not `dontAsk`).
 - `POST /v1/session/:id/resolve` — `{ callId, allow }` settles a live waiter first, else `applyAskAnswer`. Crash-resolve **pairs only**.
-- `POST /v1/session/:id/cancel` — `engine.abort()`; parked leftover-ask rows stay.
+- `POST /v1/session/:id/cancel` — optional body `{ turnId? }`. Calls `engine.abort('cancel')` when the live turn matches (or any live turn if `turnId` omitted). Stale / no live turn → **200** `{ ok: true, status: 'no_active_turn' }`. Parked leftover-ask rows stay; stream may emit `cancelled, ask still pending`.
 - `POST /v1/session/:id/compact` — `compactNow()` (queues if `liveTurn !== null`).
-- `POST /v1/turn` stays dontAsk one-shot. Opening a session via `/v1/turn` first stamps `dontAsk`, so leftover-ask on that session is deny.
+- `POST /v1/session/:id/pr` — optional `{ title, body }` → draft PR from the session shadow (default off; never a model turn). 200 `{ ok, notice, snapshot? }`. Missing job or dirty tree is a notice, not 5xx.
+- `POST /v1/turn` stays dontAsk one-shot. Opening a session via `/v1/turn` first stamps `dontAsk`, so leftover-ask on that session is deny. No `?after=` on `/v1/turn`.
 - `POST /webhooks/<route>` — `X-Raven-Signature: t=<unix>,v1=<hmac>` (`verifyWebhookSignature`, 300s skew). Fire-and-forget 202. Webhook sessions are restricted to `safeWebhookToolNames()`: `Read`, `Grep`, `Glob`, `Fetch`, `WebSearch` (`packages/core/src/gateway/webhook.ts`).
 
 Mailbox poller every 15s wakes a live engine with `[mailbox]` if `peekAgentMail` is non-empty. Slack and Discord are **not** serve adapters.
@@ -268,9 +270,9 @@ Accepts a string or `{ text?, images? }`. Sequence:
 - **`enqueueSteer(text)`** pushes onto `steering`. Drained in `prepareContext` and `finalizeRound` through `injectMidTurnHint` (the only mid-turn writer).
 - **`bindDrainQueued(fn)`** — host `/queue`. At most one queued prompt is injected after each tool batch (`finalizeRound` → `injectQueued`).
 - **`compactNow()`** runs autocompact on live or stored messages (LLM summary if `compact.llmSummarize`, else `mechanicalSummary`). May run during a live turn.
-- **`rewindLast()`** refuses if `liveTurn` or a running Agent task exists. Calls `rewindLastTurn`: persist a compact boundary for dropped ids, `fileHistory.undo()`, drop the last user turn from the transcript.
+- **`rewindLast()`** refuses if `liveTurn` or a running Agent task exists. **Job sessions** (`session.job`) call `rewindToCheckpoint`: `git reset --hard` in the job worktree to the nearest earlier assistant checkpoint sha (or `baseCommitSha`), restore that todo snapshot, drop the last user turn, persist compact `rewind`. **No-job sessions** call `rewindLastTurn`: persist a compact boundary for dropped ids, `fileHistory.undo()`, drop the last user turn from the transcript.
 - **`reloadSystem(next)`** replaces `system` for the next assemble. `/reload` rebuilds parts and calls this.
-- **`abort()`** cancels background review and `abortTurn(liveTurn.abort)`.
+- **`abort(kind?)`** cancels background review and `abortTurn(liveTurn.abort)`. Serve cancel passes `'cancel'` (vs `'interrupt'` for steer). Optional `liveTurnId()` backs the serve `turnId` guard.
 - **`close({ releaseLock? })`** fires `SessionEnd` once, then `releaseSessionLock` unless `releaseLock: false` (child agents use that).
 
 Lock holders (`SessionLockHolderName`): `'tui' | 'serve' | 'exec' | 'cron' | 'acp' | 'sdk' | 'slack' | 'discord'`. TTL 120s, renew 30s. One live writer per session id — a second holder gets `SessionLockError`. Same `holderId` may re-acquire. Stale locks are stealable.
@@ -642,7 +644,7 @@ SQLite WAL at `$RAVENCLAW_HOME/state.db` (`PRAGMA journal_mode = WAL`, `busy_tim
 
 FTS5 indexes message body (not tool dumps as the primary search surface). `raven search` / `/search` / `SessionSearch` use it. `search --all` drops the cwd filter.
 
-**Rewind vs undo:** `/undo` is `fileHistory.undo()` only (restore/remove files from the last closed generation). `/rewind` is undo **plus** drop the last user turn and persist a compact boundary. Both refuse an open generation (`a turn is in progress`).
+**Rewind vs undo:** `/undo` is `fileHistory.undo()` only (restore/remove files from the last closed generation). `/rewind` depends on the session: with a job record it is `rewindToCheckpoint` (`git reset --hard` in the worktree + todo snapshot + drop last user turn); without a job it is file-history undo **plus** drop the last user turn and persist a compact boundary. Both refuse an open generation / live turn (`a turn is in progress`).
 
 File history copies pre-images under `$RAVENCLAW_HOME/file-history/<sessionId>/0001…`. `turnWriteCount()` feeds verify-on-stop.
 

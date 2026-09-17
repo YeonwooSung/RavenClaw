@@ -1,6 +1,20 @@
-import { describe, expect, test } from 'bun:test'
-import { PersistError, type CompactPolicy, type Message, type ModelProfile, type Tool, type Turn } from '../types'
+import { afterEach, describe, expect, test } from 'bun:test'
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import {
+  PersistError,
+  type CompactPolicy,
+  type Message,
+  type ModelProfile,
+  type SessionRecord,
+  type StreamEvent,
+  type TodoItem,
+  type Tool,
+  type Turn,
+} from '../types'
 import { createMemoryStore } from '../session/memory-store'
+import { todoJsonPath, todoWriteTool } from '../tools/todo'
 import {
   assembleRequest,
   beginRound,
@@ -10,6 +24,54 @@ import {
   runToolRound,
   type LoopState,
 } from './phases'
+
+const tempDirs: string[] = []
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop()
+    if (dir) rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+function fixtureRoot(): string {
+  const root = mkdtempSync(join(tmpdir(), 'ravenclaw-phases-todo-'))
+  tempDirs.push(root)
+  return root
+}
+
+function sessionRecord(cwd: string, over: Partial<SessionRecord> = {}): SessionRecord {
+  return {
+    id: 's1',
+    createdAt: 1,
+    updatedAt: 1,
+    cwd,
+    model: 'dummy',
+    permissionMode: 'default',
+    compactGeneration: 0,
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    funding: 'byok',
+    ...over,
+  }
+}
+
+async function drainToolRound(current: LoopState): Promise<{
+  end: unknown
+  events: StreamEvent[]
+}> {
+  const gen = runToolRound(current)
+  const events: StreamEvent[] = []
+  while (true) {
+    const next = await gen.next()
+    if (next.done) return { end: next.value, events }
+    events.push(next.value)
+  }
+}
+
+function toolResultText(row: Extract<Message, { role: 'tool' }> | undefined): string {
+  const block = row?.blocks[0]
+  return block?.type === 'text' ? block.text : ''
+}
 
 function model(over: Partial<ModelProfile> = {}): ModelProfile {
   return {
@@ -471,5 +533,72 @@ describe('runToolRound live drain', () => {
       setTimeout(() => reject(new Error('hung')), 1000)
     })
     await expect(Promise.race([drained, hung])).rejects.toThrow('pre boom')
+  })
+})
+
+describe('TodoWrite executeOneCall', () => {
+  const previous: TodoItem[] = [{ id: 'old', text: 'keep', status: 'pending' }]
+  const nextItems = [{ text: 'ship', status: 'done' as const }]
+
+  test('does not apply session todos when updateSessionTodos rejects', async () => {
+    const root = fixtureRoot()
+    const inner = createMemoryStore()
+    const session = sessionRecord(root, { todos: previous })
+    await inner.createSession(session)
+    const store = {
+      ...inner,
+      async updateSessionTodos() {
+        throw new Error('upsert rejected')
+      },
+    }
+    const current = state({
+      store,
+      tools: [todoWriteTool],
+      session,
+      todos: previous,
+      turn: turn({ cwd: root }),
+      pendingToolCalls: [{ id: 'td', name: 'TodoWrite', input: { items: nextItems } }],
+    })
+    const { events } = await drainToolRound(current)
+    const row = current.toolResults[0]
+    expect(row?.ok).toBe(false)
+    expect(toolResultText(row).startsWith('TodoWrite failed:')).toBe(true)
+    const resultEvent = events.find((event) => event.type === 'tool_result')
+    expect(resultEvent?.type === 'tool_result' ? resultEvent.result.ok : undefined).toBe(false)
+    expect(current.todos).toEqual(previous)
+    expect(current.session?.todos).toEqual(previous)
+    expect((await inner.loadSession('s1')).session.todos).toEqual(previous)
+    expect(existsSync(todoJsonPath(root))).toBe(false)
+  })
+
+  test('successful TodoWrite writes store, applies RAM todos, and projects cwd file', async () => {
+    const root = fixtureRoot()
+    const store = createMemoryStore()
+    const session = sessionRecord(root, { todos: previous })
+    await store.createSession(session)
+    const current = state({
+      store,
+      tools: [todoWriteTool],
+      session,
+      todos: previous,
+      turn: turn({ cwd: root }),
+      pendingToolCalls: [{ id: 'td', name: 'TodoWrite', input: { items: nextItems } }],
+    })
+    const { events } = await drainToolRound(current)
+    const row = current.toolResults[0]
+    expect(row?.ok).toBe(true)
+    expect(toolResultText(row).toLowerCase()).not.toMatch(/fail|error|deny/)
+    const resultEvent = events.find((event) => event.type === 'tool_result')
+    expect(resultEvent?.type === 'tool_result' ? resultEvent.result.ok : undefined).toBe(true)
+    expect(current.todos?.map((item) => item.text)).toEqual(['ship'])
+    expect(current.session?.todos?.map((item) => item.text)).toEqual(['ship'])
+    expect((await store.loadSession('s1')).session.todos?.map((item) => item.text)).toEqual([
+      'ship',
+    ])
+    const path = todoJsonPath(root)
+    expect(existsSync(path)).toBe(true)
+    const raw = JSON.parse(readFileSync(path, 'utf8')) as Array<{ text: string; status: string }>
+    expect(raw.map((item) => item.text)).toEqual(['ship'])
+    expect(raw[0]?.status).toBe('done')
   })
 })

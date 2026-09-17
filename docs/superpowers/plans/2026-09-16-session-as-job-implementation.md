@@ -1,5 +1,7 @@
 # Session-as-job — Implementation Plan
 
+> **Archive:** All 15 tasks landed on `main` at `ea56edd`. Do not re-run this plan as greenfield work.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make a session own a named git job (shadow branch, opt-in turn-end commit, rewindable checkpoint, optional `/pr`) and make `raven serve` reconnectable and cancel-honest — without a second loop, a web UI, or a Prisma Task table.

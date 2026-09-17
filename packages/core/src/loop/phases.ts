@@ -1374,6 +1374,22 @@ async function executeOneCall(
     const output = await tool.execute(input, executeCtx)
     events.push(...progress)
     const formatted = formatSettledOutput(tool, output)
+    if (
+      callName === 'TodoWrite' &&
+      typeof output === 'string' &&
+      output.startsWith('TodoWrite failed:')
+    ) {
+      events.push({
+        type: 'tool_result',
+        id: call.id,
+        result: { toolUseId: call.id, ok: false, content: formatted.content },
+      })
+      return {
+        messages: [makeToolMessage(call.id, false, formatted.content)],
+        events,
+        abortRest: false,
+      }
+    }
     noteToolSideEffects(state, callName, input)
     if (callName === 'TodoWrite') applyWrittenTodos(state, input)
     const content = appendSubdirAgents(state, input, formatted.content, formatted.persistPath)

@@ -211,9 +211,18 @@ export function createAcpServer(opts: AcpServerOptions): AcpServer {
     const input = promptToSubmit(
       params && typeof params === 'object' ? (params as { prompt?: unknown }).prompt : undefined,
     )
+    expiredSessions.delete(parsed.sessionId)
+    try {
+      await drainReplay(engine)
+    } catch (error) {
+      if (isAskWaiterExpired(error)) {
+        emit(parsed.sessionId, { sessionUpdate: 'done', stopReason: 'cancelled' })
+        return jsonRpcResult(id, { stopReason: 'cancelled' })
+      }
+      throw error
+    }
     const gen = engine.submitMessage(input)
     let end: unknown
-    expiredSessions.delete(parsed.sessionId)
     while (true) {
       let next: IteratorResult<unknown, unknown>
       try {
@@ -269,7 +278,19 @@ export function createAcpServer(opts: AcpServerOptions): AcpServer {
     if (!parsed) {
       return jsonRpcError(id, JSON_RPC_INVALID_PARAMS, 'Invalid params')
     }
-    if (sessions.has(parsed.sessionId)) {
+    const live = sessions.get(parsed.sessionId)
+    if (live) {
+      try {
+        await drainReplay(live)
+      } catch (error) {
+        if (!isAskWaiterExpired(error)) {
+          return jsonRpcError(
+            id,
+            JSON_RPC_INVALID_PARAMS,
+            error instanceof Error ? error.message : 'Unknown session',
+          )
+        }
+      }
       return jsonRpcResult(id, { sessionId: parsed.sessionId })
     }
     if (!opts.loadEngine) {
@@ -278,10 +299,10 @@ export function createAcpServer(opts: AcpServerOptions): AcpServer {
     try {
       const engine = await opts.loadEngine(parsed.sessionId, factoryOpts(parsed.sessionId))
       sessions.set(parsed.sessionId, engine)
-      if (typeof engine.replayPendingAsks === 'function') {
-        for await (const _event of engine.replayPendingAsks()) {
-          // engine askUser already requests permission
-        }
+      try {
+        await drainReplay(engine)
+      } catch (error) {
+        if (!isAskWaiterExpired(error)) throw error
       }
       return jsonRpcResult(id, { sessionId: parsed.sessionId })
     } catch (error) {
@@ -375,6 +396,13 @@ async function abandonSubmit(gen: AsyncGenerator<unknown, unknown>): Promise<voi
     await gen.return(undefined)
   } catch {
     // generator already closed
+  }
+}
+
+async function drainReplay(engine: AcpEngine): Promise<void> {
+  if (typeof engine.replayPendingAsks !== 'function') return
+  for await (const _event of engine.replayPendingAsks()) {
+    // engine askUser already requests permission
   }
 }
 

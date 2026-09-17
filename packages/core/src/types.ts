@@ -70,6 +70,16 @@ export type ContentBlock =
   | { type: 'thinking'; text: string }
   | { type: 'tool_use'; id: string; name: string; input: unknown }
   | { type: 'image'; mediaType: string; data: string }
+  | {
+      type: 'draft_pr'
+      title: string
+      body: string
+      url?: string
+      sha: string
+      files: number
+      plus: number
+      minus: number
+    }
 
 export type UserOrToolBlock =
   | { type: 'text'; text: string }

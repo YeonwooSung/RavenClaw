@@ -924,6 +924,286 @@ describe('createAcpServer', () => {
     expect(engine?.liveTurnId()).toBeNull()
   })
 
+  test('session/load still drains replayPendingAsks when the session is already live', async () => {
+    let replayed = 0
+    const server = createAcpServer({
+      engineFactory: () => ({
+        ...fakeEngine({}),
+        async *replayPendingAsks() {
+          replayed += 1
+        },
+      }),
+    })
+    const sessionId = resultOf(
+      await server.handle({
+        jsonrpc: '2.0',
+        id: 1,
+        method: ACP_METHODS.sessionNew,
+        params: { cwd: '/tmp' },
+      }),
+    ).sessionId
+    const load = await server.handle({
+      jsonrpc: '2.0',
+      id: 2,
+      method: ACP_METHODS.sessionLoad,
+      params: { sessionId },
+    })
+    expect(resultOf(load)).toEqual({ sessionId })
+    expect(replayed).toBeGreaterThanOrEqual(1)
+  })
+
+  test('session/prompt drains replayPendingAsks before submitMessage', async () => {
+    const order: string[] = []
+    const server = createAcpServer({
+      engineFactory: () => ({
+        async *submitMessage() {
+          order.push('submit')
+          return { reason: 'completed' }
+        },
+        abort() {},
+        async *replayPendingAsks() {
+          order.push('replay')
+        },
+      }),
+    })
+    const sessionId = resultOf(
+      await server.handle({
+        jsonrpc: '2.0',
+        id: 1,
+        method: ACP_METHODS.sessionNew,
+        params: { cwd: '/tmp' },
+      }),
+    ).sessionId
+    await server.handle({
+      jsonrpc: '2.0',
+      id: 2,
+      method: ACP_METHODS.sessionPrompt,
+      params: { sessionId, prompt: 'hi' },
+    })
+    expect(order).toEqual(['replay', 'submit'])
+  })
+
+  test('session/prompt replay timeout returns cancelled and does not submitMessage', async () => {
+    let submitted = 0
+    const server = createAcpServer({
+      engineFactory: () => ({
+        async *submitMessage() {
+          submitted += 1
+          return { reason: 'completed' }
+        },
+        abort() {},
+        async *replayPendingAsks() {
+          throw Object.assign(new Error('permission waiter expired'), { name: 'AskWaiterExpired' })
+        },
+      }),
+    })
+    const sessionId = resultOf(
+      await server.handle({
+        jsonrpc: '2.0',
+        id: 1,
+        method: ACP_METHODS.sessionNew,
+        params: { cwd: '/tmp' },
+      }),
+    ).sessionId
+    const prompt = await server.handle({
+      jsonrpc: '2.0',
+      id: 2,
+      method: ACP_METHODS.sessionPrompt,
+      params: { sessionId, prompt: 'hi' },
+    })
+    expect(resultOf(prompt)).toEqual({ stopReason: 'cancelled' })
+    expect(submitted).toBe(0)
+  })
+
+  test('session/load after timeout re-asks leftover-ask on the live map entry', async () => {
+    const store = createMemoryStore()
+    const session = {
+      id: 'sess_replay_load',
+      createdAt: 1,
+      updatedAt: 1,
+      cwd: '/tmp',
+      model: 'dummy',
+      permissionMode: 'default' as const,
+      compactGeneration: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      funding: 'byok' as const,
+    }
+    await store.createSession(session)
+    let engine: ReturnType<typeof createSessionEngine> | undefined
+    const requests: JsonRpcRequest[] = []
+    let expireNextWait = true
+    const server = createAcpServer({
+      engineFactory: (_sessionId, opts) => {
+        engine = createSessionEngine({
+          session,
+          provider: createFakeProvider([
+            toolThenStop('call_eval', 'Echo', { text: 'hi' }),
+            textThenStop('done'),
+          ]),
+          store,
+          tools: [createAskEcho()],
+          compact: defaultCompact(),
+          model: defaultModel(),
+          maxRounds: 8,
+          bare: true,
+          askUser: (event, signal) => {
+            if (!opts?.requestPermission) return Promise.resolve('deny')
+            return opts.requestPermission(event, signal)
+          },
+        })
+        return engine
+      },
+      request: async (req) => {
+        requests.push(req)
+        if (requests.length === 1) return new Promise(() => {})
+        return { outcome: { outcome: 'selected', optionId: 'allow' } }
+      },
+      permissionTimeoutMs: 120_000,
+      wait: async () => {
+        if (expireNextWait) {
+          expireNextWait = false
+          return
+        }
+        await new Promise(() => {})
+      },
+    })
+    const sessionId = resultOf(
+      await server.handle({
+        jsonrpc: '2.0',
+        id: 1,
+        method: ACP_METHODS.sessionNew,
+        params: { cwd: '/tmp' },
+      }),
+    ).sessionId
+    const prompt = await server.handle({
+      jsonrpc: '2.0',
+      id: 2,
+      method: ACP_METHODS.sessionPrompt,
+      params: { sessionId, prompt: 'rm' },
+    })
+    expect(resultOf(prompt)).toEqual({ stopReason: 'cancelled' })
+    expect((await store.listPendingAsks(session.id)).map((row) => row.callId)).toEqual(['call_eval'])
+    expect(engine?.liveTurnId()).toBeNull()
+
+    const load = await server.handle({
+      jsonrpc: '2.0',
+      id: 3,
+      method: ACP_METHODS.sessionLoad,
+      params: { sessionId },
+    })
+    expect(resultOf(load)).toEqual({ sessionId })
+    expect(requests.length).toBeGreaterThanOrEqual(2)
+    expect(requests[1]?.method).toBe(ACP_METHODS.sessionRequestPermission)
+    expect(await store.listPendingAsks(session.id)).toHaveLength(0)
+  })
+
+  test('session/prompt after timeout settles leftover-ask via replay then submits the new prompt', async () => {
+    const store = createMemoryStore()
+    const session = {
+      id: 'sess_replay_prompt',
+      createdAt: 1,
+      updatedAt: 1,
+      cwd: '/tmp',
+      model: 'dummy',
+      permissionMode: 'default' as const,
+      compactGeneration: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      funding: 'byok' as const,
+    }
+    await store.createSession(session)
+    let engine: ReturnType<typeof createSessionEngine> | undefined
+    const requests: JsonRpcRequest[] = []
+    let expireNextWait = true
+    const submitted: UserSubmitInput[] = []
+    const server = createAcpServer({
+      engineFactory: (_sessionId, opts) => {
+        engine = createSessionEngine({
+          session,
+          provider: createFakeProvider([
+            toolThenStop('call_eval', 'Echo', { text: 'hi' }),
+            textThenStop('done'),
+          ]),
+          store,
+          tools: [createAskEcho()],
+          compact: defaultCompact(),
+          model: defaultModel(),
+          maxRounds: 8,
+          bare: true,
+          askUser: (event, signal) => {
+            if (!opts?.requestPermission) return Promise.resolve('deny')
+            return opts.requestPermission(event, signal)
+          },
+        })
+        const inner = engine
+        return {
+          submitMessage(input: UserSubmitInput) {
+            submitted.push(input)
+            return inner.submitMessage(input)
+          },
+          abort() {
+            inner.abort()
+          },
+          replayPendingAsks() {
+            return inner.replayPendingAsks()
+          },
+        }
+      },
+      request: async (req) => {
+        requests.push(req)
+        if (requests.length === 1) return new Promise(() => {})
+        return { outcome: { outcome: 'selected', optionId: 'allow' } }
+      },
+      permissionTimeoutMs: 120_000,
+      wait: async () => {
+        if (expireNextWait) {
+          expireNextWait = false
+          return
+        }
+        await new Promise(() => {})
+      },
+    })
+    const sessionId = resultOf(
+      await server.handle({
+        jsonrpc: '2.0',
+        id: 1,
+        method: ACP_METHODS.sessionNew,
+        params: { cwd: '/tmp' },
+      }),
+    ).sessionId
+    const first = await server.handle({
+      jsonrpc: '2.0',
+      id: 2,
+      method: ACP_METHODS.sessionPrompt,
+      params: { sessionId, prompt: 'rm' },
+    })
+    expect(resultOf(first)).toEqual({ stopReason: 'cancelled' })
+    expect((await store.listPendingAsks(session.id)).map((row) => row.callId)).toEqual(['call_eval'])
+    expect(submitted).toHaveLength(1)
+    expect(engine?.liveTurnId()).toBeNull()
+
+    const second = await server.handle({
+      jsonrpc: '2.0',
+      id: 3,
+      method: ACP_METHODS.sessionPrompt,
+      params: { sessionId, prompt: 'continue' },
+    })
+    expect(resultOf(second)).toEqual({ stopReason: 'end_turn' })
+    expect(requests.length).toBeGreaterThanOrEqual(2)
+    expect(requests[1]?.method).toBe(ACP_METHODS.sessionRequestPermission)
+    expect(await store.listPendingAsks(session.id)).toHaveLength(0)
+    expect(submitted).toHaveLength(2)
+    expect(submitted[1]).toBe('continue')
+    const loaded = await store.loadSession(session.id)
+    expect(
+      loaded.messages.some(
+        (msg) =>
+          msg.role === 'user' &&
+          msg.blocks.some((block) => block.type === 'text' && block.text === 'continue'),
+      ),
+    ).toBe(true)
+    expect(loaded.messages.some((msg) => msg.role === 'tool')).toBe(true)
+  })
+
   test('session/load still attaches an existing engine after factory opts change', async () => {
     const loaded: string[] = []
     const server = createAcpServer({
