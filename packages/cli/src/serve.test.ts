@@ -83,7 +83,7 @@ function liveEngine(opts: {
     submitted,
     runtime: {
       engine: {
-        session: { id: opts.id },
+        session: { id: opts.id, permissionMode: 'default' },
         async *submitMessage(input) {
           const text = typeof input === 'string' ? input : (input.text ?? '')
           submitted.push(text)
@@ -232,7 +232,7 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
     liveTurnId: 'live-1',
   }
   const engine = {
-    session: { id: 's1' },
+    session: { id: 's1', permissionMode: 'default' as const },
     async applyAskAnswer(callId: string, answer: 'allow' | 'deny' | 'allow_always') {
       applyCalls.push({ callId, answer })
       const row = await store.getPendingAsk(callId)
@@ -849,6 +849,81 @@ describe('handleServeRequest', () => {
     await expect(pending).resolves.toBe('allow')
     expect(ctx.applyCalls).toEqual([])
   })
+
+  test('GET /v1/session/:id returns job and parked callIds', async () => {
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const runtime = await ctx.runtimeForSession('s1')
+    if (!runtime) throw new Error('expected runtime')
+    runtime.engine.session = {
+      id: 's1',
+      permissionMode: 'default',
+      job: {
+        baseBranch: 'main',
+        shadowBranch: 'raven/s1',
+        baseCommitSha: 'abc',
+        worktreePath: '/tmp/wt',
+      },
+    }
+    await ctx.store.upsertPendingAsk({
+      callId: 'parked_snap',
+      sessionId: 's1',
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Bash?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    } satisfies PendingAsk)
+    await ctx.store.appendStreamEvent('s1', { type: 'text_delta', text: 'x' })
+    await ctx.store.appendStreamEvent('s1', { type: 'text_delta', text: 'y' })
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1', {
+        headers: { authorization: 'Bearer secret' },
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      id: string
+      job?: { shadowBranch: string }
+      pendingAsks: Array<{ callId: string; tool: string; message: string }>
+      lastSeq: number
+      permissionMode: string
+      live: boolean
+    }
+    expect(body.id).toBe('s1')
+    expect(body.job?.shadowBranch).toBe('raven/s1')
+    expect(body.pendingAsks[0]?.callId).toBe('parked_snap')
+    expect(body.pendingAsks[0]?.tool).toBe('Bash')
+    expect(body.pendingAsks[0]?.message).toBe('Bash?')
+    expect(body.lastSeq).toBe(2)
+    expect(body.permissionMode).toBe('default')
+    expect(body.live).toBe(true)
+  })
+
+  test('GET /v1/session/:id does not create', async () => {
+    let createCalls = 0
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/unknown', {
+        headers: { authorization: 'Bearer secret' },
+      }),
+      {
+        ...ctx,
+        createSession: async () => {
+          createCalls += 1
+          throw new Error('should not create')
+        },
+      },
+    )
+    expect(res.status).toBe(404)
+    expect(createCalls).toBe(0)
+  })
+
+  test('GET /v1/session/:id without Bearer is 401', async () => {
+    const ctx = makeServeCtx()
+    const res = await handleServeRequest(new Request('http://127.0.0.1/v1/session/s1'), ctx)
+    expect(res.status).toBe(401)
+  })
 })
 
 describe('createServeAskHost', () => {
@@ -868,7 +943,7 @@ describe('createServeAskHost', () => {
 
 function stubRuntime(tag: string): { engine: ServeEngine; tag: string } {
   const engine: ServeEngine = {
-    session: { id: 's1' },
+    session: { id: 's1', permissionMode: 'default' },
     async applyAskAnswer() {
       return 'unmatched'
     },

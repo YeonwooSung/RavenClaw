@@ -81,11 +81,14 @@ It stays dontAsk, one-shot JSON.
 
 Session routes use an engine that does **not** force `dontAsk`. All require the same Bearer token:
 
+- `GET /v1/session/:id` — reconnect snapshot `{ id, job?, pendingAsks, lastSeq, permissionMode, live }`. 404 if unknown (does not create). `live` is true while a turn is in process.
 - `GET /v1/session/:id/stream` — NDJSON `{ seq } & StreamEvent`. Omit `after` for a live tail. `?after=<seq>` replays `seq > after` then tails. `after=0` replays from the start.
 - `POST /v1/session/:id/submit` — `{ text }` → `submitMessage` with `turnPolicy: queue` (202 accepted; leftover-ask parks for `/resolve`). Missing sessions are created with `default` permission mode (not `dontAsk`).
 - `POST /v1/session/:id/cancel` — `engine.abort()`
 - `POST /v1/session/:id/compact` — `engine.compactNow()`
 - `POST /v1/session/:id/resolve` — `{ callId, allow: boolean }` → live waiter or `applyAskAnswer`; 200 `{ status }` or 404 if unmatched
+
+Crash-resolve: after process death, `POST …/resolve` → `applyAskAnswer` **pairs only** (writes the tool result row). It does not resume the model. The client must `POST …/submit` to continue. Live `/resolve` that hits an in-process waiter still unblocks that turn.
 
 Webhooks verify `X-Raven-Signature` over the raw body.
 Slack uses Socket Mode (app token); there is no Slack signing-secret HMAC.

@@ -13,8 +13,10 @@ import {
   verifyWebhookSignature,
   safeWebhookToolNames,
   type PendingAskAnswer,
+  type PermissionMode,
   type SequencedStreamEvent,
   type SessionEngine,
+  type SessionJob,
   type SessionStore,
   type StreamEvent,
   type ConfigFlags,
@@ -131,7 +133,7 @@ export function gatewaySecret(env = process.env): string {
 }
 
 export type ServeEngine = {
-  session: { id: string }
+  session: { id: string; permissionMode: PermissionMode; job?: SessionJob }
   submitMessage: (input: UserSubmitInput) => AsyncGenerator<StreamEvent, unknown>
   applyAskAnswer: (
     callId: string,
@@ -162,6 +164,7 @@ export type ServeRuntime = {
       sessionId: string,
       afterSeq: number,
     ) => Promise<SequencedStreamEvent[]>
+    lastStreamSeq?: (sessionId: string) => Promise<number>
   }
 }
 
@@ -409,6 +412,7 @@ async function readJsonBody(req: Request): Promise<{ ok: true; body: unknown } |
 }
 
 const SESSION_PATH = /^\/v1\/session\/([^/]+)\/(stream|cancel|compact|resolve|submit)$/
+const SESSION_ID_PATH = /^\/v1\/session\/([^/]+)$/
 
 async function loadSessionRuntime(
   ctx: ServeRequestContext,
@@ -421,6 +425,32 @@ async function loadSessionRuntime(
   } catch (error) {
     return { ok: false, res: sessionOpenErrorResponse(error) }
   }
+}
+
+async function collectSnapshotPendingAsks(
+  runtime: ServeRuntime,
+  sessionId: string,
+): Promise<Array<{ callId: string; tool: string; message: string; childSessionId?: string }>> {
+  const store = runtime.store
+  if (!store?.listPendingAsks) return []
+  const rows = [...(await store.listPendingAsks(sessionId))]
+  if (store.listSessions) {
+    const children = await store.listSessions({ parentSessionId: sessionId })
+    for (const child of children) {
+      for (const row of await store.listPendingAsks(child.id)) {
+        rows.push({ ...row, sessionId: child.id })
+      }
+    }
+  }
+  return rows.map((row) => {
+    const ask: { callId: string; tool: string; message: string; childSessionId?: string } = {
+      callId: row.callId,
+      tool: row.tool,
+      message: row.message,
+    }
+    if (row.sessionId !== sessionId) ask.childSessionId = row.sessionId
+    return ask
+  })
 }
 
 export async function handleServeRequest(req: Request, ctx: ServeRequestContext): Promise<Response> {
@@ -593,6 +623,33 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
     return Response.json({ error: 'not found' }, { status: 404 })
   }
 
+  const sessionIdRoute = SESSION_ID_PATH.exec(url.pathname)
+  if (sessionIdRoute && req.method === 'GET') {
+    if (!requireBearer(req, ctx.secret)) return unauthorized()
+    const sessionId = sessionIdRoute[1] ?? ''
+    const loaded = await loadSessionRuntime(ctx, sessionId)
+    if (!loaded.ok) return loaded.res
+    const { engine, store } = loaded.runtime
+    const pendingAsks = await collectSnapshotPendingAsks(loaded.runtime, sessionId)
+    const lastSeq = store?.lastStreamSeq ? await store.lastStreamSeq(sessionId) : 0
+    const body: {
+      id: string
+      job?: SessionJob
+      pendingAsks: Array<{ callId: string; tool: string; message: string; childSessionId?: string }>
+      lastSeq: number
+      permissionMode: PermissionMode
+      live: boolean
+    } = {
+      id: engine.session.id,
+      pendingAsks,
+      lastSeq,
+      permissionMode: engine.session.permissionMode,
+      live: (engine.liveTurnId?.() ?? null) !== null,
+    }
+    if (engine.session.job !== undefined) body.job = engine.session.job
+    return Response.json(body)
+  }
+
   return Response.json({ error: 'not found' }, { status: 404 })
 }
 
@@ -702,6 +759,7 @@ export async function runServe(opts: { flags: ConfigFlags }): Promise<number> {
 
   process.stdout.write(`raven serve ${server.hostname}:${server.port}\n`)
   process.stdout.write('POST /v1/turn  Authorization: Bearer <GATEWAY_SECRET>\n')
+  process.stdout.write('GET  /v1/session/:id  snapshot JSON\n')
   process.stdout.write('GET  /v1/session/:id/stream[?after=seq]  NDJSON\n')
   process.stdout.write('POST /v1/session/:id/submit|/cancel|/compact|/resolve\n')
   process.stdout.write('POST /webhooks/<route>  X-Raven-Signature: t=<unix>,v1=<hmac>\n')
