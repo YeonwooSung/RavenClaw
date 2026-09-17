@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { SessionJob } from '../types'
+import { shadowBranchName } from './session-worktree'
 import { isWorktreeDirty, prepareChildWorktree } from './worktree'
 
 const tempDirs: string[] = []
@@ -20,16 +22,21 @@ function tempDir(prefix: string): string {
   return dir
 }
 
+function git(cwd: string, args: string[]): string {
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8' })
+  return (result.stdout ?? '').trim()
+}
+
+function gitStatus(cwd: string, args: string[]): number | null {
+  return spawnSync('git', args, { cwd, encoding: 'utf8' }).status
+}
+
 function initGitRepo(dir: string): void {
-  const run = (args: string[]) => {
-    const result = spawnSync('git', args, { cwd: dir, encoding: 'utf8' })
-    expect(result.status).toBe(0)
-  }
-  run(['init'])
-  run(['config', 'user.email', 'test@example.com'])
-  run(['config', 'user.name', 'Test'])
-  run(['config', 'commit.gpgsign', 'false'])
-  run(['commit', '--allow-empty', '-m', 'init'])
+  expect(gitStatus(dir, ['init'])).toBe(0)
+  expect(gitStatus(dir, ['config', 'user.email', 'test@example.com'])).toBe(0)
+  expect(gitStatus(dir, ['config', 'user.name', 'Test'])).toBe(0)
+  expect(gitStatus(dir, ['config', 'commit.gpgsign', 'false'])).toBe(0)
+  expect(gitStatus(dir, ['commit', '--allow-empty', '-m', 'init'])).toBe(0)
 }
 
 describe('prepareChildWorktree', () => {
@@ -59,6 +66,37 @@ describe('prepareChildWorktree', () => {
     expect(handle.created).toBe(false)
     expect(handle.cleanup()).toEqual({ path: cwd, dirty: false, pruned: false })
     expect(existsSync(join(cwd, '.ravenclaw', 'worktrees', 'sess_child'))).toBe(false)
+  })
+
+  test('child worktree merge-base is the parent shadow tip at spawn', () => {
+    const cwd = tempDir('ravenclaw-wt-stack-')
+    initGitRepo(cwd)
+    const initSha = git(cwd, ['rev-parse', 'HEAD'])
+    const parentPath = join(cwd, '.ravenclaw', 'worktrees', 'parent')
+    mkdirSync(join(cwd, '.ravenclaw', 'worktrees'), { recursive: true })
+    expect(gitStatus(cwd, ['worktree', 'add', '-b', 'raven/parent', parentPath, initSha])).toBe(0)
+    writeFileSync(join(parentPath, 'parent.txt'), 'parent tip\n')
+    expect(gitStatus(parentPath, ['add', 'parent.txt'])).toBe(0)
+    expect(gitStatus(parentPath, ['commit', '-m', 'parent tip'])).toBe(0)
+    const shaP = git(parentPath, ['rev-parse', 'HEAD'])
+    expect(shaP).not.toBe(initSha)
+
+    const parentJob: SessionJob = {
+      baseBranch: git(cwd, ['rev-parse', '--abbrev-ref', 'HEAD']) || 'HEAD',
+      shadowBranch: 'raven/parent',
+      baseCommitSha: initSha,
+      worktreePath: parentPath,
+    }
+    const handle = prepareChildWorktree(cwd, 'sess_child_stack', 'worktree', parentJob)
+    expect(handle.created).toBe(true)
+    expect(handle.job?.baseBranch).toBe(parentJob.shadowBranch)
+    expect(handle.job?.shadowBranch).toBe(shadowBranchName('sess_child_stack'))
+    expect(handle.job?.baseCommitSha).toBe(shaP)
+    expect(handle.job?.worktreePath).toBe(handle.cwd)
+    expect(git(handle.cwd, ['merge-base', 'HEAD', parentJob.shadowBranch])).toBe(shaP)
+    expect(git(handle.cwd, ['rev-parse', '--abbrev-ref', 'HEAD'])).toBe(handle.job?.shadowBranch)
+
+    handle.cleanup()
   })
 
   test('cleanup keeps a dirty worktree', () => {
