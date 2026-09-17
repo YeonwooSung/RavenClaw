@@ -12,6 +12,7 @@ import {
   setSkillDisabled,
   enterSessionWorktree,
   getSessionWorktree,
+  setJobAutoCommit,
 } from '@ravenclaw/core'
 import {
   INTERVIEW_PROMPT,
@@ -205,7 +206,11 @@ export async function dispatchSharedSlash(
     case 'job': {
       const arg = parsed.arg?.trim() ?? ''
       if (arg === 'commit on' || arg === 'commit off') {
-        host.notice('usage: /job [name]')
+        const session = runtime.engine.session
+        setJobAutoCommit(session, arg === 'commit on')
+        session.updatedAt = Date.now()
+        await runtime.store.upsertSession(session)
+        host.notice(`job commit ${arg === 'commit on' ? 'on' : 'off'}`)
         return 'handled'
       }
       const session = runtime.engine.session

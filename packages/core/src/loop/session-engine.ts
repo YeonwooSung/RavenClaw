@@ -35,6 +35,7 @@ import {
 import { forgetReadsNotInTail, markReadPath, recordReadFile, stampReadMtime } from '../tools/read-files'
 import type { TodoItem } from '../tools/todo'
 import { rewindLastTurn } from '../session/rewind'
+import { maybeCommitJob } from '../session/job'
 import { getSessionWorktree } from '../tools/session-worktree'
 import { applyPermissionMode } from '../prompt/builder'
 import { injectMidTurnHint } from '../prompt/cache'
@@ -625,6 +626,18 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         session.cwd = turn.cwd
         session.updatedAt = Date.now()
         await opts.store.upsertSession(session)
+        if (
+          session.job &&
+          session.jobAutoCommit === true &&
+          (end.reason === 'completed' ||
+            end.reason === 'hook_stopped' ||
+            end.reason === 'max_rounds' ||
+            end.reason === 'context_full') &&
+          (await opts.store.listPendingAsks(session.id)).length === 0
+        ) {
+          const result = maybeCommitJob({ job: session.job, turnId: turn.id, cwd: turn.cwd })
+          if (result.notice) yield { type: 'status', message: result.notice }
+        }
         if (end.reason === 'context_full') {
           const stop = await lifecycle.run('Stop', { sessionId: session.id, reason: end.reason })
           if (stop?.message) yield { type: 'status', message: stop.message }

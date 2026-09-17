@@ -205,4 +205,35 @@ describe('dispatchSharedSlash', () => {
     expect(await dispatchSharedSlash(cmd('foo'), host)).toBe('handled')
     expect(host.notices).toEqual(['unknown command: /foo'])
   })
+
+  test('/job commit on flips jobAutoCommit and upserts', async () => {
+    const session = makeSession()
+    const runtime = fakeRuntime(fakeEngine(session))
+    const upserted: SessionRecord[] = []
+    runtime.store.upsertSession = async (next) => {
+      upserted.push(next)
+    }
+    const host = fakeHost(runtime)
+    expect(await dispatchSharedSlash(cmd('job', 'commit on'), host)).toBe('handled')
+    expect(session.jobAutoCommit).toBe(true)
+    expect(upserted).toHaveLength(1)
+    expect(upserted[0]?.jobAutoCommit).toBe(true)
+    expect(host.notices).toEqual(['job commit on'])
+  })
+
+  test('/job commit off flips jobAutoCommit and upserts', async () => {
+    const session = makeSession({ jobAutoCommit: true })
+    const runtime = fakeRuntime(fakeEngine(session))
+    const upserted: SessionRecord[] = []
+    runtime.store.upsertSession = async (next) => {
+      upserted.push(next)
+    }
+    const host = fakeHost(runtime)
+    expect(await dispatchSharedSlash(cmd('job', 'commit off'), host)).toBe('handled')
+    expect(session.jobAutoCommit).toBe(false)
+    expect(upserted).toHaveLength(1)
+    expect(upserted[0]?.jobAutoCommit).toBe(false)
+    expect(host.notices).toEqual(['job commit off'])
+  })
 })
+
