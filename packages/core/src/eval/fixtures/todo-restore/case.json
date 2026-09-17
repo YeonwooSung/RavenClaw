@@ -1,0 +1,4 @@
+{
+  "prompt": "continue after compact",
+  "expect": { "todosRestored": true }
+}

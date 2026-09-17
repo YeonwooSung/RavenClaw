@@ -1,9 +1,11 @@
+import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { INCOMPLETE_TEXT, unpairedToolUseIds } from '../loop/pairing'
 import { createSessionEngine } from '../loop/session-engine'
 import { createMemoryStore } from '../session/memory-store'
+import { enterSessionWorktree, exitSessionWorktree } from '../tools/session-worktree'
 import { writeTool } from '../tools/write'
 import type {
   CompactPolicy,
@@ -12,10 +14,12 @@ import type {
   Provider,
   ProviderChunk,
   ProviderRequest,
+  RoundEnd,
   SessionRecord,
   SessionStore,
   StreamEvent,
   SystemPart,
+  TodoItem,
   Tool,
   ToolContext,
 } from '../types'
@@ -28,6 +32,10 @@ type EvalExpect = {
   pairing?: boolean
   writeOutsideCwdDenied?: boolean
   memoryStaysSystem?: boolean
+  todosRestored?: boolean
+  cancelNotFail?: boolean
+  afterSeqReplays?: boolean
+  shadowBranchCurrent?: boolean
 }
 
 type EvalCase = {
@@ -50,6 +58,22 @@ export async function runEvalDir(dir: string): Promise<void> {
     }
     if (name === 'compact-memory-prefix') {
       await runCompactMemoryPrefix(spec)
+      continue
+    }
+    if (name === 'todo-restore') {
+      await runTodoRestore(spec)
+      continue
+    }
+    if (name === 'cancel-not-fail') {
+      await runCancelNotFail(spec)
+      continue
+    }
+    if (name === 'stream-reconnect') {
+      await runStreamReconnect(spec)
+      continue
+    }
+    if (name === 'job-shadow-branch') {
+      await runJobShadowBranch(spec)
       continue
     }
     throw new Error(`unknown eval fixture: ${name}`)
@@ -291,6 +315,257 @@ async function runCompactMemoryPrefix(spec: EvalCase): Promise<void> {
   await engine.close()
 }
 
+async function runTodoRestore(spec: EvalCase): Promise<void> {
+  const cwd = mkdtempSync(join(tmpdir(), 'raven-eval-todo-'))
+  try {
+    const todos: TodoItem[] = [
+      { id: 't1', text: 'one', status: 'pending' },
+      { id: 't2', text: 'two', status: 'in_progress' },
+      { id: 't3', text: 'three', status: 'done' },
+    ]
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_eval_todo_restore', cwd, todos })
+    await store.createSession(session)
+    const history: Message[] = [
+      { id: 'u0', role: 'user', blocks: [{ type: 'text', text: 'old' }], createdAt: 1 },
+      {
+        id: 'a0',
+        role: 'assistant',
+        blocks: [{ type: 'tool_use', id: 'td', name: 'TodoWrite', input: { items: [] } }],
+        createdAt: 2,
+      },
+      {
+        id: 't0',
+        role: 'tool',
+        toolUseId: 'td',
+        ok: true,
+        blocks: [{ type: 'text', text: 'Wrote 3' }],
+        createdAt: 3,
+      },
+      { id: 'u1', role: 'user', blocks: [{ type: 'text', text: 'recent' }], createdAt: 4 },
+      {
+        id: 'a1',
+        role: 'assistant',
+        blocks: [{ type: 'text', text: 'recent reply' }],
+        createdAt: 5,
+        usage: { input: 200, output: 20, cacheRead: 10, cacheWrite: 0 },
+      },
+    ]
+    await persistHistory(store, session.id, history)
+
+    const seen: ProviderRequest[] = []
+    const provider = createFakeProvider([textThenStop('after compact')])
+    const orig = provider.stream.bind(provider)
+    provider.stream = async function* (req: ProviderRequest, signal: AbortSignal) {
+      seen.push(req)
+      yield* orig(req, signal)
+    }
+
+    const engine = createSessionEngine({
+      session,
+      messages: history,
+      provider,
+      store,
+      tools: [],
+      compact: { ...defaultCompact(), protectLastMessages: 2, llmSummarize: false },
+      model: defaultModel(),
+      maxRounds: 8,
+      bare: true,
+      askUser: async () => 'deny',
+    })
+
+    await engine.compactNow()
+    if (engine.session.compactGeneration < 1) {
+      throw new Error('todo-restore: compactNow did not compact')
+    }
+
+    await drain(engine.submitMessage(spec.prompt))
+    const blob = messageText(seen[0]?.messages ?? [])
+    if (spec.expect.todosRestored === true) {
+      for (const text of ['one', 'two', 'three'] as const) {
+        if (!blob.includes(text)) {
+          throw new Error(`todo-restore: compacted request missing ${text}: ${blob}`)
+        }
+      }
+      if (!blob.includes('Todos:\n- [pending] one\n- [in_progress] two\n- [done] three')) {
+        throw new Error(`todo-restore: restore-note missing from next request: ${blob}`)
+      }
+    }
+    await engine.close()
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+}
+
+async function runCancelNotFail(spec: EvalCase): Promise<void> {
+  const store = createMemoryStore()
+  const session = makeSession({ id: 'sess_eval_cancel_not_fail' })
+  await store.createSession(session)
+
+  let streams = 0
+  let enteredFirst!: () => void
+  const firstStreamEntered = new Promise<void>((resolve) => {
+    enteredFirst = resolve
+  })
+  const provider: Provider = {
+    id: 'fake',
+    apiMode: 'openai_compat',
+    profile(model: string) {
+      return defaultModel(model)
+    },
+    async *stream(_req: ProviderRequest, signal: AbortSignal) {
+      streams += 1
+      if (streams === 1) {
+        enteredFirst()
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) {
+            resolve()
+            return
+          }
+          signal.addEventListener('abort', () => resolve(), { once: true })
+        })
+        return
+      }
+      yield { type: 'text_delta' as const, text: 'ok' }
+      yield { type: 'stop' as const, reason: 'end' }
+    },
+  }
+
+  const engine = createSessionEngine({
+    session,
+    provider,
+    store,
+    tools: [],
+    compact: defaultCompact(),
+    model: defaultModel(),
+    maxRounds: 8,
+    bare: true,
+    askUser: async () => 'deny',
+  })
+
+  const gen = engine.submitMessage(spec.prompt)
+  const pending = drain(gen)
+  await firstStreamEntered
+  engine.abort('cancel')
+  const cancelled = await pending
+  if (spec.expect.cancelNotFail === true) {
+    if (!isRoundEnd(cancelled) || cancelled.reason !== 'cancelled') {
+      throw new Error(`cancel-not-fail: expected { reason: 'cancelled' }, got ${JSON.stringify(cancelled)}`)
+    }
+    const second = await drain(engine.submitMessage('again'))
+    if (!isRoundEnd(second) || second.reason !== 'completed') {
+      throw new Error(`cancel-not-fail: second submit did not complete: ${JSON.stringify(second)}`)
+    }
+  }
+  await engine.close()
+}
+
+async function runStreamReconnect(spec: EvalCase): Promise<void> {
+  const store = createMemoryStore()
+  const session = makeSession({ id: 'sess_eval_stream_reconnect' })
+  await store.createSession(session)
+  const events: StreamEvent[] = [
+    { type: 'text_delta', text: 'one' },
+    { type: 'text_delta', text: 'two' },
+    { type: 'text_delta', text: 'three' },
+  ]
+  const seqs: number[] = []
+  for (const event of events) {
+    seqs.push(await store.appendStreamEvent(session.id, event))
+  }
+  if (seqs[0] !== 1 || seqs[1] !== 2 || seqs[2] !== 3) {
+    throw new Error(`stream-reconnect: expected seqs 1,2,3 got ${JSON.stringify(seqs)}`)
+  }
+  const after = await store.listStreamEventsAfter(session.id, 1)
+  if (spec.expect.afterSeqReplays === true) {
+    if (after.length !== 2) {
+      throw new Error(`stream-reconnect: expected 2 events after seq 1, got ${JSON.stringify(after)}`)
+    }
+    if (after[0]?.seq !== 2 || after[0].type !== 'text_delta' || after[0].text !== 'two') {
+      throw new Error(`stream-reconnect: event 2 mismatch: ${JSON.stringify(after[0])}`)
+    }
+    if (after[1]?.seq !== 3 || after[1].type !== 'text_delta' || after[1].text !== 'three') {
+      throw new Error(`stream-reconnect: event 3 mismatch: ${JSON.stringify(after[1])}`)
+    }
+  }
+}
+
+async function runJobShadowBranch(spec: EvalCase): Promise<void> {
+  const cwd = mkdtempSync(join(tmpdir(), 'raven-eval-job-'))
+  const sessionId = `sess_eval_job_${crypto.randomUUID()}`
+  try {
+    initGitRepo(cwd)
+    const result = enterSessionWorktree(sessionId, cwd)
+    if (!result.ok || result.job === undefined) {
+      throw new Error(`job-shadow-branch: enterSessionWorktree failed: ${result.error ?? 'no job'}`)
+    }
+    if (spec.expect.shadowBranchCurrent === true) {
+      if (!result.job.shadowBranch.startsWith('raven/')) {
+        throw new Error(`job-shadow-branch: shadow is not raven/*: ${result.job.shadowBranch}`)
+      }
+      const branch = spawnSync('git', ['-C', result.cwd, 'rev-parse', '--abbrev-ref', 'HEAD'], {
+        encoding: 'utf8',
+      })
+      const current = branch.stdout.trim()
+      if (current !== result.job.shadowBranch) {
+        throw new Error(
+          `job-shadow-branch: current ${JSON.stringify(current)} !== ${result.job.shadowBranch}`,
+        )
+      }
+      const head = spawnSync('git', ['-C', result.cwd, 'rev-parse', 'HEAD'], { encoding: 'utf8' })
+      if (head.stdout.trim() !== result.job.baseCommitSha) {
+        throw new Error(
+          `job-shadow-branch: HEAD ${JSON.stringify(head.stdout.trim())} !== ${result.job.baseCommitSha}`,
+        )
+      }
+    }
+  } finally {
+    exitSessionWorktree(sessionId, 'remove', true)
+    rmSync(cwd, { recursive: true, force: true })
+  }
+}
+
+function initGitRepo(dir: string): void {
+  const run = (args: string[]) => {
+    const result = spawnSync('git', args, { cwd: dir, encoding: 'utf8' })
+    if (result.status !== 0) {
+      throw new Error(`job-shadow-branch: git ${args.join(' ')} failed: ${result.stderr}`)
+    }
+  }
+  run(['init'])
+  run(['config', 'user.email', 'test@example.com'])
+  run(['config', 'user.name', 'Test'])
+  run(['config', 'commit.gpgsign', 'false'])
+  run(['commit', '--allow-empty', '-m', 'init'])
+}
+
+async function persistHistory(store: SessionStore, sessionId: string, messages: Message[]): Promise<void> {
+  for (const msg of messages) {
+    if (msg.role === 'user') await store.persistUser(sessionId, msg)
+    else if (msg.role === 'assistant') {
+      if (msg.blocks.some((block) => block.type === 'tool_use')) {
+        await store.persistToolCalls(sessionId, msg)
+      } else {
+        await store.persistAssistant(sessionId, msg)
+      }
+    } else {
+      await store.persistToolResults(sessionId, [msg])
+    }
+  }
+}
+
+function isRoundEnd(value: unknown): value is RoundEnd {
+  return !!value && typeof value === 'object' && 'reason' in value && typeof (value as RoundEnd).reason === 'string'
+}
+
+function messageText(messages: Message[]): string {
+  return messages
+    .flatMap((msg) => msg.blocks)
+    .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
+    .map((block) => block.text)
+    .join('\n')
+}
+
 function toolResultText(messages: Message[]): string {
   return messages
     .filter((msg): msg is Extract<Message, { role: 'tool' }> => msg.role === 'tool')
@@ -451,10 +726,10 @@ function createAskEcho(): Tool<{ text: string }, string> {
   }
 }
 
-async function drain(gen: AsyncGenerator<StreamEvent, unknown>): Promise<void> {
+async function drain(gen: AsyncGenerator<StreamEvent, unknown>): Promise<unknown> {
   while (true) {
     const next = await gen.next()
-    if (next.done) return
+    if (next.done) return next.value
   }
 }
 

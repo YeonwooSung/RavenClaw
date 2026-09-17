@@ -1,0 +1,4 @@
+{
+  "prompt": "enter named shadow",
+  "expect": { "shadowBranchCurrent": true }
+}
