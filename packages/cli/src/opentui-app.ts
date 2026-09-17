@@ -38,6 +38,7 @@ import {
 import {
   formatDiffPanel,
   loadGitDiff,
+  loadSessionDiff,
   parseDiffArg,
   type GitDiffView,
 } from './diff-cmd'
@@ -73,6 +74,13 @@ export async function runOpenTuiApp(
   const abortGate = createSecondAbortGate()
 
   const writeDiffPanel = () => {
+    if (current.engine.session.job) {
+      const panel = loadSessionDiff(current.engine.session, current.cwd)
+      if (panel.kind === 'job') {
+        write(`${panel.lines.join('\n')}\n`)
+        return
+      }
+    }
     const next = readDiff(current.cwd)
     if (next.kind === 'files') {
       diffSelected = Math.min(diffSelected, Math.max(0, next.files.length - 1))

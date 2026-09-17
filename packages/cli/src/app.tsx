@@ -51,7 +51,7 @@ import {
   removeAt,
 } from './message-queue'
 import { formatAskUserDialog, parseAskUserAnswer } from './ask-host'
-import { loadGitDiff, parseDiffArg, type GitDiffView } from './diff-cmd'
+import { loadSessionDiff, parseDiffArg, type GitDiffView } from './diff-cmd'
 import { DiffPanel } from './diff-panel'
 import type { AskUserInput } from '@ravenclaw/core'
 import { keyToPermission, PermissionDialog, type PermissionAsk } from './permission-dialog'
@@ -99,6 +99,7 @@ export function App(props: AppProps) {
   const [mode, setMode] = useState<PermissionMode>(props.runtime.engine.session.permissionMode)
   const [diffOpen, setDiffOpen] = useState(false)
   const [diffView, setDiffView] = useState<GitDiffView | undefined>()
+  const [diffLines, setDiffLines] = useState<string[] | undefined>()
   const [diffSelected, setDiffSelected] = useState(0)
   const diffOpenRef = useRef(false)
   const abortGateRef = useRef(createSecondAbortGate())
@@ -127,12 +128,20 @@ export function App(props: AppProps) {
   }, [])
 
   const applyDiffView = useCallback((select?: number) => {
-    const view = loadGitDiff(runtimeRef.current.cwd)
-    setDiffView(view)
+    const runtime = runtimeRef.current
+    const panel = loadSessionDiff(runtime.engine.session, runtime.cwd)
     diffOpenRef.current = true
     setDiffOpen(true)
-    if (view.kind === 'files') {
-      const max = view.files.length - 1
+    if (panel.kind === 'job') {
+      setDiffLines(panel.lines)
+      setDiffView(undefined)
+      setDiffSelected(0)
+      return
+    }
+    setDiffLines(undefined)
+    setDiffView(panel.view)
+    if (panel.view.kind === 'files') {
+      const max = panel.view.files.length - 1
       setDiffSelected(select === undefined ? 0 : Math.min(max, Math.max(0, select)))
     } else {
       setDiffSelected(0)
@@ -146,10 +155,17 @@ export function App(props: AppProps) {
 
   const refreshDiff = useCallback(() => {
     if (!diffOpenRef.current) return
-    const view = loadGitDiff(runtimeRef.current.cwd)
-    setDiffView(view)
-    if (view.kind === 'files') {
-      setDiffSelected((index) => Math.min(index, view.files.length - 1))
+    const runtime = runtimeRef.current
+    const panel = loadSessionDiff(runtime.engine.session, runtime.cwd)
+    if (panel.kind === 'job') {
+      setDiffLines(panel.lines)
+      setDiffView(undefined)
+      return
+    }
+    setDiffLines(undefined)
+    setDiffView(panel.view)
+    if (panel.view.kind === 'files') {
+      setDiffSelected((index) => Math.min(index, panel.view.files.length - 1))
     }
   }, [])
 
@@ -744,7 +760,11 @@ export function App(props: AppProps) {
         selectedIndex={selectedIndex}
         expandedIds={expandedIds}
       />
-      {diffOpen && diffView ? <DiffPanel view={diffView} selected={diffSelected} /> : null}
+      {diffOpen && diffLines ? (
+        <DiffPanel lines={diffLines} />
+      ) : diffOpen && diffView ? (
+        <DiffPanel view={diffView} selected={diffSelected} />
+      ) : null}
       <TodoPanel items={todos} />
       <ChildAgentList tasks={tasks} />
       {picker ? <ResumePicker sessions={picker} index={pickerIndex} /> : null}

@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process'
+import { jobDiff, type JobDiff, type SessionJob } from '@ravenclaw/core'
 
 const CAP = 20_000
 const GIT_TIMEOUT_MS = 30_000
@@ -16,6 +17,10 @@ export type GitDiffView =
   | { kind: 'not-repo' }
   | { kind: 'clean' }
   | { kind: 'files'; files: GitDiffFile[] }
+
+export type SessionDiffPanel =
+  | { kind: 'cwd'; view: GitDiffView }
+  | { kind: 'job'; lines: string[] }
 
 export type DiffArg =
   | { action: 'toggle' }
@@ -49,6 +54,35 @@ export function loadGitDiff(cwd: string): GitDiffView {
   )
   const files = mergeDiffFiles(unstaged, staged)
   return files.length === 0 ? { kind: 'clean' } : { kind: 'files', files }
+}
+
+/** Job sessions → jobDiff panel lines; otherwise cwd uncommitted+staged. */
+export function loadSessionDiff(
+  session: { job?: SessionJob },
+  cwd: string,
+): SessionDiffPanel {
+  if (session.job) {
+    return { kind: 'job', lines: formatJobDiffPanel(jobDiff(session.job)) }
+  }
+  return { kind: 'cwd', view: loadGitDiff(cwd) }
+}
+
+export function formatJobDiffPanel(
+  diff: JobDiff | { ok: false; notice: string },
+): string[] {
+  if (!diff.ok) return [diff.notice]
+  const dirty = diff.dirty ? ' dirty' : ''
+  const noun = diff.files.length === 1 ? 'file' : 'files'
+  const lines = [`job diff  ${diff.shadowBranch}  ${diff.files.length} ${noun}${dirty}`]
+  if (diff.files.length === 0) {
+    lines.push('  no changes')
+    return lines
+  }
+  for (const file of diff.files) {
+    const from = file.from !== undefined ? `  from ${file.from}` : ''
+    lines.push(`  ${file.path}  ${file.op}  +${file.plus} -${file.minus}${from}`)
+  }
+  return lines
 }
 
 export function formatGitDiff(cwd: string): string {

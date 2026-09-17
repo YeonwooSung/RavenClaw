@@ -1300,6 +1300,63 @@ describe('handleServeRequest', () => {
     expect(await refused.json()).toEqual({ ok: false, notice: 'pending permission ask' })
     expect(ctx.submitted).toHaveLength(1)
   })
+
+  test('GET /v1/session/:id/diff without a job is a notice', async () => {
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/diff', {
+        headers: { authorization: 'Bearer secret' },
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: false, notice: 'no job record' })
+  })
+
+  test('GET /v1/session/:id/diff with a job returns jobDiff', async () => {
+    const cwd = tempGitRepo(false)
+    const base = spawnSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).stdout.trim()
+    writeFileSync(join(cwd, 'new.ts'), 'hello\n')
+    spawnSync('git', ['add', 'new.ts'], { cwd, encoding: 'utf8' })
+    spawnSync('git', ['commit', '-m', 'add new'], { cwd, encoding: 'utf8' })
+    writeFileSync(join(cwd, 'dirty.txt'), 'x\n')
+
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const runtime = await ctx.runtimeForSession('s1')
+    if (!runtime) throw new Error('expected runtime')
+    runtime.engine.session = {
+      id: 's1',
+      permissionMode: 'default',
+      job: {
+        baseBranch: 'main',
+        shadowBranch: 'raven/s',
+        baseCommitSha: base,
+        worktreePath: cwd,
+      },
+    }
+
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/diff', {
+        headers: { authorization: 'Bearer secret' },
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      ok: boolean
+      baseCommitSha?: string
+      shadowBranch?: string
+      dirty?: boolean
+      files?: Array<{ path: string; op: string }>
+      notice?: string
+    }
+    expect(body.ok).toBe(true)
+    expect(body.baseCommitSha).toBe(base)
+    expect(body.shadowBranch).toBe('raven/s')
+    expect(body.dirty).toBe(true)
+    expect(body.files?.some((f) => f.path === 'new.ts' && f.op === 'create')).toBe(true)
+    expect(body.files?.some((f) => f.path === 'dirty.txt' && f.op === 'create')).toBe(true)
+  })
 })
 
 const serveTempDirs: string[] = []

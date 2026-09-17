@@ -19,6 +19,7 @@ import {
   clearSessionJobError,
   setSessionJobError,
   maybeRunFollowup,
+  jobDiff,
   type Message,
   type RoundEnd,
   type SessionEngine,
@@ -451,7 +452,7 @@ async function readJsonBody(req: Request): Promise<{ ok: true; body: unknown } |
   }
 }
 
-const SESSION_PATH = /^\/v1\/session\/([^/]+)\/(stream|cancel|compact|resolve|submit|pr|followup|edit)$/
+const SESSION_PATH = /^\/v1\/session\/([^/]+)\/(stream|cancel|compact|resolve|submit|pr|followup|edit|diff)$/
 const SESSION_ID_PATH = /^\/v1\/session\/([^/]+)$/
 
 async function loadSessionRuntime(
@@ -785,6 +786,15 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
       if (!loaded.ok) return loaded.res
       await loaded.runtime.engine.clearFollowup?.()
       return Response.json({ ok: true, queued: null })
+    }
+    if (req.method === 'GET' && action === 'diff') {
+      const loaded = await loadSessionRuntime(ctx, sessionId)
+      if (!loaded.ok) return loaded.res
+      const job = loaded.runtime.engine.session.job
+      if (!job) return Response.json({ ok: false, notice: 'no job record' })
+      const diff = jobDiff(job)
+      if (!diff.ok) return Response.json(diff)
+      return Response.json(diff)
     }
     if (req.method === 'POST' && action === 'pr') {
       const loaded = await loadSessionRuntime(ctx, sessionId)
