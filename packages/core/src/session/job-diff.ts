@@ -41,17 +41,12 @@ export function jobDiff(job: SessionJob): JobDiff | { ok: false; notice: string 
   ])
   if (!committedNum.ok) return fail(committedNum)
 
+  // Worktree vs HEAD already includes staged + unstaged; do not also add --cached.
   const dirtyName = runGit(cwd, ['diff', '--name-status', 'HEAD'])
   if (!dirtyName.ok) return fail(dirtyName)
 
   const dirtyNum = runGit(cwd, ['diff', '--numstat', 'HEAD'])
   if (!dirtyNum.ok) return fail(dirtyNum)
-
-  const cachedName = runGit(cwd, ['diff', '--cached', '--name-status', 'HEAD'])
-  if (!cachedName.ok) return fail(cachedName)
-
-  const cachedNum = runGit(cwd, ['diff', '--cached', '--numstat', 'HEAD'])
-  if (!cachedNum.ok) return fail(cachedNum)
 
   const untracked = runGit(cwd, ['ls-files', '--others', '--exclude-standard'])
   if (!untracked.ok) return fail(untracked)
@@ -59,7 +54,6 @@ export function jobDiff(job: SessionJob): JobDiff | { ok: false; notice: string 
   const stats = new Map<string, { plus: number; minus: number }>()
   mergeNumstat(stats, committedNum.stdout)
   mergeNumstat(stats, dirtyNum.stdout)
-  mergeNumstat(stats, cachedNum.stdout)
 
   const byPath = new Map<string, JobDiffFile>()
 
@@ -68,7 +62,7 @@ export function jobDiff(job: SessionJob): JobDiff | { ok: false; notice: string 
     byPath.set(row.path, fileRow(row, stat))
   }
 
-  for (const row of [...parseNameStatus(dirtyName.stdout), ...parseNameStatus(cachedName.stdout)]) {
+  for (const row of parseNameStatus(dirtyName.stdout)) {
     const existing = byPath.get(row.path)
     const stat = stats.get(row.path) ?? { plus: 0, minus: 0 }
     if (existing) {

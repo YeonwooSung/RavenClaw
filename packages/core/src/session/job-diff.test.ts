@@ -89,4 +89,29 @@ describe('jobDiff', () => {
     })
     expect(diff.ok).toBe(false)
   })
+
+  test('jobDiff does not double-count staged dirty lines', () => {
+    const repo = initRepo()
+    const base = revParse(repo)
+    write(repo, 'note.txt', 'one\n')
+    git(repo, ['add', 'note.txt'])
+    git(repo, ['commit', '-m', 'add one'])
+    write(repo, 'note.txt', 'one\ntwo\n')
+    git(repo, ['add', 'note.txt'])
+    const job: SessionJob = {
+      baseBranch: 'main',
+      shadowBranch: 'raven/t',
+      baseCommitSha: base,
+      worktreePath: repo,
+    }
+    const diff = jobDiff(job)
+    expect(diff.ok).toBe(true)
+    if (!diff.ok) return
+    expect(diff.dirty).toBe(true)
+    const row = diff.files.find((f) => f.path === 'note.txt')
+    expect(row).toBeDefined()
+    // committed create +1, staged +1 → plus === 2 (double-count of staged would yield 3)
+    expect(row?.plus).toBe(2)
+    expect(row?.minus).toBe(0)
+  })
 })
