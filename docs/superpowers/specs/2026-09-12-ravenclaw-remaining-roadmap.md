@@ -8,7 +8,7 @@ Supersedes remaining H1/H2 of `2026-09-12-ravenclaw-roadmap.md`. H0 and harness-
 
 Steal contracts. Do not copy Claude, Hermes, or Freebuff source.
 
-Session-as-job horizon (**implemented** on `main` at `ea56edd`): **`2026-09-16-session-as-job-roadmap.md`**. Previous (implemented): `2026-09-15-eve-inspired-roadmap.md`. Prior-art: [eve-analysis.md](../../research/eve-analysis.md), [y0-analysis.md](../../research/y0-analysis.md).
+Session-as-job horizon (**implemented** on `main` at `ea56edd`, closeout `0ef1554`): **`2026-09-16-session-as-job-roadmap.md`**. Next: **`2026-09-17-job-host-state-roadmap.md`**. Previous (implemented): `2026-09-15-eve-inspired-roadmap.md`. Prior-art: [eve-analysis.md](../../research/eve-analysis.md), [y0-analysis.md](../../research/y0-analysis.md).
 
 ---
 
@@ -22,7 +22,7 @@ The coding-agent waist is shipped:
 - Durable mailbox + session locks. Children go through `SessionEngine`.
 - H1.1–H1.3, H1.7 (subdir AGENTS.md, verify-on-stop, coding posture, stall) are in.
 
-Waves 1–4 are on `main`. Eve-inspired horizon is implemented. Session-as-job horizon is implemented (`ea56edd`): **`2026-09-16-session-as-job-roadmap.md`**.
+Waves 1–4 are on `main`. Eve-inspired horizon is implemented. Session-as-job horizon is implemented (`ea56edd`, closeout `0ef1554`): **`2026-09-16-session-as-job-roadmap.md`**. Next: **`2026-09-17-job-host-state-roadmap.md`**.
 
 ---
 
@@ -429,4 +429,4 @@ Then R3.1, then R3.2+R3.3, then Wave 4. R1.11 can ride with any included-session
 
 ## Out of this closeout
 
-`execute_code`, Electron, streaming executor, curator, real LSP handshake. Slack/Discord + pairing + ledger already shipped. Eve-style durable HITL is implemented (`2026-09-15-eve-inspired-roadmap.md`). If a later product wants a browser, implement F3 of **`2026-09-16-session-as-job-roadmap.md`**. Do not extend this file.
+`execute_code`, Electron, streaming executor, curator, real LSP handshake. Slack/Discord + pairing + ledger already shipped. Eve-style durable HITL is implemented (`2026-09-15-eve-inspired-roadmap.md`). Session-as-job F3 (reconnect + cancel) is implemented. If a later product wants a browser, implement **`2026-09-17-job-host-state-roadmap.md`** on that waist. Do not extend this file.

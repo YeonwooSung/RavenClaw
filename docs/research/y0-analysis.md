@@ -147,4 +147,4 @@ That parking is now the product question: **can a RavenClaw session own a git jo
 
 eve’s remaining steal that a job host actually needs: reconnectable NDJSON (`seq` / `?after=`), cancel ≠ fail, compact re-injects todos. Those are waist pieces, not a web UI.
 
-Roadmap: `docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md`.
+Session-as-job roadmap (implemented): `docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md`. Next: `docs/superpowers/specs/2026-09-17-job-host-state-roadmap.md`.
