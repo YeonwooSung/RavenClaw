@@ -940,6 +940,8 @@ describe('handleServeRequest', () => {
       lastSeq: number
       permissionMode: string
       live: boolean
+      queued: string | null
+      jobAutoCommit: boolean
     }
     expect(body.id).toBe('s1')
     expect(body.job?.shadowBranch).toBe('raven/s1')
@@ -949,6 +951,56 @@ describe('handleServeRequest', () => {
     expect(body.lastSeq).toBe(2)
     expect(body.permissionMode).toBe('default')
     expect(body.live).toBe(true)
+    expect(body.queued).toBeNull()
+    expect(body.jobAutoCommit).toBe(false)
+  })
+
+  test('GET /v1/session/:id includes title, jobAutoCommit, lastEnd, jobError, queued', async () => {
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const runtime = await ctx.runtimeForSession('s1')
+    if (!runtime) throw new Error('expected runtime')
+    runtime.engine.session = {
+      id: 's1',
+      title: 'fix login',
+      permissionMode: 'default',
+      jobAutoCommit: true,
+      lastEnd: { reason: 'cancelled' },
+      jobError: 'gh missing',
+      followup: 'run tests',
+      job: {
+        baseBranch: 'main',
+        shadowBranch: 'raven/s1',
+        baseCommitSha: 'abc',
+        worktreePath: '/tmp/wt',
+      },
+    }
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1', {
+        headers: { authorization: 'Bearer secret' },
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Record<string, unknown>
+    expect(body.title).toBe('fix login')
+    expect(body.jobAutoCommit).toBe(true)
+    expect(body.lastEnd).toEqual({ reason: 'cancelled' })
+    expect(body.jobError).toBe('gh missing')
+    expect(body.queued).toBe('run tests')
+    expect(body.live).toBe(true)
+  })
+
+  test('GET /v1/session/:id queued is null when followup is unset', async () => {
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1', {
+        headers: { authorization: 'Bearer secret' },
+      }),
+      ctx,
+    )
+    const body = (await res.json()) as { queued: string | null; jobAutoCommit: boolean }
+    expect(body.queued).toBeNull()
+    expect(body.jobAutoCommit).toBe(false)
   })
 
   test('GET /v1/session/:id does not create', async () => {

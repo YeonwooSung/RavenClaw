@@ -16,6 +16,8 @@ import {
   type PermissionMode,
   type SequencedStreamEvent,
   applySessionDraftPr,
+  clearSessionJobError,
+  setSessionJobError,
   type Message,
   type SessionEngine,
   type SessionJob,
@@ -687,10 +689,10 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
           ? { persistToolCalls: (id, message) => store.persistToolCalls!(id, message) }
           : {}),
       })
-      if (out.job) {
-        session.job = out.job
-        await store?.upsertSession?.(session as SessionRecord)
-      }
+      if (out.job) session.job = out.job
+      if (out.ok) clearSessionJobError(session)
+      else setSessionJobError(session, out.notice)
+      await store?.upsertSession?.(session as SessionRecord)
       const json: { ok: boolean; notice: string; snapshot?: typeof out.snapshot } = {
         ok: out.ok,
         notice: out.notice,
@@ -710,21 +712,32 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
     const { engine, store } = loaded.runtime
     const pendingAsks = await collectSnapshotPendingAsks(loaded.runtime, sessionId)
     const lastSeq = store?.lastStreamSeq ? await store.lastStreamSeq(sessionId) : 0
+    const session = engine.session
     const body: {
       id: string
-      job?: SessionJob
+      jobAutoCommit: boolean
       pendingAsks: Array<{ callId: string; tool: string; message: string; childSessionId?: string }>
       lastSeq: number
       permissionMode: PermissionMode
       live: boolean
+      queued: string | null
+      title?: string
+      job?: SessionJob
+      lastEnd?: SessionRecord['lastEnd']
+      jobError?: string
     } = {
-      id: engine.session.id,
+      id: session.id,
+      jobAutoCommit: session.jobAutoCommit === true,
       pendingAsks,
       lastSeq,
-      permissionMode: engine.session.permissionMode,
+      permissionMode: session.permissionMode,
       live: (engine.liveTurnId?.() ?? null) !== null,
+      queued: session.followup ?? null,
     }
-    if (engine.session.job !== undefined) body.job = engine.session.job
+    if (session.title !== undefined) body.title = session.title
+    if (session.job !== undefined) body.job = session.job
+    if (session.lastEnd !== undefined) body.lastEnd = session.lastEnd
+    if (session.jobError !== undefined) body.jobError = session.jobError
     return Response.json(body)
   }
 
