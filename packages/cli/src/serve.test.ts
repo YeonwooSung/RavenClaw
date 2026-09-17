@@ -802,6 +802,52 @@ describe('handleServeRequest', () => {
     await replay.close()
   })
 
+  test('stream after= does not drop events published during replay', async () => {
+    const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
+    const ctx = makeServeCtx(secret)
+    await ctx.store.createSession({
+      id: 's1',
+      createdAt: 1,
+      updatedAt: 1,
+      cwd: '/tmp',
+      model: 'dummy',
+      permissionMode: 'default',
+      compactGeneration: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      funding: 'byok',
+    })
+    const auth = { authorization: 'Bearer secret' }
+    let releaseReplay!: () => void
+    const holdReplay = new Promise<void>((resolve) => {
+      releaseReplay = resolve
+    })
+    let replayStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+      replayStarted = resolve
+    })
+    const orig = ctx.store.listStreamEventsAfter.bind(ctx.store)
+    ctx.store.listStreamEventsAfter = async (sessionId, afterSeq) => {
+      const snapshot = await orig(sessionId, afterSeq)
+      replayStarted()
+      await holdReplay
+      return snapshot
+    }
+    await ctx.hub.publish('s1', { type: 'text_delta', text: 'old' })
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/stream?after=0', { headers: auth }),
+      ctx,
+    )
+    expect(res.status).toBe(200)
+    const reader = ndjsonReader(res)
+    const first = reader.next()
+    await started
+    await ctx.hub.publish('s1', { type: 'text_delta', text: 'new' })
+    releaseReplay()
+    expect(await first).toEqual({ seq: 1, type: 'text_delta', text: 'old' })
+    expect(await reader.next()).toEqual({ seq: 2, type: 'text_delta', text: 'new' })
+    await reader.close()
+  })
+
   test('stream after must be a non-negative integer', async () => {
     const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
     const ctx = makeServeCtx(secret)

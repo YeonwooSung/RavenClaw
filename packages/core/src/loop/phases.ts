@@ -313,6 +313,7 @@ export async function* maybeCompact(
 
   state.turn.messages = applyToolResultBudget(state.turn.messages)
   state.turn.messages = microcompact(state.turn.messages, state.compact.protectLastMessages)
+  forgetReadsNotInTail(state.turn, state.turn.messages)
 
   const afterCheap = compactDecision(state)
   if (afterCheap === 'context_full') {
@@ -672,6 +673,7 @@ async function* reactiveCompact(
       ...(state.todos !== undefined ? { todos: state.todos } : {}),
     })
     state.turn.messages = result.messages
+    forgetReadsNotInTail(state.turn, result.messages)
     state.turn.compactGeneration = result.generation
     state.overflowCompacted = true
     yield { type: 'compact', summary, generation: result.generation }

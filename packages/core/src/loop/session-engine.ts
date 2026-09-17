@@ -664,12 +664,16 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
           (await opts.store.listPendingAsks(session.id)).length === 0
         ) {
           if (session.jobAutoCommit === true) {
-            const result = maybeCommitJob({ job: session.job, turnId: turn.id, cwd: turn.cwd })
+            const result = maybeCommitJob({
+              job: session.job,
+              turnId: turn.id,
+              cwd: session.job.worktreePath,
+            })
             if (result.notice) yield { type: 'status', message: result.notice }
           }
           const asst = lastAssistant(turn.messages)
           if (asst) {
-            stampCheckpoint(asst, session.job, session.todos, turn.cwd)
+            stampCheckpoint(asst, session.job, session.todos, session.job.worktreePath)
             if (asst.checkpoint) {
               try {
                 if (asst.blocks.some((block) => block.type === 'tool_use')) {

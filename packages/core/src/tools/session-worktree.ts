@@ -122,6 +122,9 @@ export function exitSessionWorktree(
         const detail = removed.stderr.trim() || removed.stdout.trim() || 'git worktree remove failed'
         return { ok: false, cwd: existing.worktreePath, error: detail }
       }
+      if (existing.shadowBranch) {
+        runGit(toplevel, ['branch', '-D', existing.shadowBranch])
+      }
     }
   }
 

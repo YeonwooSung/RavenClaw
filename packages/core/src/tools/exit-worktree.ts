@@ -46,6 +46,18 @@ export const exitWorktreeTool: Tool<ExitWorktreeInput, string> = {
     const result = exitSessionWorktree(ctx.turn.sessionId, input.action, input.discard_changes)
     if (!result.ok) return `ExitWorktree failed: ${result.error}`
     ctx.turn.cwd = result.cwd
+    if (ctx.session) delete ctx.session.job
+    const store = ctx.store
+    if (store) {
+      try {
+        const session = ctx.session ?? (await store.loadSession(ctx.turn.sessionId)).session
+        delete session.job
+        session.updatedAt = Date.now()
+        await store.upsertSession(session)
+      } catch {
+        // worktree is gone; next load can omit job until upsert succeeds
+      }
+    }
     return input.action === 'keep' ? 'Left worktree (kept)' : 'Left worktree (removed)'
   },
 }

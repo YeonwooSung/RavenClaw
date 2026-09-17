@@ -867,9 +867,10 @@ describe('createAcpServer', () => {
       funding: 'byok' as const,
     }
     await store.createSession(session)
+    let engine: ReturnType<typeof createSessionEngine> | undefined
     const server = createAcpServer({
-      engineFactory: (_sessionId, opts) =>
-        createSessionEngine({
+      engineFactory: (_sessionId, opts) => {
+        engine = createSessionEngine({
           session,
           provider: createFakeProvider([
             toolThenStop('call_eval', 'Echo', { text: 'hi' }),
@@ -885,7 +886,9 @@ describe('createAcpServer', () => {
             if (!opts?.requestPermission) return Promise.resolve('deny')
             return opts.requestPermission(event, signal)
           },
-        }),
+        })
+        return engine
+      },
       request: () => new Promise(() => {}),
       permissionTimeoutMs: 120_000,
       wait: async () => {},
@@ -918,6 +921,7 @@ describe('createAcpServer', () => {
           ),
       ),
     ).toBe(false)
+    expect(engine?.liveTurnId()).toBeNull()
   })
 
   test('session/load still attaches an existing engine after factory opts change', async () => {

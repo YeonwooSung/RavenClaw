@@ -210,14 +210,16 @@ function diffStat(cwd: string, fromSha: string): { files: number; plus: number; 
 
 export function stampCheckpoint(
   message: Extract<Message, { role: 'assistant' }>,
-  _job: SessionJob,
+  job: SessionJob,
   todos: TodoItem[] | undefined,
-  cwd: string,
+  cwd?: string,
 ): void {
-  const head = runGit(cwd, ['rev-parse', 'HEAD'])
+  const gitCwd = job.worktreePath || cwd
+  if (!gitCwd) return
+  const head = runGit(gitCwd, ['rev-parse', 'HEAD'])
   const commitSha = head.stdout.trim()
   if (!head.ok || commitSha === '') return
-  const status = runGit(cwd, ['status', '--porcelain'])
+  const status = runGit(gitCwd, ['status', '--porcelain'])
   message.checkpoint = {
     commitSha,
     todoSnapshot: (todos ?? []).map((item) => ({ ...item })),
@@ -232,9 +234,10 @@ export function setJobAutoCommit(session: SessionRecord, on: boolean): void {
 export function maybeCommitJob(opts: {
   job: SessionJob
   turnId: string
-  cwd: string
+  cwd?: string
 }): { committed: boolean; sha?: string; notice?: string } {
-  const cwd = opts.cwd
+  const cwd = opts.job.worktreePath || opts.cwd
+  if (!cwd) return { committed: false, notice: 'job commit failed: no worktree' }
   const status = runGit(cwd, ['status', '--porcelain'])
   if (!status.ok) return fail(status, 'git status failed')
   if (status.stdout.trim() === '') return { committed: false }

@@ -521,18 +521,30 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
             }
           }
           let lastSeq = after ?? 0
+          let replaying = after !== undefined
+          const buffered: SequencedStreamEvent[] = []
+          unsub = ctx.hub.subscribe(sessionId, (event) => {
+            if (replaying) {
+              buffered.push(event)
+              return
+            }
+            if (after !== undefined && event.seq <= lastSeq) return
+            write(event)
+            lastSeq = event.seq
+          })
           if (after !== undefined) {
             const replay = (await loaded.runtime.store?.listStreamEventsAfter?.(sessionId, after)) ?? []
             for (const event of replay) {
               write(event)
               lastSeq = event.seq
             }
+            replaying = false
+            for (const event of buffered) {
+              if (event.seq <= lastSeq) continue
+              write(event)
+              lastSeq = event.seq
+            }
           }
-          unsub = ctx.hub.subscribe(sessionId, (event) => {
-            if (after !== undefined && event.seq <= lastSeq) return
-            write(event)
-            lastSeq = event.seq
-          })
           void publishParkedAsks(loaded.runtime, sessionId, ctx.hub)
           const onAbort = () => {
             unsub()

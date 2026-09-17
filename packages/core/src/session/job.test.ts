@@ -112,6 +112,20 @@ describe('maybeCommitJob', () => {
     expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).toBe(before)
   })
 
+  test('maybeCommitJob commits in job.worktreePath even if cwd differs', () => {
+    const cwd = tempDir('ravenclaw-job-path-')
+    initGitRepo(cwd)
+    const sessionId = nextSession()
+    const entered = enterSessionWorktree(sessionId, cwd)
+    expect(entered.ok).toBe(true)
+    const job = entered.job!
+    writeFileSync(join(job.worktreePath, 'note.txt'), 'hello\n')
+    const result = maybeCommitJob({ job, turnId: 'turnpath01', cwd: '/tmp' })
+    expect(result.committed).toBe(true)
+    expect(result.sha).toBe(git(job.worktreePath, ['rev-parse', 'HEAD']))
+    expect(git(job.worktreePath, ['log', '-1', '--pretty=%s'])).toBe('raven: turn turnpath')
+  })
+
   test('maybeCommitJob reports a notice when git fails', () => {
     const cwd = tempDir('ravenclaw-job-fail-')
     const result = maybeCommitJob({
@@ -176,6 +190,24 @@ describe('stampCheckpoint', () => {
     expect(message.checkpoint?.commitSha).toBe(git(job.worktreePath, ['rev-parse', 'HEAD']))
     expect(message.checkpoint?.dirty).toBe(false)
     expect(message.checkpoint?.todoSnapshot).toEqual([])
+  })
+
+  test('stampCheckpoint reads HEAD from job.worktreePath even if cwd differs', () => {
+    const cwd = tempDir('ravenclaw-stamp-path-')
+    initGitRepo(cwd)
+    const sessionId = nextSession()
+    const entered = enterSessionWorktree(sessionId, cwd)
+    expect(entered.ok).toBe(true)
+    const job = entered.job!
+    const message: Extract<Message, { role: 'assistant' }> = {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'text', text: 'ok' }],
+      createdAt: 1,
+    }
+    stampCheckpoint(message, job, undefined, '/tmp')
+    expect(message.checkpoint?.commitSha).toBe(git(job.worktreePath, ['rev-parse', 'HEAD']))
+    expect(message.checkpoint?.dirty).toBe(false)
   })
 })
 

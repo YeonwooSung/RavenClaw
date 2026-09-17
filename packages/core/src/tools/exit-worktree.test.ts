@@ -3,7 +3,8 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { ToolContext, Turn } from '../types'
+import type { SessionRecord, ToolContext, Turn } from '../types'
+import { createMemoryStore } from '../session/memory-store'
 import { decidePermission } from '../permissions/pipeline'
 import { enterWorktreeTool } from './enter-worktree'
 import { exitWorktreeTool } from './exit-worktree'
@@ -61,6 +62,20 @@ function makeTurn(cwd: string): Turn {
     cwd,
     model: 'dummy',
     readFiles: new Set(),
+  }
+}
+
+function sessionRecord(id: string, cwd: string): SessionRecord {
+  return {
+    id,
+    createdAt: 1,
+    updatedAt: 1,
+    cwd,
+    model: 'dummy',
+    permissionMode: 'default',
+    compactGeneration: 0,
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    funding: 'byok',
   }
 }
 
@@ -167,6 +182,30 @@ describe('ExitWorktree', () => {
     expect(forced.toLowerCase()).not.toMatch(/fail|error|deny/)
     expect(ctx.turn.cwd).toBe(root)
     expect(existsSync(worktree)).toBe(false)
+  })
+
+  test('clears session.job after exit and deletes the shadow branch on remove', async () => {
+    const root = fixtureRoot()
+    initGitRepo(root)
+    const store = createMemoryStore()
+    const ctx = makeCtx(root)
+    const session = sessionRecord(ctx.turn.sessionId, root)
+    await store.createSession(session)
+    ctx.store = store
+    ctx.session = session
+    await enterWorktreeTool.execute({ name: 'gone' }, ctx)
+    expect(session.job?.shadowBranch).toBe('raven/gone')
+    const shadow = session.job!.shadowBranch
+    const out = await exitWorktreeTool.execute({ action: 'remove' }, ctx)
+    expect(out.toLowerCase()).not.toMatch(/fail|error|deny/)
+    expect(session.job).toBeUndefined()
+    const loaded = await store.loadSession(session.id)
+    expect(loaded.session.job).toBeUndefined()
+    const branch = spawnSync('git', ['show-ref', '--verify', `refs/heads/${shadow}`], {
+      cwd: root,
+      encoding: 'utf8',
+    })
+    expect(branch.status).not.toBe(0)
   })
 
   test('execute refuses when the signal is already aborted', async () => {

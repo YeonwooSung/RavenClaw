@@ -221,6 +221,7 @@ export function createAcpServer(opts: AcpServerOptions): AcpServer {
       } catch (error) {
         if (isAskWaiterExpired(error)) {
           expiredSessions.add(parsed.sessionId)
+          await abandonSubmit(gen)
           break
         }
         throw error
@@ -238,7 +239,11 @@ export function createAcpServer(opts: AcpServerOptions): AcpServer {
         try {
           await askPermission(parsed.sessionId, event)
         } catch (error) {
-          if (isAskWaiterExpired(error)) break
+          if (isAskWaiterExpired(error)) {
+            expiredSessions.add(parsed.sessionId)
+            await abandonSubmit(gen)
+            break
+          }
           throw error
         }
         continue
@@ -363,6 +368,14 @@ function defaultWait(ms: number): Promise<void> {
 
 function isAskWaiterExpired(error: unknown): boolean {
   return error instanceof Error && error.name === 'AskWaiterExpired'
+}
+
+async function abandonSubmit(gen: AsyncGenerator<unknown, unknown>): Promise<void> {
+  try {
+    await gen.return(undefined)
+  } catch {
+    // generator already closed
+  }
 }
 
 async function racePermission(

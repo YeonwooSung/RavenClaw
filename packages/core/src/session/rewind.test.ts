@@ -422,6 +422,44 @@ describe('rewindToCheckpoint', () => {
     expect(result.messages).toEqual([])
   })
 
+  test('reset failure does not inactivate messages and returns originals', async () => {
+    const cwd = tempDir('ravenclaw-rewind-reset-fail-')
+    initGitRepo(cwd)
+    const id = nextSession()
+    const entered = enterSessionWorktree(id, cwd)
+    expect(entered.ok).toBe(true)
+    const job = entered.job!
+    job.baseCommitSha = 'not-a-real-commit-sha'
+    const store = createMemoryStore()
+    const sess = sessionRecord({
+      id,
+      cwd: job.worktreePath,
+      job,
+      todos: [{ text: 'keep', status: 'pending' }],
+    })
+    await store.createSession(sess)
+    const messages: Message[] = [user('u1', 'only', 1), assistant('a1', 'ok', 2)]
+    await store.persistUser(id, messages[0] as Extract<Message, { role: 'user' }>)
+    await store.persistAssistant(id, messages[1] as Extract<Message, { role: 'assistant' }>)
+    const inactivated: string[] = []
+    const orig = store.recordCompact.bind(store)
+    store.recordCompact = async (sessionId, generation, summary, ids) => {
+      inactivated.push(...ids)
+      return orig(sessionId, generation, summary, ids)
+    }
+
+    const headBefore = git(job.worktreePath, ['rev-parse', 'HEAD'])
+    const result = await rewindToCheckpoint({ session: sess, messages, store })
+    expect(result.ok).toBe(false)
+    expect(result.notice.startsWith('rewind reset failed:')).toBe(true)
+    expect(result.messages).toBe(messages)
+    expect(inactivated).toEqual([])
+    expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).toBe(headBefore)
+    expect(sess.todos).toEqual([{ text: 'keep', status: 'pending' }])
+    const loaded = await store.loadSession(id)
+    expect(loaded.messages.map((msg) => msg.id)).toEqual(['u1', 'a1'])
+  })
+
   test('persistAssistant and persistToolCalls write checkpoint_json', async () => {
     const dir = tempDir('ravenclaw-ckpt-sql-')
     const store = createSqliteStore(join(dir, 'state.db')) as SessionStore & { close(): void }
