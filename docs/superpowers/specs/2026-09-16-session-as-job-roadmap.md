@@ -3,10 +3,10 @@
 Date: 2026-09-16  
 Status: implemented  
 Shipped on `main` at `ea56edd` (merge of `feat/session-as-job`).  
+Closeout shipped on `main` at `0ef1554` (merge of `feat/session-as-job-closeout`): F4.1 `draft_pr` annotation, F4.3 stacked-child `raven/*` branch GC, ACP timeout replay (H1), `TodoWrite failed:` does not apply todos.  
 Reviewed against tree at `d4c73d4` before implementation (eve-inspired horizon + leftover-ask holes PRs #2–#8 on `main`).  
-Successor to `2026-09-15-eve-inspired-roadmap.md` (Status: implemented). Does not reopen that spec’s closed doors.
-
-Closeout in progress (this branch / `2026-09-17-session-as-job-closeout`): F4.1 PR snapshot annotation (`draft_pr` block) and F4.3 stacked-child `raven/*` branch GC on prune. Horizon contracts F0.1–F4.3 otherwise landed.
+Successor to `2026-09-15-eve-inspired-roadmap.md` (Status: implemented). Does not reopen that spec’s closed doors.  
+Next horizon: [`2026-09-17-job-host-state-roadmap.md`](2026-09-17-job-host-state-roadmap.md).
 
 Sources: current tree, [eve analysis](../../research/eve-analysis.md) (`/Users/yeonwoosung/Desktop/eve`, Apache-2.0, read-only), [y0 analysis](../../research/y0-analysis.md) (`/Users/yeonwoosung/Desktop/y0`, read-only).
 
@@ -18,7 +18,7 @@ Steal contracts. Do not copy eve, y0, Claude, Hermes, or Freebuff source. Do not
 
 ## Where we are
 
-The eve-inspired waves and this session-as-job horizon are on `main` (`ea56edd`). The waist is:
+The eve-inspired waves and this session-as-job horizon are on `main` (`ea56edd`, closeout `0ef1554`). The waist is:
 
 - One `queryLoop`. Hosts call `submitMessage`. The only other host entry is `applyAskAnswer`. Persist-before-execute. Pairing. No `bypass`.
 - `dontAsk` ≠ leftover-allow-all.
@@ -57,8 +57,8 @@ Board as of `ea56edd` on `main`. Pre-ship “missing” rows are historical; do 
 
 | ID | Status vs tree |
 |---|---|
-| F0.1 docs match shipped waist | **shipped** (closeout Task 1 re-aligns docs to this waist) |
-| F0.2 ACP timeout must not persist deny | **shipped** (`AskWaiterExpired`; row stays; closeout may still harden ACP replay) |
+| F0.1 docs match shipped waist | **shipped** (closeout Task 1; honesty pass after `0ef1554`) |
+| F0.2 ACP timeout must not persist deny | **shipped** (`AskWaiterExpired`; row stays; closeout `0ef1554` drains `replayPendingAsks` on `session/load` and `session/prompt`) |
 | F0.3 eval gates for sandbox-cwd + compact-MEMORY | **shipped** |
 | F1.1 compact resets this-turn `readFiles` | **shipped** (`forgetReadsNotInTail`) |
 | F1.2 todos restore-note after compact | **shipped** |
@@ -70,9 +70,9 @@ Board as of `ea56edd` on `main`. Pre-ship “missing” rows are historical; do 
 | F3.1 cancel ≠ fail | **shipped** (`cancelled` vs `failed`; `turnId` → `no_active_turn`; parked asks stay) |
 | F3.2 reconnectable stream (`seq` + `?after=`) | **shipped** (schema v9 `stream_events`) |
 | F3.3 `GET /v1/session/:id` snapshot | **shipped** |
-| F4.1 optional `/pr` delivery, default off | **shipped** (route + slash); annotation shape closeout in progress |
+| F4.1 optional `/pr` delivery, default off | **shipped** (route + slash + `draft_pr` block at `0ef1554`) |
 | F4.2 eval fixtures that lock F1–F3 | **shipped** |
-| F4.3 stacked child `base = parent.shadow` | **shipped** (spawn); branch GC on prune closeout in progress |
+| F4.3 stacked child `base = parent.shadow` | **shipped** (spawn + prune `git branch -D raven/*` at `0ef1554`) |
 
 ---
 

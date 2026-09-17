@@ -1,6 +1,6 @@
 # Session-as-job — Implementation Plan
 
-> **Archive:** All 15 tasks landed on `main` at `ea56edd`. Do not re-run this plan as greenfield work.
+> **Archive:** All 15 tasks landed on `main` at `ea56edd`. Closeout (ACP H1 replay, TodoWrite fail-closed, `draft_pr`, child `raven/*` GC) landed on `main` at `0ef1554`. Do not re-run this plan as greenfield work.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 

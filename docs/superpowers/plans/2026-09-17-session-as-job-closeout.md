@@ -4,7 +4,8 @@ Date: 2026-09-17
 Branch: `feat/session-as-job-closeout` (worktree `.worktrees/session-as-job-closeout`)  
 Base: `ea56edd` (`main` after session-as-job merge)  
 Spec: `docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md`  
-Status: in progress
+Status: implemented  
+Shipped on `main` at `0ef1554` (merge of `feat/session-as-job-closeout`). Do not re-run this plan as greenfield work.
 
 Close the last session-as-job honesty holes and make docs match what shipped. Not a new horizon. No web UI, no leftover-ask re-model, no docker file port.
 
