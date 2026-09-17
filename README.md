@@ -250,7 +250,9 @@ Ink is the default. OpenTUI is `--tui opentui`.
 | `/review` | Append a read-only review to `.ravenclaw/MEMORY.md` |
 | `/interview` | Ask clarifying questions (`AskUser`) before coding |
 | `/undo` | Restore files from the last closed edit checkpoint |
-| `/rewind` | Undo those files **and** drop the last user turn (persisted) |
+| `/rewind` | Job: checkpoint `git reset --hard` + todos; no-job: undo files **and** drop last user turn |
+| `/job [name]` | Enter a named `raven/*` job worktree; `/job commit on\|off` flips opt-in turn-end commit |
+| `/pr [title]` | Open or update a draft PR from the session shadow (default off) |
 | `/diff` | Uncommitted + staged git diff |
 | `/steer <text>` | Inject into the live turn |
 | `/queue [drop n\|clear]` | Next-turn message queue |
@@ -440,7 +442,7 @@ If `included.gatewayUrl` is a real URL and `GET /v1/entitlement` admits the sess
 - [System design](docs/superpowers/specs/2026-09-08-ravenclaw-coding-agent-design.md)
 - [Cron / scheduler](docs/superpowers/specs/2026-09-12-ravenclaw-cron-scheduler-design.md)
 - Prior art notes: [Hermes](docs/research/hermes-agent-analysis.md), [Freebuff](docs/research/freebuff-analysis.md), [Claude Code loop](docs/research/claude-code-analysis.md), [eve](docs/research/eve-analysis.md) ([한국어](docs/research/eve-analysis.ko.md)), [y0](docs/research/y0-analysis.md) ([한국어](docs/research/y0-analysis.ko.md))
-- Next-horizon roadmap (session-as-job + reconnectable serve): [2026-09-16-session-as-job-roadmap.md](docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md)
+- Session-as-job horizon (named shadow, checkpoint rewind, reconnectable serve, optional `/pr`; **implemented** at `ea56edd`): [2026-09-16-session-as-job-roadmap.md](docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md)
 - Previous horizon (durable HITL, sandbox port, session HTTP; implemented): [2026-09-15-eve-inspired-roadmap.md](docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md)
 
 ## Develop

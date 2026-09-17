@@ -89,6 +89,8 @@ Ink의 frozen prompt는 `void runTurn(...)`이라 fire-and-forget이다. OpenTUI
 | `undo` | shared | 마지막 체크포인트 | 턴이 열려 있으면 block | `formatUndoNotice` |
 | `rewind` | shared | 파일 + 마지막 user turn | live turn / running agent면 거부 | `a turn is in progress` 등 |
 | `diff` | host | git 패널 토글 | 패널만 | working-tree + staged |
+| `job` | shared | `raven/*` job worktree 진입 / commit on\|off | 동일 | `session.job`, cwd → worktree |
+| `pr` | shared | shadow draft PR | 동일 | job 없거나 dirty면 notice만 |
 | `steer` | shared | 다음 툴 라운드/턴 | 다음 툴 라운드에 inject | `steered (next round)` |
 | `add-dir` | shared | notice-only | notice-only | 루트를 추가하지 않음 |
 | `effort` | shared | notice-only | notice-only | persist 없음 |
@@ -281,10 +283,33 @@ Ink status line은 모델·mode·usage·`shortSessionId`·funding·near-compact�
 
 - 분류: shared
 - live turn이거나 running `type === 'agent'` 태스크가 있으면 `a turn is in progress`
-- 아니면 마지막 user부터 끝까지 drop + 그 generation undo
-- persist 실패: `rewind persist failed` (메시지는 그대로)
+- **job 세션** (`session.job`): `rewindToCheckpoint` — 마지막 user 턴 drop, job worktree에서 이전 assistant 체크포인트 sha(없으면 `baseCommitSha`)로 `git reset --hard`, todo 스냅샷 복원, compact `rewind` persist. 실패 notice: `rewind reset failed: …` / `rewind persist failed` / `nothing to rewind`
+- **job 없는 세션**: 열린 file-history generation이면 `a turn is in progress`. 아니면 마지막 user부터 drop + 그 generation undo. persist 실패: `rewind persist failed` (메시지는 그대로)
 - notice: `nothing to rewind` / `dropped 1 message` / `dropped N messages` / 파일 부분과 `; `로 결합
 - compact 세대에 `rewind`로 기록
+- 관련: `/undo`, `/job`
+
+### `/job [name]` / `/job commit on|off`
+
+- 분류: shared
+- 카탈로그: `/job [name] | /job commit on|off` — named `raven/*` job worktree 진입; opt-in turn-end commit 토글
+- 인자 없음: 기본 `raven/<slug>` shadow로 job worktree 진입
+- `<name>`: 해당 slug로 진입
+- `commit on` / `commit off`: `session.jobAutoCommit` 설정 후 upsert. notice `job commit on|off`
+- 진입 성공 시 `session.job = { baseBranch, shadowBranch, baseCommitSha, worktreePath }`, cwd를 worktree로 바꾸고 upsert. notice `job ${shadowBranch}`
+- 모델 턴을 시작하지 않는다. auto-commit 기본은 off
+- 관련: `/pr`, `/rewind`, CLI `--worktree`
+
+### `/pr [title]`
+
+- 분류: shared
+- 카탈로그: `/pr [title]` — 세션 shadow 브랜치에서 draft PR 열기/갱신
+- `session.job` 없으면 notice `no job record` (`gh` 호출 없음)
+- 있으면 `gh`로 draft `shadow → base`. 인자 있으면 PR title
+- 전제: job 기록, clean worktree, 인증된 `gh`. dirty / `gh` 없음은 notice만 (턴 실패 아님)
+- job의 PR 필드를 in-place 갱신; 마지막 assistant에 annotation 가능
+- 기본 off — 턴 종료 시 자동 실행하지 않음. serve 대응: `POST /v1/session/:id/pr`
+- 관련: `/job`, `docs/headless.md`
 
 ### `/diff [n|close]`
 
@@ -547,7 +572,9 @@ disable 목록: `~/.ravenclaw/skills-disabled.json`. `/reload`와 disable/enable
 | 커맨드 | 파일 | 대화 | 세션 id | 진행 중 턴 |
 |---|---|---|---|---|
 | `/undo` | 마지막 닫힌 generation 복원/삭제 | 유지 | 유지 | 열려 있으면 block |
-| `/rewind` | 그 generation undo | 마지막 user부터 drop | 유지 | `a turn is in progress` |
+| `/rewind` | job: `git reset --hard` + todo 스냅샷. no-job: file-history undo | 마지막 user부터 drop | 유지 | `a turn is in progress` |
+| `/job` | `raven/*` worktree + job 기록; `commit on\|off` | 유지 | 유지 (cwd → worktree) | 모델 턴 아님 |
+| `/pr` | shadow draft PR (없거나 dirty면 notice) | 마지막 assistant annotation 가능 | 유지 | 모델 턴 아님 |
 | `/compact` | 없음 | 앞부분 요약/접기 | 유지, `compactGeneration++` | mid-turn은 큐; live splice 안 함 |
 | `/clear` | 새 id의 빈 history | 빈 transcript | **새 id** | 이전 엔진 close |
 | `/resume` | 대상 세션 history | 저장된 메시지 로드 | **대상 id** | 엔진 교체 |

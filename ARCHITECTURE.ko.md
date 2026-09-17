@@ -10,7 +10,7 @@ English: [ARCHITECTURE.md](ARCHITECTURE.md)
 - [SLASH_COMMANDS.ko.md](SLASH_COMMANDS.ko.md)
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [docs/headless.md](docs/headless.md)
-- 다음 로드맵: [2026-09-16-session-as-job-roadmap.md](docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md) (이전: [eve-inspired](docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md), implemented)
+- 구현됨: [2026-09-16-session-as-job-roadmap.md](docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md) (`ea56edd`) (이전: [eve-inspired](docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md), implemented)
 - 선행 분석: [eve-analysis.ko.md](docs/research/eve-analysis.ko.md), [y0-analysis.ko.md](docs/research/y0-analysis.ko.md)
 
 ---
@@ -180,12 +180,14 @@ ACP `session/new`는 cwd, model, MCP 서버 목록을 overlay할 수 있다. 이
 - bind는 `127.0.0.1` / `localhost` / `::1`만 허용한다. 기본은 `127.0.0.1:8787`.
 - `dontAsk`를 강제하고 `lockHolder: 'serve'`다. (`/v1/turn` 경로. 아래 세션 라우트는 다름.)
 - `POST /v1/turn`은 `Authorization: Bearer <secret>`이 필요하다. body는 `{ text, sessionKey? }`다. 같은 `sessionKey`는 `~/.ravenclaw/gateway/sessions.json`에 세션 id를 고정한다.
-- `GET  /v1/session/:id/stream` — `StreamEvent` NDJSON live tail (Bearer). 스트림을 닫는 것은 detach이며 cancel이 아니다.
+- `GET  /v1/session/:id` — 재연결 스냅샷 `{ id, job?, pendingAsks, lastSeq, permissionMode, live }` (Bearer). 없으면 404 (생성하지 않음). `live`는 턴 진행 중 true.
+- `GET  /v1/session/:id/stream` — NDJSON `{ seq } & StreamEvent` (Bearer). `after` 없으면 live tail. `?after=<seq>`는 `seq > after`를 재생한 뒤 tail. `after=0`은 처음부터. 스트림을 닫는 것은 detach이며 cancel이 아니다.
 - `POST /v1/session/:id/submit` — `{ text }` → `submitMessage({ text, turnPolicy: 'queue' })`, **202** `{ accepted, sessionId }`. 없는 세션은 **default** permission mode로 만든다 (`dontAsk` 아님).
 - `POST /v1/session/:id/resolve` — `{ callId, allow }`가 먼저 live waiter를 처리하고, 없으면 `applyAskAnswer`. crash-resolve는 **pair only**.
-- `POST /v1/session/:id/cancel` — `engine.abort()`; parked leftover-ask 행은 남는다.
+- `POST /v1/session/:id/cancel` — body에 optional `{ turnId? }`. 라이브 턴이 일치하면(또는 `turnId` 생략 시 라이브가 있으면) `engine.abort('cancel')`. stale / 라이브 없음 → **200** `{ ok: true, status: 'no_active_turn' }`. parked leftover-ask 행은 남는다. 스트림은 `cancelled, ask still pending`을 낼 수 있다.
 - `POST /v1/session/:id/compact` — `compactNow()` (`liveTurn !== null`이면 큐).
-- `POST /v1/turn`은 dontAsk one-shot으로 남는다. `/v1/turn`으로 연 세션은 `dontAsk`가 찍히므로 leftover-ask는 deny다.
+- `POST /v1/session/:id/pr` — optional `{ title, body }` → 세션 shadow에서 draft PR (기본 off; 모델 턴 아님). 200 `{ ok, notice, snapshot? }`. job 없음/dirty tree는 notice이지 5xx가 아니다.
+- `POST /v1/turn`은 dontAsk one-shot으로 남는다. `/v1/turn`으로 연 세션은 `dontAsk`가 찍히므로 leftover-ask는 deny다. `/v1/turn`에는 `?after=`가 없다.
 - `POST /webhooks/<route>`는 `X-Raven-Signature: t=<unix>,v1=<hmac-sha256 of t.body>`다. skew는 5분. 각 delivery는 새 세션이다. 툴은 `Read` / `Grep` / `Glob` / `Fetch` / `WebSearch`만.
 - `GET /health`는 `{ ok: true }`.
 - 세션당 single-flight다. 15초 mailbox poller가 child Agent mail을 `[mailbox]` 턴으로 깨운다.
@@ -272,7 +274,7 @@ SDK `createRootTools`에 없는 CLI 루트 툴: `NotebookEdit`, `TaskSteer`, `Ad
 
 `setPermissionMode`는 라이브 턴에도 즉시 반영한다. `plan`으로 들어갈 때 이전 모드를 `prePlanMode`에 저장하고, 나올 때 지운다. 시스템 파트의 volatile 줄 `Current permission mode:`도 같이 고친다.
 
-`enqueueSteer` / `drainSteering`은 `/steer`와 `TaskSteer`가 쓰는 큐다. `bindDrainQueued`는 `/queue`의 다음 턴 텍스트를 루프에 넘긴다. `rewindLast`는 라이브 턴이 없을 때만 마지막 user 턴과 파일 체크포인트를 되돌린다. `close`는 `SessionEnd` 후 락을 놓는다.
+`enqueueSteer` / `drainSteering`은 `/steer`와 `TaskSteer`가 쓰는 큐다. `bindDrainQueued`는 `/queue`의 다음 턴 텍스트를 루프에 넘긴다. `rewindLast`는 라이브 턴(또는 running agent)이 없을 때만 동작한다. **job 세션**은 `rewindToCheckpoint`로 worktree에서 `git reset --hard`(체크포인트 sha 또는 `baseCommitSha`) + todo 스냅샷 복원 + 마지막 user 턴 drop이다. **job 없는 세션**은 `rewindLastTurn`(file-history undo + 마지막 user 턴 drop)이다. `abort(kind?)`는 background review를 취소하고 라이브 턴을 abort한다. serve cancel은 `'cancel'`을 넘긴다. `liveTurnId()`가 serve `turnId` 가드를 받친다. `close`는 `SessionEnd` 후 락을 놓는다.
 
 ---
 
@@ -551,6 +553,8 @@ SQLite WAL, `$RAVENCLAW_HOME/state.db`. `PRAGMA journal_mode = WAL`, `busy_timeo
 세션 락은 한 id에 writer 하나다. 다른 holder가 잡고 있으면 `SessionLockError`다. Discord/Slack/serve는 이 메시지로 채널에 충돌을 알린다.
 
 FTS5는 `raven search` / `/search` / `SessionSearch`가 쓴다. compact로 비활성화된 행은 검색에서 빠진다.
+
+**Rewind vs undo:** `/undo`는 닫힌 마지막 generation의 `fileHistory.undo()`만이다. `/rewind`는 세션에 따라 갈린다. job 기록이 있으면 `rewindToCheckpoint`(`git reset --hard` + todo 스냅샷 + 마지막 user 턴 drop), 없으면 file-history undo + 마지막 user 턴 drop + compact `rewind` 경계. 둘 다 라이브 턴/열린 generation이면 `a turn is in progress`로 거절한다.
 
 ---
 

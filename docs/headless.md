@@ -82,9 +82,9 @@ It stays dontAsk, one-shot JSON.
 Session routes use an engine that does **not** force `dontAsk`. All require the same Bearer token:
 
 - `GET /v1/session/:id` — reconnect snapshot `{ id, job?, pendingAsks, lastSeq, permissionMode, live }`. 404 if unknown (does not create). `live` is true while a turn is in process.
-- `GET /v1/session/:id/stream` — NDJSON `{ seq } & StreamEvent`. Omit `after` for a live tail. `?after=<seq>` replays `seq > after` then tails. `after=0` replays from the start.
+- `GET /v1/session/:id/stream` — NDJSON `{ seq } & StreamEvent`. Omit `after` for a live tail. `?after=<seq>` replays `seq > after` then tails. `after=0` replays from the start. Closing the stream is detach, not cancel.
 - `POST /v1/session/:id/submit` — `{ text }` → `submitMessage` with `turnPolicy: queue` (202 accepted; leftover-ask parks for `/resolve`). Missing sessions are created with `default` permission mode (not `dontAsk`).
-- `POST /v1/session/:id/cancel` — `engine.abort()`
+- `POST /v1/session/:id/cancel` — optional `{ turnId }` from `round_start`. Calls `engine.abort('cancel')` when the live turn matches (or any live turn if `turnId` is omitted). Stale `turnId` or no live turn → **200** `{ ok: true, status: 'no_active_turn' }` (not an error). Parked leftover-ask rows stay; the stream may emit `cancelled, ask still pending`. Cancel is not failure — the session accepts the next `submit`.
 - `POST /v1/session/:id/compact` — `engine.compactNow()`
 - `POST /v1/session/:id/resolve` — `{ callId, allow: boolean }` → live waiter or `applyAskAnswer`; 200 `{ status }` or 404 if unmatched
 - `POST /v1/session/:id/pr` — optional `{ title, body }` → draft PR from the session shadow (default off; never a model turn). 200 `{ ok, notice, snapshot? }`. Missing job or dirty tree is a notice, not 5xx.

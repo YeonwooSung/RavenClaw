@@ -8,7 +8,7 @@ Supersedes remaining H1/H2 of `2026-09-12-ravenclaw-roadmap.md`. H0 and harness-
 
 Steal contracts. Do not copy Claude, Hermes, or Freebuff source.
 
-Next horizon (session-as-job + reconnectable serve): **`2026-09-16-session-as-job-roadmap.md`**. Previous (implemented): `2026-09-15-eve-inspired-roadmap.md`. Prior-art: [eve-analysis.md](../../research/eve-analysis.md), [y0-analysis.md](../../research/y0-analysis.md).
+Session-as-job horizon (**implemented** on `main` at `ea56edd`): **`2026-09-16-session-as-job-roadmap.md`**. Previous (implemented): `2026-09-15-eve-inspired-roadmap.md`. Prior-art: [eve-analysis.md](../../research/eve-analysis.md), [y0-analysis.md](../../research/y0-analysis.md).
 
 ---
 
@@ -22,7 +22,7 @@ The coding-agent waist is shipped:
 - Durable mailbox + session locks. Children go through `SessionEngine`.
 - H1.1–H1.3, H1.7 (subdir AGENTS.md, verify-on-stop, coding posture, stall) are in.
 
-Waves 1–4 are on `main`. Eve-inspired horizon is implemented. Next: **`2026-09-16-session-as-job-roadmap.md`**.
+Waves 1–4 are on `main`. Eve-inspired horizon is implemented. Session-as-job horizon is implemented (`ea56edd`): **`2026-09-16-session-as-job-roadmap.md`**.
 
 ---
 
