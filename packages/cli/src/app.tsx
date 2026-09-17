@@ -13,6 +13,7 @@ import {
   shouldAdvanceLoop,
   type LoopState,
   maybePruneSkillsOnIdle,
+  maybeRunFollowup,
   type Funding,
   type PermissionMode,
   type SessionRecord,
@@ -280,6 +281,7 @@ export function App(props: AppProps) {
       historyIndexRef.current = null
       setRows((prev) => [...prev, { kind: 'user', text }])
       let advanceLoop = false
+      let followupRan = false
       try {
         const payload = collectUserImages(
           prompt,
@@ -295,6 +297,14 @@ export function App(props: AppProps) {
           const next = await gen.next()
           if (next.done) {
             advanceLoop = shouldAdvanceLoop(next.value.reason)
+            const engine = runtimeRef.current.engine
+            const flag = await maybeRunFollowup({
+              engine,
+              listPendingAsks: () =>
+                runtimeRef.current.store.listPendingAsks(engine.session.id),
+              lastEnd: next.value,
+            })
+            followupRan = flag === 'ran'
             break
           }
           applyLiveEvent(next.value)
@@ -310,7 +320,7 @@ export function App(props: AppProps) {
         setBusy(false)
         const leftover = runtimeRef.current.engine.drainSteering()
         if (leftover.length > 0) void runTurn(leftover.join('\n'))
-        else {
+        else if (!followupRan) {
           const queued = dequeue(queueRef.current)
           if (queued !== undefined) void runTurn(queued)
           else if (advanceLoop) {

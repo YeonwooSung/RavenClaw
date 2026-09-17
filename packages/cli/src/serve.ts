@@ -18,7 +18,9 @@ import {
   applySessionDraftPr,
   clearSessionJobError,
   setSessionJobError,
+  maybeRunFollowup,
   type Message,
+  type RoundEnd,
   type SessionEngine,
   type SessionJob,
   type SessionRecord,
@@ -68,11 +70,20 @@ export function singleFlight<T>(
   return task
 }
 
-async function consumeSubmit(gen: AsyncGenerator<unknown, unknown>): Promise<void> {
+async function consumeSubmit(gen: AsyncGenerator<unknown, unknown>): Promise<unknown> {
   while (true) {
     const next = await gen.next()
-    if (next.done) return
+    if (next.done) return next.value
   }
+}
+
+function isRoundEnd(value: unknown): value is RoundEnd {
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    'reason' in value &&
+    typeof (value as { reason: unknown }).reason === 'string'
+  )
 }
 
 export async function tickMailbox(
@@ -651,9 +662,31 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
       const sid = loaded.runtime.engine.session.id
       void singleFlight(ctx.turnFlights, sid, async () => {
         try {
-          await consumeSubmit(
+          const end = await consumeSubmit(
             loaded.runtime.engine.submitMessage({ text: parsed.text, turnPolicy: 'queue' }),
           )
+          if (!isRoundEnd(end)) return
+          const engine = loaded.runtime.engine
+          if (
+            typeof engine.getFollowup !== 'function' ||
+            typeof engine.clearFollowup !== 'function' ||
+            typeof engine.liveTurnId !== 'function'
+          ) {
+            return
+          }
+          await maybeRunFollowup({
+            engine: {
+              submitMessage: (input) => engine.submitMessage(input),
+              getFollowup: () => engine.getFollowup?.() ?? null,
+              clearFollowup: async () => {
+                await engine.clearFollowup?.()
+              },
+              liveTurnId: () => engine.liveTurnId?.() ?? null,
+            },
+            listPendingAsks: async () =>
+              (await loaded.runtime.store?.listPendingAsks(sid)) ?? [],
+            lastEnd: end,
+          })
         } catch {
           // session submit is fire-and-forget; the stream carries errors
         }

@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import type { SessionRecord } from '../types'
-import { followupNotice, writeFollowup } from './followup'
+import type { SessionRecord, UserSubmitInput } from '../types'
+import { followupNotice, maybeRunFollowup, writeFollowup } from './followup'
 
 describe('writeFollowup', () => {
   test('setFollowup overwrites; empty is an error; clear removes', async () => {
@@ -42,5 +42,70 @@ describe('followupNotice', () => {
     expect(followupNotice(null)).toBe('no follow-up')
     expect(followupNotice('')).toBe('no follow-up')
     expect(followupNotice('run tests')).toBe('run tests')
+  })
+})
+
+describe('maybeRunFollowup', () => {
+  test('maybeRunFollowup persist-clears then submits on completed; cancel clears; pending skips', async () => {
+    const submitted: string[] = []
+    const session = { followup: 'next please' } as SessionRecord
+    const engine = {
+      getFollowup: () => session.followup ?? null,
+      clearFollowup: async () => {
+        delete session.followup
+      },
+      liveTurnId: () => null,
+      async *submitMessage(input: UserSubmitInput) {
+        submitted.push(typeof input === 'string' ? input : (input.text ?? ''))
+      },
+    }
+    const ran = await maybeRunFollowup({
+      engine,
+      listPendingAsks: async () => [],
+      lastEnd: { reason: 'completed' },
+    })
+    expect(ran).toBe('ran')
+    expect(session.followup).toBeUndefined()
+    expect(submitted).toEqual(['next please'])
+
+    session.followup = 'nope'
+    const cleared = await maybeRunFollowup({
+      engine,
+      listPendingAsks: async () => [],
+      lastEnd: { reason: 'cancelled' },
+    })
+    expect(cleared).toBe('cleared')
+    expect(submitted).toEqual(['next please'])
+    expect(session.followup).toBeUndefined()
+
+    session.followup = 'wait'
+    const skipped = await maybeRunFollowup({
+      engine,
+      listPendingAsks: async () => [{ callId: 'x' }],
+      lastEnd: { reason: 'completed' },
+    })
+    expect(skipped).toBe('skipped')
+    expect(session.followup).toBe('wait')
+  })
+
+  test('maybeRunFollowup does not submit when clearFollowup throws', async () => {
+    const submitted: string[] = []
+    const engine = {
+      getFollowup: () => 'keep',
+      clearFollowup: async () => {
+        throw new Error('disk')
+      },
+      liveTurnId: () => null,
+      async *submitMessage(input: UserSubmitInput) {
+        submitted.push(typeof input === 'string' ? input : (input.text ?? ''))
+      },
+    }
+    const result = await maybeRunFollowup({
+      engine,
+      listPendingAsks: async () => [],
+      lastEnd: { reason: 'completed' },
+    })
+    expect(result).toBe('skipped')
+    expect(submitted).toEqual([])
   })
 })

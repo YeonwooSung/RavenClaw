@@ -220,6 +220,7 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
   submitEvents: StreamEvent[]
   replayEvents: StreamEvent[]
   submitHold?: Promise<void>
+  submitEnd: { reason: string }
 } {
   const store = createMemoryStore()
   const submitEvents: StreamEvent[] = []
@@ -231,13 +232,19 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
     compactCalls: number
     liveTurnId: string | null
     submitHold?: Promise<void>
+    submitEnd: { reason: string }
   } = {
     abortCalls: 0,
     compactCalls: 0,
     liveTurnId: 'live-1',
+    submitEnd: { reason: 'completed' },
   }
   const engine = {
-    session: { id: 's1', permissionMode: 'default' as const },
+    session: { id: 's1', permissionMode: 'default' as const } as {
+      id: string
+      permissionMode: 'default'
+      followup?: string
+    },
     async applyAskAnswer(callId: string, answer: 'allow' | 'deny' | 'allow_always') {
       applyCalls.push({ callId, answer })
       const row = await store.getPendingAsk(callId)
@@ -254,10 +261,24 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
     async compactNow() {
       state.compactCalls += 1
     },
+    async setFollowup(text: string) {
+      if (text.trim() === '') return { ok: false as const, notice: 'follow-up text required' }
+      engine.session.followup = text.trim()
+      return { ok: true as const }
+    },
+    async clearFollowup() {
+      delete engine.session.followup
+    },
+    getFollowup() {
+      return engine.session.followup ?? null
+    },
     async *submitMessage(input: UserSubmitInput) {
       submitted.push(input)
+      if (state.liveTurnId === null) state.liveTurnId = 'live-1'
       for (const event of submitEvents) yield event
       if (state.submitHold) await state.submitHold
+      state.liveTurnId = null
+      return state.submitEnd
     },
     async *replayPendingAsks() {
       for (const event of replayEvents) yield event
@@ -284,6 +305,9 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
     replayEvents,
     set submitHold(value: Promise<void> | undefined) {
       state.submitHold = value
+    },
+    set submitEnd(value: { reason: string }) {
+      state.submitEnd = value
     },
   }
   return ctx
@@ -1003,19 +1027,66 @@ describe('handleServeRequest', () => {
     expect(body.jobAutoCommit).toBe(false)
   })
 
+  test('POST submit runs follow-up after completed; cancelled clears without submit', async () => {
+    const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
+    const ctx = makeServeCtx(secret)
+    const auth = { authorization: 'Bearer secret', 'content-type': 'application/json' }
+
+    const setRes = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/followup', {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ text: 'next please' }),
+      }),
+      ctx,
+    )
+    expect(setRes.status).toBe(200)
+
+    const submitRes = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/submit', {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ text: 'go' }),
+      }),
+      ctx,
+    )
+    expect(submitRes.status).toBe(202)
+    await Promise.all([...ctx.turnFlights.values()])
+    expect(ctx.submitted).toEqual([
+      { text: 'go', turnPolicy: 'queue' },
+      { text: 'next please', turnPolicy: 'queue' },
+    ])
+    const runtime = await ctx.runtimeForSession('s1')
+    expect(runtime?.engine.session.followup).toBeUndefined()
+
+    const ctx2 = makeServeCtx(secret)
+    ctx2.submitEnd = { reason: 'cancelled' }
+    await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/followup', {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ text: 'nope' }),
+      }),
+      ctx2,
+    )
+    await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/submit', {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ text: 'go' }),
+      }),
+      ctx2,
+    )
+    await Promise.all([...ctx2.turnFlights.values()])
+    expect(ctx2.submitted).toEqual([{ text: 'go', turnPolicy: 'queue' }])
+    const runtime2 = await ctx2.runtimeForSession('s1')
+    expect(runtime2?.engine.session.followup).toBeUndefined()
+  })
+
   test('POST /v1/session/:id/followup overwrites; DELETE clears; empty is 400', async () => {
     const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
     const runtime = await ctx.runtimeForSession('s1')
     if (!runtime) throw new Error('expected runtime')
-    runtime.engine.setFollowup = async (text: string) => {
-      if (text.trim() === '') return { ok: false as const, notice: 'follow-up text required' }
-      runtime.engine.session.followup = text
-      return { ok: true as const }
-    }
-    runtime.engine.clearFollowup = async () => {
-      delete runtime.engine.session.followup
-    }
-    runtime.engine.getFollowup = () => runtime.engine.session.followup ?? null
 
     const bad = await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/s1/followup', {

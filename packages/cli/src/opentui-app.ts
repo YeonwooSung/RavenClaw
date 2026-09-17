@@ -13,6 +13,7 @@ import {
   formatLoopStatus,
   shouldAdvanceLoop,
   maybePruneSkillsOnIdle,
+  maybeRunFollowup,
   createSecondAbortGate,
   formatKilledBackgroundNotice,
   type StreamEvent,
@@ -145,6 +146,7 @@ export async function runOpenTuiApp(
     view.append(`you  ${text}`)
     flush()
     let advanceLoop = false
+    let followupRan = false
     try {
       const payload = collectUserImages(expanded.text, current.cwd, readClipboardImage)
       const queued =
@@ -158,6 +160,12 @@ export async function runOpenTuiApp(
           view.apply({ type: 'round_end', end: next.value })
           flush()
           advanceLoop = shouldAdvanceLoop(next.value.reason)
+          const flag = await maybeRunFollowup({
+            engine: current.engine,
+            listPendingAsks: () => current.store.listPendingAsks(current.engine.session.id),
+            lastEnd: next.value,
+          })
+          followupRan = flag === 'ran'
           break
         }
         renderEvent(next.value)
@@ -171,7 +179,7 @@ export async function runOpenTuiApp(
       turnBusy = false
       const leftover = current.engine.drainSteering()
       if (leftover.length > 0) void runTurn(leftover.join('\n'))
-      else {
+      else if (!followupRan) {
         const queued = dequeue(queue)
         if (queued !== undefined) void runTurn(queued)
         else if (advanceLoop) {
