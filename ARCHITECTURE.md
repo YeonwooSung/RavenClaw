@@ -173,13 +173,16 @@ Same `CliRuntime` and slash dispatch (`packages/cli/src/slash/dispatch.ts`). Ren
 
 - `GET /health` → `{ ok: true }`
 - `POST /v1/turn` — `Authorization: Bearer <secret>` (`checkBearer` in `packages/core/src/gateway/http.ts`). Body `{ text, sessionKey? }`. Runs `runExec` with `closeEngine: false`. Session map is `$RAVENCLAW_HOME/gateway/sessions.json`.
-- `GET  /v1/session/:id` — reconnect snapshot `{ id, job?, pendingAsks, lastSeq, permissionMode, live }` (Bearer). 404 if unknown (does not create). `live` is true while a turn is in process.
+- `GET  /v1/session/:id` — reconnect snapshot `{ id, title?, job?, jobAutoCommit, pendingAsks, lastSeq, permissionMode, live, lastEnd?, jobError?, queued }` (Bearer). 404 if unknown (does not create). `live` is true while a turn is in process. `jobAutoCommit` is always a boolean. `queued` is the one-slot follow-up text or `null`. `lastEnd` / `jobError` appear when set on the session.
 - `GET  /v1/session/:id/stream` — NDJSON `{ seq } & StreamEvent` (Bearer). Omit `after` for a live tail. `?after=<seq>` replays `seq > after` then tails. `after=0` replays from the start. Closing the stream is detach, not cancel.
-- `POST /v1/session/:id/submit` — `{ text }` → `submitMessage({ text, turnPolicy: 'queue' })`, **202** `{ accepted, sessionId }`. Missing sessions are created with the **default** permission mode (not `dontAsk`).
+- `POST /v1/session/:id/submit` — `{ text }` → `submitMessage({ text, turnPolicy: 'queue' })`, **202** `{ accepted, sessionId }`. Missing sessions are created with the **default** permission mode (not `dontAsk`). After the turn ends, serve may `maybeRunFollowup` (in-process one-slot epilogue).
 - `POST /v1/session/:id/resolve` — `{ callId, allow }` settles a live waiter first, else `applyAskAnswer`. Crash-resolve **pairs only**.
 - `POST /v1/session/:id/cancel` — optional body `{ turnId? }`. Calls `engine.abort('cancel')` when the live turn matches (or any live turn if `turnId` omitted). Stale / no live turn → **200** `{ ok: true, status: 'no_active_turn' }`. Parked leftover-ask rows stay; stream may emit `cancelled, ask still pending`.
 - `POST /v1/session/:id/compact` — `compactNow()` (queues if `liveTurn !== null`).
 - `POST /v1/session/:id/pr` — optional `{ title, body }` → draft PR from the session shadow (default off; never a model turn). 200 `{ ok, notice, snapshot? }`. Missing job or dirty tree is a notice, not 5xx.
+- `POST /v1/session/:id/followup` — `{ text }` → one-slot `setFollowup`; 200 `{ ok: true, queued }` or 400. `DELETE …/followup` clears; 200 `{ ok: true, queued: null }`. Not `/queue`, not `SuggestFollowups`.
+- `POST /v1/session/:id/edit` — `{ text }` → `rewindLast()` then `submitMessage`. Empty text → 400. Rewind refuse → 200 `{ ok: false, notice, droppedText? }`. Success → **202** `{ accepted, sessionId, droppedText? }` then fire-and-forget submit (same follow-up epilogue as `/submit`).
+- `GET  /v1/session/:id/diff` — read-only job range: `baseCommitSha...HEAD` ∪ dirty via `jobDiff`. 200 `JobDiff` (`ok: true`, files with `create|update|delete|rename`) or `{ ok: false, notice }` (no job / git fail). Not a model turn.
 - `POST /v1/turn` stays dontAsk one-shot. Opening a session via `/v1/turn` first stamps `dontAsk`, so leftover-ask on that session is deny. No `?after=` on `/v1/turn`.
 - `POST /webhooks/<route>` — `X-Raven-Signature: t=<unix>,v1=<hmac>` (`verifyWebhookSignature`, 300s skew). Fire-and-forget 202. Webhook sessions are restricted to `safeWebhookToolNames()`: `Read`, `Grep`, `Glob`, `Fetch`, `WebSearch` (`packages/core/src/gateway/webhook.ts`).
 
@@ -270,7 +273,8 @@ Accepts a string or `{ text?, images? }`. Sequence:
 - **`enqueueSteer(text)`** pushes onto `steering`. Drained in `prepareContext` and `finalizeRound` through `injectMidTurnHint` (the only mid-turn writer).
 - **`bindDrainQueued(fn)`** — host `/queue`. At most one queued prompt is injected after each tool batch (`finalizeRound` → `injectQueued`).
 - **`compactNow()`** runs autocompact on live or stored messages (LLM summary if `compact.llmSummarize`, else `mechanicalSummary`). May run during a live turn.
-- **`rewindLast()`** refuses if `liveTurn` or a running Agent task exists. **Job sessions** (`session.job`) call `rewindToCheckpoint`: `git reset --hard` in the job worktree to the nearest earlier assistant checkpoint sha (or `baseCommitSha`), restore that todo snapshot, drop the last user turn, persist compact `rewind`. **No-job sessions** call `rewindLastTurn`: persist a compact boundary for dropped ids, `fileHistory.undo()`, drop the last user turn from the transcript.
+- **`rewindLast()`** refuses if `liveTurn`, a running Agent task, or unpaired pending asks exist. Returns `{ ok, notice, droppedText? }` (prior last-user text when a turn was dropped). **Job sessions** (`session.job`) call `rewindToCheckpoint`: `git reset --hard` in the job worktree to the nearest earlier assistant checkpoint sha (or `baseCommitSha`), restore that todo snapshot, drop the last user turn, persist compact `rewind`. **No-job sessions** call `rewindLastTurn`: persist a compact boundary for dropped ids, `fileHistory.undo()`, drop the last user turn from the transcript. Serve `POST …/edit` and TUI `/retry` compose rewind then `submitMessage` (or restore the composer).
+- **`setFollowup` / `clearFollowup` / `getFollowup`** — one persisted next-turn slot on `session.followup` (schema v10). Hosts call `maybeRunFollowup` after a real turn ends; serve exposes `POST/DELETE …/followup` and GET `queued`.
 - **`reloadSystem(next)`** replaces `system` for the next assemble. `/reload` rebuilds parts and calls this.
 - **`abort(kind?)`** cancels background review and `abortTurn(liveTurn.abort)`. Serve cancel passes `'cancel'` (vs `'interrupt'` for steer). Optional `liveTurnId()` backs the serve `turnId` guard.
 - **`close({ releaseLock? })`** fires `SessionEnd` once, then `releaseSessionLock` unless `releaseLock: false` (child agents use that).
@@ -622,7 +626,7 @@ Threshold = `contextWindow - reserveOutputTokens - autoCompactBuffer`. Hard limi
 
 ## Sessions
 
-SQLite WAL at `$RAVENCLAW_HOME/state.db` (`PRAGMA journal_mode = WAL`, `busy_timeout = 5000`, `foreign_keys = ON` in `packages/core/src/session/sqlite-store.ts`). Schema version **9**:
+SQLite WAL at `$RAVENCLAW_HOME/state.db` (`PRAGMA journal_mode = WAL`, `busy_timeout = 5000`, `foreign_keys = ON` in `packages/core/src/session/sqlite-store.ts`). Schema version **10**:
 
 | Version | File | Adds |
 |---|---|---|
@@ -635,6 +639,7 @@ SQLite WAL at `$RAVENCLAW_HOME/state.db` (`PRAGMA journal_mode = WAL`, `busy_tim
 | 7 | `007_session_todos.sql` | `sessions.todos_json` |
 | 8 | `008_session_job.sql` | `sessions.job_json`, `sessions.job_auto_commit`, `messages.checkpoint_json` |
 | 9 | `009_stream_events.sql` | `stream_events` (serve `seq` / `?after=`) |
+| 10 | `010_session_host_state.sql` | `sessions.last_end_json`, `sessions.job_error`, `sessions.followup_text` |
 
 `applyAskAnswer(callId, allow|deny|allow_always)` is the only non-`submitMessage` host entry. It pairs a parked leftover-ask and does not start a model turn. `resumeSession` treats pending `callId`s as paired-for-resume.
 

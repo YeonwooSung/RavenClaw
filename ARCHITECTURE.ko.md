@@ -148,7 +148,7 @@ flowchart TD
 - included 세션이면 `AdDock`이 붙을 수 있다. BYOK면 붙지 않는다.
 - 15초마다 cron ticker가 due job을 태운다.
 
-슬래시 처리의 공통 부분은 `packages/cli/src/slash/dispatch.ts`의 `dispatchSharedSlash`다. Ink와 OpenTUI가 같은 dispatcher를 쓴다. `quit` / `stop` / `clear` / `resume` / `diff` / `queue` / `loop` / `bash`만 호스트 전용이다.
+슬래시 처리의 공통 부분은 `packages/cli/src/slash/dispatch.ts`의 `dispatchSharedSlash`다. Ink와 OpenTUI가 같은 dispatcher를 쓴다. `quit` / `stop` / `clear` / `resume` / `diff` / `retry` / `queue` / `loop` / `bash`만 호스트 전용이다. `/follow`는 dispatch(엔진 one-slot). job 세션의 `/diff`는 cwd dirty가 아니라 `jobDiff`(`base...HEAD` ∪ dirty) 요약을 쓴다.
 
 ### OpenTUI
 
@@ -180,13 +180,16 @@ ACP `session/new`는 cwd, model, MCP 서버 목록을 overlay할 수 있다. 이
 - bind는 `127.0.0.1` / `localhost` / `::1`만 허용한다. 기본은 `127.0.0.1:8787`.
 - `dontAsk`를 강제하고 `lockHolder: 'serve'`다. (`/v1/turn` 경로. 아래 세션 라우트는 다름.)
 - `POST /v1/turn`은 `Authorization: Bearer <secret>`이 필요하다. body는 `{ text, sessionKey? }`다. 같은 `sessionKey`는 `~/.ravenclaw/gateway/sessions.json`에 세션 id를 고정한다.
-- `GET  /v1/session/:id` — 재연결 스냅샷 `{ id, job?, pendingAsks, lastSeq, permissionMode, live }` (Bearer). 없으면 404 (생성하지 않음). `live`는 턴 진행 중 true.
+- `GET  /v1/session/:id` — 재연결 스냅샷 `{ id, title?, job?, jobAutoCommit, pendingAsks, lastSeq, permissionMode, live, lastEnd?, jobError?, queued }` (Bearer). 없으면 404 (생성하지 않음). `live`는 턴 진행 중 true. `jobAutoCommit`은 항상 boolean. `queued`는 one-slot follow-up 텍스트 또는 `null`. `lastEnd` / `jobError`는 세션에 있을 때만 포함.
 - `GET  /v1/session/:id/stream` — NDJSON `{ seq } & StreamEvent` (Bearer). `after` 없으면 live tail. `?after=<seq>`는 `seq > after`를 재생한 뒤 tail. `after=0`은 처음부터. 스트림을 닫는 것은 detach이며 cancel이 아니다.
-- `POST /v1/session/:id/submit` — `{ text }` → `submitMessage({ text, turnPolicy: 'queue' })`, **202** `{ accepted, sessionId }`. 없는 세션은 **default** permission mode로 만든다 (`dontAsk` 아님).
+- `POST /v1/session/:id/submit` — `{ text }` → `submitMessage({ text, turnPolicy: 'queue' })`, **202** `{ accepted, sessionId }`. 없는 세션은 **default** permission mode로 만든다 (`dontAsk` 아님). 턴이 끝나면 serve가 `maybeRunFollowup`(in-process one-slot epilogue)을 호출할 수 있다.
 - `POST /v1/session/:id/resolve` — `{ callId, allow }`가 먼저 live waiter를 처리하고, 없으면 `applyAskAnswer`. crash-resolve는 **pair only**.
 - `POST /v1/session/:id/cancel` — body에 optional `{ turnId? }`. 라이브 턴이 일치하면(또는 `turnId` 생략 시 라이브가 있으면) `engine.abort('cancel')`. stale / 라이브 없음 → **200** `{ ok: true, status: 'no_active_turn' }`. parked leftover-ask 행은 남는다. 스트림은 `cancelled, ask still pending`을 낼 수 있다.
 - `POST /v1/session/:id/compact` — `compactNow()` (`liveTurn !== null`이면 큐).
 - `POST /v1/session/:id/pr` — optional `{ title, body }` → 세션 shadow에서 draft PR (기본 off; 모델 턴 아님). 200 `{ ok, notice, snapshot? }`. job 없음/dirty tree는 notice이지 5xx가 아니다.
+- `POST /v1/session/:id/followup` — `{ text }` → one-slot `setFollowup`; 200 `{ ok: true, queued }` 또는 400. `DELETE …/followup`은 clear; 200 `{ ok: true, queued: null }`. `/queue`도 `SuggestFollowups`도 아니다.
+- `POST /v1/session/:id/edit` — `{ text }` → `rewindLast()` 후 `submitMessage`. 빈 text → 400. rewind 거절 → 200 `{ ok: false, notice, droppedText? }`. 성공 → **202** `{ accepted, sessionId, droppedText? }` 후 fire-and-forget submit (`/submit`과 같은 follow-up epilogue).
+- `GET  /v1/session/:id/diff` — read-only job range: `baseCommitSha...HEAD` ∪ dirty (`jobDiff`). 200 `JobDiff` (`ok: true`, `create|update|delete|rename` 파일 목록) 또는 `{ ok: false, notice }` (job 없음 / git 실패). 모델 턴이 아니다.
 - `POST /v1/turn`은 dontAsk one-shot으로 남는다. `/v1/turn`으로 연 세션은 `dontAsk`가 찍히므로 leftover-ask는 deny다. `/v1/turn`에는 `?after=`가 없다.
 - `POST /webhooks/<route>`는 `X-Raven-Signature: t=<unix>,v1=<hmac-sha256 of t.body>`다. skew는 5분. 각 delivery는 새 세션이다. 툴은 `Read` / `Grep` / `Glob` / `Fetch` / `WebSearch`만.
 - `GET /health`는 `{ ok: true }`.
@@ -274,7 +277,7 @@ SDK `createRootTools`에 없는 CLI 루트 툴: `NotebookEdit`, `TaskSteer`, `Ad
 
 `setPermissionMode`는 라이브 턴에도 즉시 반영한다. `plan`으로 들어갈 때 이전 모드를 `prePlanMode`에 저장하고, 나올 때 지운다. 시스템 파트의 volatile 줄 `Current permission mode:`도 같이 고친다.
 
-`enqueueSteer` / `drainSteering`은 `/steer`와 `TaskSteer`가 쓰는 큐다. `bindDrainQueued`는 `/queue`의 다음 턴 텍스트를 루프에 넘긴다. `rewindLast`는 라이브 턴(또는 running agent)이 없을 때만 동작한다. **job 세션**은 `rewindToCheckpoint`로 worktree에서 `git reset --hard`(체크포인트 sha 또는 `baseCommitSha`) + todo 스냅샷 복원 + 마지막 user 턴 drop이다. **job 없는 세션**은 `rewindLastTurn`(file-history undo + 마지막 user 턴 drop)이다. `abort(kind?)`는 background review를 취소하고 라이브 턴을 abort한다. serve cancel은 `'cancel'`을 넘긴다. `liveTurnId()`가 serve `turnId` 가드를 받친다. `close`는 `SessionEnd` 후 락을 놓는다.
+`enqueueSteer` / `drainSteering`은 `/steer`와 `TaskSteer`가 쓰는 큐다. `bindDrainQueued`는 `/queue`의 다음 턴 텍스트를 루프에 넘긴다. `rewindLast`는 라이브 턴·running agent·unpaired pending ask가 없을 때만 동작하며 `{ ok, notice, droppedText? }`를 반환한다. **job 세션**은 `rewindToCheckpoint`로 worktree에서 `git reset --hard`(체크포인트 sha 또는 `baseCommitSha`) + todo 스냅샷 복원 + 마지막 user 턴 drop이다. **job 없는 세션**은 `rewindLastTurn`(file-history undo + 마지막 user 턴 drop)이다. serve `POST …/edit`와 TUI `/retry`는 rewind 후 `submitMessage`(또는 composer 복원)를 합성한다. `setFollowup` / `clearFollowup` / `getFollowup`은 `session.followup` one-slot(schema v10)이다. 호스트는 실제 턴 종료 후 `maybeRunFollowup`을 호출한다. `abort(kind?)`는 background review를 취소하고 라이브 턴을 abort한다. serve cancel은 `'cancel'`을 넘긴다. `liveTurnId()`가 serve `turnId` 가드를 받친다. `close`는 `SessionEnd` 후 락을 놓는다.
 
 ---
 
@@ -525,7 +528,7 @@ TUI 트랜스크립트 창은 `TRANSCRIPT_WINDOW = 200`이다. compact의 `prote
 
 ## Sessions
 
-SQLite WAL, `$RAVENCLAW_HOME/state.db`. `PRAGMA journal_mode = WAL`, `busy_timeout = 5000`, `foreign_keys = ON` (`packages/core/src/session/sqlite-store.ts`). Schema version **9**:
+SQLite WAL, `$RAVENCLAW_HOME/state.db`. `PRAGMA journal_mode = WAL`, `busy_timeout = 5000`, `foreign_keys = ON` (`packages/core/src/session/sqlite-store.ts`). Schema version **10**:
 
 | version | SQL | 내용 |
 |---|---|---|
@@ -538,6 +541,7 @@ SQLite WAL, `$RAVENCLAW_HOME/state.db`. `PRAGMA journal_mode = WAL`, `busy_timeo
 | 7 | `007_session_todos.sql` | `sessions.todos_json` |
 | 8 | `008_session_job.sql` | `sessions.job_json`, `sessions.job_auto_commit`, `messages.checkpoint_json` |
 | 9 | `009_stream_events.sql` | `stream_events` (serve `seq` / `?after=`) |
+| 10 | `010_session_host_state.sql` | `sessions.last_end_json`, `sessions.job_error`, `sessions.followup_text` |
 
 `applyAskAnswer(callId, allow|deny|allow_always)`는 `submitMessage`가 아닌 유일한 호스트 진입점이다. parked leftover-ask를 pair하고 모델 턴을 시작하지 않는다. `resumeSession`은 pending `callId`를 paired-for-resume으로 취급한다.
 
