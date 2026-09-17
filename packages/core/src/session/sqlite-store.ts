@@ -28,6 +28,12 @@ import {
   upsertPendingAskRow,
 } from './pending-asks'
 import {
+  appendStreamEventRow,
+  deleteStreamEventsBySession,
+  lastStreamSeqRow,
+  listStreamEventRowsAfter,
+} from './stream-events'
+import {
   indexMessageFts,
   searchMessages,
   unindexMessagesFts,
@@ -645,6 +651,26 @@ export function createSqliteStore(dbPath: string): SessionStore {
       })
     },
 
+    async appendStreamEvent(sessionId, event) {
+      return withWrite(async () => beginImmediate(() => appendStreamEventRow(db, sessionId, event)))
+    },
+
+    async listStreamEventsAfter(sessionId, afterSeq) {
+      try {
+        return listStreamEventRowsAfter(db, sessionId, afterSeq)
+      } catch (error) {
+        throw toPersistError(error)
+      }
+    },
+
+    async lastStreamSeq(sessionId) {
+      try {
+        return lastStreamSeqRow(db, sessionId)
+      } catch (error) {
+        throw toPersistError(error)
+      }
+    },
+
     async listSessions(filter?: SessionListFilter) {
       const where: string[] = []
       const params: Array<string | number> = []
@@ -728,6 +754,7 @@ export function createSqliteStore(dbPath: string): SessionStore {
         deleteBoundariesBySession.run(sessionId)
         deleteRules.run(sessionId)
         deletePendingAsksBySession.run(sessionId)
+        deleteStreamEventsBySession(db, sessionId)
         deleteSessionRow.run(sessionId)
       })
     },

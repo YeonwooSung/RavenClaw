@@ -172,6 +172,8 @@ export type StreamEvent =
   | { type: 'usage'; usage: TokenUsage }
   | { type: 'round_end'; end: RoundEnd }
 
+export type SequencedStreamEvent = StreamEvent & { seq: number }
+
 export type RoundEnd =
   | { reason: 'completed' }
   | { reason: 'hook_stopped' }
@@ -356,6 +358,9 @@ export interface SessionStore {
   upsertSession(session: SessionRecord): Promise<void>
   /** Non-repairing session-row write. Must not load or pair messages. */
   updateSessionTodos(sessionId: string, todos: TodoItem[]): Promise<void>
+  appendStreamEvent(sessionId: string, event: StreamEvent): Promise<number>
+  listStreamEventsAfter(sessionId: string, afterSeq: number): Promise<SequencedStreamEvent[]>
+  lastStreamSeq(sessionId: string): Promise<number>
   listSessions(filter?: SessionListFilter): Promise<SessionRecord[]>
   loadSession(sessionId: string): Promise<{ session: SessionRecord; messages: Message[] }>
   /**

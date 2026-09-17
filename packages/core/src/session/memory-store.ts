@@ -7,6 +7,7 @@ import {
 import type {
   Message,
   PermissionRule,
+  SequencedStreamEvent,
   SessionListFilter,
   SessionRecord,
   SessionStore,
@@ -14,6 +15,7 @@ import type {
 import type { PendingAsk } from './pending-asks'
 import { repairRoleAlternation } from '../loop/repair'
 import { clipAgentMailBody } from '../tasks/mailbox'
+import { streamEventAskCallId, toSequencedStreamEvent } from './stream-events'
 
 type Stored = {
   message: Message
@@ -60,6 +62,7 @@ export function createMemoryStore(): SessionStore {
   const mail = new Map<string, Array<{ id: number; createdAt: number; body: string }>>()
   const locks = new Map<string, MemoryLock>()
   const pendingAsks = new Map<string, PendingAsk>()
+  const streamEvents = new Map<string, SequencedStreamEvent[]>()
   let mailSeq = 0
 
   let tail: Promise<void> = Promise.resolve()
@@ -174,6 +177,34 @@ export function createMemoryStore(): SessionStore {
       })
     },
 
+    async appendStreamEvent(sessionId, event) {
+      return withWrite(async () => {
+        const rows = streamEvents.get(sessionId) ?? []
+        const askCallId = streamEventAskCallId(event)
+        if (askCallId !== undefined) {
+          const existing = rows.find(
+            (row) => row.type === 'permission_ask' && row.id === askCallId,
+          )
+          if (existing) return existing.seq
+        }
+        const seq = (rows.at(-1)?.seq ?? 0) + 1
+        const sequenced = toSequencedStreamEvent(event, seq)
+        rows.push(sequenced)
+        streamEvents.set(sessionId, rows)
+        return seq
+      })
+    },
+
+    async listStreamEventsAfter(sessionId, afterSeq) {
+      return (streamEvents.get(sessionId) ?? [])
+        .filter((row) => row.seq > afterSeq)
+        .map((row) => ({ ...row }))
+    },
+
+    async lastStreamSeq(sessionId) {
+      return streamEvents.get(sessionId)?.at(-1)?.seq ?? 0
+    },
+
     async listSessions(filter?: SessionListFilter) {
       let rows = [...sessions.values()].map((row) => ({ ...row }))
       if (filter?.cwd !== undefined) {
@@ -231,6 +262,7 @@ export function createMemoryStore(): SessionStore {
         rules.delete(sessionId)
         mail.delete(sessionId)
         locks.delete(sessionId)
+        streamEvents.delete(sessionId)
         for (const [callId, row] of pendingAsks) {
           if (row.sessionId === sessionId) pendingAsks.delete(callId)
         }

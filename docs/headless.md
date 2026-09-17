@@ -81,7 +81,7 @@ It stays dontAsk, one-shot JSON.
 
 Session routes use an engine that does **not** force `dontAsk`. All require the same Bearer token:
 
-- `GET /v1/session/:id/stream` — NDJSON `StreamEvent` live tail (no `?after=` cursor)
+- `GET /v1/session/:id/stream` — NDJSON `{ seq } & StreamEvent`. Omit `after` for a live tail. `?after=<seq>` replays `seq > after` then tails. `after=0` replays from the start.
 - `POST /v1/session/:id/submit` — `{ text }` → `submitMessage` with `turnPolicy: queue` (202 accepted; leftover-ask parks for `/resolve`). Missing sessions are created with `default` permission mode (not `dontAsk`).
 - `POST /v1/session/:id/cancel` — `engine.abort()`
 - `POST /v1/session/:id/compact` — `engine.compactNow()`

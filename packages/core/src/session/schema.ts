@@ -42,6 +42,11 @@ export const SESSION_JOB_SQL = readFileSync(
   'utf8',
 )
 
+export const STREAM_EVENTS_SQL = readFileSync(
+  join(import.meta.dir, '../migrations/009_stream_events.sql'),
+  'utf8',
+)
+
 const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: 1, sql: INIT_SQL },
   { version: 2, sql: FTS5_SQL },
@@ -51,6 +56,7 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: 6, sql: READ_MTIME_SQL },
   { version: 7, sql: SESSION_TODOS_SQL },
   { version: 8, sql: SESSION_JOB_SQL },
+  { version: 9, sql: STREAM_EVENTS_SQL },
 ]
 
 function currentSchemaVersion(db: Database): number {

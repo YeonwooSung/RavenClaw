@@ -192,6 +192,15 @@ describe('port shapes', () => {
       async createSession() {},
       async upsertSession() {},
       async updateSessionTodos() {},
+      async appendStreamEvent() {
+        return 0
+      },
+      async listStreamEventsAfter() {
+        return []
+      },
+      async lastStreamSeq() {
+        return 0
+      },
       async listSessions() {
         return []
       },

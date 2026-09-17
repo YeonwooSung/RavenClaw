@@ -13,7 +13,9 @@ import {
   verifyWebhookSignature,
   safeWebhookToolNames,
   type PendingAskAnswer,
+  type SequencedStreamEvent,
   type SessionEngine,
+  type SessionStore,
   type StreamEvent,
   type ConfigFlags,
   type UserSubmitInput,
@@ -156,14 +158,18 @@ export type ServeRuntime = {
       }>
     >
     listSessions?: (filter?: { parentSessionId?: string | null }) => Promise<Array<{ id: string }>>
+    listStreamEventsAfter?: (
+      sessionId: string,
+      afterSeq: number,
+    ) => Promise<SequencedStreamEvent[]>
   }
 }
 
-export type SessionEventSink = (event: StreamEvent) => void
+export type SessionEventSink = (event: SequencedStreamEvent) => void
 
 export type SessionEventHub = {
   subscribe: (sessionId: string, sink: SessionEventSink) => () => void
-  publish: (sessionId: string, event: StreamEvent) => void
+  publish: (sessionId: string, event: StreamEvent) => Promise<number>
 }
 
 export type ServeAskHost = {
@@ -218,8 +224,11 @@ export type ServeRequestContext = {
   settleAsk?: (callId: string, answer: PendingAskAnswer) => boolean
 }
 
-export function createSessionEventHub(): SessionEventHub {
+export function createSessionEventHub(
+  store?: Pick<SessionStore, 'appendStreamEvent'>,
+): SessionEventHub {
   const listeners = new Map<string, Set<SessionEventSink>>()
+  let localSeq = 0
   return {
     subscribe(sessionId, sink) {
       let set = listeners.get(sessionId)
@@ -233,22 +242,26 @@ export function createSessionEventHub(): SessionEventHub {
         if (set.size === 0) listeners.delete(sessionId)
       }
     },
-    publish(sessionId, event) {
+    async publish(sessionId, event) {
+      const seq = store ? await store.appendStreamEvent(sessionId, event) : ++localSeq
+      const sequenced: SequencedStreamEvent = { ...event, seq }
       const set = listeners.get(sessionId)
-      if (!set) return
-      for (const sink of set) sink(event)
+      if (set) {
+        for (const sink of set) sink(sequenced)
+      }
+      return seq
     },
   }
 }
 
 async function* tapAsyncGen<T, R>(
   gen: AsyncGenerator<T, R>,
-  onValue: (value: T) => void,
+  onValue: (value: T) => void | Promise<void>,
 ): AsyncGenerator<T, R> {
   while (true) {
     const next = await gen.next()
     if (next.done) return next.value
-    onValue(next.value)
+    await onValue(next.value)
     yield next.value
   }
 }
@@ -367,8 +380,16 @@ async function publishParkedAsks(
       event.saveAs = row.saveAs as Extract<StreamEvent, { type: 'permission_ask' }>['saveAs']
     }
     if (row.sessionId !== sessionId) event.childSessionId = row.sessionId
-    hub.publish(sessionId, event)
+    await hub.publish(sessionId, event)
   }
+}
+
+function parseAfterParam(raw: string | null): { ok: true; after?: number } | { ok: false } {
+  if (raw === null) return { ok: true }
+  if (!/^\d+$/.test(raw)) return { ok: false }
+  const after = Number(raw)
+  if (!Number.isSafeInteger(after)) return { ok: false }
+  return { ok: true, after }
 }
 
 function unauthorized(): Response {
@@ -439,18 +460,34 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
     const sessionId = sessionRoute[1] ?? ''
     const action = sessionRoute[2]
     if (req.method === 'GET' && action === 'stream') {
+      const parsedAfter = parseAfterParam(url.searchParams.get('after'))
+      if (!parsedAfter.ok) return Response.json({ error: 'invalid after' }, { status: 400 })
       const loaded = await loadSessionRuntime(ctx, sessionId)
       if (!loaded.ok) return loaded.res
+      const after = parsedAfter.after
       const encoder = new TextEncoder()
       let unsub = () => {}
       const stream = new ReadableStream<Uint8Array>({
-        start(controller) {
-          unsub = ctx.hub.subscribe(sessionId, (event) => {
+        async start(controller) {
+          const write = (event: SequencedStreamEvent) => {
             try {
               controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`))
             } catch {
               unsub()
             }
+          }
+          let lastSeq = after ?? 0
+          if (after !== undefined) {
+            const replay = (await loaded.runtime.store?.listStreamEventsAfter?.(sessionId, after)) ?? []
+            for (const event of replay) {
+              write(event)
+              lastSeq = event.seq
+            }
+          }
+          unsub = ctx.hub.subscribe(sessionId, (event) => {
+            if (after !== undefined && event.seq <= lastSeq) return
+            write(event)
+            lastSeq = event.seq
           })
           void publishParkedAsks(loaded.runtime, sessionId, ctx.hub)
           const onAbort = () => {
@@ -574,8 +611,6 @@ export async function runServe(opts: { flags: ConfigFlags }): Promise<number> {
   const home = ravenclawHome()
   const map = loadSessionMap(home)
   const turnFlights = new Map<string, Promise<unknown>>()
-  const hub = createSessionEventHub()
-  const caches = createServeRuntimeCaches(hub)
   const asks = createServeAskHost()
   const shared = await bootCli({
     flags: { ...opts.flags, dontAsk: true },
@@ -583,6 +618,8 @@ export async function runServe(opts: { flags: ConfigFlags }): Promise<number> {
     surface: 'headless',
     lockHolder: 'serve',
   })
+  const hub = createSessionEventHub(shared.store)
+  const caches = createServeRuntimeCaches(hub)
   shared.ask.bind(asks.askUser)
   const sessionBoot = {
     ...shared,
@@ -665,7 +702,7 @@ export async function runServe(opts: { flags: ConfigFlags }): Promise<number> {
 
   process.stdout.write(`raven serve ${server.hostname}:${server.port}\n`)
   process.stdout.write('POST /v1/turn  Authorization: Bearer <GATEWAY_SECRET>\n')
-  process.stdout.write('GET  /v1/session/:id/stream  NDJSON live tail\n')
+  process.stdout.write('GET  /v1/session/:id/stream[?after=seq]  NDJSON\n')
   process.stdout.write('POST /v1/session/:id/submit|/cancel|/compact|/resolve\n')
   process.stdout.write('POST /webhooks/<route>  X-Raven-Signature: t=<unix>,v1=<hmac>\n')
   const stopMailbox = startMailboxPoller(caches.liveEngines(), turnFlights)

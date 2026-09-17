@@ -523,7 +523,7 @@ TUI 트랜스크립트 창은 `TRANSCRIPT_WINDOW = 200`이다. compact의 `prote
 
 ## Sessions
 
-SQLite WAL, `$RAVENCLAW_HOME/state.db`. `PRAGMA journal_mode = WAL`, `busy_timeout = 5000`, `foreign_keys = ON` (`packages/core/src/session/sqlite-store.ts`). Schema version **8**:
+SQLite WAL, `$RAVENCLAW_HOME/state.db`. `PRAGMA journal_mode = WAL`, `busy_timeout = 5000`, `foreign_keys = ON` (`packages/core/src/session/sqlite-store.ts`). Schema version **9**:
 
 | version | SQL | 내용 |
 |---|---|---|
@@ -535,6 +535,7 @@ SQLite WAL, `$RAVENCLAW_HOME/state.db`. `PRAGMA journal_mode = WAL`, `busy_timeo
 | 6 | `006_read_mtime.sql` | `messages.read_mtime_ms` |
 | 7 | `007_session_todos.sql` | `sessions.todos_json` |
 | 8 | `008_session_job.sql` | `sessions.job_json`, `sessions.job_auto_commit`, `messages.checkpoint_json` |
+| 9 | `009_stream_events.sql` | `stream_events` (serve `seq` / `?after=`) |
 
 `applyAskAnswer(callId, allow|deny|allow_always)`는 `submitMessage`가 아닌 유일한 호스트 진입점이다. parked leftover-ask를 pair하고 모델 턴을 시작하지 않는다. `resumeSession`은 pending `callId`를 paired-for-resume으로 취급한다.
 

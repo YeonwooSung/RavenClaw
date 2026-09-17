@@ -258,7 +258,7 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
       for (const event of replayEvents) yield event
     },
   }
-  const hub = createSessionEventHub()
+  const hub = createSessionEventHub(store)
   const runtime = { engine: tapEngineEvents(engine, hub), store }
   const ctx = {
     secret,
@@ -284,21 +284,41 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
   return ctx
 }
 
-async function readFirstJsonLine(res: Response): Promise<unknown> {
+function ndjsonReader(res: Response): {
+  next: () => Promise<unknown>
+  close: () => Promise<void>
+} {
   const reader = res.body?.getReader()
   if (!reader) throw new Error('missing body')
   const dec = new TextDecoder()
   let buf = ''
+  return {
+    async next() {
+      while (true) {
+        const nl = buf.indexOf('\n')
+        if (nl !== -1) {
+          const line = buf.slice(0, nl)
+          buf = buf.slice(nl + 1)
+          if (line.trim() === '') continue
+          return JSON.parse(line) as unknown
+        }
+        const chunk = await reader.read()
+        if (chunk.done) throw new Error('stream ended before a line')
+        buf += dec.decode(chunk.value, { stream: true })
+      }
+    },
+    async close() {
+      await reader.cancel()
+    },
+  }
+}
+
+async function readFirstJsonLine(res: Response): Promise<unknown> {
+  const reader = ndjsonReader(res)
   try {
-    while (true) {
-      const next = await reader.read()
-      if (next.done) throw new Error('stream ended before a line')
-      buf += dec.decode(next.value, { stream: true })
-      const nl = buf.indexOf('\n')
-      if (nl !== -1) return JSON.parse(buf.slice(0, nl)) as unknown
-    }
+    return await reader.next()
   } finally {
-    await reader.cancel()
+    await reader.close()
   }
 }
 
@@ -388,7 +408,7 @@ describe('handleServeRequest', () => {
       ctx,
     )
     expect(turnRes.status).toBe(200)
-    expect(await firstLine).toEqual({ type: 'text_delta', text: 'hi' })
+    expect(await firstLine).toEqual({ seq: 1, type: 'text_delta', text: 'hi' })
   })
 
   test('GET /v1/session/:id/stream emits parked permission_ask rows on subscribe', async () => {
@@ -421,6 +441,7 @@ describe('handleServeRequest', () => {
     )
     expect(streamRes.status).toBe(200)
     expect(await readFirstJsonLine(streamRes)).toEqual({
+      seq: 1,
       type: 'permission_ask',
       id: 'parked_1',
       tool: 'Echo',
@@ -451,6 +472,7 @@ describe('handleServeRequest', () => {
       // drain so the hub publishes
     }
     expect(await firstLine).toEqual({
+      seq: 1,
       type: 'permission_ask',
       id: 'c1',
       tool: 'Echo',
@@ -662,6 +684,7 @@ describe('handleServeRequest', () => {
     )
     expect(submitRes.status).toBe(202)
     expect(await firstLine).toEqual({
+      seq: 1,
       type: 'permission_ask',
       id: 'c1',
       tool: 'Write',
@@ -671,6 +694,139 @@ describe('handleServeRequest', () => {
     expect(ctx.turnFlights.size).toBe(1)
     release()
     await Promise.all([...ctx.turnFlights.values()])
+  })
+
+  test('second stream with after= concatenates without gaps or dupes', async () => {
+    const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
+    const ctx = makeServeCtx(secret)
+    await ctx.store.createSession({
+      id: 's1',
+      createdAt: 1,
+      updatedAt: 1,
+      cwd: '/tmp',
+      model: 'dummy',
+      permissionMode: 'default',
+      compactGeneration: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      funding: 'byok',
+    })
+    const auth = { authorization: 'Bearer secret' }
+    const firstRes = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/stream', { headers: auth }),
+      ctx,
+    )
+    expect(firstRes.status).toBe(200)
+    const first = ndjsonReader(firstRes)
+    const early: StreamEvent[] = [
+      { type: 'round_start', round: 1, turnId: 't1' },
+      { type: 'text_delta', text: 'a' },
+      { type: 'text_delta', text: 'b' },
+    ]
+    const later: StreamEvent[] = [
+      { type: 'text_delta', text: 'c' },
+      { type: 'round_end', end: { reason: 'cancelled' } },
+    ]
+    const firstPending = Promise.all([first.next(), first.next(), first.next()])
+    for (const event of early) await ctx.hub.publish('s1', event)
+    const firstEvents = await firstPending
+    expect(firstEvents).toEqual([
+      { seq: 1, type: 'round_start', round: 1, turnId: 't1' },
+      { seq: 2, type: 'text_delta', text: 'a' },
+      { seq: 3, type: 'text_delta', text: 'b' },
+    ])
+    for (const event of later) await ctx.hub.publish('s1', event)
+    expect([await first.next(), await first.next()]).toEqual([
+      { seq: 4, type: 'text_delta', text: 'c' },
+      { seq: 5, type: 'round_end', end: { reason: 'cancelled' } },
+    ])
+    const secondRes = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/stream?after=3', { headers: auth }),
+      ctx,
+    )
+    expect(secondRes.status).toBe(200)
+    const second = ndjsonReader(secondRes)
+    const replayed = [await second.next(), await second.next()]
+    expect(replayed).toEqual([
+      { seq: 4, type: 'text_delta', text: 'c' },
+      { seq: 5, type: 'round_end', end: { reason: 'cancelled' } },
+    ])
+    const concat = [...firstEvents, ...replayed]
+    expect(concat.map((event) => (event as { seq: number }).seq)).toEqual([1, 2, 3, 4, 5])
+    expect(new Set(concat.map((event) => (event as { seq: number }).seq)).size).toBe(5)
+    await ctx.hub.publish('s1', { type: 'text_delta', text: 'd' })
+    expect(await second.next()).toEqual({ seq: 6, type: 'text_delta', text: 'd' })
+    await first.close()
+    await second.close()
+  })
+
+  test('stream after omitted is live tail only; after=0 replays', async () => {
+    const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
+    const ctx = makeServeCtx(secret)
+    await ctx.store.createSession({
+      id: 's1',
+      createdAt: 1,
+      updatedAt: 1,
+      cwd: '/tmp',
+      model: 'dummy',
+      permissionMode: 'default',
+      compactGeneration: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      funding: 'byok',
+    })
+    const auth = { authorization: 'Bearer secret' }
+    await ctx.hub.publish('s1', { type: 'text_delta', text: 'old' })
+    const liveRes = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/stream', { headers: auth }),
+      ctx,
+    )
+    expect(liveRes.status).toBe(200)
+    const live = ndjsonReader(liveRes)
+    const liveNext = live.next()
+    const replayRes = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/stream?after=0', { headers: auth }),
+      ctx,
+    )
+    expect(replayRes.status).toBe(200)
+    const replay = ndjsonReader(replayRes)
+    expect(await replay.next()).toEqual({ seq: 1, type: 'text_delta', text: 'old' })
+    const replayNext = replay.next()
+    await ctx.hub.publish('s1', { type: 'text_delta', text: 'new' })
+    expect(await liveNext).toEqual({ seq: 2, type: 'text_delta', text: 'new' })
+    expect(await replayNext).toEqual({ seq: 2, type: 'text_delta', text: 'new' })
+    await live.close()
+    await replay.close()
+  })
+
+  test('stream after must be a non-negative integer', async () => {
+    const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
+    const ctx = makeServeCtx(secret)
+    const auth = { authorization: 'Bearer secret' }
+    for (const after of ['-1', 'foo', '1.5', '']) {
+      const res = await handleServeRequest(
+        new Request(`http://127.0.0.1/v1/session/s1/stream?after=${after}`, { headers: auth }),
+        ctx,
+      )
+      expect(res.status).toBe(400)
+    }
+  })
+
+  test('POST /v1/turn ignores ?after=', async () => {
+    const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
+    const ctx = makeServeCtx(secret)
+    ctx.submitEvents.push({ type: 'text_delta', text: 'hi' })
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/turn?after=0', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+        body: JSON.stringify({ text: 'hi' }),
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toContain('application/json')
+    const body = (await res.json()) as { text: string; sessionId: string }
+    expect(body.sessionId).toBe('s1')
+    expect(typeof body.text).toBe('string')
   })
 
   test('POST resolve settles a live leftover-ask without applyAskAnswer', async () => {
