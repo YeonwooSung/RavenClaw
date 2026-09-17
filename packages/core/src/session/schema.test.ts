@@ -10,6 +10,7 @@ import {
   READ_MTIME_SQL,
   SESSION_JOB_SQL,
   SESSION_TODOS_SQL,
+  STREAM_EVENTS_SQL,
 } from './schema'
 
 function sessionColumns(db: Database): string[] {
@@ -37,14 +38,20 @@ function expectStreamEvents(db: Database): void {
   ).toBeTruthy()
 }
 
+function expectHostStateColumns(db: Database): void {
+  expect(sessionColumns(db)).toContain('last_end_json')
+  expect(sessionColumns(db)).toContain('job_error')
+  expect(sessionColumns(db)).toContain('followup_text')
+}
+
 describe('applyMigrations', () => {
-  test('fresh db reaches schema_version 9 with mail and lock tables', () => {
+  test('fresh db reaches schema_version 10 with mail and lock tables', () => {
     const db = new Database(':memory:')
     applyMigrations(db)
     const version = db.query("SELECT value FROM meta WHERE key = 'schema_version'").get() as {
       value: string
     }
-    expect(version.value).toBe('9')
+    expect(version.value).toBe('10')
     const tables = db
       .query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
       .all() as Array<{ name: string }>
@@ -55,29 +62,31 @@ describe('applyMigrations', () => {
     expect(names).toContain('stream_events')
     expectJobColumns(db)
     expectStreamEvents(db)
+    expectHostStateColumns(db)
     db.close()
   })
 
-  test('is idempotent when already at version 9', () => {
+  test('is idempotent when already at version 10', () => {
     const db = new Database(':memory:')
     applyMigrations(db)
     applyMigrations(db)
     const version = db.query("SELECT value FROM meta WHERE key = 'schema_version'").get() as {
       value: string
     }
-    expect(version.value).toBe('9')
+    expect(version.value).toBe('10')
     expectJobColumns(db)
     expectStreamEvents(db)
+    expectHostStateColumns(db)
     db.close()
   })
 
-  test('fresh db reaches schema_version 9 with pending_asks', () => {
+  test('fresh db reaches schema_version 10 with pending_asks', () => {
     const db = new Database(':memory:')
     applyMigrations(db)
     const version = db.query("SELECT value FROM meta WHERE key = 'schema_version'").get() as {
       value: string
     }
-    expect(version.value).toBe('9')
+    expect(version.value).toBe('10')
     const names = (
       db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>
     ).map((row) => row.name)
@@ -85,10 +94,11 @@ describe('applyMigrations', () => {
     expect(names).toContain('deliveries')
     expect(names).toContain('stream_events')
     expectJobColumns(db)
+    expectHostStateColumns(db)
     db.close()
   })
 
-  test('v4 database upgrades to v9 without dropping deliveries', () => {
+  test('v4 database upgrades to v10 without dropping deliveries', () => {
     const db = new Database(':memory:')
     db.exec(INIT_SQL)
     db.exec(FTS5_SQL)
@@ -102,7 +112,7 @@ describe('applyMigrations', () => {
     const version = db.query("SELECT value FROM meta WHERE key = 'schema_version'").get() as {
       value: string
     }
-    expect(version.value).toBe('9')
+    expect(version.value).toBe('10')
     const kept = db.query("SELECT id FROM deliveries WHERE id = 'discord:abc'").get() as {
       id: string
     } | null
@@ -112,10 +122,11 @@ describe('applyMigrations', () => {
     ).toBeTruthy()
     expectJobColumns(db)
     expectStreamEvents(db)
+    expectHostStateColumns(db)
     db.close()
   })
 
-  test('v5 database upgrades to v9 with read_mtime_ms', () => {
+  test('v5 database upgrades to v10 with read_mtime_ms', () => {
     const db = new Database(':memory:')
     db.exec(INIT_SQL)
     db.exec(FTS5_SQL)
@@ -129,14 +140,15 @@ describe('applyMigrations', () => {
     const version = db.query("SELECT value FROM meta WHERE key = 'schema_version'").get() as {
       value: string
     }
-    expect(version.value).toBe('9')
+    expect(version.value).toBe('10')
     expect(messageColumns(db)).toContain('read_mtime_ms')
     expectJobColumns(db)
     expectStreamEvents(db)
+    expectHostStateColumns(db)
     db.close()
   })
 
-  test('v6 database upgrades to v9 with todos_json', () => {
+  test('v6 database upgrades to v10 with todos_json', () => {
     const db = new Database(':memory:')
     db.exec(INIT_SQL)
     db.exec(FTS5_SQL)
@@ -151,13 +163,14 @@ describe('applyMigrations', () => {
     const version = db.query("SELECT value FROM meta WHERE key = 'schema_version'").get() as {
       value: string
     }
-    expect(version.value).toBe('9')
+    expect(version.value).toBe('10')
     expectJobColumns(db)
     expectStreamEvents(db)
+    expectHostStateColumns(db)
     db.close()
   })
 
-  test('v7 database upgrades to v9 with job_json', () => {
+  test('v7 database upgrades to v10 with job_json', () => {
     const db = new Database(':memory:')
     db.exec(INIT_SQL)
     db.exec(FTS5_SQL)
@@ -173,13 +186,14 @@ describe('applyMigrations', () => {
     const version = db.query("SELECT value FROM meta WHERE key = 'schema_version'").get() as {
       value: string
     }
-    expect(version.value).toBe('9')
+    expect(version.value).toBe('10')
     expectJobColumns(db)
     expectStreamEvents(db)
+    expectHostStateColumns(db)
     db.close()
   })
 
-  test('v8 database upgrades to v9 with stream_events', () => {
+  test('v8 database upgrades to v10 with stream_events', () => {
     const db = new Database(':memory:')
     db.exec(INIT_SQL)
     db.exec(FTS5_SQL)
@@ -196,9 +210,35 @@ describe('applyMigrations', () => {
     const version = db.query("SELECT value FROM meta WHERE key = 'schema_version'").get() as {
       value: string
     }
-    expect(version.value).toBe('9')
+    expect(version.value).toBe('10')
     expectStreamEvents(db)
     expectJobColumns(db)
+    expectHostStateColumns(db)
+    db.close()
+  })
+
+  test('v9 database upgrades to v10 with last_end_json', () => {
+    const db = new Database(':memory:')
+    db.exec(INIT_SQL)
+    db.exec(FTS5_SQL)
+    db.exec(AGENT_MAIL_SQL)
+    db.exec(DELIVERIES_SQL)
+    db.exec(PENDING_ASKS_SQL)
+    db.exec(READ_MTIME_SQL)
+    db.exec(SESSION_TODOS_SQL)
+    db.exec(SESSION_JOB_SQL)
+    db.exec(STREAM_EVENTS_SQL)
+    db.query(
+      "INSERT INTO meta (key, value) VALUES ('schema_version', '9') ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    ).run()
+    applyMigrations(db)
+    const version = db.query("SELECT value FROM meta WHERE key = 'schema_version'").get() as {
+      value: string
+    }
+    expect(version.value).toBe('10')
+    expect(sessionColumns(db)).toContain('last_end_json')
+    expect(sessionColumns(db)).toContain('job_error')
+    expect(sessionColumns(db)).toContain('followup_text')
     db.close()
   })
 })

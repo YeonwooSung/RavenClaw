@@ -322,6 +322,9 @@ export interface SessionRecord {
   todos?: TodoItem[]
   job?: SessionJob
   jobAutoCommit?: boolean
+  lastEnd?: RoundEnd
+  jobError?: string
+  followup?: string
 }
 
 export interface SessionListFilter {
