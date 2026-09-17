@@ -486,6 +486,9 @@ export interface SessionEngine {
   setModel(profile: ModelProfile): Promise<void>
   setPermissionMode(mode: PermissionMode): Promise<void>
   reloadSystem(system: SystemPart[]): void
+  setFollowup(text: string): Promise<{ ok: true } | { ok: false; notice: string }>
+  clearFollowup(): Promise<void>
+  getFollowup(): string | null
   abort(kind?: 'cancel' | 'interrupt'): void
   liveTurnId(): string | null
   /** Fire SessionEnd once, then release the session lock. Safe to call more than once. */

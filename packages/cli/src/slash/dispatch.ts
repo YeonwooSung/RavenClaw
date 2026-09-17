@@ -4,6 +4,7 @@ import {
   discoverSkills,
   formatTasksNotice,
   formatUndoNotice,
+  followupNotice,
   getModelProfile,
   LIFECYCLE_EVENTS,
   parseTasksArg,
@@ -236,6 +237,25 @@ export async function dispatchSharedSlash(
       session.updatedAt = Date.now()
       await runtime.store.upsertSession(session)
       host.notice(`job ${entered.job?.shadowBranch ?? entered.cwd}`)
+      return 'handled'
+    }
+    case 'follow': {
+      const arg = parsed.arg?.trim() ?? ''
+      if (arg === '') {
+        host.notice(followupNotice(runtime.engine.getFollowup()))
+        return 'handled'
+      }
+      if (arg === 'clear') {
+        await runtime.engine.clearFollowup()
+        host.notice('no follow-up')
+        return 'handled'
+      }
+      const result = await runtime.engine.setFollowup(arg)
+      if (!result.ok) {
+        host.notice(result.notice)
+        return 'handled'
+      }
+      host.notice(followupNotice(runtime.engine.getFollowup()))
       return 'handled'
     }
     case 'pr': {

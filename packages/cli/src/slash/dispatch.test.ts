@@ -58,6 +58,18 @@ function fakeEngine(session: SessionRecord): SessionEngine & { reloads: number }
     },
     abort() {},
     async close() {},
+    async setFollowup(text: string) {
+      const trimmed = text.trim()
+      if (trimmed === '') return { ok: false as const, notice: 'follow-up text required' }
+      session.followup = trimmed
+      return { ok: true as const }
+    },
+    async clearFollowup() {
+      delete session.followup
+    },
+    getFollowup() {
+      return session.followup ?? null
+    },
     get reloads() {
       return reloads.n
     },
@@ -253,6 +265,39 @@ describe('dispatchSharedSlash', () => {
     const host = fakeHost(fakeRuntime(fakeEngine(makeSession())))
     expect(await dispatchSharedSlash(cmd('foo'), host)).toBe('handled')
     expect(host.notices).toEqual(['unknown command: /foo'])
+  })
+
+  test('/follow with no arg prints no follow-up or the text', async () => {
+    const session = makeSession()
+    const engine = fakeEngine(session)
+    const host = fakeHost(fakeRuntime(engine))
+    expect(await dispatchSharedSlash(cmd('follow'), host)).toBe('handled')
+    expect(host.notices).toEqual(['no follow-up'])
+
+    session.followup = 'run tests'
+    host.notices.length = 0
+    expect(await dispatchSharedSlash(cmd('follow'), host)).toBe('handled')
+    expect(host.notices).toEqual(['run tests'])
+  })
+
+  test('/follow clear clears the slot', async () => {
+    const session = makeSession({ followup: 'run tests' })
+    const engine = fakeEngine(session)
+    const host = fakeHost(fakeRuntime(engine))
+    expect(await dispatchSharedSlash(cmd('follow', 'clear'), host)).toBe('handled')
+    expect(session.followup).toBeUndefined()
+    expect(engine.getFollowup()).toBeNull()
+    expect(host.notices).toEqual(['no follow-up'])
+  })
+
+  test('/follow text sets the slot', async () => {
+    const session = makeSession()
+    const engine = fakeEngine(session)
+    const host = fakeHost(fakeRuntime(engine))
+    expect(await dispatchSharedSlash(cmd('follow', 'run tests'), host)).toBe('handled')
+    expect(session.followup).toBe('run tests')
+    expect(engine.getFollowup()).toBe('run tests')
+    expect(host.notices).toEqual(['run tests'])
   })
 
   test('/job commit on flips jobAutoCommit and upserts', async () => {

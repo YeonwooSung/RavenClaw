@@ -138,7 +138,16 @@ export function gatewaySecret(env = process.env): string {
 }
 
 export type ServeEngine = {
-  session: { id: string; permissionMode: PermissionMode; job?: SessionJob }
+  session: {
+    id: string
+    permissionMode: PermissionMode
+    job?: SessionJob
+    followup?: string
+    title?: string
+    jobAutoCommit?: boolean
+    lastEnd?: SessionRecord['lastEnd']
+    jobError?: string
+  }
   submitMessage: (input: UserSubmitInput) => AsyncGenerator<StreamEvent, unknown>
   applyAskAnswer: (
     callId: string,
@@ -148,6 +157,9 @@ export type ServeEngine = {
   abort: (kind?: 'cancel' | 'interrupt') => void
   liveTurnId?: () => string | null
   compactNow: () => Promise<void>
+  setFollowup?: (text: string) => Promise<{ ok: true } | { ok: false; notice: string }>
+  clearFollowup?: () => Promise<void>
+  getFollowup?: () => string | null
   close?: SessionEngine['close']
 }
 
@@ -427,7 +439,7 @@ async function readJsonBody(req: Request): Promise<{ ok: true; body: unknown } |
   }
 }
 
-const SESSION_PATH = /^\/v1\/session\/([^/]+)\/(stream|cancel|compact|resolve|submit|pr)$/
+const SESSION_PATH = /^\/v1\/session\/([^/]+)\/(stream|cancel|compact|resolve|submit|pr|followup)$/
 const SESSION_ID_PATH = /^\/v1\/session\/([^/]+)$/
 
 async function loadSessionRuntime(
@@ -647,6 +659,34 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
         }
       })
       return Response.json({ accepted: true, sessionId: sid }, { status: 202 })
+    }
+    if (req.method === 'POST' && action === 'followup') {
+      const loaded = await loadSessionRuntime(ctx, sessionId)
+      if (!loaded.ok) return loaded.res
+      const parsedBody = await readJsonBody(req)
+      if (!parsedBody.ok) return parsedBody.res
+      const rec =
+        parsedBody.body !== null && typeof parsedBody.body === 'object'
+          ? (parsedBody.body as Record<string, unknown>)
+          : null
+      const text = typeof rec?.text === 'string' ? rec.text : ''
+      const setFollowup = loaded.runtime.engine.setFollowup
+      if (!setFollowup) {
+        return Response.json({ error: 'follow-up text required' }, { status: 400 })
+      }
+      const result = await setFollowup(text)
+      if (!result.ok) {
+        return Response.json({ error: result.notice }, { status: 400 })
+      }
+      const queued =
+        loaded.runtime.engine.getFollowup?.() ?? loaded.runtime.engine.session.followup ?? text.trim()
+      return Response.json({ ok: true, queued })
+    }
+    if (req.method === 'DELETE' && action === 'followup') {
+      const loaded = await loadSessionRuntime(ctx, sessionId)
+      if (!loaded.ok) return loaded.res
+      await loaded.runtime.engine.clearFollowup?.()
+      return Response.json({ ok: true, queued: null })
     }
     if (req.method === 'POST' && action === 'pr') {
       const loaded = await loadSessionRuntime(ctx, sessionId)

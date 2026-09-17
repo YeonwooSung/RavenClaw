@@ -1003,6 +1003,62 @@ describe('handleServeRequest', () => {
     expect(body.jobAutoCommit).toBe(false)
   })
 
+  test('POST /v1/session/:id/followup overwrites; DELETE clears; empty is 400', async () => {
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const runtime = await ctx.runtimeForSession('s1')
+    if (!runtime) throw new Error('expected runtime')
+    runtime.engine.setFollowup = async (text: string) => {
+      if (text.trim() === '') return { ok: false as const, notice: 'follow-up text required' }
+      runtime.engine.session.followup = text
+      return { ok: true as const }
+    }
+    runtime.engine.clearFollowup = async () => {
+      delete runtime.engine.session.followup
+    }
+    runtime.engine.getFollowup = () => runtime.engine.session.followup ?? null
+
+    const bad = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/followup', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+        body: JSON.stringify({ text: '' }),
+      }),
+      ctx,
+    )
+    expect(bad.status).toBe(400)
+
+    const first = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/followup', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'first' }),
+      }),
+      ctx,
+    )
+    expect(first.status).toBe(200)
+    expect(await first.json()).toEqual({ ok: true, queued: 'first' })
+
+    await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/followup', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'second' }),
+      }),
+      ctx,
+    )
+    expect(runtime.engine.session.followup).toBe('second')
+
+    const del = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/followup', {
+        method: 'DELETE',
+        headers: { authorization: 'Bearer secret' },
+      }),
+      ctx,
+    )
+    expect(del.status).toBe(200)
+    expect(await del.json()).toEqual({ ok: true, queued: null })
+  })
+
   test('GET /v1/session/:id does not create', async () => {
     let createCalls = 0
     const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))

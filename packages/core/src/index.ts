@@ -127,6 +127,7 @@ export {
   stampCheckpoint,
 } from './session/job'
 export type { DraftPrSnapshot, GhRunner } from './session/job'
+export { followupNotice, writeFollowup } from './session/followup'
 export { loadLifecycleHooks, LIFECYCLE_EVENTS } from './hooks/lifecycle'
 export { scanTeamOnboarding, ONBOARDING_USAGE_DAYS } from './onboarding/scan'
 export type { OnboardingScan } from './onboarding/scan'

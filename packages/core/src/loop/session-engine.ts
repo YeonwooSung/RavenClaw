@@ -41,6 +41,7 @@ import {
   setSessionJobError,
   stampCheckpoint,
 } from '../session/job'
+import { writeFollowup } from '../session/followup'
 import { getSessionWorktree } from '../tools/session-worktree'
 import { applyPermissionMode } from '../prompt/builder'
 import { injectMidTurnHint } from '../prompt/cache'
@@ -790,6 +791,18 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       session.updatedAt = Date.now()
       await opts.store.upsertSession(session)
       if (system !== undefined) system = applyPermissionMode(system, mode)
+    },
+
+    async setFollowup(text: string) {
+      return writeFollowup(session, opts.store, text)
+    },
+
+    async clearFollowup() {
+      await writeFollowup(session, opts.store, null)
+    },
+
+    getFollowup() {
+      return session.followup ?? null
     },
 
     liveTurnId() {

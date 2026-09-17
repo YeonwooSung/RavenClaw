@@ -1845,3 +1845,36 @@ describe('cancel', () => {
     expect(engine.session.lastEnd).toEqual({ reason: 'cancelled' })
   })
 })
+
+describe('followup slot', () => {
+  test('setFollowup overwrites; empty is an error; clear removes', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_followup' })
+    await store.createSession(sess)
+    const engine = createSessionEngine({
+      session: sess,
+      provider: createFakeProvider([]),
+      store,
+      tools: [],
+      compact: defaultCompact({ enabled: false }),
+      model: defaultModel(),
+      maxRounds: 8,
+      async askUser() {
+        return 'deny'
+      },
+    })
+
+    expect(await engine.setFollowup('  ')).toEqual({ ok: false, notice: 'follow-up text required' })
+    expect(engine.session.followup).toBeUndefined()
+    expect(engine.getFollowup()).toBeNull()
+
+    expect(await engine.setFollowup('first')).toEqual({ ok: true })
+    expect(await engine.setFollowup('second')).toEqual({ ok: true })
+    expect(engine.getFollowup()).toBe('second')
+    expect((await store.loadSession(sess.id)).session.followup).toBe('second')
+
+    await engine.clearFollowup()
+    expect(engine.getFollowup()).toBeNull()
+    expect((await store.loadSession(sess.id)).session.followup).toBeUndefined()
+  })
+})
