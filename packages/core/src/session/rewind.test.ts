@@ -1,10 +1,24 @@
-import { describe, expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { afterEach, describe, expect, test } from 'bun:test'
+import { spawnSync } from 'node:child_process'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { Message, SessionStore } from '../types'
+import { createSessionEngine } from '../loop/session-engine'
+import type {
+  CompactPolicy,
+  Message,
+  ModelProfile,
+  Provider,
+  ProviderChunk,
+  SessionRecord,
+  SessionStore,
+  StreamEvent,
+} from '../types'
+import { enterSessionWorktree, exitSessionWorktree } from '../tools/session-worktree'
 import { createFileHistory } from './file-history'
-import { dropLastUserTurn, formatRewindNotice, rewindLastTurn } from './rewind'
+import { createMemoryStore } from './memory-store'
+import { dropLastUserTurn, formatRewindNotice, rewindLastTurn, rewindToCheckpoint } from './rewind'
+import { createSqliteStore } from './sqlite-store'
 
 function user(id: string, text: string, createdAt: number): Message {
   return { id, role: 'user', blocks: [{ type: 'text', text }], createdAt }
@@ -185,5 +199,268 @@ describe('rewindLastTurn', () => {
     expect(result.ok).toBe(false)
     expect(result.notice).toBe('rewind persist failed')
     expect(readFileSync(path, 'utf8')).toBe('new\n')
+  })
+})
+
+describe('rewindToCheckpoint', () => {
+  const tempDirs: string[] = []
+  const sessionIds: string[] = []
+  let seq = 0
+
+  afterEach(() => {
+    while (sessionIds.length > 0) {
+      const id = sessionIds.pop()
+      if (id) exitSessionWorktree(id, 'remove', true)
+    }
+    while (tempDirs.length > 0) {
+      const dir = tempDirs.pop()
+      if (dir) rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  function tempDir(prefix: string): string {
+    const dir = mkdtempSync(join(tmpdir(), prefix))
+    tempDirs.push(dir)
+    return dir
+  }
+
+  function nextSession(): string {
+    const id = `sess_rewind_job_${Date.now()}_${seq++}`
+    sessionIds.push(id)
+    return id
+  }
+
+  function initGitRepo(dir: string): void {
+    const run = (args: string[]) => {
+      const result = spawnSync('git', args, { cwd: dir, encoding: 'utf8' })
+      expect(result.status).toBe(0)
+    }
+    run(['init'])
+    run(['config', 'user.email', 'test@example.com'])
+    run(['config', 'user.name', 'Test'])
+    run(['config', 'commit.gpgsign', 'false'])
+    run(['commit', '--allow-empty', '-m', 'init'])
+  }
+
+  function git(cwd: string, args: string[]): string {
+    const result = spawnSync('git', args, { cwd, encoding: 'utf8' })
+    expect(result.status).toBe(0)
+    return result.stdout.trim()
+  }
+
+  function defaultModel(id = 'dummy'): ModelProfile {
+    return {
+      id,
+      contextWindow: 32_000,
+      reserveOutputTokens: 3_200,
+      inputUsdPerMTok: 0,
+      outputUsdPerMTok: 0,
+      cacheReadUsdPerMTok: 0,
+      cacheWriteUsdPerMTok: 0,
+      supportsThinking: false,
+    }
+  }
+
+  function defaultCompact(over: Partial<CompactPolicy> = {}): CompactPolicy {
+    return {
+      enabled: true,
+      autoCompactBuffer: 13_000,
+      blockingBufferWhenManual: 3_000,
+      protectLastMessages: 2,
+      keepRecentFiles: 5,
+      maxCharsPerRestoredFile: 5_000,
+      maxCharsRestoredFilesTotal: 50_000,
+      maxCharsPerRestoredSkill: 5_000,
+      maxCharsRestoredSkillsTotal: 25_000,
+      maxConsecutiveFailures: 3,
+      llmSummarize: false,
+      ...over,
+    }
+  }
+
+  function createFakeProvider(scripts: ProviderChunk[][]): Provider {
+    const queue = [...scripts]
+    return {
+      id: 'fake',
+      apiMode: 'openai_compat',
+      profile(model: string) {
+        return defaultModel(model)
+      },
+      async *stream(_req, signal) {
+        const script = queue.shift() ?? [{ type: 'stop' as const, reason: null }]
+        for (const chunk of script) {
+          if (signal.aborted) return
+          yield chunk
+        }
+      },
+    }
+  }
+
+  async function drain(gen: AsyncGenerator<StreamEvent, import('../types').RoundEnd>) {
+    const events: StreamEvent[] = []
+    while (true) {
+      const next = await gen.next()
+      if (next.done) return { events, result: next.value }
+      events.push(next.value)
+    }
+  }
+
+  function sessionRecord(over: Partial<SessionRecord> = {}): SessionRecord {
+    return {
+      id: 'sess_rewind_job',
+      createdAt: 1,
+      updatedAt: 1,
+      cwd: '/tmp',
+      model: 'dummy',
+      permissionMode: 'default',
+      compactGeneration: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      funding: 'byok',
+      ...over,
+    }
+  }
+
+  test('two committed turns, rewind once: HEAD is the first checkpoint sha and todos match', async () => {
+    // enter job, write+commit turn1 with todos [a], write+commit turn2 with todos [a,b]
+    // rewindLast → HEAD === turn1 sha, session.todos === [a], last user/assistant of turn2 gone
+    const cwd = tempDir('ravenclaw-rewind-ckpt-')
+    initGitRepo(cwd)
+    const id = nextSession()
+    const entered = enterSessionWorktree(id, cwd)
+    expect(entered.ok).toBe(true)
+    expect(entered.job).toBeDefined()
+    const job = entered.job!
+    const store = createMemoryStore()
+    const sess = sessionRecord({
+      id,
+      cwd: job.worktreePath,
+      job,
+      jobAutoCommit: true,
+      todos: [{ text: 'a', status: 'pending' }],
+    })
+    await store.createSession(sess)
+    const engine = createSessionEngine({
+      session: sess,
+      provider: createFakeProvider([
+        [
+          { type: 'text_delta', text: 'one' },
+          { type: 'stop', reason: 'end' },
+        ],
+        [
+          { type: 'text_delta', text: 'two' },
+          { type: 'stop', reason: 'end' },
+        ],
+      ]),
+      store,
+      tools: [],
+      compact: defaultCompact({ enabled: false }),
+      model: defaultModel(),
+      maxRounds: 8,
+      bare: true,
+      async askUser() {
+        return 'deny'
+      },
+    })
+
+    writeFileSync(join(job.worktreePath, 't1.txt'), 'turn1\n')
+    const first = await drain(engine.submitMessage('first'))
+    expect(first.result).toEqual({ reason: 'completed' })
+    const turn1Sha = git(job.worktreePath, ['rev-parse', 'HEAD'])
+
+    engine.session.todos = [
+      { text: 'a', status: 'pending' },
+      { text: 'b', status: 'pending' },
+    ]
+    writeFileSync(join(job.worktreePath, 't2.txt'), 'turn2\n')
+    const second = await drain(engine.submitMessage('second'))
+    expect(second.result).toEqual({ reason: 'completed' })
+    expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).not.toBe(turn1Sha)
+
+    const result = await engine.rewindLast()
+    expect(result.ok).toBe(true)
+    expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).toBe(turn1Sha)
+    expect(engine.session.todos).toEqual([{ text: 'a', status: 'pending' }])
+    const loaded = await store.loadSession(id)
+    expect(loaded.session.todos).toEqual([{ text: 'a', status: 'pending' }])
+    expect(loaded.messages.map((msg) => msg.role)).toEqual(['user', 'assistant'])
+    const userText = loaded.messages[0]?.blocks[0]
+    expect(userText && userText.type === 'text' ? userText.text : undefined).toBe('first')
+  })
+
+  test('rewinds to baseCommitSha when no earlier checkpoint remains', async () => {
+    const cwd = tempDir('ravenclaw-rewind-base-')
+    initGitRepo(cwd)
+    const id = nextSession()
+    const entered = enterSessionWorktree(id, cwd)
+    expect(entered.ok).toBe(true)
+    const job = entered.job!
+    writeFileSync(join(job.worktreePath, 'extra.txt'), 'later\n')
+    const commit = spawnSync('git', ['add', '-A'], { cwd: job.worktreePath, encoding: 'utf8' })
+    expect(commit.status).toBe(0)
+    expect(spawnSync('git', ['commit', '-m', 'later'], { cwd: job.worktreePath, encoding: 'utf8' }).status).toBe(0)
+    expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).not.toBe(job.baseCommitSha)
+
+    const store = createMemoryStore()
+    const sess = sessionRecord({
+      id,
+      cwd: job.worktreePath,
+      job,
+      todos: [{ text: 'gone', status: 'pending' }],
+    })
+    await store.createSession(sess)
+    const messages: Message[] = [
+      user('u1', 'only', 1),
+      assistant('a1', 'ok', 2),
+    ]
+    await store.persistUser(id, messages[0] as Extract<Message, { role: 'user' }>)
+    await store.persistAssistant(id, messages[1] as Extract<Message, { role: 'assistant' }>)
+
+    const result = await rewindToCheckpoint({ session: sess, messages, store })
+    expect(result.ok).toBe(true)
+    expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).toBe(job.baseCommitSha)
+    expect(sess.todos).toEqual([])
+    expect(result.messages).toEqual([])
+  })
+
+  test('persistAssistant and persistToolCalls write checkpoint_json', async () => {
+    const dir = tempDir('ravenclaw-ckpt-sql-')
+    const store = createSqliteStore(join(dir, 'state.db')) as SessionStore & { close(): void }
+    const sess = sessionRecord({ id: 's1' })
+    await store.createSession(sess)
+    const textOnly: Extract<Message, { role: 'assistant' }> = {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'text', text: 'ok' }],
+      createdAt: 1,
+      checkpoint: {
+        commitSha: 'abc123',
+        todoSnapshot: [{ text: 'a', status: 'pending' }],
+        dirty: false,
+      },
+    }
+    await store.persistAssistant('s1', textOnly)
+    const withTools: Extract<Message, { role: 'assistant' }> = {
+      id: 'a2',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'c1', name: 'Echo', input: {} }],
+      createdAt: 2,
+    }
+    await store.persistToolCalls('s1', withTools)
+    withTools.checkpoint = {
+      commitSha: 'def456',
+      todoSnapshot: [{ text: 'b', status: 'done' }],
+      dirty: true,
+    }
+    await store.persistToolCalls('s1', withTools)
+    const loaded = await store.loadSession('s1')
+    const asst1 = loaded.messages.find((msg) => msg.id === 'a1')
+    const asst2 = loaded.messages.find((msg) => msg.id === 'a2')
+    expect(asst1 && asst1.role === 'assistant' ? asst1.checkpoint : undefined).toEqual(
+      textOnly.checkpoint,
+    )
+    expect(asst2 && asst2.role === 'assistant' ? asst2.checkpoint : undefined).toEqual(
+      withTools.checkpoint,
+    )
+    store.close()
   })
 })

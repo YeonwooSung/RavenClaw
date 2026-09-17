@@ -7,6 +7,7 @@ import {
 } from '../types'
 import type {
   Funding,
+  JobCheckpoint,
   Message,
   PermissionMode,
   PermissionRule,
@@ -62,6 +63,7 @@ type MessageRow = {
   persist_path: string | null
   usage_json: string | null
   read_mtime_ms: number | null
+  checkpoint_json: string | null
   active: number
   generation: number
 }
@@ -193,6 +195,23 @@ function todosFromJson(raw: string | null): TodoItem[] | undefined {
   }
 }
 
+function checkpointFromJson(raw: string | null): JobCheckpoint | undefined {
+  if (raw == null) return undefined
+  try {
+    const parsed = JSON.parse(raw) as Partial<JobCheckpoint>
+    if (typeof parsed.commitSha !== 'string' || typeof parsed.dirty !== 'boolean') {
+      return undefined
+    }
+    return {
+      commitSha: parsed.commitSha,
+      todoSnapshot: parseTodoItems(parsed.todoSnapshot),
+      dirty: parsed.dirty,
+    }
+  } catch {
+    return undefined
+  }
+}
+
 function messageFromRow(row: MessageRow): Message {
   const blocks = JSON.parse(row.blocks_json) as Message['blocks']
   if (row.role === 'user') {
@@ -211,6 +230,8 @@ function messageFromRow(row: MessageRow): Message {
       createdAt: row.created_at,
     }
     if (row.usage_json != null) message.usage = JSON.parse(row.usage_json) as TokenUsage
+    const checkpoint = checkpointFromJson(row.checkpoint_json)
+    if (checkpoint) message.checkpoint = checkpoint
     return message
   }
   if (row.role === 'tool') {
@@ -273,6 +294,10 @@ function messageBind(sessionId: string, message: Message) {
     $read_mtime_ms:
       message.role === 'tool' && message.readMtimeMs !== undefined
         ? message.readMtimeMs
+        : null,
+    $checkpoint_json:
+      message.role === 'assistant' && message.checkpoint !== undefined
+        ? JSON.stringify(message.checkpoint)
         : null,
   }
 }
@@ -350,11 +375,26 @@ export function createSqliteStore(dbPath: string): SessionStore {
   const insertMessage = db.query(
     `INSERT INTO messages (
        id, session_id, created_at, role, blocks_json, tool_use_id, ok,
-       persist_path, usage_json, read_mtime_ms, active, generation
+       persist_path, usage_json, read_mtime_ms, checkpoint_json, active, generation
      ) VALUES (
        $id, $session_id, $created_at, $role, $blocks_json, $tool_use_id, $ok,
-       $persist_path, $usage_json, $read_mtime_ms, 1, 0
+       $persist_path, $usage_json, $read_mtime_ms, $checkpoint_json, 1, 0
      )`,
+  )
+  const selectMessageById = db.query(`SELECT * FROM messages WHERE id = ?`)
+  const updateMessage = db.query(
+    `UPDATE messages SET
+       session_id = $session_id,
+       created_at = $created_at,
+       role = $role,
+       blocks_json = $blocks_json,
+       tool_use_id = $tool_use_id,
+       ok = $ok,
+       persist_path = $persist_path,
+       usage_json = $usage_json,
+       read_mtime_ms = $read_mtime_ms,
+       checkpoint_json = $checkpoint_json
+     WHERE id = $id`,
   )
   const upsertTool = db.query(
     `INSERT INTO messages (
@@ -495,6 +535,48 @@ export function createSqliteStore(dbPath: string): SessionStore {
       throw error
     }
     indexMessageFts(db, sessionId, message, bind.$blocks_json)
+  }
+
+  function assistantPersistKind(
+    message: Extract<Message, { role: 'assistant' }>,
+  ): 'assistant' | 'tool_calls' {
+    return hasToolUse(message) ? 'tool_calls' : 'assistant'
+  }
+
+  function existingAssistantPersistKind(row: MessageRow): 'assistant' | 'tool_calls' | undefined {
+    if (row.role !== 'assistant') return undefined
+    try {
+      const blocks = JSON.parse(row.blocks_json) as Array<{ type?: string }>
+      return blocks.some((block) => block.type === 'tool_use') ? 'tool_calls' : 'assistant'
+    } catch {
+      return 'assistant'
+    }
+  }
+
+  function persistAssistantRow(
+    sessionId: string,
+    message: Extract<Message, { role: 'assistant' }>,
+    kind: 'assistant' | 'tool_calls',
+  ): void {
+    if (assistantPersistKind(message) !== kind) {
+      throw new PersistError(
+        'unknown',
+        kind === 'tool_calls'
+          ? 'persistToolCalls requires tool_use'
+          : 'persistAssistant cannot write tool_use',
+      )
+    }
+    const existing = selectMessageById.get(message.id) as MessageRow | null
+    if (existing) {
+      if (existingAssistantPersistKind(existing) !== kind) {
+        throw new PersistError('unknown', 'assistant row already persisted')
+      }
+      const bind = messageBind(sessionId, message)
+      updateMessage.run(bind)
+      indexMessageFts(db, sessionId, message, bind.$blocks_json)
+      return
+    }
+    insertMessageRow(sessionId, message)
   }
 
   const persistToolsTx = db.transaction(
@@ -678,19 +760,13 @@ export function createSqliteStore(dbPath: string): SessionStore {
 
     async persistAssistant(sessionId, message) {
       await withWrite(async () => {
-        if (hasToolUse(message)) {
-          throw new PersistError('unknown', 'persistAssistant cannot write tool_use')
-        }
-        insertMessageRow(sessionId, message)
+        persistAssistantRow(sessionId, message, 'assistant')
       })
     },
 
     async persistToolCalls(sessionId, message) {
       await withWrite(async () => {
-        if (!hasToolUse(message)) {
-          throw new PersistError('unknown', 'persistToolCalls requires tool_use')
-        }
-        insertMessageRow(sessionId, message)
+        persistAssistantRow(sessionId, message, 'tool_calls')
       })
     },
 

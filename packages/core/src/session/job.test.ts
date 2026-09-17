@@ -3,9 +3,9 @@ import { spawnSync } from 'node:child_process'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { SessionJob, SessionRecord } from '../types'
+import type { Message, SessionJob, SessionRecord } from '../types'
 import { enterSessionWorktree, exitSessionWorktree } from '../tools/session-worktree'
-import { maybeCommitJob, setJobAutoCommit } from './job'
+import { maybeCommitJob, setJobAutoCommit, stampCheckpoint } from './job'
 
 const tempDirs: string[] = []
 const sessionIds: string[] = []
@@ -131,5 +131,50 @@ describe('setJobAutoCommit', () => {
     expect(session.jobAutoCommit).toBe(true)
     setJobAutoCommit(session, false)
     expect(session.jobAutoCommit).toBe(false)
+  })
+})
+
+describe('stampCheckpoint', () => {
+  test('records HEAD, dirty bit, and a copied todo snapshot', () => {
+    const cwd = tempDir('ravenclaw-stamp-dirty-')
+    initGitRepo(cwd)
+    const sessionId = nextSession()
+    const entered = enterSessionWorktree(sessionId, cwd)
+    expect(entered.ok).toBe(true)
+    const job = entered.job!
+    writeFileSync(join(job.worktreePath, 'dirty.txt'), 'x\n')
+    const message: Extract<Message, { role: 'assistant' }> = {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'text', text: 'ok' }],
+      createdAt: 1,
+    }
+    const todos = [{ text: 'a', status: 'pending' as const }]
+    stampCheckpoint(message, job, todos, job.worktreePath)
+    expect(message.checkpoint?.commitSha).toBe(git(job.worktreePath, ['rev-parse', 'HEAD']))
+    expect(message.checkpoint?.dirty).toBe(true)
+    expect(message.checkpoint?.todoSnapshot).toEqual([{ text: 'a', status: 'pending' }])
+    expect(message.checkpoint?.todoSnapshot).not.toBe(todos)
+    todos.push({ text: 'b', status: 'pending' })
+    expect(message.checkpoint?.todoSnapshot).toEqual([{ text: 'a', status: 'pending' }])
+  })
+
+  test('records dirty false on a clean worktree', () => {
+    const cwd = tempDir('ravenclaw-stamp-clean-')
+    initGitRepo(cwd)
+    const sessionId = nextSession()
+    const entered = enterSessionWorktree(sessionId, cwd)
+    expect(entered.ok).toBe(true)
+    const job = entered.job!
+    const message: Extract<Message, { role: 'assistant' }> = {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'text', text: 'ok' }],
+      createdAt: 1,
+    }
+    stampCheckpoint(message, job, undefined, job.worktreePath)
+    expect(message.checkpoint?.commitSha).toBe(git(job.worktreePath, ['rev-parse', 'HEAD']))
+    expect(message.checkpoint?.dirty).toBe(false)
+    expect(message.checkpoint?.todoSnapshot).toEqual([])
   })
 })

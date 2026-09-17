@@ -1,5 +1,22 @@
 import { runGit } from '../tools/session-worktree'
-import type { SessionJob, SessionRecord } from '../types'
+import type { Message, SessionJob, SessionRecord, TodoItem } from '../types'
+
+export function stampCheckpoint(
+  message: Extract<Message, { role: 'assistant' }>,
+  _job: SessionJob,
+  todos: TodoItem[] | undefined,
+  cwd: string,
+): void {
+  const head = runGit(cwd, ['rev-parse', 'HEAD'])
+  const commitSha = head.stdout.trim()
+  if (!head.ok || commitSha === '') return
+  const status = runGit(cwd, ['status', '--porcelain'])
+  message.checkpoint = {
+    commitSha,
+    todoSnapshot: (todos ?? []).map((item) => ({ ...item })),
+    dirty: !status.ok || status.stdout.trim() !== '',
+  }
+}
 
 export function setJobAutoCommit(session: SessionRecord, on: boolean): void {
   session.jobAutoCommit = on

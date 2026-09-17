@@ -34,8 +34,8 @@ import {
 } from './pairing'
 import { forgetReadsNotInTail, markReadPath, recordReadFile, stampReadMtime } from '../tools/read-files'
 import type { TodoItem } from '../tools/todo'
-import { rewindLastTurn } from '../session/rewind'
-import { maybeCommitJob } from '../session/job'
+import { rewindLastTurn, rewindToCheckpoint } from '../session/rewind'
+import { maybeCommitJob, stampCheckpoint } from '../session/job'
 import { getSessionWorktree } from '../tools/session-worktree'
 import { applyPermissionMode } from '../prompt/builder'
 import { injectMidTurnHint } from '../prompt/cache'
@@ -84,6 +84,23 @@ function titleFromUserText(text: string): string | undefined {
 
 function sessionTodosOf(session: { todos?: TodoItem[] }): TodoItem[] | undefined {
   return session.todos
+}
+
+function lastAssistant(messages: Message[]): Extract<Message, { role: 'assistant' }> | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]
+    if (msg?.role === 'assistant') return msg
+  }
+  return undefined
+}
+
+function isJobSuccessReason(reason: RoundEnd['reason']): boolean {
+  return (
+    reason === 'completed' ||
+    reason === 'hook_stopped' ||
+    reason === 'max_rounds' ||
+    reason === 'context_full'
+  )
 }
 
 export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
@@ -454,6 +471,15 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       if (tasks.list().some((task) => task.status === 'running' && task.type === 'agent')) {
         return { ok: false, notice: 'a turn is in progress' }
       }
+      if (session.job) {
+        const result = await rewindToCheckpoint({
+          session,
+          messages,
+          store: opts.store,
+        })
+        messages = result.messages
+        return { ok: result.ok, notice: result.notice }
+      }
       const result = await rewindLastTurn({
         fileHistory,
         messages,
@@ -628,15 +654,28 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         await opts.store.upsertSession(session)
         if (
           session.job &&
-          session.jobAutoCommit === true &&
-          (end.reason === 'completed' ||
-            end.reason === 'hook_stopped' ||
-            end.reason === 'max_rounds' ||
-            end.reason === 'context_full') &&
+          isJobSuccessReason(end.reason) &&
           (await opts.store.listPendingAsks(session.id)).length === 0
         ) {
-          const result = maybeCommitJob({ job: session.job, turnId: turn.id, cwd: turn.cwd })
-          if (result.notice) yield { type: 'status', message: result.notice }
+          if (session.jobAutoCommit === true) {
+            const result = maybeCommitJob({ job: session.job, turnId: turn.id, cwd: turn.cwd })
+            if (result.notice) yield { type: 'status', message: result.notice }
+          }
+          const asst = lastAssistant(turn.messages)
+          if (asst) {
+            stampCheckpoint(asst, session.job, session.todos, turn.cwd)
+            if (asst.checkpoint) {
+              try {
+                if (asst.blocks.some((block) => block.type === 'tool_use')) {
+                  await opts.store.persistToolCalls(session.id, asst)
+                } else {
+                  await opts.store.persistAssistant(session.id, asst)
+                }
+              } catch {
+                // checkpoint persist must not fail the turn
+              }
+            }
+          }
         }
         if (end.reason === 'context_full') {
           const stop = await lifecycle.run('Stop', { sessionId: session.id, reason: end.reason })

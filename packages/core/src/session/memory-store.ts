@@ -128,6 +128,25 @@ export function createMemoryStore(): SessionStore {
     return message.blocks.some((block) => block.type === 'tool_use')
   }
 
+  function upsertAssistant(
+    sessionId: string,
+    message: Extract<Message, { role: 'assistant' }>,
+    kind: 'assistant' | 'tool_calls',
+  ): void {
+    const key = kindKey(sessionId, message.id)
+    const existingKind = assistantKind.get(key)
+    if (existingKind !== undefined) {
+      if (existingKind !== kind) {
+        throw new PersistError('unknown', 'assistant row already persisted')
+      }
+      const row = bucket(sessionId).find((stored) => stored.message.id === message.id)
+      if (row) row.message = message
+      return
+    }
+    assistantKind.set(key, kind)
+    pushMessage(sessionId, message)
+  }
+
   const store: SessionStore = {
     async createSession(session) {
       await withWrite(async () => {
@@ -256,12 +275,7 @@ export function createMemoryStore(): SessionStore {
         if (hasToolUse(message)) {
           throw new PersistError('unknown', 'persistAssistant cannot write tool_use')
         }
-        const key = kindKey(sessionId, message.id)
-        if (assistantKind.has(key)) {
-          throw new PersistError('unknown', 'assistant row already persisted')
-        }
-        assistantKind.set(key, 'assistant')
-        pushMessage(sessionId, message)
+        upsertAssistant(sessionId, message, 'assistant')
       })
     },
 
@@ -270,12 +284,7 @@ export function createMemoryStore(): SessionStore {
         if (!hasToolUse(message)) {
           throw new PersistError('unknown', 'persistToolCalls requires tool_use')
         }
-        const key = kindKey(sessionId, message.id)
-        if (assistantKind.has(key)) {
-          throw new PersistError('unknown', 'assistant row already persisted')
-        }
-        assistantKind.set(key, 'tool_calls')
-        pushMessage(sessionId, message)
+        upsertAssistant(sessionId, message, 'tool_calls')
       })
     },
 

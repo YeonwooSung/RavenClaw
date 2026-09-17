@@ -88,6 +88,7 @@ export type Message =
       blocks: ContentBlock[]
       createdAt: number
       usage?: TokenUsage
+      checkpoint?: JobCheckpoint
     }
   | {
       id: string
@@ -282,6 +283,12 @@ export type SessionJob = {
   worktreePath: string
   prNumber?: number
   prUrl?: string
+}
+
+export type JobCheckpoint = {
+  commitSha: string
+  todoSnapshot: TodoItem[]
+  dirty: boolean
 }
 
 export interface SessionRecord {
