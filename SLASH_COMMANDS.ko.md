@@ -51,7 +51,7 @@ flowchart TD
   E -->|kind bash| F["runBangCommand /bin/sh -c"]
   E -->|kind other| G["runTurn: mentions + images + submitMessage"]
   D -->|type command| H["dispatchSharedSlash"]
-  H -->|HOST_ONLY| I["host switch: quit/stop/clear/resume/diff/queue/loop/bash"]
+  H -->|HOST_ONLY| I["host switch: quit/stop/clear/resume/diff/retry/queue/loop/bash"]
   H -->|handled| J{"notice / runTurn / engine API"}
   J -->|help cost model ...| K["host.notice"]
   J -->|learn interview team-onboarding skill| L["host.runTurn frozen prompt"]
@@ -67,9 +67,9 @@ Ink의 frozen prompt는 `void runTurn(...)`이라 fire-and-forget이다. OpenTUI
 
 `HOST_ONLY` (`packages/cli/src/slash/dispatch.ts`):
 
-`quit`, `stop`, `clear`, `resume`, `diff`, `queue`, `loop`, `bash`
+`quit`, `stop`, `clear`, `resume`, `diff`, `retry`, `queue`, `loop`, `bash`
 
-이 여덟 개는 호스트 프로세스 상태(종료, abort gate, 새 세션, git 패널, 메시지 큐, loop ref, 로컬 셸)를 만진다. 나머지는 shared다.
+이 아홉 개는 호스트 프로세스 상태(종료, abort gate, 새 세션, git 패널, 메시지 큐, composer retry, loop ref, 로컬 셸)를 만진다. 나머지는 shared다.
 
 | name | 분류 | idle | mid-turn | 주 부작용 |
 |---|---|---|---|---|
@@ -87,7 +87,7 @@ Ink의 frozen prompt는 `void runTurn(...)`이라 fire-and-forget이다. OpenTUI
 | `permissions` | shared | 규칙 파일 경로 | 동일 | 경로 또는 `no extra rules` |
 | `tasks` | shared | list/kill/steer | 백그라운드 레지스트리 | `no background tasks` 등 |
 | `undo` | shared | 마지막 체크포인트 | 턴이 열려 있으면 block | `formatUndoNotice` |
-| `rewind` | shared | 파일 + 마지막 user turn | live turn / running agent면 거부 | `a turn is in progress` 등 |
+| `rewind` | shared | 파일 + 마지막 user turn | live turn / running agent / pending ask면 거부 | `a turn is in progress` 등 |
 | `diff` | host | git 패널 토글 | 패널만 | working-tree + staged |
 | `job` | shared | `raven/*` job worktree 진입 / commit on\|off | 동일 | `session.job`, cwd → worktree |
 | `pr` | shared | shadow draft PR | 동일 | job 없거나 dirty면 notice만 |
@@ -102,6 +102,8 @@ Ink의 frozen prompt는 `void runTurn(...)`이라 fire-and-forget이다. OpenTUI
 | `loop` | host | 시작/상태/중지 | 호스트 ref | 최대 20회, `completed`만 진행 |
 | `cron` | shared | 로컬 jobs.json | 동일 | TUI 15s ticker와 별개 |
 | `queue` | host | 목록/drop/clear | 같은 큐 | mid-turn drain 또는 다음 턴 |
+| `follow` | shared | one-slot next-turn 표시/설정/clear | 세션 필드만 | `session.followup` |
+| `retry` | host | rewind 후 composer 복원 또는 resubmit | `/rewind`와 같은 거부 | composer / `runTurn` |
 | `copy` | shared | 클립보드 | 동일 | text 블록만 markdown |
 | `interview` | shared | frozen turn | busy면 enqueue | `INTERVIEW_PROMPT` |
 | `team-onboarding` | shared | scan + frozen turn | busy면 enqueue | alias `/onboard` |
@@ -283,11 +285,22 @@ Ink status line은 모델·mode·usage·`shortSessionId`·funding·near-compact�
 
 - 분류: shared
 - live turn이거나 running `type === 'agent'` 태스크가 있으면 `a turn is in progress`
+- unpaired owned `pending_asks`가 있으면 `pending permission ask` (drop 없음)
 - **job 세션** (`session.job`): `rewindToCheckpoint` — 마지막 user 턴 drop, job worktree에서 이전 assistant 체크포인트 sha(없으면 `baseCommitSha`)로 `git reset --hard`, todo 스냅샷 복원, compact `rewind` persist. 실패 notice: `rewind reset failed: …` / `rewind persist failed` / `nothing to rewind`
 - **job 없는 세션**: 열린 file-history generation이면 `a turn is in progress`. 아니면 마지막 user부터 drop + 그 generation undo. persist 실패: `rewind persist failed` (메시지는 그대로)
+- 성공 시 `droppedText`는 마지막 user text 블록 연결(이미지 무시). `/rewind` 슬래시는 notice만 출력
 - notice: `nothing to rewind` / `dropped 1 message` / `dropped N messages` / 파일 부분과 `; `로 결합
 - compact 세대에 `rewind`로 기록
-- 관련: `/undo`, `/job`
+- 관련: `/undo`, `/retry`, `/job`
+
+### `/retry [text]`
+
+- 분류: host-only (composer 필요)
+- `engine.rewindLast()` 먼저. 항상 notice 출력. 거부 규칙은 `/rewind`와 동일
+- 인자 없음: ok이고 `droppedText`가 있으면 composer에 넣음 (Ink `setDraft`, OpenTUI draft). **`runTurn` 하지 않음**
+- 인자 있음: ok이면 `runTurn(arg)`로 재제출
+- serve 대응: `POST /v1/session/:id/edit` `{ text }` — 빈 text 400, rewind 실패 200 `{ ok:false, notice }`, 성공 202 후 `submitMessage`
+- `/rewind`는 notice-only. 관련: `/rewind`, `/follow`
 
 ### `/job [name]` / `/job commit on|off`
 
@@ -418,7 +431,19 @@ Ink status line은 모델·mode·usage·`shortSessionId`·funding·near-compact�
 - busy 중 일반 텍스트는 enqueue, notice `queued (${n})`
 - live turn: 툴 배치마다 하나 drain, status `queued: ${preview}`
 - 턴 종료 후 leftover는 다음 `runTurn`. leftover steer가 큐보다 앞선다
-- 관련: `/steer`, `/loop`
+- `/follow`(세션에 저장된 one-slot)과 다름
+- 관련: `/steer`, `/loop`, `/follow`
+
+### `/follow [text|clear]`
+
+- 분류: shared
+- 세션 one-slot `session.followup` (schema v10). `/queue`·`SuggestFollowups` 아님
+- 인자 없음: 현재 슬롯 표시 (`no follow-up` 또는 텍스트)
+- `clear`: 슬롯 삭제, notice `no follow-up`
+- 그 외 텍스트: `setFollowup`. 빈/공백만이면 `follow-up text required`
+- 턴 종료 후 `maybeRunFollowup`이 성공 reason이면 자동 실행, cancel/abort/error면 clear (pending ask 있으면 skip)
+- serve: `POST/DELETE /v1/session/:id/followup`, 스냅샷 `queued`
+- 관련: `/queue`, `/retry`
 
 ### `/copy`
 
@@ -572,7 +597,8 @@ disable 목록: `~/.ravenclaw/skills-disabled.json`. `/reload`와 disable/enable
 | 커맨드 | 파일 | 대화 | 세션 id | 진행 중 턴 |
 |---|---|---|---|---|
 | `/undo` | 마지막 닫힌 generation 복원/삭제 | 유지 | 유지 | 열려 있으면 block |
-| `/rewind` | job: `git reset --hard` + todo 스냅샷. no-job: file-history undo | 마지막 user부터 drop | 유지 | `a turn is in progress` |
+| `/rewind` | job: `git reset --hard` + todo 스냅샷. no-job: file-history undo | 마지막 user부터 drop | 유지 | `a turn is in progress` / `pending permission ask` |
+| `/retry` | `/rewind`와 동일 | drop 후 composer 복원 또는 새 text로 `runTurn` | 유지 | `/rewind`와 동일 |
 | `/job` | `raven/*` worktree + job 기록; `commit on\|off` | 유지 | 유지 (cwd → worktree) | 모델 턴 아님 |
 | `/pr` | shadow draft PR (없거나 dirty면 notice) | 마지막 assistant annotation 가능 | 유지 | 모델 턴 아님 |
 | `/compact` | 없음 | 앞부분 요약/접기 | 유지, `compactGeneration++` | mid-turn은 큐; live splice 안 함 |

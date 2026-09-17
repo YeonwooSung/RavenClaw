@@ -467,6 +467,19 @@ export function App(props: AppProps) {
             applyDiffView(action.action === 'select' ? action.index : undefined)
             return
           }
+          case 'retry': {
+            void (async () => {
+              const rewound = await runtimeRef.current.engine.rewindLast()
+              setNotice(rewound.notice)
+              if (!rewound.ok) return
+              if (parsed.arg !== undefined && parsed.arg.trim() !== '') {
+                void runTurn(parsed.arg)
+                return
+              }
+              if (rewound.droppedText !== undefined) setDraft(rewound.droppedText)
+            })()
+            return
+          }
           case 'queue': {
             const action = parseQueueArg(parsed.arg)
             if (action.action === 'error') {

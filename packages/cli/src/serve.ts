@@ -171,6 +171,7 @@ export type ServeEngine = {
   setFollowup?: (text: string) => Promise<{ ok: true } | { ok: false; notice: string }>
   clearFollowup?: () => Promise<void>
   getFollowup?: () => string | null
+  rewindLast?: () => Promise<{ ok: boolean; notice: string; droppedText?: string }>
   close?: SessionEngine['close']
 }
 
@@ -450,7 +451,7 @@ async function readJsonBody(req: Request): Promise<{ ok: true; body: unknown } |
   }
 }
 
-const SESSION_PATH = /^\/v1\/session\/([^/]+)\/(stream|cancel|compact|resolve|submit|pr|followup)$/
+const SESSION_PATH = /^\/v1\/session\/([^/]+)\/(stream|cancel|compact|resolve|submit|pr|followup|edit)$/
 const SESSION_ID_PATH = /^\/v1\/session\/([^/]+)$/
 
 async function loadSessionRuntime(
@@ -692,6 +693,70 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
         }
       })
       return Response.json({ accepted: true, sessionId: sid }, { status: 202 })
+    }
+    if (req.method === 'POST' && action === 'edit') {
+      const parsedBody = await readJsonBody(req)
+      if (!parsedBody.ok) return parsedBody.res
+      const rec = parsedBody.body
+      const text =
+        rec !== null && typeof rec === 'object' && typeof (rec as { text?: unknown }).text === 'string'
+          ? (rec as { text: string }).text
+          : ''
+      if (text.trim() === '') return Response.json({ error: 'text required' }, { status: 400 })
+      const loaded = await loadSessionRuntime(ctx, sessionId)
+      if (!loaded.ok) return loaded.res
+      const rewindLast = loaded.runtime.engine.rewindLast
+      if (!rewindLast) {
+        return Response.json({ ok: false, notice: 'rewind unavailable' })
+      }
+      const rewound = await rewindLast()
+      if (!rewound.ok) {
+        return Response.json({
+          ok: false,
+          notice: rewound.notice,
+          ...(rewound.droppedText !== undefined ? { droppedText: rewound.droppedText } : {}),
+        })
+      }
+      const sid = loaded.runtime.engine.session.id
+      void singleFlight(ctx.turnFlights, sid, async () => {
+        try {
+          const end = await consumeSubmit(
+            loaded.runtime.engine.submitMessage({ text, turnPolicy: 'queue' }),
+          )
+          if (!isRoundEnd(end)) return
+          const engine = loaded.runtime.engine
+          if (
+            typeof engine.getFollowup !== 'function' ||
+            typeof engine.clearFollowup !== 'function' ||
+            typeof engine.liveTurnId !== 'function'
+          ) {
+            return
+          }
+          await maybeRunFollowup({
+            engine: {
+              submitMessage: (input) => engine.submitMessage(input),
+              getFollowup: () => engine.getFollowup?.() ?? null,
+              clearFollowup: async () => {
+                await engine.clearFollowup?.()
+              },
+              liveTurnId: () => engine.liveTurnId?.() ?? null,
+            },
+            listPendingAsks: async () =>
+              (await loaded.runtime.store?.listPendingAsks(sid)) ?? [],
+            lastEnd: end,
+          })
+        } catch {
+          // session edit is fire-and-forget; the stream carries errors
+        }
+      })
+      return Response.json(
+        {
+          accepted: true,
+          sessionId: sid,
+          ...(rewound.droppedText !== undefined ? { droppedText: rewound.droppedText } : {}),
+        },
+        { status: 202 },
+      )
     }
     if (req.method === 'POST' && action === 'followup') {
       const loaded = await loadSessionRuntime(ctx, sessionId)

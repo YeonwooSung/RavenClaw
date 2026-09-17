@@ -131,6 +131,7 @@ export async function runOpenTuiApp(
 
   const queue = createMessageQueue()
   let turnBusy = false
+  let draft = ''
   let loopState: import('@ravenclaw/core').LoopState | null = null
 
   const runTurn = async (text: string) => {
@@ -260,9 +261,10 @@ export async function runOpenTuiApp(
     await replayPending()
     while (true) {
       if (diffOpen) writeDiffPanel()
-      write(`${composerLine()}\n`)
+      write(`${composerLine(draft)}\n`)
       const line = await readLine()
       if (line === undefined) return 0
+      draft = ''
       lastActivityAt = Date.now()
 
       const parsed = handleSlashCommand(line)
@@ -355,6 +357,17 @@ export async function runOpenTuiApp(
           if (action.action === 'select') diffSelected = action.index
           diffOpen = true
           writeDiffPanel()
+          continue
+        }
+        case 'retry': {
+          const rewound = await current.engine.rewindLast()
+          write(`${rewound.notice}\n`)
+          if (!rewound.ok) continue
+          if (parsed.arg !== undefined && parsed.arg.trim() !== '') {
+            await runTurn(parsed.arg)
+            continue
+          }
+          if (rewound.droppedText !== undefined) draft = rewound.droppedText
           continue
         }
         case 'queue': {

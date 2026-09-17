@@ -60,6 +60,11 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     usage: '/follow [text|clear]',
     summary: 'set, show, or clear the one-slot next-turn follow-up',
   },
+  {
+    name: 'retry',
+    usage: '/retry [text]',
+    summary: 'rewind last user turn; no arg restores text to composer, arg resubmits',
+  },
   { name: 'copy', usage: '/copy', summary: 'copy this conversation as markdown' },
   { name: 'interview', usage: '/interview', summary: 'ask clarifying questions before implementing' },
   {

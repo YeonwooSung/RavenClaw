@@ -1247,6 +1247,59 @@ describe('handleServeRequest', () => {
     expect(ghCalls[0]?.[1]).toBe('create')
     expect(ctx.submitted).toEqual([])
   })
+
+  test('POST /v1/session/:id/edit rewinds then submits; empty is 400; pending refuses', async () => {
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const runtime = await ctx.runtimeForSession('s1')
+    if (!runtime) throw new Error('expected runtime')
+    let rewindCalls = 0
+    runtime.engine.rewindLast = async () => {
+      rewindCalls += 1
+      return { ok: true, notice: 'dropped 2 messages', droppedText: 'old prompt' }
+    }
+
+    const empty = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/edit', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+        body: JSON.stringify({ text: '' }),
+      }),
+      ctx,
+    )
+    expect(empty.status).toBe(400)
+    expect(rewindCalls).toBe(0)
+
+    const ok = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/edit', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'new prompt' }),
+      }),
+      ctx,
+    )
+    expect(ok.status).toBe(202)
+    expect(await ok.json()).toEqual({
+      accepted: true,
+      sessionId: 's1',
+      droppedText: 'old prompt',
+    })
+    expect(rewindCalls).toBe(1)
+    await Promise.all([...ctx.turnFlights.values()])
+    expect(ctx.submitted).toEqual([{ text: 'new prompt', turnPolicy: 'queue' }])
+
+    runtime.engine.rewindLast = async () => ({ ok: false, notice: 'pending permission ask' })
+    const refused = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/edit', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'x' }),
+      }),
+      ctx,
+    )
+    expect(refused.status).toBe(200)
+    expect(await refused.json()).toEqual({ ok: false, notice: 'pending permission ask' })
+    expect(ctx.submitted).toHaveLength(1)
+  })
 })
 
 const serveTempDirs: string[] = []

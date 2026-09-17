@@ -47,6 +47,7 @@ const HOST_ONLY = new Set([
   'clear',
   'resume',
   'diff',
+  'retry',
   'queue',
   'loop',
   'bash',
