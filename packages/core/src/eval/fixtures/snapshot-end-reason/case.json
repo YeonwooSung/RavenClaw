@@ -1,0 +1,1 @@
+{ "prompt": "start then cancel", "expect": { "lastEndCancelled": true } }

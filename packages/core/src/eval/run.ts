@@ -1,9 +1,11 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { INCOMPLETE_TEXT, unpairedToolUseIds } from '../loop/pairing'
 import { createSessionEngine } from '../loop/session-engine'
+import { maybeRunFollowup } from '../session/followup'
+import { jobDiff } from '../session/job-diff'
 import { createMemoryStore } from '../session/memory-store'
 import { enterSessionWorktree, exitSessionWorktree } from '../tools/session-worktree'
 import { writeTool } from '../tools/write'
@@ -36,6 +38,10 @@ type EvalExpect = {
   cancelNotFail?: boolean
   afterSeqReplays?: boolean
   shadowBranchCurrent?: boolean
+  lastEndCancelled?: boolean
+  followupRan?: boolean
+  editResubmit?: boolean
+  jobDiffListsDirty?: boolean
 }
 
 type EvalCase = {
@@ -74,6 +80,22 @@ export async function runEvalDir(dir: string): Promise<void> {
     }
     if (name === 'job-shadow-branch') {
       await runJobShadowBranch(spec)
+      continue
+    }
+    if (name === 'snapshot-end-reason') {
+      await runSnapshotEndReason(spec)
+      continue
+    }
+    if (name === 'followup-slot') {
+      await runFollowupSlot(spec)
+      continue
+    }
+    if (name === 'edit-resubmit') {
+      await runEditResubmit(spec)
+      continue
+    }
+    if (name === 'job-diff') {
+      await runJobDiff(spec)
       continue
     }
     throw new Error(`unknown eval fixture: ${name}`)
@@ -523,6 +545,266 @@ async function runJobShadowBranch(spec: EvalCase): Promise<void> {
     exitSessionWorktree(sessionId, 'remove', true)
     rmSync(cwd, { recursive: true, force: true })
   }
+}
+
+async function runSnapshotEndReason(spec: EvalCase): Promise<void> {
+  const store = createMemoryStore()
+  const session = makeSession({ id: 'sess_eval_snapshot_end_reason' })
+  await store.createSession(session)
+
+  let streams = 0
+  let enteredFirst!: () => void
+  const firstStreamEntered = new Promise<void>((resolve) => {
+    enteredFirst = resolve
+  })
+  const provider: Provider = {
+    id: 'fake',
+    apiMode: 'openai_compat',
+    profile(model: string) {
+      return defaultModel(model)
+    },
+    async *stream(_req: ProviderRequest, signal: AbortSignal) {
+      streams += 1
+      if (streams === 1) {
+        enteredFirst()
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) {
+            resolve()
+            return
+          }
+          signal.addEventListener('abort', () => resolve(), { once: true })
+        })
+        return
+      }
+      yield { type: 'text_delta' as const, text: 'ok' }
+      yield { type: 'stop' as const, reason: 'end' }
+    },
+  }
+
+  const engine = createSessionEngine({
+    session,
+    provider,
+    store,
+    tools: [],
+    compact: defaultCompact(),
+    model: defaultModel(),
+    maxRounds: 8,
+    bare: true,
+    askUser: async () => 'deny',
+  })
+
+  const gen = engine.submitMessage(spec.prompt)
+  const pending = drain(gen)
+  await firstStreamEntered
+  engine.abort('cancel')
+  const cancelled = await pending
+  if (spec.expect.lastEndCancelled === true) {
+    if (!isRoundEnd(cancelled) || cancelled.reason !== 'cancelled') {
+      throw new Error(
+        `snapshot-end-reason: expected { reason: 'cancelled' }, got ${JSON.stringify(cancelled)}`,
+      )
+    }
+    if (engine.session.lastEnd?.reason !== 'cancelled') {
+      throw new Error(
+        `snapshot-end-reason: lastEnd not cancelled: ${JSON.stringify(engine.session.lastEnd)}`,
+      )
+    }
+    await store.upsertPendingAsk({
+      callId: 'parked',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Bash?',
+      input: { command: 'ls' },
+      createdAt: Date.now(),
+    })
+    await drain(engine.submitMessage('again'))
+    if (engine.session.lastEnd?.reason !== 'cancelled') {
+      throw new Error(
+        `snapshot-end-reason: pending-gate overwrote lastEnd: ${JSON.stringify(engine.session.lastEnd)}`,
+      )
+    }
+  }
+  await engine.close()
+}
+
+async function runFollowupSlot(spec: EvalCase): Promise<void> {
+  const store = createMemoryStore()
+  const session = makeSession({ id: 'sess_eval_followup_slot' })
+  await store.createSession(session)
+  const provider = createFakeProvider([
+    textThenStop('done'),
+    textThenStop('from followup'),
+    textThenStop('after cancel path'),
+  ])
+  const engine = createSessionEngine({
+    session,
+    provider,
+    store,
+    tools: [],
+    compact: defaultCompact(),
+    model: defaultModel(),
+    maxRounds: 8,
+    bare: true,
+    askUser: async () => 'deny',
+  })
+
+  if (spec.expect.followupRan === true) {
+    const set = await engine.setFollowup('from slot')
+    if (!set.ok) {
+      throw new Error(`followup-slot: setFollowup failed: ${set.notice}`)
+    }
+    const end = await drain(engine.submitMessage(spec.prompt))
+    if (!isRoundEnd(end) || end.reason !== 'completed') {
+      throw new Error(`followup-slot: first turn did not complete: ${JSON.stringify(end)}`)
+    }
+    const flag = await maybeRunFollowup({
+      engine,
+      listPendingAsks: () => store.listPendingAsks(session.id),
+      lastEnd: end,
+    })
+    if (flag !== 'ran') {
+      throw new Error(`followup-slot: maybeRunFollowup expected ran, got ${flag}`)
+    }
+    const afterRun = await store.loadSession(session.id)
+    if (!hasUserText(afterRun.messages, 'from slot')) {
+      throw new Error('followup-slot: missing user row with "from slot" after ran')
+    }
+
+    const cancelText = 'cancel slot'
+    const set2 = await engine.setFollowup(cancelText)
+    if (!set2.ok) {
+      throw new Error(`followup-slot: second setFollowup failed: ${set2.notice}`)
+    }
+    const cleared = await maybeRunFollowup({
+      engine,
+      listPendingAsks: () => store.listPendingAsks(session.id),
+      lastEnd: { reason: 'cancelled' },
+    })
+    if (cleared !== 'cleared') {
+      throw new Error(`followup-slot: maybeRunFollowup expected cleared, got ${cleared}`)
+    }
+    const afterClear = await store.loadSession(session.id)
+    if (hasUserText(afterClear.messages, cancelText)) {
+      throw new Error('followup-slot: cancelled path submitted follow-up text')
+    }
+    if (engine.getFollowup() !== null) {
+      throw new Error(`followup-slot: getFollowup after cancel expected null, got ${engine.getFollowup()}`)
+    }
+  }
+  await engine.close()
+}
+
+async function runEditResubmit(spec: EvalCase): Promise<void> {
+  const store = createMemoryStore()
+  const session = makeSession({ id: 'sess_eval_edit_resubmit' })
+  await store.createSession(session)
+  const provider = createFakeProvider([
+    textThenStop('one'),
+    textThenStop('two'),
+    textThenStop('three'),
+  ])
+  const engine = createSessionEngine({
+    session,
+    provider,
+    store,
+    tools: [],
+    compact: defaultCompact(),
+    model: defaultModel(),
+    maxRounds: 8,
+    bare: true,
+    askUser: async () => 'deny',
+  })
+
+  if (spec.expect.editResubmit === true) {
+    const first = await drain(engine.submitMessage(spec.prompt))
+    if (!isRoundEnd(first) || first.reason !== 'completed') {
+      throw new Error(`edit-resubmit: first turn did not complete: ${JSON.stringify(first)}`)
+    }
+    const second = await drain(engine.submitMessage('second'))
+    if (!isRoundEnd(second) || second.reason !== 'completed') {
+      throw new Error(`edit-resubmit: second turn did not complete: ${JSON.stringify(second)}`)
+    }
+    const rewound = await engine.rewindLast()
+    if (!rewound.ok) {
+      throw new Error(`edit-resubmit: rewindLast failed: ${rewound.notice}`)
+    }
+    if (rewound.droppedText !== 'second') {
+      throw new Error(
+        `edit-resubmit: droppedText expected "second", got ${JSON.stringify(rewound.droppedText)}`,
+      )
+    }
+    const edited = await drain(engine.submitMessage('edited'))
+    if (!isRoundEnd(edited) || edited.reason !== 'completed') {
+      throw new Error(`edit-resubmit: edited turn did not complete: ${JSON.stringify(edited)}`)
+    }
+    const loaded = await store.loadSession(session.id)
+    const lastUser = lastUserMessageText(loaded.messages)
+    if (lastUser !== 'edited') {
+      throw new Error(`edit-resubmit: last user text expected "edited", got ${JSON.stringify(lastUser)}`)
+    }
+  }
+  await engine.close()
+}
+
+async function runJobDiff(spec: EvalCase): Promise<void> {
+  const cwd = mkdtempSync(join(tmpdir(), 'raven-eval-job-diff-'))
+  const sessionId = `sess_eval_job_diff_${crypto.randomUUID()}`
+  try {
+    initGitRepo(cwd)
+    const result = enterSessionWorktree(sessionId, cwd)
+    if (!result.ok || result.job === undefined) {
+      throw new Error(`job-diff: enterSessionWorktree failed: ${result.error ?? 'no job'}`)
+    }
+    const job = result.job
+    const worktree = result.cwd
+    if (spec.expect.jobDiffListsDirty === true) {
+      writeFileSync(join(worktree, 'committed.txt'), 'one\n')
+      const add = spawnSync('git', ['-C', worktree, 'add', 'committed.txt'], { encoding: 'utf8' })
+      if (add.status !== 0) {
+        throw new Error(`job-diff: git add failed: ${add.stderr}`)
+      }
+      const commit = spawnSync('git', ['-C', worktree, 'commit', '-m', 'add committed'], {
+        encoding: 'utf8',
+      })
+      if (commit.status !== 0) {
+        throw new Error(`job-diff: git commit failed: ${commit.stderr}`)
+      }
+      writeFileSync(join(worktree, 'dirty.txt'), 'dirty\n')
+      const diff = jobDiff(job)
+      if (!diff.ok) {
+        throw new Error(`job-diff: jobDiff failed: ${diff.notice}`)
+      }
+      const paths = diff.files.map((file) => file.path)
+      if (!paths.includes('committed.txt') || !paths.includes('dirty.txt')) {
+        throw new Error(`job-diff: expected committed.txt and dirty.txt, got ${JSON.stringify(paths)}`)
+      }
+    }
+  } finally {
+    exitSessionWorktree(sessionId, 'remove', true)
+    rmSync(cwd, { recursive: true, force: true })
+  }
+}
+
+function hasUserText(messages: Message[], text: string): boolean {
+  return messages.some(
+    (msg) =>
+      msg.role === 'user' &&
+      msg.blocks.some((block) => block.type === 'text' && block.text === text),
+  )
+}
+
+function lastUserMessageText(messages: Message[]): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]
+    if (msg?.role !== 'user') continue
+    const parts = msg.blocks
+      .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
+      .map((block) => block.text)
+    const text = parts.join('')
+    return text === '' ? undefined : text
+  }
+  return undefined
 }
 
 function initGitRepo(dir: string): void {
