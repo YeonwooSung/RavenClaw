@@ -135,7 +135,28 @@ describe('TodoWrite', () => {
       { items: [{ text: 'orphan', status: 'pending' }] },
       makeCtx(root),
     )
-    expect(String(out).toLowerCase()).toMatch(/fail|store/)
+    expect(String(out).startsWith('TodoWrite failed:')).toBe(true)
+    expect(existsSync(todoJsonPath(root))).toBe(false)
+  })
+
+  test('fails closed when updateSessionTodos rejects and does not write todo.json', async () => {
+    const root = fixtureRoot()
+    const store = createMemoryStore()
+    await store.createSession(sessionRecord('sess_1', root))
+    await store.updateSessionTodos('sess_1', [
+      { id: 'old', text: 'keep', status: 'pending' },
+    ])
+    store.updateSessionTodos = async () => {
+      throw new Error('upsert rejected')
+    }
+    const out = await todoWriteTool.execute(
+      { items: [{ text: 'orphan', status: 'done' }] },
+      makeCtx(root, 'sess_1', store),
+    )
+    expect(String(out).startsWith('TodoWrite failed:')).toBe(true)
+    expect((await store.loadSession('sess_1')).session.todos).toEqual([
+      { id: 'old', text: 'keep', status: 'pending' },
+    ])
     expect(existsSync(todoJsonPath(root))).toBe(false)
   })
 
