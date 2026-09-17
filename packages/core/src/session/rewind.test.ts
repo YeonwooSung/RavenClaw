@@ -17,7 +17,13 @@ import type {
 import { enterSessionWorktree, exitSessionWorktree } from '../tools/session-worktree'
 import { createFileHistory } from './file-history'
 import { createMemoryStore } from './memory-store'
-import { dropLastUserTurn, formatRewindNotice, rewindLastTurn, rewindToCheckpoint } from './rewind'
+import {
+  dropLastUserTurn,
+  formatRewindNotice,
+  lastUserText,
+  rewindLastTurn,
+  rewindToCheckpoint,
+} from './rewind'
 import { createSqliteStore } from './sqlite-store'
 
 function user(id: string, text: string, createdAt: number): Message {
@@ -69,6 +75,25 @@ describe('formatRewindNotice', () => {
     expect(formatRewindNotice({ restored: ['a'], removed: ['b'] }, 3)).toBe(
       'undo: restored 1, removed 1; dropped 3 messages',
     )
+  })
+})
+
+describe('lastUserText', () => {
+  test('lastUserText concatenates text blocks and ignores images', () => {
+    expect(
+      lastUserText([
+        {
+          id: 'u',
+          role: 'user',
+          createdAt: 1,
+          blocks: [
+            { type: 'text', text: 'fix ' },
+            { type: 'image', mediaType: 'image/png', data: 'x' },
+            { type: 'text', text: 'login' },
+          ],
+        },
+      ]),
+    ).toBe('fix login')
   })
 })
 
@@ -378,6 +403,7 @@ describe('rewindToCheckpoint', () => {
 
     const result = await engine.rewindLast()
     expect(result.ok).toBe(true)
+    expect(result.droppedText).toBe('second')
     expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).toBe(turn1Sha)
     expect(engine.session.todos).toEqual([{ text: 'a', status: 'pending' }])
     const loaded = await store.loadSession(id)
@@ -385,6 +411,75 @@ describe('rewindToCheckpoint', () => {
     expect(loaded.messages.map((msg) => msg.role)).toEqual(['user', 'assistant'])
     const userText = loaded.messages[0]?.blocks[0]
     expect(userText && userText.type === 'text' ? userText.text : undefined).toBe('first')
+  })
+
+  test('rewindLast returns droppedText and refuses when a pending ask exists', async () => {
+    const cwd = tempDir('ravenclaw-rewind-dropped-')
+    initGitRepo(cwd)
+    const id = nextSession()
+    const entered = enterSessionWorktree(id, cwd)
+    expect(entered.ok).toBe(true)
+    expect(entered.job).toBeDefined()
+    const job = entered.job!
+    const store = createMemoryStore()
+    const sess = sessionRecord({
+      id,
+      cwd: job.worktreePath,
+      job,
+      jobAutoCommit: true,
+      todos: [{ text: 'a', status: 'pending' }],
+    })
+    await store.createSession(sess)
+    const engine = createSessionEngine({
+      session: sess,
+      provider: createFakeProvider([
+        [
+          { type: 'text_delta', text: 'one' },
+          { type: 'stop', reason: 'end' },
+        ],
+        [
+          { type: 'text_delta', text: 'two' },
+          { type: 'stop', reason: 'end' },
+        ],
+      ]),
+      store,
+      tools: [],
+      compact: defaultCompact({ enabled: false }),
+      model: defaultModel(),
+      maxRounds: 8,
+      bare: true,
+      async askUser() {
+        return 'deny'
+      },
+    })
+
+    writeFileSync(join(job.worktreePath, 't1.txt'), 'turn1\n')
+    const first = await drain(engine.submitMessage('first'))
+    expect(first.result).toEqual({ reason: 'completed' })
+
+    engine.session.todos = [
+      { text: 'a', status: 'pending' },
+      { text: 'b', status: 'pending' },
+    ]
+    writeFileSync(join(job.worktreePath, 't2.txt'), 'turn2\n')
+    const second = await drain(engine.submitMessage('second prompt'))
+    expect(second.result).toEqual({ reason: 'completed' })
+
+    const ok = await engine.rewindLast()
+    expect(ok.ok).toBe(true)
+    expect(ok.droppedText).toBe('second prompt')
+
+    await store.upsertPendingAsk({
+      callId: 'parked',
+      sessionId: engine.session.id,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Bash?',
+      input: { command: 'ls' },
+      createdAt: Date.now(),
+    })
+    const refused = await engine.rewindLast()
+    expect(refused).toEqual({ ok: false, notice: 'pending permission ask' })
   })
 
   test('rewinds to baseCommitSha when no earlier checkpoint remains', async () => {

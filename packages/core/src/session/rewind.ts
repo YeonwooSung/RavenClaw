@@ -15,6 +15,17 @@ export function dropLastUserTurn(messages: Message[]): Message[] {
   return messages.slice(0, lastUser)
 }
 
+export function lastUserText(messages: Message[]): string | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]
+    if (msg?.role !== 'user') continue
+    const parts = msg.blocks.filter((b) => b.type === 'text').map((b) => b.text)
+    const text = parts.join('')
+    return text === '' ? undefined : text
+  }
+  return undefined
+}
+
 export function formatRewindNotice(undo: UndoResult, dropped: number): string {
   if (undo.blocked === true) return 'a turn is in progress'
   const filePart = formatUndoNotice(undo)

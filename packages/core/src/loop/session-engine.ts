@@ -34,7 +34,7 @@ import {
 } from './pairing'
 import { forgetReadsNotInTail, markReadPath, recordReadFile, stampReadMtime } from '../tools/read-files'
 import type { TodoItem } from '../tools/todo'
-import { rewindLastTurn, rewindToCheckpoint } from '../session/rewind'
+import { lastUserText, rewindLastTurn, rewindToCheckpoint } from '../session/rewind'
 import {
   clearSessionJobError,
   maybeCommitJob,
@@ -483,6 +483,13 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
     },
 
     async rewindLast() {
+      const pending = await listOwnedPendingAsks()
+      for (const row of pending) {
+        if (!(await isCallPaired(row.callId, row.sessionId))) {
+          return { ok: false, notice: 'pending permission ask' }
+        }
+      }
+      const droppedText = lastUserText(messages)
       if (liveTurn) {
         return { ok: false, notice: 'a turn is in progress' }
       }
@@ -496,7 +503,9 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
           store: opts.store,
         })
         messages = result.messages
-        return { ok: result.ok, notice: result.notice }
+        return result.ok
+          ? { ok: true, notice: result.notice, ...(droppedText !== undefined ? { droppedText } : {}) }
+          : { ok: false, notice: result.notice }
       }
       const result = await rewindLastTurn({
         fileHistory,
@@ -506,7 +515,9 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         generation: session.compactGeneration,
       })
       messages = result.messages
-      return { ok: result.ok, notice: result.notice }
+      return result.ok
+        ? { ok: true, notice: result.notice, ...(droppedText !== undefined ? { droppedText } : {}) }
+        : { ok: false, notice: result.notice }
     },
 
     async *submitMessage(input: UserSubmitInput): AsyncGenerator<StreamEvent, RoundEnd> {
