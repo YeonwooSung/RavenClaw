@@ -15,7 +15,7 @@ import {
   type PendingAskAnswer,
   type PermissionMode,
   type SequencedStreamEvent,
-  openDraftPr,
+  applySessionDraftPr,
   type Message,
   type SessionEngine,
   type SessionJob,
@@ -657,41 +657,27 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
       if (!session.job) {
         return Response.json({ ok: false, notice: 'no job record' })
       }
-      const out = openDraftPr({
+      const store = loaded.runtime.store
+      const out = await applySessionDraftPr({
         job: session.job,
         cwd: session.job.worktreePath,
         ...(title !== undefined ? { title } : {}),
         ...(body !== undefined ? { body } : {}),
         ...(ctx.gh ? { gh: ctx.gh } : {}),
+        sessionId: session.id,
+        ...(store?.loadSession
+          ? { loadMessages: async () => (await store.loadSession!(session.id)).messages }
+          : {}),
+        ...(store?.persistAssistant
+          ? { persistAssistant: (id, message) => store.persistAssistant!(id, message) }
+          : {}),
+        ...(store?.persistToolCalls
+          ? { persistToolCalls: (id, message) => store.persistToolCalls!(id, message) }
+          : {}),
       })
       if (out.job) {
         session.job = out.job
-        await loaded.runtime.store?.upsertSession?.(session as SessionRecord)
-      }
-      if (out.ok && out.snapshot) {
-        try {
-          const loadedSession = await loaded.runtime.store?.loadSession?.(session.id)
-          const messages = loadedSession?.messages ?? []
-          for (let i = messages.length - 1; i >= 0; i--) {
-            const message = messages[i]
-            if (message?.role !== 'assistant') continue
-            message.blocks.push({
-              type: 'text',
-              text:
-                out.snapshot.url !== undefined
-                  ? `Draft PR: ${out.snapshot.url}`
-                  : `Draft PR: ${out.snapshot.title}`,
-            })
-            if (message.blocks.some((block) => block.type === 'tool_use')) {
-              await loaded.runtime.store?.persistToolCalls?.(session.id, message)
-            } else {
-              await loaded.runtime.store?.persistAssistant?.(session.id, message)
-            }
-            break
-          }
-        } catch {
-          // annotation must not fail /pr
-        }
+        await store?.upsertSession?.(session as SessionRecord)
       }
       const json: { ok: boolean; notice: string; snapshot?: typeof out.snapshot } = {
         ok: out.ok,

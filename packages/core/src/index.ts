@@ -117,7 +117,13 @@ export { createTaskV2Tools } from './tools/task-v2'
 export { createLspTool } from './tools/lsp'
 export { createStructuredOutputTool } from './tools/structured-output'
 export { rewindLastTurn, rewindToCheckpoint, dropLastUserTurn, formatRewindNotice } from './session/rewind'
-export { maybeCommitJob, openDraftPr, setJobAutoCommit, stampCheckpoint } from './session/job'
+export {
+  applySessionDraftPr,
+  maybeCommitJob,
+  openDraftPr,
+  setJobAutoCommit,
+  stampCheckpoint,
+} from './session/job'
 export type { DraftPrSnapshot, GhRunner } from './session/job'
 export { loadLifecycleHooks, LIFECYCLE_EVENTS } from './hooks/lifecycle'
 export { scanTeamOnboarding, ONBOARDING_USAGE_DAYS } from './onboarding/scan'

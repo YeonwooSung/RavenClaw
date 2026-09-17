@@ -39,12 +39,20 @@ export function openDraftPr(opts: {
     return { ok: false, notice: 'worktree is dirty' }
   }
 
-  const title = opts.title?.trim() || `raven: ${job.shadowBranch}`
-  const body = opts.body ?? ''
+  const suppliedTitle = opts.title !== undefined ? opts.title.trim() : undefined
+  const suppliedBody = opts.body
+  const title = suppliedTitle || `raven: ${job.shadowBranch}`
+  const body = suppliedBody ?? ''
   const gh = opts.gh ?? defaultGh
   const args =
     job.prNumber !== undefined
-      ? ['pr', 'edit', String(job.prNumber), '--title', title, '--body', body]
+      ? [
+          'pr',
+          'edit',
+          String(job.prNumber),
+          ...(suppliedTitle !== undefined && suppliedTitle !== '' ? ['--title', suppliedTitle] : []),
+          ...(suppliedBody !== undefined ? ['--body', suppliedBody] : []),
+        ]
       : [
           'pr',
           'create',
@@ -103,6 +111,61 @@ export function annotateDraftPr(
 ): void {
   const line = snapshot.url !== undefined ? `Draft PR: ${snapshot.url}` : `Draft PR: ${snapshot.title}`
   message.blocks.push({ type: 'text', text: line })
+}
+
+export function lastAssistantForPr(
+  messages: Message[],
+): Extract<Message, { role: 'assistant' }> | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]
+    if (message?.role === 'assistant') return message
+  }
+  return undefined
+}
+
+export async function applySessionDraftPr(opts: {
+  job: SessionJob
+  cwd: string
+  title?: string
+  body?: string
+  gh?: GhRunner
+  sessionId: string
+  loadMessages?: () => Promise<Message[]>
+  persistAssistant?: (
+    sessionId: string,
+    message: Extract<Message, { role: 'assistant' }>,
+  ) => Promise<void>
+  persistToolCalls?: (
+    sessionId: string,
+    message: Extract<Message, { role: 'assistant' }>,
+  ) => Promise<void>
+}): Promise<ReturnType<typeof openDraftPr>> {
+  let message: Extract<Message, { role: 'assistant' }> | undefined
+  try {
+    message = lastAssistantForPr((await opts.loadMessages?.()) ?? [])
+  } catch {
+    message = undefined
+  }
+  const out = openDraftPr({
+    job: opts.job,
+    cwd: opts.cwd,
+    ...(opts.title !== undefined ? { title: opts.title } : {}),
+    ...(opts.body !== undefined ? { body: opts.body } : {}),
+    ...(opts.gh ? { gh: opts.gh } : {}),
+    ...(message ? { message } : {}),
+  })
+  if (out.ok && message) {
+    try {
+      if (message.blocks.some((block) => block.type === 'tool_use')) {
+        await opts.persistToolCalls?.(opts.sessionId, message)
+      } else {
+        await opts.persistAssistant?.(opts.sessionId, message)
+      }
+    } catch {
+      // annotation persist must not fail /pr
+    }
+  }
+  return out
 }
 
 function defaultGh(args: string[], cwd: string): { ok: boolean; stdout: string; stderr: string } {

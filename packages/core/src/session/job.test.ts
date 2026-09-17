@@ -260,4 +260,23 @@ describe('openDraftPr', () => {
     expect(calls[0]).toContain('--title')
     expect(calls[0]).toContain('updated')
   })
+
+  test('openDraftPr edit without title/body does not send empty --body', () => {
+    const cwd = tempDir('ravenclaw-job-pr-edit-keep-')
+    initGitRepo(cwd)
+    const job = dummyJob(cwd)
+    const calls: string[][] = []
+    const gh = (args: string[]) => {
+      calls.push(args)
+      return { ok: true, stdout: 'https://github.com/o/r/pull/4\n', stderr: '' }
+    }
+    const first = openDraftPr({ job, cwd, title: 'first', body: 'keep me', gh })
+    expect(first.ok).toBe(true)
+    expect(job.prNumber).toBe(4)
+    const second = openDraftPr({ job, cwd, gh })
+    expect(second.ok).toBe(true)
+    expect(calls[1]?.slice(0, 3)).toEqual(['pr', 'edit', '4'])
+    expect(calls[1]).not.toContain('--body')
+    expect(calls[1]).not.toContain('--title')
+  })
 })

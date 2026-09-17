@@ -10,9 +10,9 @@ import {
   ravenclawHome,
   scanTeamOnboarding,
   setSkillDisabled,
+  applySessionDraftPr,
   enterSessionWorktree,
   getSessionWorktree,
-  openDraftPr,
   setJobAutoCommit,
 } from '@ravenclaw/core'
 import {
@@ -237,40 +237,20 @@ export async function dispatchSharedSlash(
         return 'handled'
       }
       const title = parsed.arg?.trim()
-      const out = openDraftPr({
+      const out = await applySessionDraftPr({
         job: session.job,
         cwd: session.job.worktreePath,
         ...(title ? { title } : {}),
         ...(host.gh ? { gh: host.gh } : {}),
+        sessionId: session.id,
+        loadMessages: async () => (await runtime.store.loadSession(session.id)).messages,
+        persistAssistant: (sessionId, message) => runtime.store.persistAssistant(sessionId, message),
+        persistToolCalls: (sessionId, message) => runtime.store.persistToolCalls(sessionId, message),
       })
       if (out.job) {
         session.job = out.job
         session.updatedAt = Date.now()
         await runtime.store.upsertSession(session)
-      }
-      if (out.ok && out.snapshot) {
-        try {
-          const loaded = await runtime.store.loadSession(session.id)
-          for (let i = loaded.messages.length - 1; i >= 0; i--) {
-            const message = loaded.messages[i]
-            if (message?.role !== 'assistant') continue
-            message.blocks.push({
-              type: 'text',
-              text:
-                out.snapshot.url !== undefined
-                  ? `Draft PR: ${out.snapshot.url}`
-                  : `Draft PR: ${out.snapshot.title}`,
-            })
-            if (message.blocks.some((block) => block.type === 'tool_use')) {
-              await runtime.store.persistToolCalls(session.id, message)
-            } else {
-              await runtime.store.persistAssistant(session.id, message)
-            }
-            break
-          }
-        } catch {
-          // annotation must not fail /pr
-        }
       }
       host.notice(out.notice)
       return 'handled'
