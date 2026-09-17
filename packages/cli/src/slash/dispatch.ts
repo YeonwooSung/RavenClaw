@@ -12,6 +12,7 @@ import {
   setSkillDisabled,
   enterSessionWorktree,
   getSessionWorktree,
+  openDraftPr,
   setJobAutoCommit,
 } from '@ravenclaw/core'
 import {
@@ -55,6 +56,7 @@ export interface SlashHost {
   onModelChanged?(model: string): void
   onModeChanged?(mode: string): void
   writeOsc52?(text: string): void
+  gh?: (args: string[], cwd: string) => { ok: boolean; stdout: string; stderr: string }
 }
 
 export async function dispatchSharedSlash(
@@ -226,6 +228,51 @@ export async function dispatchSharedSlash(
       runtime.cwd = entered.cwd
       await runtime.store.upsertSession(session)
       host.notice(`job ${entered.job?.shadowBranch ?? entered.cwd}`)
+      return 'handled'
+    }
+    case 'pr': {
+      const session = runtime.engine.session
+      if (!session.job) {
+        host.notice('no job record')
+        return 'handled'
+      }
+      const title = parsed.arg?.trim()
+      const out = openDraftPr({
+        job: session.job,
+        cwd: session.job.worktreePath,
+        ...(title ? { title } : {}),
+        ...(host.gh ? { gh: host.gh } : {}),
+      })
+      if (out.job) {
+        session.job = out.job
+        session.updatedAt = Date.now()
+        await runtime.store.upsertSession(session)
+      }
+      if (out.ok && out.snapshot) {
+        try {
+          const loaded = await runtime.store.loadSession(session.id)
+          for (let i = loaded.messages.length - 1; i >= 0; i--) {
+            const message = loaded.messages[i]
+            if (message?.role !== 'assistant') continue
+            message.blocks.push({
+              type: 'text',
+              text:
+                out.snapshot.url !== undefined
+                  ? `Draft PR: ${out.snapshot.url}`
+                  : `Draft PR: ${out.snapshot.title}`,
+            })
+            if (message.blocks.some((block) => block.type === 'tool_use')) {
+              await runtime.store.persistToolCalls(session.id, message)
+            } else {
+              await runtime.store.persistAssistant(session.id, message)
+            }
+            break
+          }
+        } catch {
+          // annotation must not fail /pr
+        }
+      }
+      host.notice(out.notice)
       return 'handled'
     }
     case 'copy':

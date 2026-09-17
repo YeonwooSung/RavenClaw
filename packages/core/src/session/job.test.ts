@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Message, SessionJob, SessionRecord } from '../types'
 import { enterSessionWorktree, exitSessionWorktree } from '../tools/session-worktree'
-import { maybeCommitJob, setJobAutoCommit, stampCheckpoint } from './job'
+import { maybeCommitJob, openDraftPr, setJobAutoCommit, stampCheckpoint } from './job'
 
 const tempDirs: string[] = []
 const sessionIds: string[] = []
@@ -176,5 +176,88 @@ describe('stampCheckpoint', () => {
     expect(message.checkpoint?.commitSha).toBe(git(job.worktreePath, ['rev-parse', 'HEAD']))
     expect(message.checkpoint?.dirty).toBe(false)
     expect(message.checkpoint?.todoSnapshot).toEqual([])
+  })
+})
+
+describe('openDraftPr', () => {
+  test('openDraftPr on a clean shadow records a url', () => {
+    const cwd = tempDir('ravenclaw-job-pr-clean-')
+    initGitRepo(cwd)
+    const job = dummyJob(cwd)
+    const calls: string[][] = []
+    const gh = (args: string[]) => {
+      calls.push(args)
+      return { ok: true, stdout: 'https://github.com/o/r/pull/4\n', stderr: '' }
+    }
+    const out = openDraftPr({ job, cwd, gh })
+    expect(out.ok).toBe(true)
+    expect(out.snapshot?.url).toContain('/pull/4')
+    expect(out.job?.prNumber).toBe(4)
+    expect(job.prNumber).toBe(4)
+    expect(job.prUrl).toContain('/pull/4')
+    expect(calls[0]?.[0]).toBe('pr')
+    expect(calls[0]?.[1]).toBe('create')
+    expect(calls[0]).toContain('--draft')
+    expect(calls[0]).toContain('--base')
+    expect(calls[0]).toContain('main')
+    expect(calls[0]).toContain('--head')
+    expect(calls[0]).toContain('raven/x')
+  })
+
+  test('openDraftPr without a job record notices and does nothing', () => {
+    const calls: string[][] = []
+    const out = openDraftPr({
+      job: undefined as never,
+      cwd: '/tmp',
+      gh: (args) => {
+        calls.push(args)
+        return { ok: true, stdout: '', stderr: '' }
+      },
+    })
+    expect(out.ok).toBe(false)
+    expect(out.notice).toBe('no job record')
+    expect(calls).toEqual([])
+  })
+
+  test('openDraftPr on a dirty worktree notices and does nothing', () => {
+    const cwd = tempDir('ravenclaw-job-pr-dirty-')
+    initGitRepo(cwd)
+    writeFileSync(join(cwd, 'dirty.txt'), 'x\n')
+    const calls: string[][] = []
+    const out = openDraftPr({
+      job: dummyJob(cwd),
+      cwd,
+      gh: (args) => {
+        calls.push(args)
+        return { ok: true, stdout: 'https://github.com/o/r/pull/4\n', stderr: '' }
+      },
+    })
+    expect(out.ok).toBe(false)
+    expect(out.notice).toBe('worktree is dirty')
+    expect(calls).toEqual([])
+  })
+
+  test('openDraftPr edits when the job already has a prNumber', () => {
+    const cwd = tempDir('ravenclaw-job-pr-edit-')
+    initGitRepo(cwd)
+    const job = dummyJob(cwd)
+    job.prNumber = 4
+    job.prUrl = 'https://github.com/o/r/pull/4'
+    const calls: string[][] = []
+    const out = openDraftPr({
+      job,
+      cwd,
+      title: 'updated',
+      body: 'body',
+      gh: (args) => {
+        calls.push(args)
+        return { ok: true, stdout: 'https://github.com/o/r/pull/4\n', stderr: '' }
+      },
+    })
+    expect(out.ok).toBe(true)
+    expect(out.job?.prNumber).toBe(4)
+    expect(calls[0]?.slice(0, 3)).toEqual(['pr', 'edit', '4'])
+    expect(calls[0]).toContain('--title')
+    expect(calls[0]).toContain('updated')
   })
 })

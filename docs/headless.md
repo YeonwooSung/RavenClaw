@@ -87,6 +87,7 @@ Session routes use an engine that does **not** force `dontAsk`. All require the 
 - `POST /v1/session/:id/cancel` — `engine.abort()`
 - `POST /v1/session/:id/compact` — `engine.compactNow()`
 - `POST /v1/session/:id/resolve` — `{ callId, allow: boolean }` → live waiter or `applyAskAnswer`; 200 `{ status }` or 404 if unmatched
+- `POST /v1/session/:id/pr` — optional `{ title, body }` → draft PR from the session shadow (default off; never a model turn). 200 `{ ok, notice, snapshot? }`. Missing job or dirty tree is a notice, not 5xx.
 
 Crash-resolve: after process death, `POST …/resolve` → `applyAskAnswer` **pairs only** (writes the tool result row). It does not resume the model. The client must `POST …/submit` to continue. Live `/resolve` that hits an in-process waiter still unblocks that turn.
 

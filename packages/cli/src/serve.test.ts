@@ -1,9 +1,14 @@
-import { describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'bun:test'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { spawnSync } from 'node:child_process'
 import {
   createMemoryStore,
   PersistError,
   SessionLockError,
   type PendingAsk,
+  type SessionJob,
   type StreamEvent,
   type UserSubmitInput,
 } from '@ravenclaw/core'
@@ -924,7 +929,134 @@ describe('handleServeRequest', () => {
     const res = await handleServeRequest(new Request('http://127.0.0.1/v1/session/s1'), ctx)
     expect(res.status).toBe(401)
   })
+
+  test('POST /v1/session/:id/pr without Bearer is 401', async () => {
+    const ctx = makeServeCtx()
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/pr', { method: 'POST' }),
+      ctx,
+    )
+    expect(res.status).toBe(401)
+  })
+
+  test('POST /v1/session/:id/pr without a job record notices and does not submit', async () => {
+    const ghCalls: string[][] = []
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/pr', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+        body: JSON.stringify({ title: 't', body: 'b' }),
+      }),
+      {
+        ...ctx,
+        gh(args) {
+          ghCalls.push(args)
+          return { ok: true, stdout: 'https://github.com/o/r/pull/4\n', stderr: '' }
+        },
+      },
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: false, notice: 'no job record' })
+    expect(ghCalls).toEqual([])
+    expect(ctx.submitted).toEqual([])
+  })
+
+  test('POST /v1/session/:id/pr on a dirty worktree notices and does not submit', async () => {
+    const cwd = tempGitRepo(true)
+    const ghCalls: string[][] = []
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const runtime = await ctx.runtimeForSession('s1')
+    if (!runtime) throw new Error('expected runtime')
+    runtime.engine.session = { id: 's1', permissionMode: 'default', job: jobAt(cwd) }
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/pr', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+      }),
+      {
+        ...ctx,
+        gh(args) {
+          ghCalls.push(args)
+          return { ok: true, stdout: 'https://github.com/o/r/pull/4\n', stderr: '' }
+        },
+      },
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: false, notice: 'worktree is dirty' })
+    expect(ghCalls).toEqual([])
+    expect(ctx.submitted).toEqual([])
+  })
+
+  test('POST /v1/session/:id/pr on a clean shadow records a url', async () => {
+    const cwd = tempGitRepo(false)
+    const ghCalls: string[][] = []
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const runtime = await ctx.runtimeForSession('s1')
+    if (!runtime) throw new Error('expected runtime')
+    runtime.engine.session = { id: 's1', permissionMode: 'default', job: jobAt(cwd) }
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/pr', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+        body: JSON.stringify({ title: 'draft', body: 'from serve' }),
+      }),
+      {
+        ...ctx,
+        gh(args) {
+          ghCalls.push(args)
+          return { ok: true, stdout: 'https://github.com/o/r/pull/4\n', stderr: '' }
+        },
+      },
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      ok: boolean
+      notice: string
+      snapshot?: { url?: string }
+    }
+    expect(body.ok).toBe(true)
+    expect(body.snapshot?.url).toContain('/pull/4')
+    expect(runtime.engine.session.job?.prNumber).toBe(4)
+    expect(ghCalls[0]?.[0]).toBe('pr')
+    expect(ghCalls[0]?.[1]).toBe('create')
+    expect(ctx.submitted).toEqual([])
+  })
 })
+
+const serveTempDirs: string[] = []
+
+afterEach(() => {
+  while (serveTempDirs.length > 0) {
+    const dir = serveTempDirs.pop()
+    if (dir) rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+function tempGitRepo(dirty = false): string {
+  const dir = mkdtempSync(join(tmpdir(), 'ravenclaw-serve-pr-'))
+  serveTempDirs.push(dir)
+  const run = (args: string[]) => {
+    const result = spawnSync('git', args, { cwd: dir, encoding: 'utf8' })
+    expect(result.status).toBe(0)
+  }
+  run(['init'])
+  run(['config', 'user.email', 'test@example.com'])
+  run(['config', 'user.name', 'Test'])
+  run(['config', 'commit.gpgsign', 'false'])
+  run(['commit', '--allow-empty', '-m', 'init'])
+  if (dirty) writeFileSync(join(dir, 'dirty.txt'), 'x\n')
+  return dir
+}
+
+function jobAt(cwd: string): SessionJob {
+  return {
+    baseBranch: 'main',
+    shadowBranch: 'raven/x',
+    baseCommitSha: 'abc',
+    worktreePath: cwd,
+  }
+}
 
 describe('createServeAskHost', () => {
   test('parks askUser until settle and ignores unknown callIds', async () => {

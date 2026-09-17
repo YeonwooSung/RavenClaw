@@ -15,8 +15,11 @@ import {
   type PendingAskAnswer,
   type PermissionMode,
   type SequencedStreamEvent,
+  openDraftPr,
+  type Message,
   type SessionEngine,
   type SessionJob,
+  type SessionRecord,
   type SessionStore,
   type StreamEvent,
   type ConfigFlags,
@@ -165,6 +168,16 @@ export type ServeRuntime = {
       afterSeq: number,
     ) => Promise<SequencedStreamEvent[]>
     lastStreamSeq?: (sessionId: string) => Promise<number>
+    upsertSession?: (session: SessionRecord) => Promise<void>
+    loadSession?: (sessionId: string) => Promise<{ session: SessionRecord; messages: Message[] }>
+    persistAssistant?: (
+      sessionId: string,
+      message: Extract<Message, { role: 'assistant' }>,
+    ) => Promise<void>
+    persistToolCalls?: (
+      sessionId: string,
+      message: Extract<Message, { role: 'assistant' }>,
+    ) => Promise<void>
   }
 }
 
@@ -225,6 +238,7 @@ export type ServeRequestContext = {
   runtimeForSession: (sessionId: string) => Promise<ServeRuntime | undefined>
   createSession?: (sessionId: string) => Promise<ServeRuntime>
   settleAsk?: (callId: string, answer: PendingAskAnswer) => boolean
+  gh?: (args: string[], cwd: string) => { ok: boolean; stdout: string; stderr: string }
 }
 
 export function createSessionEventHub(
@@ -411,7 +425,7 @@ async function readJsonBody(req: Request): Promise<{ ok: true; body: unknown } |
   }
 }
 
-const SESSION_PATH = /^\/v1\/session\/([^/]+)\/(stream|cancel|compact|resolve|submit)$/
+const SESSION_PATH = /^\/v1\/session\/([^/]+)\/(stream|cancel|compact|resolve|submit|pr)$/
 const SESSION_ID_PATH = /^\/v1\/session\/([^/]+)$/
 
 async function loadSessionRuntime(
@@ -619,6 +633,72 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
         }
       })
       return Response.json({ accepted: true, sessionId: sid }, { status: 202 })
+    }
+    if (req.method === 'POST' && action === 'pr') {
+      const loaded = await loadSessionRuntime(ctx, sessionId)
+      if (!loaded.ok) return loaded.res
+      let title: string | undefined
+      let body: string | undefined
+      const raw = await req.text()
+      if (raw.trim() !== '') {
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(raw) as unknown
+        } catch {
+          return Response.json({ error: 'invalid json' }, { status: 400 })
+        }
+        if (parsed !== null && typeof parsed === 'object') {
+          const rec = parsed as Record<string, unknown>
+          if (typeof rec.title === 'string') title = rec.title
+          if (typeof rec.body === 'string') body = rec.body
+        }
+      }
+      const session = loaded.runtime.engine.session
+      if (!session.job) {
+        return Response.json({ ok: false, notice: 'no job record' })
+      }
+      const out = openDraftPr({
+        job: session.job,
+        cwd: session.job.worktreePath,
+        ...(title !== undefined ? { title } : {}),
+        ...(body !== undefined ? { body } : {}),
+        ...(ctx.gh ? { gh: ctx.gh } : {}),
+      })
+      if (out.job) {
+        session.job = out.job
+        await loaded.runtime.store?.upsertSession?.(session as SessionRecord)
+      }
+      if (out.ok && out.snapshot) {
+        try {
+          const loadedSession = await loaded.runtime.store?.loadSession?.(session.id)
+          const messages = loadedSession?.messages ?? []
+          for (let i = messages.length - 1; i >= 0; i--) {
+            const message = messages[i]
+            if (message?.role !== 'assistant') continue
+            message.blocks.push({
+              type: 'text',
+              text:
+                out.snapshot.url !== undefined
+                  ? `Draft PR: ${out.snapshot.url}`
+                  : `Draft PR: ${out.snapshot.title}`,
+            })
+            if (message.blocks.some((block) => block.type === 'tool_use')) {
+              await loaded.runtime.store?.persistToolCalls?.(session.id, message)
+            } else {
+              await loaded.runtime.store?.persistAssistant?.(session.id, message)
+            }
+            break
+          }
+        } catch {
+          // annotation must not fail /pr
+        }
+      }
+      const json: { ok: boolean; notice: string; snapshot?: typeof out.snapshot } = {
+        ok: out.ok,
+        notice: out.notice,
+      }
+      if (out.snapshot) json.snapshot = out.snapshot
+      return Response.json(json)
     }
     return Response.json({ error: 'not found' }, { status: 404 })
   }

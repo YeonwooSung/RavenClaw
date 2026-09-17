@@ -150,6 +150,7 @@ describe('handleSlashCommand', () => {
       'rewind',
       'diff',
       'job',
+      'pr',
       'steer',
       'add-dir',
       'effort',

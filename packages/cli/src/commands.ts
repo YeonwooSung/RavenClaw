@@ -35,6 +35,7 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
   { name: 'rewind', usage: '/rewind', summary: 'undo last turn files and drop that conversation turn' },
   { name: 'diff', usage: '/diff [n|close]', summary: 'open working-tree git diff panel' },
   { name: 'job', usage: '/job [name] | /job commit on|off', summary: 'enter a named raven/* job worktree; flip opt-in turn-end commit' },
+  { name: 'pr', usage: '/pr [title]', summary: 'open or update a draft PR from the session shadow branch' },
   { name: 'steer', usage: '/steer <text>', summary: 'inject text into the live turn (next tool round)' },
   {
     name: 'add-dir',
