@@ -24,6 +24,23 @@ export function parseTurnRequest(body: unknown): TurnRequest {
   return { ok: true, text, sessionKey: key }
 }
 
+export function parseCancelBody(
+  body: unknown,
+): { ok: true; turnId?: string } | { ok: false; error: string } {
+  if (body === undefined || body === null) return { ok: true }
+  if (typeof body !== 'object' || Array.isArray(body)) {
+    return { ok: false, error: 'body must be an object' }
+  }
+  const rec = body as Record<string, unknown>
+  if (rec.turnId === undefined) return { ok: true }
+  if (typeof rec.turnId !== 'string') {
+    return { ok: false, error: 'turnId must be a string' }
+  }
+  const turnId = rec.turnId.trim()
+  if (turnId === '') return { ok: true }
+  return { ok: true, turnId }
+}
+
 export function parseResolveBody(
   body: unknown,
 ): { ok: true; callId: string; allow: boolean } | { ok: false; error: string } {

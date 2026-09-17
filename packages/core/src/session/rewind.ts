@@ -1,4 +1,5 @@
-import type { Message, SessionStore } from '../types'
+import { runGit } from '../tools/session-worktree'
+import type { JobCheckpoint, Message, SessionRecord, SessionStore } from '../types'
 import { formatUndoNotice, type FileHistory, type UndoResult } from './file-history'
 
 export function dropLastUserTurn(messages: Message[]): Message[] {
@@ -59,4 +60,62 @@ export async function rewindLastTurn(opts: {
   }
 
   return { ok: true, notice: formatRewindNotice(undo, droppedIds.length), messages: next }
+}
+
+function lastAssistantCheckpoint(messages: Message[]): JobCheckpoint | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]
+    if (msg?.role === 'assistant' && msg.checkpoint) return msg.checkpoint
+  }
+  return undefined
+}
+
+export async function rewindToCheckpoint(opts: {
+  session: SessionRecord
+  messages: Message[]
+  store: SessionStore
+}): Promise<{ ok: boolean; notice: string; messages: Message[] }> {
+  const job = opts.session.job
+  if (!job) {
+    return { ok: false, notice: 'nothing to rewind', messages: opts.messages }
+  }
+
+  const next = dropLastUserTurn(opts.messages)
+  const droppedIds = opts.messages.slice(next.length).map((msg) => msg.id)
+  const checkpoint = lastAssistantCheckpoint(next)
+  const sha = checkpoint?.commitSha ?? job.baseCommitSha
+  const reset = runGit(job.worktreePath, ['reset', '--hard', sha])
+  if (!reset.ok) {
+    const detail = reset.stderr.trim() || reset.stdout.trim() || 'git reset failed'
+    return { ok: false, notice: `rewind reset failed: ${detail}`, messages: opts.messages }
+  }
+
+  if (droppedIds.length > 0) {
+    try {
+      await opts.store.recordCompact(
+        opts.session.id,
+        opts.session.compactGeneration,
+        'rewind',
+        droppedIds,
+      )
+    } catch {
+      return { ok: false, notice: 'rewind persist failed', messages: next }
+    }
+  }
+
+  opts.session.todos = checkpoint
+    ? checkpoint.todoSnapshot.map((item) => ({ ...item }))
+    : []
+  opts.session.updatedAt = Date.now()
+  try {
+    await opts.store.upsertSession(opts.session)
+  } catch {
+    return { ok: false, notice: 'rewind persist failed', messages: next }
+  }
+
+  return {
+    ok: true,
+    notice: formatRewindNotice({ restored: [], removed: [] }, droppedIds.length),
+    messages: next,
+  }
 }

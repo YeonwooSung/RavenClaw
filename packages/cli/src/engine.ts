@@ -313,9 +313,10 @@ export function newSessionRecord(opts: {
   permissionMode: PermissionMode
   funding?: Funding
   id?: string
+  jobAutoCommit?: boolean
 }): SessionRecord {
   const now = Date.now()
-  return {
+  const session: SessionRecord = {
     id: opts.id ?? crypto.randomUUID(),
     createdAt: now,
     updatedAt: now,
@@ -326,6 +327,8 @@ export function newSessionRecord(opts: {
     usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
     funding: opts.funding ?? 'byok',
   }
+  if (opts.jobAutoCommit === true) session.jobAutoCommit = true
+  return session
 }
 
 export interface AskBridge {
@@ -401,6 +404,7 @@ export async function openEngine(opts: {
     model: opts.config.model,
     permissionMode: opts.config.permissionMode,
     funding: opts.funding ?? 'byok',
+    jobAutoCommit: opts.config.job?.autoCommit === true,
   })
   if (!opts.session) await opts.store.createSession(session)
   const lockHolderId = opts.lockHolderId ?? crypto.randomUUID()
@@ -802,6 +806,7 @@ export async function bootCli(
     const entered = enterSessionWorktree(engine.session.id, cwd, name)
     if (entered.ok) {
       engine.session.cwd = entered.cwd
+      if (entered.job) engine.session.job = entered.job
       await store.upsertSession(engine.session)
       return {
         engine,
@@ -933,6 +938,7 @@ export async function openNewSession(
     model: runtime.config.model,
     permissionMode: runtime.config.permissionMode,
     funding,
+    jobAutoCommit: runtime.config.job?.autoCommit === true,
     ...(opts?.sessionId !== undefined ? { id: opts.sessionId } : {}),
   })
   await runtime.store.createSession(session)
@@ -1072,8 +1078,11 @@ function attachRavenclawLog(engine: SessionEngine, log: RavenclawLog): SessionEn
     reloadSystem(system) {
       engine.reloadSystem(system)
     },
-    abort() {
-      engine.abort()
+    abort(kind) {
+      engine.abort(kind)
+    },
+    liveTurnId() {
+      return engine.liveTurnId()
     },
     async close(closeOpts) {
       try {

@@ -7,9 +7,11 @@ import {
 } from '../types'
 import type {
   Funding,
+  JobCheckpoint,
   Message,
   PermissionMode,
   PermissionRule,
+  SessionJob,
   SessionListFilter,
   SessionRecord,
   SessionStore,
@@ -17,6 +19,7 @@ import type {
 } from '../types'
 import { clipAgentMailBody } from '../tasks/mailbox'
 import { repairRoleAlternation } from '../loop/repair'
+import { parseTodoItems, type TodoItem } from '../tools/todo'
 import { applyMigrations } from './schema'
 import {
   deletePendingAskRow,
@@ -24,6 +27,12 @@ import {
   listPendingAskRows,
   upsertPendingAskRow,
 } from './pending-asks'
+import {
+  appendStreamEventRow,
+  deleteStreamEventsBySession,
+  lastStreamSeqRow,
+  listStreamEventRowsAfter,
+} from './stream-events'
 import {
   indexMessageFts,
   searchMessages,
@@ -44,6 +53,9 @@ type SessionRow = {
   title: string | null
   parent_session_id: string | null
   funding: string
+  todos_json: string | null
+  job_json: string | null
+  job_auto_commit: number
 }
 
 type MessageRow = {
@@ -57,6 +69,7 @@ type MessageRow = {
   persist_path: string | null
   usage_json: string | null
   read_mtime_ms: number | null
+  checkpoint_json: string | null
   active: number
   generation: number
 }
@@ -143,7 +156,66 @@ function sessionFromRow(row: SessionRow): SessionRecord {
   if (row.pre_plan_mode != null) session.prePlanMode = row.pre_plan_mode as PermissionMode
   if (row.title != null) session.title = row.title
   if (row.parent_session_id != null) session.parentSessionId = row.parent_session_id
+  const todos = todosFromJson(row.todos_json)
+  if (todos !== undefined) session.todos = todos
+  const job = jobFromJson(row.job_json)
+  if (job !== undefined) session.job = job
+  if (row.job_auto_commit === 1) session.jobAutoCommit = true
   return session
+}
+
+function jobFromJson(raw: string | null): SessionJob | undefined {
+  if (raw == null) return undefined
+  try {
+    const parsed = JSON.parse(raw) as Partial<SessionJob>
+    if (
+      typeof parsed.baseBranch !== 'string' ||
+      typeof parsed.shadowBranch !== 'string' ||
+      typeof parsed.baseCommitSha !== 'string' ||
+      typeof parsed.worktreePath !== 'string'
+    ) {
+      return undefined
+    }
+    const job: SessionJob = {
+      baseBranch: parsed.baseBranch,
+      shadowBranch: parsed.shadowBranch,
+      baseCommitSha: parsed.baseCommitSha,
+      worktreePath: parsed.worktreePath,
+    }
+    if (typeof parsed.prNumber === 'number') job.prNumber = parsed.prNumber
+    if (typeof parsed.prUrl === 'string') job.prUrl = parsed.prUrl
+    return job
+  } catch {
+    return undefined
+  }
+}
+
+function todosFromJson(raw: string | null): TodoItem[] | undefined {
+  if (raw == null) return undefined
+  try {
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return undefined
+    return parseTodoItems(parsed)
+  } catch {
+    return undefined
+  }
+}
+
+function checkpointFromJson(raw: string | null): JobCheckpoint | undefined {
+  if (raw == null) return undefined
+  try {
+    const parsed = JSON.parse(raw) as Partial<JobCheckpoint>
+    if (typeof parsed.commitSha !== 'string' || typeof parsed.dirty !== 'boolean') {
+      return undefined
+    }
+    return {
+      commitSha: parsed.commitSha,
+      todoSnapshot: parseTodoItems(parsed.todoSnapshot),
+      dirty: parsed.dirty,
+    }
+  } catch {
+    return undefined
+  }
 }
 
 function messageFromRow(row: MessageRow): Message {
@@ -164,6 +236,8 @@ function messageFromRow(row: MessageRow): Message {
       createdAt: row.created_at,
     }
     if (row.usage_json != null) message.usage = JSON.parse(row.usage_json) as TokenUsage
+    const checkpoint = checkpointFromJson(row.checkpoint_json)
+    if (checkpoint) message.checkpoint = checkpoint
     return message
   }
   if (row.role === 'tool') {
@@ -200,6 +274,9 @@ function sessionBind(session: SessionRecord) {
     $title: session.title ?? null,
     $parent_session_id: session.parentSessionId ?? null,
     $funding: session.funding,
+    $todos_json: session.todos !== undefined ? JSON.stringify(session.todos) : null,
+    $job_json: session.job !== undefined ? JSON.stringify(session.job) : null,
+    $job_auto_commit: session.jobAutoCommit === true ? 1 : 0,
   }
 }
 
@@ -223,6 +300,10 @@ function messageBind(sessionId: string, message: Message) {
     $read_mtime_ms:
       message.role === 'tool' && message.readMtimeMs !== undefined
         ? message.readMtimeMs
+        : null,
+    $checkpoint_json:
+      message.role === 'assistant' && message.checkpoint !== undefined
+        ? JSON.stringify(message.checkpoint)
         : null,
   }
 }
@@ -259,19 +340,23 @@ export function createSqliteStore(dbPath: string): SessionStore {
   const insertSession = db.query(
     `INSERT INTO sessions (
        id, created_at, updated_at, cwd, model, permission_mode, pre_plan_mode,
-       compact_generation, usage_json, title, parent_session_id, funding
+       compact_generation, usage_json, title, parent_session_id, funding, todos_json,
+       job_json, job_auto_commit
      ) VALUES (
        $id, $created_at, $updated_at, $cwd, $model, $permission_mode, $pre_plan_mode,
-       $compact_generation, $usage_json, $title, $parent_session_id, $funding
+       $compact_generation, $usage_json, $title, $parent_session_id, $funding, $todos_json,
+       $job_json, $job_auto_commit
      )`,
   )
   const upsertSessionSql = db.query(
     `INSERT INTO sessions (
        id, created_at, updated_at, cwd, model, permission_mode, pre_plan_mode,
-       compact_generation, usage_json, title, parent_session_id, funding
+       compact_generation, usage_json, title, parent_session_id, funding, todos_json,
+       job_json, job_auto_commit
      ) VALUES (
        $id, $created_at, $updated_at, $cwd, $model, $permission_mode, $pre_plan_mode,
-       $compact_generation, $usage_json, $title, $parent_session_id, $funding
+       $compact_generation, $usage_json, $title, $parent_session_id, $funding, $todos_json,
+       $job_json, $job_auto_commit
      )
      ON CONFLICT(id) DO UPDATE SET
        created_at = excluded.created_at,
@@ -284,17 +369,38 @@ export function createSqliteStore(dbPath: string): SessionStore {
        usage_json = excluded.usage_json,
        title = excluded.title,
        parent_session_id = excluded.parent_session_id,
-       funding = excluded.funding`,
+       funding = excluded.funding,
+       todos_json = excluded.todos_json,
+       job_json = excluded.job_json,
+       job_auto_commit = excluded.job_auto_commit`,
+  )
+  const updateSessionTodosSql = db.query(
+    `UPDATE sessions SET todos_json = ?, updated_at = ? WHERE id = ?`,
   )
   const selectSession = db.query(`SELECT * FROM sessions WHERE id = ?`)
   const insertMessage = db.query(
     `INSERT INTO messages (
        id, session_id, created_at, role, blocks_json, tool_use_id, ok,
-       persist_path, usage_json, read_mtime_ms, active, generation
+       persist_path, usage_json, read_mtime_ms, checkpoint_json, active, generation
      ) VALUES (
        $id, $session_id, $created_at, $role, $blocks_json, $tool_use_id, $ok,
-       $persist_path, $usage_json, $read_mtime_ms, 1, 0
+       $persist_path, $usage_json, $read_mtime_ms, $checkpoint_json, 1, 0
      )`,
+  )
+  const selectMessageById = db.query(`SELECT * FROM messages WHERE id = ?`)
+  const updateMessage = db.query(
+    `UPDATE messages SET
+       session_id = $session_id,
+       created_at = $created_at,
+       role = $role,
+       blocks_json = $blocks_json,
+       tool_use_id = $tool_use_id,
+       ok = $ok,
+       persist_path = $persist_path,
+       usage_json = $usage_json,
+       read_mtime_ms = $read_mtime_ms,
+       checkpoint_json = $checkpoint_json
+     WHERE id = $id`,
   )
   const upsertTool = db.query(
     `INSERT INTO messages (
@@ -437,6 +543,48 @@ export function createSqliteStore(dbPath: string): SessionStore {
     indexMessageFts(db, sessionId, message, bind.$blocks_json)
   }
 
+  function assistantPersistKind(
+    message: Extract<Message, { role: 'assistant' }>,
+  ): 'assistant' | 'tool_calls' {
+    return hasToolUse(message) ? 'tool_calls' : 'assistant'
+  }
+
+  function existingAssistantPersistKind(row: MessageRow): 'assistant' | 'tool_calls' | undefined {
+    if (row.role !== 'assistant') return undefined
+    try {
+      const blocks = JSON.parse(row.blocks_json) as Array<{ type?: string }>
+      return blocks.some((block) => block.type === 'tool_use') ? 'tool_calls' : 'assistant'
+    } catch {
+      return 'assistant'
+    }
+  }
+
+  function persistAssistantRow(
+    sessionId: string,
+    message: Extract<Message, { role: 'assistant' }>,
+    kind: 'assistant' | 'tool_calls',
+  ): void {
+    if (assistantPersistKind(message) !== kind) {
+      throw new PersistError(
+        'unknown',
+        kind === 'tool_calls'
+          ? 'persistToolCalls requires tool_use'
+          : 'persistAssistant cannot write tool_use',
+      )
+    }
+    const existing = selectMessageById.get(message.id) as MessageRow | null
+    if (existing) {
+      if (existingAssistantPersistKind(existing) !== kind) {
+        throw new PersistError('unknown', 'assistant row already persisted')
+      }
+      const bind = messageBind(sessionId, message)
+      updateMessage.run(bind)
+      indexMessageFts(db, sessionId, message, bind.$blocks_json)
+      return
+    }
+    insertMessageRow(sessionId, message)
+  }
+
   const persistToolsTx = db.transaction(
     (sessionId: string, msgs: Array<Extract<Message, { role: 'tool' }>>) => {
       for (const msg of msgs) {
@@ -492,6 +640,35 @@ export function createSqliteStore(dbPath: string): SessionStore {
       await withWrite(async () => {
         upsertSessionSql.run(sessionBind(session))
       })
+    },
+
+    async updateSessionTodos(sessionId, todos) {
+      await withWrite(async () => {
+        const result = updateSessionTodosSql.run(JSON.stringify(todos), Date.now(), sessionId)
+        if (result.changes === 0) {
+          throw new PersistError('unknown', `session not found: ${sessionId}`)
+        }
+      })
+    },
+
+    async appendStreamEvent(sessionId, event) {
+      return withWrite(async () => beginImmediate(() => appendStreamEventRow(db, sessionId, event)))
+    },
+
+    async listStreamEventsAfter(sessionId, afterSeq) {
+      try {
+        return listStreamEventRowsAfter(db, sessionId, afterSeq)
+      } catch (error) {
+        throw toPersistError(error)
+      }
+    },
+
+    async lastStreamSeq(sessionId) {
+      try {
+        return lastStreamSeqRow(db, sessionId)
+      } catch (error) {
+        throw toPersistError(error)
+      }
     },
 
     async listSessions(filter?: SessionListFilter) {
@@ -577,6 +754,7 @@ export function createSqliteStore(dbPath: string): SessionStore {
         deleteBoundariesBySession.run(sessionId)
         deleteRules.run(sessionId)
         deletePendingAsksBySession.run(sessionId)
+        deleteStreamEventsBySession(db, sessionId)
         deleteSessionRow.run(sessionId)
       })
     },
@@ -609,19 +787,13 @@ export function createSqliteStore(dbPath: string): SessionStore {
 
     async persistAssistant(sessionId, message) {
       await withWrite(async () => {
-        if (hasToolUse(message)) {
-          throw new PersistError('unknown', 'persistAssistant cannot write tool_use')
-        }
-        insertMessageRow(sessionId, message)
+        persistAssistantRow(sessionId, message, 'assistant')
       })
     },
 
     async persistToolCalls(sessionId, message) {
       await withWrite(async () => {
-        if (!hasToolUse(message)) {
-          throw new PersistError('unknown', 'persistToolCalls requires tool_use')
-        }
-        insertMessageRow(sessionId, message)
+        persistAssistantRow(sessionId, message, 'tool_calls')
       })
     },
 

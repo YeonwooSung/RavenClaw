@@ -2,17 +2,41 @@ import { spawnSync } from 'node:child_process'
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ravenclawHome } from '../home'
+import type { SessionJob } from '../types'
 
 export interface SessionWorktree {
   originalCwd: string
   worktreePath: string
   name: string
+  baseBranch?: string
+  shadowBranch?: string
+  baseCommitSha?: string
 }
 
 export type WorktreeExitAction = 'keep' | 'remove'
 
 const GIT_TIMEOUT_MS = 30_000
 const sessions = new Map<string, SessionWorktree>()
+
+export function shadowBranchName(sessionId: string, name?: string): string {
+  return `raven/${worktreeName(sessionId, name)}`
+}
+
+export function jobFromSessionWorktree(row: SessionWorktree): SessionJob | undefined {
+  if (
+    row.baseBranch === undefined ||
+    row.shadowBranch === undefined ||
+    row.baseCommitSha === undefined
+  ) {
+    return undefined
+  }
+  return {
+    baseBranch: row.baseBranch,
+    shadowBranch: row.shadowBranch,
+    baseCommitSha: row.baseCommitSha,
+    worktreePath: row.worktreePath,
+  }
+}
 
 export function getSessionWorktree(sessionId: string): SessionWorktree | undefined {
   const live = sessions.get(sessionId)
@@ -26,10 +50,15 @@ export function enterSessionWorktree(
   sessionId: string,
   parentCwd: string,
   name?: string,
-): { ok: boolean; cwd: string; error?: string } {
+): { ok: boolean; cwd: string; job?: SessionJob; error?: string } {
   const existing = getSessionWorktree(sessionId)
   if (existing) {
-    return { ok: false, cwd: existing.worktreePath, error: 'session already has a worktree' }
+    return {
+      ok: false,
+      cwd: existing.worktreePath,
+      job: jobFromSessionWorktree(existing),
+      error: 'session already has a worktree',
+    }
   }
 
   const toplevel = gitToplevel(parentCwd)
@@ -43,16 +72,27 @@ export function enterSessionWorktree(
     return { ok: false, cwd: parentCwd, error: errorMessage(error) }
   }
 
-  const added = runGit(toplevel, ['worktree', 'add', '--detach', worktreePath])
+  const baseSha = runGit(toplevel, ['rev-parse', 'HEAD']).stdout.trim()
+  const baseBranch =
+    runGit(toplevel, ['rev-parse', '--abbrev-ref', 'HEAD']).stdout.trim() || 'HEAD'
+  const shadow = shadowBranchName(sessionId, name)
+  const added = runGit(toplevel, ['worktree', 'add', '-b', shadow, worktreePath, baseSha])
   if (!added.ok) {
     const detail = added.stderr.trim() || added.stdout.trim() || 'git worktree add failed'
     return { ok: false, cwd: parentCwd, error: detail }
   }
 
-  const row: SessionWorktree = { originalCwd: parentCwd, worktreePath, name: slug }
+  const row: SessionWorktree = {
+    originalCwd: parentCwd,
+    worktreePath,
+    name: slug,
+    baseBranch,
+    shadowBranch: shadow,
+    baseCommitSha: baseSha,
+  }
   sessions.set(sessionId, row)
   saveSidecar(sessionId, row)
-  return { ok: true, cwd: worktreePath }
+  return { ok: true, cwd: worktreePath, job: jobFromSessionWorktree(row) }
 }
 
 export function exitSessionWorktree(
@@ -81,6 +121,9 @@ export function exitSessionWorktree(
       if (!removed.ok) {
         const detail = removed.stderr.trim() || removed.stdout.trim() || 'git worktree remove failed'
         return { ok: false, cwd: existing.worktreePath, error: detail }
+      }
+      if (existing.shadowBranch) {
+        runGit(toplevel, ['branch', '-D', existing.shadowBranch])
       }
     }
   }
@@ -111,11 +154,15 @@ function loadSidecar(sessionId: string): SessionWorktree | undefined {
       typeof parsed.worktreePath === 'string' &&
       typeof parsed.name === 'string'
     ) {
-      return {
+      const row: SessionWorktree = {
         originalCwd: parsed.originalCwd,
         worktreePath: parsed.worktreePath,
         name: parsed.name,
       }
+      if (typeof parsed.baseBranch === 'string') row.baseBranch = parsed.baseBranch
+      if (typeof parsed.shadowBranch === 'string') row.shadowBranch = parsed.shadowBranch
+      if (typeof parsed.baseCommitSha === 'string') row.baseCommitSha = parsed.baseCommitSha
+      return row
     }
   } catch {
     return undefined

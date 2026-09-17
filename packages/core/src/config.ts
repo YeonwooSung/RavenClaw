@@ -63,6 +63,10 @@ export interface ReviewConfig {
   background?: boolean
 }
 
+export interface JobConfig {
+  autoCommit?: boolean
+}
+
 export interface SlackConfig {
   enabled: boolean
   appToken: string
@@ -99,6 +103,7 @@ export interface RavenClawConfig {
   slack?: SlackConfig
   discord?: DiscordConfig
   review?: ReviewConfig
+  job?: JobConfig
 }
 
 export interface ModelPriceFields {
@@ -313,6 +318,14 @@ export function parseConfigYaml(text: string): Partial<RavenClawConfig> {
     out.review = { background: asBoolean(reviewRaw.background) === true }
   }
 
+  const jobRaw = asMap(raw.job)
+  if (jobRaw) {
+    const job: JobConfig = {}
+    const autoCommit = asBoolean(jobRaw.autoCommit)
+    if (autoCommit !== undefined) job.autoCommit = autoCommit
+    out.job = job
+  }
+
   return out
 }
 
@@ -408,6 +421,7 @@ export function loadConfig(opts?: { home?: string; flags?: ConfigFlags }): Resol
   if (parsed.slack !== undefined) resolved.slack = resolveSlackConfig(parsed.slack, fileEnv)
   if (parsed.discord !== undefined) resolved.discord = resolveDiscordConfig(parsed.discord, fileEnv)
   if (parsed.review !== undefined) resolved.review = parsed.review
+  resolved.job = { autoCommit: parsed.job?.autoCommit === true }
   if (flags?.fallbackModel !== undefined) resolved.fallbackModel = flags.fallbackModel
   if (flags?.allowedTools !== undefined && flags.allowedTools.length > 0) {
     resolved.allowedTools = flags.allowedTools

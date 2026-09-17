@@ -2,7 +2,8 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import type { ToolContext, Turn } from '../types'
+import type { SessionRecord, SessionStore, ToolContext, Turn } from '../types'
+import { createMemoryStore } from '../session/memory-store'
 import { loadTodos, todoJsonPath, todosFromToolResult, todoWriteTool } from './todo'
 
 const tempDirs: string[] = []
@@ -20,10 +21,10 @@ function fixtureRoot(): string {
   return root
 }
 
-function makeTurn(cwd: string): Turn {
+function makeTurn(cwd: string, sessionId = 'sess_1'): Turn {
   return {
     id: 'turn_1',
-    sessionId: 'sess_1',
+    sessionId,
     messages: [],
     round: 1,
     maxRounds: 80,
@@ -39,13 +40,29 @@ function makeTurn(cwd: string): Turn {
   }
 }
 
-function makeCtx(cwd: string): ToolContext {
-  const turn = makeTurn(cwd)
+function sessionRecord(id: string, cwd: string): SessionRecord {
   return {
+    id,
+    createdAt: 1,
+    updatedAt: 1,
+    cwd,
+    model: 'dummy',
+    permissionMode: 'default',
+    compactGeneration: 0,
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    funding: 'byok',
+  }
+}
+
+function makeCtx(cwd: string, sessionId?: string, store?: SessionStore): ToolContext {
+  const turn = makeTurn(cwd, sessionId ?? 'sess_1')
+  const ctx: ToolContext = {
     turn,
     signal: turn.abort.signal,
     onProgress() {},
   }
+  if (store) ctx.store = store
+  return ctx
 }
 
 describe('TodoWrite', () => {
@@ -71,7 +88,9 @@ describe('TodoWrite', () => {
 
   test('writes .ravenclaw/todo.json under the turn cwd and fills missing ids', async () => {
     const root = fixtureRoot()
-    const ctx = makeCtx(root)
+    const store = createMemoryStore()
+    await store.createSession(sessionRecord('sess_1', root))
+    const ctx = makeCtx(root, 'sess_1', store)
     const out = await todoWriteTool.execute(
       {
         items: [
@@ -100,12 +119,74 @@ describe('TodoWrite', () => {
   test('uses projectCwd when the turn is isolated', async () => {
     const project = fixtureRoot()
     const worktree = fixtureRoot()
+    const store = createMemoryStore()
+    await store.createSession(sessionRecord('sess_1', worktree))
     const turn = makeTurn(worktree)
     turn.projectCwd = project
-    const ctx: ToolContext = { turn, signal: turn.abort.signal, onProgress() {} }
+    const ctx: ToolContext = { turn, signal: turn.abort.signal, onProgress() {}, store }
     await todoWriteTool.execute({ items: [{ text: 'iso', status: 'pending' }] }, ctx)
     expect(existsSync(join(project, '.ravenclaw', 'todo.json'))).toBe(true)
     expect(existsSync(join(worktree, '.ravenclaw', 'todo.json'))).toBe(false)
+  })
+
+  test('fails closed without a session store and does not write todo.json', async () => {
+    const root = fixtureRoot()
+    const out = await todoWriteTool.execute(
+      { items: [{ text: 'orphan', status: 'pending' }] },
+      makeCtx(root),
+    )
+    expect(String(out).toLowerCase()).toMatch(/fail|store/)
+    expect(existsSync(todoJsonPath(root))).toBe(false)
+  })
+
+  test('persist-before-execute TodoWrite does not insert an incomplete tool row', async () => {
+    const root = fixtureRoot()
+    const store = createMemoryStore()
+    await store.createSession(sessionRecord('s1', root))
+    await store.persistUser('s1', {
+      id: 'u1',
+      role: 'user',
+      blocks: [{ type: 'text', text: 'todos' }],
+      createdAt: 1,
+    })
+    await store.persistToolCalls('s1', {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [
+        {
+          type: 'tool_use',
+          id: 'td',
+          name: 'TodoWrite',
+          input: { items: [{ text: 'alpha', status: 'pending' }] },
+        },
+      ],
+      createdAt: 2,
+    })
+    const out = await todoWriteTool.execute(
+      { items: [{ text: 'alpha', status: 'pending' }] },
+      makeCtx(root, 's1', store),
+    )
+    expect(String(out).toLowerCase()).not.toMatch(/fail|error|deny/)
+    const raw = store.loadMessages ? await store.loadMessages('s1') : []
+    expect(raw.filter((msg) => msg.role === 'tool')).toEqual([])
+    expect((await store.listSessions()).find((row) => row.id === 's1')?.todos?.map((t) => t.text)).toEqual([
+      'alpha',
+    ])
+  })
+
+  test('two sessions in one cwd keep independent todo lists', async () => {
+    const root = fixtureRoot()
+    const store = createMemoryStore()
+    const a = sessionRecord('s_a', root)
+    const b = sessionRecord('s_b', root)
+    await store.createSession(a)
+    await store.createSession(b)
+    const ctxA = makeCtx(root, 's_a', store)
+    const ctxB = makeCtx(root, 's_b', store)
+    await todoWriteTool.execute({ items: [{ text: 'alpha', status: 'pending' }] }, ctxA)
+    await todoWriteTool.execute({ items: [{ text: 'beta', status: 'done' }] }, ctxB)
+    expect((await store.loadSession('s_a')).session.todos?.map((t) => t.text)).toEqual(['alpha'])
+    expect((await store.loadSession('s_b')).session.todos?.map((t) => t.text)).toEqual(['beta'])
   })
 })
 

@@ -133,7 +133,7 @@ Shared dispatch and host-only handlers run even while a turn is live. They do **
 | Refuse if a turn (or running agent task) is live | `/rewind` → `a turn is in progress` |
 | Refuse file undo of the **open** generation | `/undo` → `undo after the turn finishes` (a **closed** previous generation can still undo) |
 | Run immediately (notice / store / panel) | `/help`, `/cost`, `/search`, `/mode`, `/model`, `/title`, `/permissions`, `/tasks`, `/diff`, `/queue`, `/cron`, `/copy`, `/mcp`, `/skills`, `/reload`, `/agents`, `/hooks`, `/config`, `/context`, `/add-dir`, `/effort`, `/compact`, `/review`, `/bash`, `/quit`, `/clear`, `/resume` |
-| `/compact` mid-turn | Compacts `liveTurn.messages` if a turn is live |
+| `/compact` mid-turn | sets a one-slot flag; runs after `liveTurn` is null |
 | `/mode` mid-turn | Writes `liveTurn.permissionMode` as well as the session |
 | `/model` mid-turn | Updates session + `config.profile` for the **next** `queryLoop`. Does not mutate the in-flight loop’s captured profile |
 | `/clear` / `/resume` mid-turn | Replace the runtime (`engine.close` / `resumeRuntime`). They do not call `abort()` first |
@@ -180,7 +180,8 @@ Related CLI: `raven resume [id]`, `raven sessions`, `raven show <id>`.
 
 `compactNow` (`session-engine.ts`):
 
-- Source messages = live turn if present, else persisted messages
+- While `liveTurn !== null`, **queues** a one-slot flag and does not splice the live transcript
+- Runs after `liveTurn` is null (source = persisted / engine buffer messages)
 - Protects the last `compact.protectLastMessages` rows
 - If there is nothing before that tail, it returns without writing
 - Otherwise runs autocompact (LLM summarize when `compact.llmSummarize` is on; else a mechanical summary)

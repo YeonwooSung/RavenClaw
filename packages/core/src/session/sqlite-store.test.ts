@@ -57,7 +57,7 @@ function session(over: Partial<SessionRecord> = {}): SessionRecord {
 }
 
 describe('createSqliteStore', () => {
-  test('fresh install uses WAL and schema_version 6', () => {
+  test('fresh install uses WAL and schema_version 9', () => {
     const path = tempDbPath()
     openStore(path)
     const db = new Database(path, { readonly: true })
@@ -67,7 +67,7 @@ describe('createSqliteStore', () => {
       const version = db
         .query("SELECT value FROM meta WHERE key = 'schema_version'")
         .get() as { value: string }
-      expect(version.value).toBe('6')
+      expect(version.value).toBe('9')
       expect(
         db
           .query("SELECT 1 AS ok FROM sqlite_master WHERE name = 'messages_fts'")
@@ -82,6 +82,41 @@ describe('createSqliteStore', () => {
     } finally {
       db.close()
     }
+  })
+
+  test('updateSessionTodos writes todos without pairing messages', async () => {
+    const store = openStore()
+    await store.createSession(session())
+    await store.persistUser('s1', {
+      id: 'u1',
+      role: 'user',
+      blocks: [{ type: 'text', text: 'todos' }],
+      createdAt: 1,
+    })
+    await store.persistToolCalls('s1', {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'td', name: 'TodoWrite', input: { items: [] } }],
+      createdAt: 2,
+    })
+    await store.updateSessionTodos('s1', [{ text: 'alpha', status: 'pending' }])
+    const raw = store.loadMessages ? await store.loadMessages('s1') : []
+    expect(raw.filter((msg) => msg.role === 'tool')).toEqual([])
+    const listed = (await store.listSessions()).find((row) => row.id === 's1')
+    expect(listed?.todos).toEqual([{ text: 'alpha', status: 'pending' }])
+  })
+
+  test('session todos_json round-trips through create, upsert, and load', async () => {
+    const store = openStore()
+    await store.createSession(
+      session({ todos: [{ id: 't1', text: 'alpha', status: 'pending' }] }),
+    )
+    const created = await store.loadSession('s1')
+    expect(created.session.todos).toEqual([{ id: 't1', text: 'alpha', status: 'pending' }])
+    created.session.todos = [{ text: 'beta', status: 'done' }]
+    await store.upsertSession(created.session)
+    const loaded = await store.loadSession('s1')
+    expect(loaded.session.todos).toEqual([{ text: 'beta', status: 'done' }])
   })
 
   test('persistAssistant rejects tool_use; persistToolCalls rejects text-only', async () => {

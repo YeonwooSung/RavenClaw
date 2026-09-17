@@ -927,6 +927,75 @@ describe('createAgentTool', () => {
     expect(provider.streamCount).toBe(0)
   })
 
+  test('isolation worktree stacks the child job on the parent shadow', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-agent-stack-'))
+    tempDirs.push(cwd)
+    initGitRepo(cwd)
+    const initSha = spawnSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).stdout.trim()
+    const parentPath = join(cwd, '.ravenclaw', 'worktrees', 'parent')
+    mkdirSync(join(cwd, '.ravenclaw', 'worktrees'), { recursive: true })
+    const added = spawnSync(
+      'git',
+      ['worktree', 'add', '-b', 'raven/parent', parentPath, initSha],
+      { cwd, encoding: 'utf8' },
+    )
+    expect(added.status).toBe(0)
+    writeFileSync(join(parentPath, 'parent.txt'), 'parent tip\n')
+    expect(spawnSync('git', ['add', 'parent.txt'], { cwd: parentPath }).status).toBe(0)
+    expect(spawnSync('git', ['commit', '-m', 'parent tip'], { cwd: parentPath }).status).toBe(0)
+    const shaP = spawnSync('git', ['rev-parse', 'HEAD'], {
+      cwd: parentPath,
+      encoding: 'utf8',
+    }).stdout.trim()
+
+    const store = createMemoryStore()
+    const session = makeSession({
+      cwd: parentPath,
+      job: {
+        baseBranch: spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], {
+          cwd,
+          encoding: 'utf8',
+        }).stdout.trim() || 'HEAD',
+        shadowBranch: 'raven/parent',
+        baseCommitSha: initSha,
+        worktreePath: parentPath,
+      },
+    })
+    await store.createSession(session)
+    await store.persistUser(session.id, {
+      id: 'u_parent',
+      role: 'user',
+      blocks: [{ type: 'text', text: 'PARENT_SECRET do not leak' }],
+      createdAt: 1,
+    })
+
+    const provider = createFakeProvider([textThenStop('stacked-ok')])
+    const { tool } = createTestAgent({ store, provider })
+    const result = await tool.execute(
+      { prompt: 'stack on parent shadow', isolation: 'worktree' },
+      makeCtx(makeTurn(session, { cwd: parentPath }), { store, session }),
+    )
+    expect(result.startsWith('stacked-ok')).toBe(true)
+
+    const child = (await store.listSessions({ parentSessionId: session.id }))[0]
+    expect(child?.job?.baseBranch).toBe('raven/parent')
+    expect(child?.job?.shadowBranch.startsWith('raven/')).toBe(true)
+    expect(child?.job?.baseCommitSha).toBe(shaP)
+    expect(child?.job?.worktreePath.startsWith(join(parentPath, '.ravenclaw', 'worktrees') + '/')).toBe(
+      true,
+    )
+
+    const loaded = await store.loadSession(child!.id)
+    const texts = loaded.messages.flatMap((msg) =>
+      msg.role === 'user' || msg.role === 'assistant' || msg.role === 'tool'
+        ? msg.blocks.map((block) => ('text' in block ? block.text : ''))
+        : [],
+    )
+    expect(texts.some((text) => text.includes('PARENT_SECRET'))).toBe(false)
+    expect(texts.some((text) => text.includes('stack on parent shadow'))).toBe(true)
+    expect(provider.requests[0]?.messages).toHaveLength(1)
+  })
+
   test('isolation worktree creates then removes a git worktree', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-agent-wt-'))
     tempDirs.push(cwd)

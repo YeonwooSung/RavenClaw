@@ -17,7 +17,7 @@ const inputSchema = {
 export const enterWorktreeTool: Tool<EnterWorktreeInput, string> = {
   name: 'EnterWorktree',
   description:
-    'Create a detached git worktree under .ravenclaw/worktrees and switch the turn cwd to it. Optional name labels the worktree directory. projectCwd stays the original project root.',
+    'Create a named raven/* git worktree under .ravenclaw/worktrees and switch the turn cwd to it. Optional name labels the worktree directory and shadow branch. projectCwd stays the original project root.',
   inputSchema,
   parse(input: unknown) {
     return parseWithSchema<EnterWorktreeInput>(inputSchema, input)
@@ -47,6 +47,19 @@ export const enterWorktreeTool: Tool<EnterWorktreeInput, string> = {
     if (!result.ok) return `EnterWorktree failed: ${result.error}`
     if (ctx.turn.projectCwd === undefined) ctx.turn.projectCwd = parent
     ctx.turn.cwd = result.cwd
+    if (result.job) {
+      if (ctx.session) ctx.session.job = result.job
+      const store = ctx.store
+      if (store) {
+        try {
+          const session = ctx.session ?? (await store.loadSession(ctx.turn.sessionId)).session
+          session.job = result.job
+          await store.upsertSession(session)
+        } catch {
+          // worktree is live; sidecar can rebuild the job until upsert succeeds
+        }
+      }
+    }
     return `Entered worktree ${result.cwd}`
   },
 }

@@ -60,6 +60,43 @@ export function isStaleSinceRead(turn: Turn, resolved: string, candidate: string
   }
 }
 
+function textOf(msg: Message): string {
+  return msg.blocks
+    .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
+    .map((block) => block.text)
+    .join('')
+}
+
+export function forgetReadsNotInTail(turn: Turn, messages: Message[]): void {
+  const pending = new Map<string, string>()
+  const evidenced = new Set<string>()
+  for (const msg of messages) {
+    if (msg.role === 'assistant') {
+      for (const block of msg.blocks) {
+        if (block.type !== 'tool_use' || block.name !== 'Read') continue
+        const path = (block.input as { path?: unknown } | undefined)?.path
+        if (typeof path === 'string' && path.length > 0) pending.set(block.id, path)
+      }
+    }
+    if (msg.role === 'tool' && msg.ok) {
+      const path = pending.get(msg.toolUseId)
+      if (path === undefined) continue
+      if (textOf(msg).startsWith('[cleared ')) continue
+      evidenced.add(resolve(turn.cwd, path))
+    }
+  }
+
+  const keep = (seen: string): boolean => evidenced.has(seen) || evidenced.has(resolve(turn.cwd, seen))
+  for (const seen of [...turn.readFiles]) {
+    if (!keep(seen)) turn.readFiles.delete(seen)
+  }
+  if (turn.readFileMtimes) {
+    for (const seen of [...turn.readFileMtimes.keys()]) {
+      if (!keep(seen)) turn.readFileMtimes.delete(seen)
+    }
+  }
+}
+
 function lookupReadMtime(turn: Turn, resolved: string, candidate: string): number | undefined {
   const map = turn.readFileMtimes
   if (!map) return undefined

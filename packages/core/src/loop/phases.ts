@@ -30,7 +30,8 @@ import { isAbortError, nextOrAbort } from './abort'
 import { formatSettledOutput } from './format-output'
 import { partitionToolCalls } from '../tools/partition'
 import { toolCallTool } from '../tools/tool-call'
-import { stampReadMtime } from '../tools/read-files'
+import { forgetReadsNotInTail, stampReadMtime } from '../tools/read-files'
+import { normalizeTodoWriteItems, type TodoWriteInput } from '../tools/todo'
 import { filterToolsForTurn } from '../tools/skill'
 import { appendDeferredMcpTools } from '../mcp/tools'
 import { estimateTokens, shouldEnterGrace, suffixGraceNotice } from './budget'
@@ -102,6 +103,10 @@ export type PhaseResult =
   | { action: 'return'; end: RoundEnd }
 
 const ZERO_USAGE: TokenUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
+
+function abortEnd(turn: Turn): RoundEnd {
+  return turn.cancelKind === 'cancel' ? { reason: 'cancelled' } : { reason: 'aborted' }
+}
 
 function resetPending(state: LoopState): void {
   state.pendingText = ''
@@ -231,13 +236,13 @@ export async function persistResultsWithRetry(
 
 export async function* beginRound(state: LoopState): AsyncGenerator<StreamEvent, PhaseResult> {
   if (state.turn.abort.signal.aborted) {
-    return { action: 'return', end: { reason: 'aborted' } }
+    return { action: 'return', end: abortEnd(state.turn) }
   }
 
   if (shouldEnterGrace(state.turn, state.lastHadToolUse)) {
     state.turn.graceUsed = true
     resetPending(state)
-    yield { type: 'round_start', round: state.turn.round }
+    yield { type: 'round_start', round: state.turn.round, turnId: state.turn.id }
     return { action: 'continue' }
   }
 
@@ -247,7 +252,7 @@ export async function* beginRound(state: LoopState): AsyncGenerator<StreamEvent,
 
   state.turn.round += 1
   resetPending(state)
-  yield { type: 'round_start', round: state.turn.round }
+  yield { type: 'round_start', round: state.turn.round, turnId: state.turn.id }
   return { action: 'continue' }
 }
 
@@ -308,6 +313,7 @@ export async function* maybeCompact(
 
   state.turn.messages = applyToolResultBudget(state.turn.messages)
   state.turn.messages = microcompact(state.turn.messages, state.compact.protectLastMessages)
+  forgetReadsNotInTail(state.turn, state.turn.messages)
 
   const afterCheap = compactDecision(state)
   if (afterCheap === 'context_full') {
@@ -337,8 +343,10 @@ export async function* maybeCompact(
       generation: state.turn.compactGeneration,
       summary,
       cwd: state.turn.projectCwd ?? state.turn.cwd,
+      ...(state.todos !== undefined ? { todos: state.todos } : {}),
     })
     state.turn.messages = result.messages
+    forgetReadsNotInTail(state.turn, result.messages)
     state.turn.compactGeneration = result.generation
     state.compactFailures = 0
     state.overflowCompacted = true
@@ -662,8 +670,10 @@ async function* reactiveCompact(
       generation: state.turn.compactGeneration,
       summary,
       cwd: state.turn.projectCwd ?? state.turn.cwd,
+      ...(state.todos !== undefined ? { todos: state.todos } : {}),
     })
     state.turn.messages = result.messages
+    forgetReadsNotInTail(state.turn, result.messages)
     state.turn.compactGeneration = result.generation
     state.overflowCompacted = true
     yield { type: 'compact', summary, generation: result.generation }
@@ -706,7 +716,7 @@ export async function* normalizeResponse(
       state.turn.messages.push(asst)
     }
     yield { type: 'status', message: 'interrupted' }
-    return { action: 'return', end: { reason: 'aborted' } }
+    return { action: 'return', end: abortEnd(state.turn) }
   }
 
   if (!hasTools) {
@@ -873,7 +883,7 @@ export async function* runToolRound(
     const fail = await persistResultsWithRetry(state, results)
     if (fail) return { action: 'return', end: fail }
     yield { type: 'status', message: 'interrupted' }
-    return { action: 'return', end: { reason: 'aborted' } }
+    return { action: 'return', end: abortEnd(state.turn) }
   }
 
   await applyRefreshTools(state)
@@ -1246,6 +1256,7 @@ async function executeOneCall(
   if (state.tasks) ctx.tasks = state.tasks
   if (state.fileHistory) ctx.fileHistory = state.fileHistory
   if (state.store) ctx.store = state.store
+  if (state.session) ctx.session = state.session
 
   let allowed = false
   try {
@@ -1315,7 +1326,10 @@ async function executeOneCall(
           box.rules = appendPermissionRule(box.rules, saved, scope)
         }
         allowed = true
-      } catch {
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AskWaiterExpired') {
+          return { messages: [], events, abortRest: false }
+        }
         return {
           messages: pairMissing([call.id], 'aborted'),
           events,
@@ -1361,6 +1375,7 @@ async function executeOneCall(
     events.push(...progress)
     const formatted = formatSettledOutput(tool, output)
     noteToolSideEffects(state, callName, input)
+    if (callName === 'TodoWrite') applyWrittenTodos(state, input)
     const content = appendSubdirAgents(state, input, formatted.content, formatted.persistPath)
     recordStall(state, callName, input, content)
     if (state.lifecycle) {
@@ -1436,6 +1451,12 @@ function noteToolSideEffects(state: LoopState, name: string, input: unknown): vo
     const command = input && typeof input === 'object' ? (input as { command?: unknown }).command : undefined
     if (typeof command === 'string' && VERIFY_COMMAND.test(command)) state.sawVerifyCommand = true
   }
+}
+
+function applyWrittenTodos(state: LoopState, input: unknown): void {
+  const items = normalizeTodoWriteItems((input as TodoWriteInput).items ?? [])
+  state.todos = items
+  if (state.session) state.session.todos = items
 }
 
 function appendSubdirAgents(

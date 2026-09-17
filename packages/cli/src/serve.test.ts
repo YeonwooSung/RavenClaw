@@ -1,9 +1,14 @@
-import { describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'bun:test'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { spawnSync } from 'node:child_process'
 import {
   createMemoryStore,
   PersistError,
   SessionLockError,
   type PendingAsk,
+  type SessionJob,
   type StreamEvent,
   type UserSubmitInput,
 } from '@ravenclaw/core'
@@ -83,7 +88,7 @@ function liveEngine(opts: {
     submitted,
     runtime: {
       engine: {
-        session: { id: opts.id },
+        session: { id: opts.id, permissionMode: 'default' },
         async *submitMessage(input) {
           const text = typeof input === 'string' ? input : (input.text ?? '')
           submitted.push(text)
@@ -221,18 +226,27 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
   const replayEvents: StreamEvent[] = []
   const submitted: UserSubmitInput[] = []
   const applyCalls: Array<{ callId: string; answer: 'allow' | 'deny' | 'allow_always' }> = []
-  const state: { abortCalls: number; compactCalls: number; submitHold?: Promise<void> } = {
+  const state: {
+    abortCalls: number
+    compactCalls: number
+    liveTurnId: string | null
+    submitHold?: Promise<void>
+  } = {
     abortCalls: 0,
     compactCalls: 0,
+    liveTurnId: 'live-1',
   }
   const engine = {
-    session: { id: 's1' },
+    session: { id: 's1', permissionMode: 'default' as const },
     async applyAskAnswer(callId: string, answer: 'allow' | 'deny' | 'allow_always') {
       applyCalls.push({ callId, answer })
       const row = await store.getPendingAsk(callId)
       if (!row || row.sessionId !== engine.session.id) return 'unmatched' as const
       await store.deletePendingAsk(callId)
       return 'matched' as const
+    },
+    liveTurnId() {
+      return state.liveTurnId
     },
     abort() {
       state.abortCalls += 1
@@ -249,7 +263,7 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
       for (const event of replayEvents) yield event
     },
   }
-  const hub = createSessionEventHub()
+  const hub = createSessionEventHub(store)
   const runtime = { engine: tapEngineEvents(engine, hub), store }
   const ctx = {
     secret,
@@ -275,21 +289,41 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
   return ctx
 }
 
-async function readFirstJsonLine(res: Response): Promise<unknown> {
+function ndjsonReader(res: Response): {
+  next: () => Promise<unknown>
+  close: () => Promise<void>
+} {
   const reader = res.body?.getReader()
   if (!reader) throw new Error('missing body')
   const dec = new TextDecoder()
   let buf = ''
+  return {
+    async next() {
+      while (true) {
+        const nl = buf.indexOf('\n')
+        if (nl !== -1) {
+          const line = buf.slice(0, nl)
+          buf = buf.slice(nl + 1)
+          if (line.trim() === '') continue
+          return JSON.parse(line) as unknown
+        }
+        const chunk = await reader.read()
+        if (chunk.done) throw new Error('stream ended before a line')
+        buf += dec.decode(chunk.value, { stream: true })
+      }
+    },
+    async close() {
+      await reader.cancel()
+    },
+  }
+}
+
+async function readFirstJsonLine(res: Response): Promise<unknown> {
+  const reader = ndjsonReader(res)
   try {
-    while (true) {
-      const next = await reader.read()
-      if (next.done) throw new Error('stream ended before a line')
-      buf += dec.decode(next.value, { stream: true })
-      const nl = buf.indexOf('\n')
-      if (nl !== -1) return JSON.parse(buf.slice(0, nl)) as unknown
-    }
+    return await reader.next()
   } finally {
-    await reader.cancel()
+    await reader.close()
   }
 }
 
@@ -379,7 +413,7 @@ describe('handleServeRequest', () => {
       ctx,
     )
     expect(turnRes.status).toBe(200)
-    expect(await firstLine).toEqual({ type: 'text_delta', text: 'hi' })
+    expect(await firstLine).toEqual({ seq: 1, type: 'text_delta', text: 'hi' })
   })
 
   test('GET /v1/session/:id/stream emits parked permission_ask rows on subscribe', async () => {
@@ -412,6 +446,7 @@ describe('handleServeRequest', () => {
     )
     expect(streamRes.status).toBe(200)
     expect(await readFirstJsonLine(streamRes)).toEqual({
+      seq: 1,
       type: 'permission_ask',
       id: 'parked_1',
       tool: 'Echo',
@@ -442,6 +477,7 @@ describe('handleServeRequest', () => {
       // drain so the hub publishes
     }
     expect(await firstLine).toEqual({
+      seq: 1,
       type: 'permission_ask',
       id: 'c1',
       tool: 'Echo',
@@ -482,6 +518,21 @@ describe('handleServeRequest', () => {
     expect(compact.status).toBe(200)
     expect(ctx.abortCalls).toBe(1)
     expect(ctx.compactCalls).toBe(1)
+  })
+
+  test('POST cancel with stale turnId is a no-op', async () => {
+    const ctx = makeServeCtx('t')
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/cancel', {
+        method: 'POST',
+        headers: { authorization: 'Bearer t', 'content-type': 'application/json' },
+        body: JSON.stringify({ turnId: 'stale' }),
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true, status: 'no_active_turn' })
+    expect(ctx.abortCalls).toBe(0)
   })
 
   test('missing session is 404; lock is 409; other resume errors are 500', async () => {
@@ -638,6 +689,7 @@ describe('handleServeRequest', () => {
     )
     expect(submitRes.status).toBe(202)
     expect(await firstLine).toEqual({
+      seq: 1,
       type: 'permission_ask',
       id: 'c1',
       tool: 'Write',
@@ -647,6 +699,185 @@ describe('handleServeRequest', () => {
     expect(ctx.turnFlights.size).toBe(1)
     release()
     await Promise.all([...ctx.turnFlights.values()])
+  })
+
+  test('second stream with after= concatenates without gaps or dupes', async () => {
+    const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
+    const ctx = makeServeCtx(secret)
+    await ctx.store.createSession({
+      id: 's1',
+      createdAt: 1,
+      updatedAt: 1,
+      cwd: '/tmp',
+      model: 'dummy',
+      permissionMode: 'default',
+      compactGeneration: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      funding: 'byok',
+    })
+    const auth = { authorization: 'Bearer secret' }
+    const firstRes = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/stream', { headers: auth }),
+      ctx,
+    )
+    expect(firstRes.status).toBe(200)
+    const first = ndjsonReader(firstRes)
+    const early: StreamEvent[] = [
+      { type: 'round_start', round: 1, turnId: 't1' },
+      { type: 'text_delta', text: 'a' },
+      { type: 'text_delta', text: 'b' },
+    ]
+    const later: StreamEvent[] = [
+      { type: 'text_delta', text: 'c' },
+      { type: 'round_end', end: { reason: 'cancelled' } },
+    ]
+    const firstPending = Promise.all([first.next(), first.next(), first.next()])
+    for (const event of early) await ctx.hub.publish('s1', event)
+    const firstEvents = await firstPending
+    expect(firstEvents).toEqual([
+      { seq: 1, type: 'round_start', round: 1, turnId: 't1' },
+      { seq: 2, type: 'text_delta', text: 'a' },
+      { seq: 3, type: 'text_delta', text: 'b' },
+    ])
+    for (const event of later) await ctx.hub.publish('s1', event)
+    expect([await first.next(), await first.next()]).toEqual([
+      { seq: 4, type: 'text_delta', text: 'c' },
+      { seq: 5, type: 'round_end', end: { reason: 'cancelled' } },
+    ])
+    const secondRes = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/stream?after=3', { headers: auth }),
+      ctx,
+    )
+    expect(secondRes.status).toBe(200)
+    const second = ndjsonReader(secondRes)
+    const replayed = [await second.next(), await second.next()]
+    expect(replayed).toEqual([
+      { seq: 4, type: 'text_delta', text: 'c' },
+      { seq: 5, type: 'round_end', end: { reason: 'cancelled' } },
+    ])
+    const concat = [...firstEvents, ...replayed]
+    expect(concat.map((event) => (event as { seq: number }).seq)).toEqual([1, 2, 3, 4, 5])
+    expect(new Set(concat.map((event) => (event as { seq: number }).seq)).size).toBe(5)
+    await ctx.hub.publish('s1', { type: 'text_delta', text: 'd' })
+    expect(await second.next()).toEqual({ seq: 6, type: 'text_delta', text: 'd' })
+    await first.close()
+    await second.close()
+  })
+
+  test('stream after omitted is live tail only; after=0 replays', async () => {
+    const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
+    const ctx = makeServeCtx(secret)
+    await ctx.store.createSession({
+      id: 's1',
+      createdAt: 1,
+      updatedAt: 1,
+      cwd: '/tmp',
+      model: 'dummy',
+      permissionMode: 'default',
+      compactGeneration: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      funding: 'byok',
+    })
+    const auth = { authorization: 'Bearer secret' }
+    await ctx.hub.publish('s1', { type: 'text_delta', text: 'old' })
+    const liveRes = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/stream', { headers: auth }),
+      ctx,
+    )
+    expect(liveRes.status).toBe(200)
+    const live = ndjsonReader(liveRes)
+    const liveNext = live.next()
+    const replayRes = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/stream?after=0', { headers: auth }),
+      ctx,
+    )
+    expect(replayRes.status).toBe(200)
+    const replay = ndjsonReader(replayRes)
+    expect(await replay.next()).toEqual({ seq: 1, type: 'text_delta', text: 'old' })
+    const replayNext = replay.next()
+    await ctx.hub.publish('s1', { type: 'text_delta', text: 'new' })
+    expect(await liveNext).toEqual({ seq: 2, type: 'text_delta', text: 'new' })
+    expect(await replayNext).toEqual({ seq: 2, type: 'text_delta', text: 'new' })
+    await live.close()
+    await replay.close()
+  })
+
+  test('stream after= does not drop events published during replay', async () => {
+    const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
+    const ctx = makeServeCtx(secret)
+    await ctx.store.createSession({
+      id: 's1',
+      createdAt: 1,
+      updatedAt: 1,
+      cwd: '/tmp',
+      model: 'dummy',
+      permissionMode: 'default',
+      compactGeneration: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      funding: 'byok',
+    })
+    const auth = { authorization: 'Bearer secret' }
+    let releaseReplay!: () => void
+    const holdReplay = new Promise<void>((resolve) => {
+      releaseReplay = resolve
+    })
+    let replayStarted!: () => void
+    const started = new Promise<void>((resolve) => {
+      replayStarted = resolve
+    })
+    const orig = ctx.store.listStreamEventsAfter.bind(ctx.store)
+    ctx.store.listStreamEventsAfter = async (sessionId, afterSeq) => {
+      const snapshot = await orig(sessionId, afterSeq)
+      replayStarted()
+      await holdReplay
+      return snapshot
+    }
+    await ctx.hub.publish('s1', { type: 'text_delta', text: 'old' })
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/stream?after=0', { headers: auth }),
+      ctx,
+    )
+    expect(res.status).toBe(200)
+    const reader = ndjsonReader(res)
+    const first = reader.next()
+    await started
+    await ctx.hub.publish('s1', { type: 'text_delta', text: 'new' })
+    releaseReplay()
+    expect(await first).toEqual({ seq: 1, type: 'text_delta', text: 'old' })
+    expect(await reader.next()).toEqual({ seq: 2, type: 'text_delta', text: 'new' })
+    await reader.close()
+  })
+
+  test('stream after must be a non-negative integer', async () => {
+    const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
+    const ctx = makeServeCtx(secret)
+    const auth = { authorization: 'Bearer secret' }
+    for (const after of ['-1', 'foo', '1.5', '']) {
+      const res = await handleServeRequest(
+        new Request(`http://127.0.0.1/v1/session/s1/stream?after=${after}`, { headers: auth }),
+        ctx,
+      )
+      expect(res.status).toBe(400)
+    }
+  })
+
+  test('POST /v1/turn ignores ?after=', async () => {
+    const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
+    const ctx = makeServeCtx(secret)
+    ctx.submitEvents.push({ type: 'text_delta', text: 'hi' })
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/turn?after=0', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+        body: JSON.stringify({ text: 'hi' }),
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toContain('application/json')
+    const body = (await res.json()) as { text: string; sessionId: string }
+    expect(body.sessionId).toBe('s1')
+    expect(typeof body.text).toBe('string')
   })
 
   test('POST resolve settles a live leftover-ask without applyAskAnswer', async () => {
@@ -669,7 +900,209 @@ describe('handleServeRequest', () => {
     await expect(pending).resolves.toBe('allow')
     expect(ctx.applyCalls).toEqual([])
   })
+
+  test('GET /v1/session/:id returns job and parked callIds', async () => {
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const runtime = await ctx.runtimeForSession('s1')
+    if (!runtime) throw new Error('expected runtime')
+    runtime.engine.session = {
+      id: 's1',
+      permissionMode: 'default',
+      job: {
+        baseBranch: 'main',
+        shadowBranch: 'raven/s1',
+        baseCommitSha: 'abc',
+        worktreePath: '/tmp/wt',
+      },
+    }
+    await ctx.store.upsertPendingAsk({
+      callId: 'parked_snap',
+      sessionId: 's1',
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Bash?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    } satisfies PendingAsk)
+    await ctx.store.appendStreamEvent('s1', { type: 'text_delta', text: 'x' })
+    await ctx.store.appendStreamEvent('s1', { type: 'text_delta', text: 'y' })
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1', {
+        headers: { authorization: 'Bearer secret' },
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      id: string
+      job?: { shadowBranch: string }
+      pendingAsks: Array<{ callId: string; tool: string; message: string }>
+      lastSeq: number
+      permissionMode: string
+      live: boolean
+    }
+    expect(body.id).toBe('s1')
+    expect(body.job?.shadowBranch).toBe('raven/s1')
+    expect(body.pendingAsks[0]?.callId).toBe('parked_snap')
+    expect(body.pendingAsks[0]?.tool).toBe('Bash')
+    expect(body.pendingAsks[0]?.message).toBe('Bash?')
+    expect(body.lastSeq).toBe(2)
+    expect(body.permissionMode).toBe('default')
+    expect(body.live).toBe(true)
+  })
+
+  test('GET /v1/session/:id does not create', async () => {
+    let createCalls = 0
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/unknown', {
+        headers: { authorization: 'Bearer secret' },
+      }),
+      {
+        ...ctx,
+        createSession: async () => {
+          createCalls += 1
+          throw new Error('should not create')
+        },
+      },
+    )
+    expect(res.status).toBe(404)
+    expect(createCalls).toBe(0)
+  })
+
+  test('GET /v1/session/:id without Bearer is 401', async () => {
+    const ctx = makeServeCtx()
+    const res = await handleServeRequest(new Request('http://127.0.0.1/v1/session/s1'), ctx)
+    expect(res.status).toBe(401)
+  })
+
+  test('POST /v1/session/:id/pr without Bearer is 401', async () => {
+    const ctx = makeServeCtx()
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/pr', { method: 'POST' }),
+      ctx,
+    )
+    expect(res.status).toBe(401)
+  })
+
+  test('POST /v1/session/:id/pr without a job record notices and does not submit', async () => {
+    const ghCalls: string[][] = []
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/pr', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+        body: JSON.stringify({ title: 't', body: 'b' }),
+      }),
+      {
+        ...ctx,
+        gh(args) {
+          ghCalls.push(args)
+          return { ok: true, stdout: 'https://github.com/o/r/pull/4\n', stderr: '' }
+        },
+      },
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: false, notice: 'no job record' })
+    expect(ghCalls).toEqual([])
+    expect(ctx.submitted).toEqual([])
+  })
+
+  test('POST /v1/session/:id/pr on a dirty worktree notices and does not submit', async () => {
+    const cwd = tempGitRepo(true)
+    const ghCalls: string[][] = []
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const runtime = await ctx.runtimeForSession('s1')
+    if (!runtime) throw new Error('expected runtime')
+    runtime.engine.session = { id: 's1', permissionMode: 'default', job: jobAt(cwd) }
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/pr', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+      }),
+      {
+        ...ctx,
+        gh(args) {
+          ghCalls.push(args)
+          return { ok: true, stdout: 'https://github.com/o/r/pull/4\n', stderr: '' }
+        },
+      },
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: false, notice: 'worktree is dirty' })
+    expect(ghCalls).toEqual([])
+    expect(ctx.submitted).toEqual([])
+  })
+
+  test('POST /v1/session/:id/pr on a clean shadow records a url', async () => {
+    const cwd = tempGitRepo(false)
+    const ghCalls: string[][] = []
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const runtime = await ctx.runtimeForSession('s1')
+    if (!runtime) throw new Error('expected runtime')
+    runtime.engine.session = { id: 's1', permissionMode: 'default', job: jobAt(cwd) }
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/pr', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+        body: JSON.stringify({ title: 'draft', body: 'from serve' }),
+      }),
+      {
+        ...ctx,
+        gh(args) {
+          ghCalls.push(args)
+          return { ok: true, stdout: 'https://github.com/o/r/pull/4\n', stderr: '' }
+        },
+      },
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      ok: boolean
+      notice: string
+      snapshot?: { url?: string }
+    }
+    expect(body.ok).toBe(true)
+    expect(body.snapshot?.url).toContain('/pull/4')
+    expect(runtime.engine.session.job?.prNumber).toBe(4)
+    expect(ghCalls[0]?.[0]).toBe('pr')
+    expect(ghCalls[0]?.[1]).toBe('create')
+    expect(ctx.submitted).toEqual([])
+  })
 })
+
+const serveTempDirs: string[] = []
+
+afterEach(() => {
+  while (serveTempDirs.length > 0) {
+    const dir = serveTempDirs.pop()
+    if (dir) rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+function tempGitRepo(dirty = false): string {
+  const dir = mkdtempSync(join(tmpdir(), 'ravenclaw-serve-pr-'))
+  serveTempDirs.push(dir)
+  const run = (args: string[]) => {
+    const result = spawnSync('git', args, { cwd: dir, encoding: 'utf8' })
+    expect(result.status).toBe(0)
+  }
+  run(['init'])
+  run(['config', 'user.email', 'test@example.com'])
+  run(['config', 'user.name', 'Test'])
+  run(['config', 'commit.gpgsign', 'false'])
+  run(['commit', '--allow-empty', '-m', 'init'])
+  if (dirty) writeFileSync(join(dir, 'dirty.txt'), 'x\n')
+  return dir
+}
+
+function jobAt(cwd: string): SessionJob {
+  return {
+    baseBranch: 'main',
+    shadowBranch: 'raven/x',
+    baseCommitSha: 'abc',
+    worktreePath: cwd,
+  }
+}
 
 describe('createServeAskHost', () => {
   test('parks askUser until settle and ignores unknown callIds', async () => {
@@ -688,7 +1121,7 @@ describe('createServeAskHost', () => {
 
 function stubRuntime(tag: string): { engine: ServeEngine; tag: string } {
   const engine: ServeEngine = {
-    session: { id: 's1' },
+    session: { id: 's1', permissionMode: 'default' },
     async applyAskAnswer() {
       return 'unmatched'
     },

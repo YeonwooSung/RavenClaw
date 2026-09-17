@@ -10,6 +10,10 @@ import {
   ravenclawHome,
   scanTeamOnboarding,
   setSkillDisabled,
+  applySessionDraftPr,
+  enterSessionWorktree,
+  getSessionWorktree,
+  setJobAutoCommit,
 } from '@ravenclaw/core'
 import {
   INTERVIEW_PROMPT,
@@ -52,6 +56,7 @@ export interface SlashHost {
   onModelChanged?(model: string): void
   onModeChanged?(mode: string): void
   writeOsc52?(text: string): void
+  gh?: (args: string[], cwd: string) => { ok: boolean; stdout: string; stderr: string }
 }
 
 export async function dispatchSharedSlash(
@@ -200,6 +205,56 @@ export async function dispatchSharedSlash(
     case 'cron':
       host.notice(applyCronMutate(parsed.arg, runtime.cwd, runtime.config.home).text)
       return 'handled'
+    case 'job': {
+      const arg = parsed.arg?.trim() ?? ''
+      if (arg === 'commit on' || arg === 'commit off') {
+        const session = runtime.engine.session
+        setJobAutoCommit(session, arg === 'commit on')
+        session.updatedAt = Date.now()
+        await runtime.store.upsertSession(session)
+        host.notice(`job commit ${arg === 'commit on' ? 'on' : 'off'}`)
+        return 'handled'
+      }
+      const session = runtime.engine.session
+      const parent = getSessionWorktree(session.id)?.originalCwd ?? runtime.cwd
+      const name = arg === '' ? undefined : arg
+      const entered = enterSessionWorktree(session.id, parent, name)
+      if (!entered.ok) {
+        host.notice(entered.error ?? 'job failed')
+        return 'handled'
+      }
+      if (entered.job) session.job = entered.job
+      session.cwd = entered.cwd
+      runtime.cwd = entered.cwd
+      await runtime.store.upsertSession(session)
+      host.notice(`job ${entered.job?.shadowBranch ?? entered.cwd}`)
+      return 'handled'
+    }
+    case 'pr': {
+      const session = runtime.engine.session
+      if (!session.job) {
+        host.notice('no job record')
+        return 'handled'
+      }
+      const title = parsed.arg?.trim()
+      const out = await applySessionDraftPr({
+        job: session.job,
+        cwd: session.job.worktreePath,
+        ...(title ? { title } : {}),
+        ...(host.gh ? { gh: host.gh } : {}),
+        sessionId: session.id,
+        loadMessages: async () => (await runtime.store.loadSession(session.id)).messages,
+        persistAssistant: (sessionId, message) => runtime.store.persistAssistant(sessionId, message),
+        persistToolCalls: (sessionId, message) => runtime.store.persistToolCalls(sessionId, message),
+      })
+      if (out.job) {
+        session.job = out.job
+        session.updatedAt = Date.now()
+        await runtime.store.upsertSession(session)
+      }
+      host.notice(out.notice)
+      return 'handled'
+    }
     case 'copy':
       await dispatchCopy(host, runtime)
       return 'handled'

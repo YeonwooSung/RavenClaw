@@ -1,8 +1,13 @@
-import { describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'bun:test'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { spawnSync } from 'node:child_process'
 import {
   createFileHistory,
   createTaskRegistry,
   type SessionEngine,
+  type SessionJob,
   type SessionRecord,
 } from '@ravenclaw/core'
 import { SLASH_HELP, type SlashResult } from '../commands'
@@ -104,12 +109,17 @@ function cmd(name: string, arg?: string): Extract<SlashResult, { type: 'command'
   return parsed
 }
 
-function fakeHost(runtime: CliRuntime): SlashHost & { notices: string[]; turns: string[] } {
+function fakeHost(
+  runtime: CliRuntime,
+  over: Partial<SlashHost> = {},
+): SlashHost & { notices: string[]; turns: string[]; ghCalls: string[][] } {
   const notices: string[] = []
   const turns: string[] = []
+  const ghCalls: string[][] = []
   return {
     notices,
     turns,
+    ghCalls,
     runtime: () => runtime,
     notice(text) {
       notices.push(text)
@@ -117,6 +127,45 @@ function fakeHost(runtime: CliRuntime): SlashHost & { notices: string[]; turns: 
     runTurn(prompt) {
       turns.push(prompt)
     },
+    gh(args) {
+      ghCalls.push(args)
+      return { ok: true, stdout: 'https://github.com/o/r/pull/4\n', stderr: '' }
+    },
+    ...over,
+  }
+}
+
+const tempDirs: string[] = []
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop()
+    if (dir) rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+function tempGitRepo(dirty = false): string {
+  const dir = mkdtempSync(join(tmpdir(), 'ravenclaw-dispatch-pr-'))
+  tempDirs.push(dir)
+  const run = (args: string[]) => {
+    const result = spawnSync('git', args, { cwd: dir, encoding: 'utf8' })
+    expect(result.status).toBe(0)
+  }
+  run(['init'])
+  run(['config', 'user.email', 'test@example.com'])
+  run(['config', 'user.name', 'Test'])
+  run(['config', 'commit.gpgsign', 'false'])
+  run(['commit', '--allow-empty', '-m', 'init'])
+  if (dirty) writeFileSync(join(dir, 'dirty.txt'), 'x\n')
+  return dir
+}
+
+function jobAt(cwd: string): SessionJob {
+  return {
+    baseBranch: 'main',
+    shadowBranch: 'raven/x',
+    baseCommitSha: 'abc',
+    worktreePath: cwd,
   }
 }
 
@@ -205,4 +254,55 @@ describe('dispatchSharedSlash', () => {
     expect(await dispatchSharedSlash(cmd('foo'), host)).toBe('handled')
     expect(host.notices).toEqual(['unknown command: /foo'])
   })
+
+  test('/job commit on flips jobAutoCommit and upserts', async () => {
+    const session = makeSession()
+    const runtime = fakeRuntime(fakeEngine(session))
+    const upserted: SessionRecord[] = []
+    runtime.store.upsertSession = async (next) => {
+      upserted.push(next)
+    }
+    const host = fakeHost(runtime)
+    expect(await dispatchSharedSlash(cmd('job', 'commit on'), host)).toBe('handled')
+    expect(session.jobAutoCommit).toBe(true)
+    expect(upserted).toHaveLength(1)
+    expect(upserted[0]?.jobAutoCommit).toBe(true)
+    expect(host.notices).toEqual(['job commit on'])
+  })
+
+  test('/job commit off flips jobAutoCommit and upserts', async () => {
+    const session = makeSession({ jobAutoCommit: true })
+    const runtime = fakeRuntime(fakeEngine(session))
+    const upserted: SessionRecord[] = []
+    runtime.store.upsertSession = async (next) => {
+      upserted.push(next)
+    }
+    const host = fakeHost(runtime)
+    expect(await dispatchSharedSlash(cmd('job', 'commit off'), host)).toBe('handled')
+    expect(session.jobAutoCommit).toBe(false)
+    expect(upserted).toHaveLength(1)
+    expect(upserted[0]?.jobAutoCommit).toBe(false)
+    expect(host.notices).toEqual(['job commit off'])
+  })
+
+  test('/pr without a job record notices and does not invoke gh', async () => {
+    const host = fakeHost(fakeRuntime(fakeEngine(makeSession())))
+    expect(await dispatchSharedSlash(cmd('pr'), host)).toBe('handled')
+    expect(host.notices).toEqual(['no job record'])
+    expect(host.ghCalls).toEqual([])
+    expect(host.turns).toEqual([])
+  })
+
+  test('/pr on a dirty worktree notices and does not invoke gh', async () => {
+    const cwd = tempGitRepo(true)
+    const session = makeSession({ cwd, job: jobAt(cwd) })
+    const runtime = fakeRuntime(fakeEngine(session))
+    runtime.cwd = cwd
+    const host = fakeHost(runtime)
+    expect(await dispatchSharedSlash(cmd('pr'), host)).toBe('handled')
+    expect(host.notices).toEqual(['worktree is dirty'])
+    expect(host.ghCalls).toEqual([])
+    expect(host.turns).toEqual([])
+  })
 })
+

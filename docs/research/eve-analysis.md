@@ -321,4 +321,4 @@ If we ever add a browser client, **eve’s session API is the right waist**, not
 
 y0 still teaches Task-as-job UX (shadow branch, PR, wiki). eve teaches the **runtime contract** that makes that UX safe across process death. Neither replaces the waist.
 
-Roadmap items: `docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md`.
+That eve-inspired horizon is implemented. Next: `docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md` (y0 session-as-job + leftover eve waist: reconnectable stream, cancel ≠ fail, compact/todo truth).

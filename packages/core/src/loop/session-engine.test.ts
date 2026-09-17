@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'bun:test'
+import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -16,6 +17,7 @@ import type {
   Tool,
 } from '../types'
 import { memoryTool } from '../tools/memory'
+import { enterSessionWorktree, exitSessionWorktree } from '../tools/session-worktree'
 import { createSessionEngine } from './session-engine'
 import { drainAgentMail, enqueueAgentMail } from '../tasks/mailbox'
 import { applyPermissionMode, buildSystemParts } from '../prompt/builder'
@@ -1497,5 +1499,248 @@ describe('replayPendingAsks', () => {
     const ask = events.find((e) => e.type === 'permission_ask')
     expect(ask && ask.type === 'permission_ask' ? ask.id : undefined).toBe('call_child')
     expect(await store.listPendingAsks(child.id)).toHaveLength(0)
+  })
+})
+
+describe('job auto-commit', () => {
+  const tempDirs: string[] = []
+  const sessionIds: string[] = []
+  let seq = 0
+
+  afterEach(() => {
+    while (sessionIds.length > 0) {
+      const id = sessionIds.pop()
+      if (id) exitSessionWorktree(id, 'remove', true)
+    }
+    while (tempDirs.length > 0) {
+      const dir = tempDirs.pop()
+      if (dir) rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  function tempDir(prefix: string): string {
+    const dir = mkdtempSync(join(tmpdir(), prefix))
+    tempDirs.push(dir)
+    return dir
+  }
+
+  function nextSession(): string {
+    const id = `sess_jobac_${Date.now()}_${seq++}`
+    sessionIds.push(id)
+    return id
+  }
+
+  function initGitRepo(dir: string): void {
+    const run = (args: string[]) => {
+      const result = spawnSync('git', args, { cwd: dir, encoding: 'utf8' })
+      expect(result.status).toBe(0)
+    }
+    run(['init'])
+    run(['config', 'user.email', 'test@example.com'])
+    run(['config', 'user.name', 'Test'])
+    run(['config', 'commit.gpgsign', 'false'])
+    run(['commit', '--allow-empty', '-m', 'init'])
+  }
+
+  function git(cwd: string, args: string[]): string {
+    const result = spawnSync('git', args, { cwd, encoding: 'utf8' })
+    expect(result.status).toBe(0)
+    return result.stdout.trim()
+  }
+
+  async function drain(gen: AsyncGenerator<StreamEvent, import('../types').RoundEnd>) {
+    const events: StreamEvent[] = []
+    while (true) {
+      const next = await gen.next()
+      if (next.done) return { events, result: next.value }
+      events.push(next.value)
+    }
+  }
+
+  async function startJobSession(over: { jobAutoCommit?: boolean }) {
+    const cwd = tempDir('ravenclaw-jobac-')
+    initGitRepo(cwd)
+    const id = nextSession()
+    const entered = enterSessionWorktree(id, cwd)
+    expect(entered.ok).toBe(true)
+    expect(entered.job).toBeDefined()
+    const job = entered.job!
+    writeFileSync(join(job.worktreePath, 'note.txt'), 'dirty\n')
+    const store = createMemoryStore()
+    const sess = makeSession({
+      id,
+      cwd: job.worktreePath,
+      job,
+      ...(over.jobAutoCommit === true ? { jobAutoCommit: true } : {}),
+    })
+    await store.createSession(sess)
+    return { store, sess, job, head: git(job.worktreePath, ['rev-parse', 'HEAD']) }
+  }
+
+  test('submitMessage with jobAutoCommit does not commit on abort', async () => {
+    const { store, sess, job, head } = await startJobSession({ jobAutoCommit: true })
+    const provider: Provider = {
+      id: 'fake',
+      apiMode: 'openai_compat',
+      profile(model: string) {
+        return defaultModel(model)
+      },
+      async *stream(_req, signal) {
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) {
+            resolve()
+            return
+          }
+          signal.addEventListener('abort', () => resolve(), { once: true })
+        })
+      },
+    }
+    const engine = createSessionEngine({
+      ...engineOpts({ provider, store, session: sess }),
+    })
+    const gen = engine.submitMessage('hi')
+    const first = await gen.next()
+    expect(first.done).toBe(false)
+    engine.abort()
+    const { result } = await drain(gen)
+    expect(result).toEqual({ reason: 'aborted' })
+    expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).toBe(head)
+    expect(git(job.worktreePath, ['status', '--porcelain'])).toContain('note.txt')
+  })
+
+  test('submitMessage with jobAutoCommit commits a dirty tree on completed', async () => {
+    const { store, sess, job, head } = await startJobSession({ jobAutoCommit: true })
+    const engine = createSessionEngine({
+      ...engineOpts({
+        provider: createFakeProvider([[{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: 'end' }]]),
+        store,
+        session: sess,
+      }),
+    })
+    const { result } = await drain(engine.submitMessage('hi'))
+    expect(result).toEqual({ reason: 'completed' })
+    const after = git(job.worktreePath, ['rev-parse', 'HEAD'])
+    expect(after).not.toBe(head)
+    expect(git(job.worktreePath, ['log', '-1', '--pretty=%s'])).toMatch(/^raven: turn /)
+    expect(git(job.worktreePath, ['status', '--porcelain'])).toBe('')
+  })
+
+  test('submitMessage does not commit when jobAutoCommit is off', async () => {
+    const { store, sess, job, head } = await startJobSession({})
+    const engine = createSessionEngine({
+      ...engineOpts({
+        provider: createFakeProvider([[{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: 'end' }]]),
+        store,
+        session: sess,
+      }),
+    })
+    const { result } = await drain(engine.submitMessage('hi'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).toBe(head)
+    expect(git(job.worktreePath, ['status', '--porcelain'])).toContain('note.txt')
+  })
+})
+
+describe('cancel', () => {
+  async function drain(gen: AsyncGenerator<StreamEvent, import('../types').RoundEnd>) {
+    const events: StreamEvent[] = []
+    while (true) {
+      const next = await gen.next()
+      if (next.done) return { events, result: next.value }
+      events.push(next.value)
+    }
+  }
+
+  test('host cancel yields cancelled and a later submit runs', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_host_cancel' })
+    await store.createSession(sess)
+    let streams = 0
+    let enteredFirst: () => void
+    const firstStreamEntered = new Promise<void>((resolve) => {
+      enteredFirst = resolve
+    })
+    const provider: Provider = {
+      id: 'fake',
+      apiMode: 'openai_compat',
+      profile(model: string) {
+        return defaultModel(model)
+      },
+      async *stream(_req, signal) {
+        streams += 1
+        if (streams === 1) {
+          enteredFirst()
+          await new Promise<void>((resolve) => {
+            if (signal.aborted) {
+              resolve()
+              return
+            }
+            signal.addEventListener('abort', () => resolve(), { once: true })
+          })
+          return
+        }
+        yield { type: 'text_delta', text: 'ok' }
+        yield { type: 'stop', reason: 'end' }
+      },
+    }
+    const engine = createSessionEngine({
+      ...engineOpts({ provider, store, session: sess }),
+    })
+    const gen = engine.submitMessage('hi')
+    const pending = drain(gen)
+    await firstStreamEntered
+    engine.abort('cancel')
+    const { result } = await pending
+    expect(result).toEqual({ reason: 'cancelled' })
+
+    const second = await drain(engine.submitMessage('again'))
+    expect(second.result).toEqual({ reason: 'completed' })
+    expect(streams).toBe(2)
+  })
+
+  test('cancel leaves a parked leftover-ask and yields a status line', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_cancel_ask' })
+    await store.createSession(sess)
+    const provider: Provider = {
+      id: 'fake',
+      apiMode: 'openai_compat',
+      profile(model: string) {
+        return defaultModel(model)
+      },
+      async *stream(_req, signal) {
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) {
+            resolve()
+            return
+          }
+          signal.addEventListener('abort', () => resolve(), { once: true })
+        })
+      },
+    }
+    const engine = createSessionEngine({
+      ...engineOpts({ provider, store, session: sess }),
+    })
+    const gen = engine.submitMessage('hi')
+    const first = await gen.next()
+    expect(first.done).toBe(false)
+    await store.upsertPendingAsk({
+      callId: 'parked_1',
+      sessionId: sess.id,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Run ls?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    engine.abort('cancel')
+    const { events, result } = await drain(gen)
+    expect(result).toEqual({ reason: 'cancelled' })
+    expect(
+      events.some(
+        (event) => event.type === 'status' && event.message === 'cancelled, ask still pending',
+      ),
+    ).toBe(true)
+    expect(await store.listPendingAsks(sess.id)).toHaveLength(1)
   })
 })

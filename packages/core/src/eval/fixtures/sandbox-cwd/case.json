@@ -1,0 +1,4 @@
+{
+  "prompt": "write outside cwd",
+  "expect": { "writeOutsideCwdDenied": true }
+}

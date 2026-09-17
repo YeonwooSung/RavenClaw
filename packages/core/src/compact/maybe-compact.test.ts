@@ -1,8 +1,12 @@
-import { describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'bun:test'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { maybeCompact, type LoopState } from '../loop/phases'
 import { createMemoryStore } from '../session/memory-store'
 import type {
   CompactPolicy,
+  ContentBlock,
   Message,
   ModelProfile,
   Provider,
@@ -10,9 +14,20 @@ import type {
   StreamEvent,
   SystemPart,
   TokenUsage,
+  ToolContext,
 } from '../types'
+import { writeTool } from '../tools/write'
 import { clearLastRequestAt, markLastRequestAt } from './last-request'
 import { defaultCompactPolicy } from './policy'
+
+const tempDirs: string[] = []
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop()
+    if (dir) rmSync(dir, { recursive: true, force: true })
+  }
+})
 
 function model(over: Partial<ModelProfile> = {}): ModelProfile {
   return {
@@ -297,5 +312,121 @@ describe('maybeCompact', () => {
     )
     const blob = JSON.stringify(state.turn.messages)
     expect(blob.includes('unique-bytes-xyz') && state.system === undefined).toBe(false)
+  })
+
+  test('maybeCompact forgets this-turn Reads that left the tail', async () => {
+    const readBlock: ContentBlock = {
+      type: 'tool_use',
+      id: 'r1',
+      name: 'Read',
+      input: { path: 'a.ts' },
+    }
+    const messages: Message[] = [
+      user('u0', 'old', 1),
+      { id: 'a0', role: 'assistant', blocks: [readBlock], createdAt: 2 },
+      {
+        id: 't0',
+        role: 'tool',
+        toolUseId: 'r1',
+        ok: true,
+        blocks: [{ type: 'text', text: 'export const n = 1' }],
+        createdAt: 3,
+      },
+      user('u1', 'recent', 4),
+      asstText('a1', 'recent reply', 5, {
+        input: 200,
+        output: 20,
+        cacheRead: 10,
+        cacheWrite: 0,
+      }),
+    ]
+    const state = await makeState({
+      messages,
+      compact: compact({ autoCompactBuffer: 13, protectLastMessages: 2 }),
+      model: model({ contextWindow: 200, reserveOutputTokens: 20 }),
+      persist: false,
+    })
+    for (const msg of messages) {
+      if (msg.role === 'user') await state.store.persistUser(state.turn.sessionId, msg)
+      else if (msg.role === 'assistant') {
+        const hasTools = msg.blocks.some((block) => block.type === 'tool_use')
+        if (hasTools) await state.store.persistToolCalls(state.turn.sessionId, msg)
+        else await state.store.persistAssistant(state.turn.sessionId, msg)
+      } else {
+        await state.store.persistToolResults(state.turn.sessionId, [msg])
+      }
+    }
+    state.turn.readFiles.add('/tmp/a.ts')
+    if (!state.turn.readFileMtimes) state.turn.readFileMtimes = new Map()
+    state.turn.readFileMtimes.set('/tmp/a.ts', 1)
+
+    const { events, result } = await drain(state)
+    expect(result).toEqual({ action: 'continue' })
+    expect(events).toHaveLength(1)
+    expect(events[0]).toMatchObject({ type: 'compact', generation: 1 })
+    expect(
+      state.turn.messages.some(
+        (msg) =>
+          msg.role === 'assistant' &&
+          msg.blocks.some((block) => block.type === 'tool_use' && block.name === 'Read'),
+      ),
+    ).toBe(false)
+    expect(state.turn.readFiles.has('/tmp/a.ts')).toBe(false)
+    expect(state.turn.readFileMtimes?.has('/tmp/a.ts')).toBe(false)
+  })
+
+  test('cheap-only stubbed Read then Write requires a new Read', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-cheap-read-'))
+    tempDirs.push(cwd)
+    writeFileSync(join(cwd, 'a.ts'), 'old')
+    const resolved = resolve(cwd, 'a.ts')
+    const readBlock: ContentBlock = {
+      type: 'tool_use',
+      id: 'r1',
+      name: 'Read',
+      input: { path: 'a.ts' },
+    }
+    const messages: Message[] = [
+      user('u0', 'old', 1),
+      { id: 'a0', role: 'assistant', blocks: [readBlock], createdAt: 2 },
+      {
+        id: 't0',
+        role: 'tool',
+        toolUseId: 'r1',
+        ok: true,
+        blocks: [{ type: 'text', text: 'export const n = 1' }],
+        createdAt: 3,
+      },
+      user('u1', 'recent', 4),
+      asstText('a1', 'recent reply', 5),
+    ]
+    const state = await makeState({
+      messages,
+      compact: compact({ protectLastMessages: 2 }),
+      persist: false,
+    })
+    state.turn.cwd = cwd
+    state.turn.readFiles.add(resolved)
+    if (!state.turn.readFileMtimes) state.turn.readFileMtimes = new Map()
+    state.turn.readFileMtimes.set(resolved, 1)
+
+    const { events, result } = await drain(state)
+    expect(result).toEqual({ action: 'continue' })
+    expect(events).toEqual([])
+    const stubbed = state.turn.messages.find((msg) => msg.id === 't0')
+    expect(stubbed && stubbed.role === 'tool' ? stubbed.blocks[0] : undefined).toEqual({
+      type: 'text',
+      text: '[cleared Read output]',
+    })
+    expect(state.turn.readFiles.has(resolved)).toBe(false)
+
+    const ctx: ToolContext = {
+      turn: state.turn,
+      signal: state.turn.abort.signal,
+      onProgress() {},
+    }
+    const out = await writeTool.execute({ path: 'a.ts', content: 'x' }, ctx)
+    expect(out).toBe('Write failed: path must be Read first: a.ts')
+    expect(readFileSync(join(cwd, 'a.ts'), 'utf8')).toBe('old')
   })
 })

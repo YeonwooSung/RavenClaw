@@ -148,6 +148,8 @@ describe('RoundEnd mapping', () => {
     expect(roundEndToStopReason({ reason: 'completed' })).toBe('end_turn')
     expect(roundEndToStopReason({ reason: 'hook_stopped' })).toBe('end_turn')
     expect(roundEndToStopReason({ reason: 'aborted' })).toBe('cancelled')
+    expect(isRoundEnd({ reason: 'cancelled' })).toBe(true)
+    expect(roundEndToStopReason({ reason: 'cancelled' })).toBe('cancelled')
     expect(roundEndToStopReason({ reason: 'max_rounds', round: 8 })).toBe('max_turn_requests')
     expect(roundEndToStopReason({ reason: 'context_full' })).toBe('max_tokens')
     expect(roundEndToStopReason({ reason: 'model_error', error: 'boom' })).toBe('refusal')
@@ -188,7 +190,7 @@ describe('toSessionUpdate', () => {
   })
 
   test('ignores unrelated stream events', () => {
-    expect(toSessionUpdate({ type: 'round_start', round: 1 })).toBeUndefined()
+    expect(toSessionUpdate({ type: 'round_start', round: 1, turnId: 't1' })).toBeUndefined()
     expect(toSessionUpdate({ type: 'round_end', end: { reason: 'completed' } })).toBeUndefined()
   })
 })

@@ -1,15 +1,9 @@
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
-import type { Tool, ToolContext } from '../types'
+import type { TodoItem, TodoStatus, Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
 
-export type TodoStatus = 'pending' | 'in_progress' | 'done'
-
-export interface TodoItem {
-  id?: string
-  text: string
-  status: TodoStatus
-}
+export type { TodoItem, TodoStatus }
 
 export interface TodoWriteInput {
   items: TodoItem[]
@@ -35,9 +29,22 @@ export function loadTodos(root: string): TodoItem[] {
   } catch {
     return []
   }
-  if (!Array.isArray(parsed)) return []
+  return parseTodoItems(parsed)
+}
+
+export function normalizeTodoWriteItems(items: TodoItem[]): TodoItem[] {
+  return items.map((item, index) => ({
+    id: item.id !== undefined && item.id !== '' ? item.id : `todo_${index + 1}`,
+    text: item.text,
+    status: item.status,
+  }))
+}
+
+/** Parse a JSON value into checklist items. Non-arrays become `[]`. */
+export function parseTodoItems(value: unknown): TodoItem[] {
+  if (!Array.isArray(value)) return []
   const items: TodoItem[] = []
-  for (const entry of parsed) {
+  for (const entry of value) {
     const item = parseTodoItem(entry)
     if (item !== undefined) items.push(item)
   }
@@ -108,12 +115,16 @@ export const todoWriteTool: Tool<TodoWriteInput, string> = {
   },
   async execute(input: TodoWriteInput, ctx: ToolContext) {
     if (ctx.signal.aborted) throw abortError()
+    const store = ctx.store
+    if (!store) return 'TodoWrite failed: session store is required'
+    const items = normalizeTodoWriteItems(input.items)
+    try {
+      await store.updateSessionTodos(ctx.turn.sessionId, items)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return `TodoWrite failed: ${message}`
+    }
     const root = ctx.turn.projectCwd ?? ctx.turn.cwd
-    const items = input.items.map((item, index) => ({
-      id: item.id !== undefined && item.id !== '' ? item.id : `todo_${index + 1}`,
-      text: item.text,
-      status: item.status,
-    }))
     const path = todoJsonPath(root)
     try {
       mkdirSync(dirname(path), { recursive: true })

@@ -391,6 +391,7 @@ export function isRoundEnd(value: unknown): value is RoundEnd {
     reason === 'hook_stopped' ||
     reason === 'max_rounds' ||
     reason === 'aborted' ||
+    reason === 'cancelled' ||
     reason === 'context_full' ||
     reason === 'model_error' ||
     reason === 'persist_failed' ||
@@ -405,6 +406,7 @@ export function roundEndToStopReason(end: unknown): StopReason {
     case 'hook_stopped':
       return 'end_turn'
     case 'aborted':
+    case 'cancelled':
       return 'cancelled'
     case 'max_rounds':
       return 'max_turn_requests'

@@ -191,6 +191,16 @@ describe('port shapes', () => {
     const store = {
       async createSession() {},
       async upsertSession() {},
+      async updateSessionTodos() {},
+      async appendStreamEvent() {
+        return 0
+      },
+      async listStreamEventsAfter() {
+        return []
+      },
+      async lastStreamSeq() {
+        return 0
+      },
       async listSessions() {
         return []
       },
@@ -206,6 +216,14 @@ describe('port shapes', () => {
             compactGeneration: 0,
             usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
             funding: 'byok',
+            todos: [{ text: 'ship', status: 'pending' }],
+            job: {
+              baseBranch: 'main',
+              shadowBranch: 'raven/sess_1',
+              baseCommitSha: 'abc123',
+              worktreePath: '/tmp/worktree',
+            },
+            jobAutoCommit: false,
           },
           messages: [],
         }
@@ -254,6 +272,7 @@ describe('port shapes', () => {
         compactGeneration: 0,
         usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
         funding: 'byok',
+        todos: [{ text: 'ship', status: 'pending' }],
       },
       provider,
       store,

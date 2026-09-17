@@ -32,8 +32,10 @@ import {
   parseFailedText,
   unknownToolText,
 } from './pairing'
-import { markReadPath, recordReadFile, stampReadMtime } from '../tools/read-files'
-import { rewindLastTurn } from '../session/rewind'
+import { forgetReadsNotInTail, markReadPath, recordReadFile, stampReadMtime } from '../tools/read-files'
+import type { TodoItem } from '../tools/todo'
+import { rewindLastTurn, rewindToCheckpoint } from '../session/rewind'
+import { maybeCommitJob, stampCheckpoint } from '../session/job'
 import { getSessionWorktree } from '../tools/session-worktree'
 import { applyPermissionMode } from '../prompt/builder'
 import { injectMidTurnHint } from '../prompt/cache'
@@ -78,6 +80,27 @@ function titleFromUserText(text: string): string | undefined {
   const line = first.replace(/\s+/g, ' ').trim()
   if (line === '') return undefined
   return line.length <= TITLE_MAX ? line : line.slice(0, TITLE_MAX)
+}
+
+function sessionTodosOf(session: { todos?: TodoItem[] }): TodoItem[] | undefined {
+  return session.todos
+}
+
+function lastAssistant(messages: Message[]): Extract<Message, { role: 'assistant' }> | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]
+    if (msg?.role === 'assistant') return msg
+  }
+  return undefined
+}
+
+function isJobSuccessReason(reason: RoundEnd['reason']): boolean {
+  return (
+    reason === 'completed' ||
+    reason === 'hook_stopped' ||
+    reason === 'max_rounds' ||
+    reason === 'context_full'
+  )
 }
 
 export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
@@ -307,6 +330,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       tasks,
       fileHistory,
     }
+    if (target.sessionId === session.id) ctx.session = session
 
     let toolRow: Extract<Message, { role: 'tool' }>
     try {
@@ -362,6 +386,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
     const cut = source.length - tail.length
     if (cut <= 0) return
 
+    const todos = sessionTodosOf(session)
     const result = await runAutocompact({
       messages: source,
       compact: opts.compact,
@@ -370,6 +395,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       sessionId: session.id,
       generation: liveTurn?.compactGeneration ?? session.compactGeneration,
       cwd: liveTurn?.projectCwd ?? liveTurn?.cwd ?? session.cwd,
+      ...(todos !== undefined ? { todos } : {}),
       ...(opts.compact.llmSummarize
         ? {
             provider: opts.provider,
@@ -380,6 +406,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
     messages = result.messages
     if (liveTurn) {
       liveTurn.messages = result.messages
+      forgetReadsNotInTail(liveTurn, result.messages)
       liveTurn.compactGeneration = result.generation
     }
     session.compactGeneration = result.generation
@@ -443,6 +470,15 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       }
       if (tasks.list().some((task) => task.status === 'running' && task.type === 'agent')) {
         return { ok: false, notice: 'a turn is in progress' }
+      }
+      if (session.job) {
+        const result = await rewindToCheckpoint({
+          session,
+          messages,
+          store: opts.store,
+        })
+        messages = result.messages
+        return { ok: result.ok, notice: result.notice }
       }
       const result = await rewindLastTurn({
         fileHistory,
@@ -595,12 +631,21 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         if (opts.jsonSchema !== undefined) loopOpts.jsonSchema = opts.jsonSchema
         if (opts.verifyOnStop === true) loopOpts.verifyOnStop = true
         if (opts.refreshTools !== undefined) loopOpts.refreshTools = opts.refreshTools
+        loopOpts.session = session
+        const todos = sessionTodosOf(session)
+        if (todos !== undefined) loopOpts.todos = todos
         userTurns += 1
         if (shouldNudgeMemory(userTurns)) {
           turn.messages = injectMidTurnHint(turn.messages, MEMORY_NUDGE)
           messages = turn.messages
         }
         const end = yield* queryLoop(loopOpts)
+        if (end.reason === 'cancelled') {
+          const leftover = await opts.store.listPendingAsks(session.id)
+          if (leftover.length > 0) {
+            yield { type: 'status', message: 'cancelled, ask still pending' }
+          }
+        }
         messages = turn.messages
         if (end.reason === 'completed' && shouldNudgeLearn(turn.round)) {
           messages = injectMidTurnHint(messages, LEARN_NUDGE)
@@ -613,6 +658,35 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         session.cwd = turn.cwd
         session.updatedAt = Date.now()
         await opts.store.upsertSession(session)
+        if (
+          session.job &&
+          isJobSuccessReason(end.reason) &&
+          (await opts.store.listPendingAsks(session.id)).length === 0
+        ) {
+          if (session.jobAutoCommit === true) {
+            const result = maybeCommitJob({
+              job: session.job,
+              turnId: turn.id,
+              cwd: session.job.worktreePath,
+            })
+            if (result.notice) yield { type: 'status', message: result.notice }
+          }
+          const asst = lastAssistant(turn.messages)
+          if (asst) {
+            stampCheckpoint(asst, session.job, session.todos, session.job.worktreePath)
+            if (asst.checkpoint) {
+              try {
+                if (asst.blocks.some((block) => block.type === 'tool_use')) {
+                  await opts.store.persistToolCalls(session.id, asst)
+                } else {
+                  await opts.store.persistAssistant(session.id, asst)
+                }
+              } catch {
+                // checkpoint persist must not fail the turn
+              }
+            }
+          }
+        }
         if (end.reason === 'context_full') {
           const stop = await lifecycle.run('Stop', { sessionId: session.id, reason: end.reason })
           if (stop?.message) yield { type: 'status', message: stop.message }
@@ -686,11 +760,18 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       if (system !== undefined) system = applyPermissionMode(system, mode)
     },
 
-    abort() {
+    liveTurnId() {
+      return liveTurn?.id ?? null
+    },
+
+    abort(kind?: 'cancel' | 'interrupt') {
       cancelBackgroundReview?.()
       cancelBackgroundReview = undefined
       replayAbort?.abort()
-      if (liveTurn) abortTurn(liveTurn.abort)
+      if (liveTurn) {
+        if (liveTurn.cancelKind === undefined) liveTurn.cancelKind = kind ?? 'interrupt'
+        abortTurn(liveTurn.abort)
+      }
     },
 
     async close(closeOpts) {

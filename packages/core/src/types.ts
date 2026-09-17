@@ -88,6 +88,7 @@ export type Message =
       blocks: ContentBlock[]
       createdAt: number
       usage?: TokenUsage
+      checkpoint?: JobCheckpoint
     }
   | {
       id: string
@@ -136,6 +137,8 @@ export interface Turn {
   frozenToolNames?: string[]
   /** Same tool+args+result repeats this turn. Key is name + args + result text. */
   stallCounts?: Record<string, number>
+  /** Set by `SessionEngine.abort`. `cancel` → `{ reason: 'cancelled' }`; default interrupt → `aborted`. */
+  cancelKind?: 'cancel' | 'interrupt'
 }
 
 export interface Round {
@@ -148,7 +151,7 @@ export interface Round {
 }
 
 export type StreamEvent =
-  | { type: 'round_start'; round: number }
+  | { type: 'round_start'; round: number; turnId: string }
   | { type: 'text_delta'; text: string }
   | { type: 'thinking_delta'; text: string }
   | { type: 'tool_call'; id: string; name: string; input: unknown }
@@ -169,11 +172,14 @@ export type StreamEvent =
   | { type: 'usage'; usage: TokenUsage }
   | { type: 'round_end'; end: RoundEnd }
 
+export type SequencedStreamEvent = StreamEvent & { seq: number }
+
 export type RoundEnd =
   | { reason: 'completed' }
   | { reason: 'hook_stopped' }
   | { reason: 'max_rounds'; round: number }
   | { reason: 'aborted' }
+  | { reason: 'cancelled' }
   | { reason: 'context_full' }
   | { reason: 'model_error'; error: unknown }
   | { reason: 'persist_failed'; error: unknown }
@@ -215,6 +221,7 @@ export interface ToolContext {
   tasks?: import('./tasks/registry').TaskRegistry
   fileHistory?: import('./session/file-history').FileHistory
   store?: SessionStore
+  session?: SessionRecord
 }
 
 export interface ToolResult {
@@ -266,6 +273,29 @@ export interface AgentDefinition {
   outputMode: 'last_message' | 'all_messages'
 }
 
+export type TodoStatus = 'pending' | 'in_progress' | 'done'
+
+export interface TodoItem {
+  id?: string
+  text: string
+  status: TodoStatus
+}
+
+export type SessionJob = {
+  baseBranch: string
+  shadowBranch: string
+  baseCommitSha: string
+  worktreePath: string
+  prNumber?: number
+  prUrl?: string
+}
+
+export type JobCheckpoint = {
+  commitSha: string
+  todoSnapshot: TodoItem[]
+  dirty: boolean
+}
+
 export interface SessionRecord {
   id: string
   createdAt: number
@@ -279,6 +309,9 @@ export interface SessionRecord {
   title?: string
   parentSessionId?: string
   funding: Funding
+  todos?: TodoItem[]
+  job?: SessionJob
+  jobAutoCommit?: boolean
 }
 
 export interface SessionListFilter {
@@ -323,6 +356,11 @@ export function sessionLockedMessage(holderName: string | undefined, expiresAt: 
 export interface SessionStore {
   createSession(session: SessionRecord): Promise<void>
   upsertSession(session: SessionRecord): Promise<void>
+  /** Non-repairing session-row write. Must not load or pair messages. */
+  updateSessionTodos(sessionId: string, todos: TodoItem[]): Promise<void>
+  appendStreamEvent(sessionId: string, event: StreamEvent): Promise<number>
+  listStreamEventsAfter(sessionId: string, afterSeq: number): Promise<SequencedStreamEvent[]>
+  lastStreamSeq(sessionId: string): Promise<number>
   listSessions(filter?: SessionListFilter): Promise<SessionRecord[]>
   loadSession(sessionId: string): Promise<{ session: SessionRecord; messages: Message[] }>
   /**
@@ -435,7 +473,8 @@ export interface SessionEngine {
   setModel(profile: ModelProfile): Promise<void>
   setPermissionMode(mode: PermissionMode): Promise<void>
   reloadSystem(system: SystemPart[]): void
-  abort(): void
+  abort(kind?: 'cancel' | 'interrupt'): void
+  liveTurnId(): string | null
   /** Fire SessionEnd once, then release the session lock. Safe to call more than once. */
   close(opts?: { releaseLock?: boolean }): Promise<void>
 }
@@ -462,6 +501,10 @@ export interface QueryLoopOptions {
   verifyOnStop?: boolean
   /** After a tool batch, return newly ready deferred tools (MCP). Prefix stays unchanged. */
   refreshTools?: () => Promise<Tool[] | undefined> | Tool[] | undefined
+  /** Live session record. TodoWrite mutates `todos` in place for mid-turn compact/TUI. */
+  session?: SessionRecord
+  /** Session todos for compact restore. Unset until the engine has a session list. */
+  todos?: TodoItem[]
   lifecycle?: {
     run(
       event: string,

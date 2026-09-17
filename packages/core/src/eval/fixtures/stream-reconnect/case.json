@@ -1,0 +1,4 @@
+{
+  "prompt": "reconnect after seq 1",
+  "expect": { "afterSeqReplays": true }
+}

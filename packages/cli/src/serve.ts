@@ -2,6 +2,7 @@ import {
   checkBearer,
   loadConfig,
   loadSessionMap,
+  parseCancelBody,
   parseResolveBody,
   parseTurnRequest,
   PersistError,
@@ -12,7 +13,14 @@ import {
   verifyWebhookSignature,
   safeWebhookToolNames,
   type PendingAskAnswer,
+  type PermissionMode,
+  type SequencedStreamEvent,
+  applySessionDraftPr,
+  type Message,
   type SessionEngine,
+  type SessionJob,
+  type SessionRecord,
+  type SessionStore,
   type StreamEvent,
   type ConfigFlags,
   type UserSubmitInput,
@@ -128,14 +136,15 @@ export function gatewaySecret(env = process.env): string {
 }
 
 export type ServeEngine = {
-  session: { id: string }
+  session: { id: string; permissionMode: PermissionMode; job?: SessionJob }
   submitMessage: (input: UserSubmitInput) => AsyncGenerator<StreamEvent, unknown>
   applyAskAnswer: (
     callId: string,
     answer: PendingAskAnswer,
   ) => Promise<'matched' | 'unmatched'>
   replayPendingAsks: () => AsyncGenerator<StreamEvent, void>
-  abort: () => void
+  abort: (kind?: 'cancel' | 'interrupt') => void
+  liveTurnId?: () => string | null
   compactNow: () => Promise<void>
   close?: SessionEngine['close']
 }
@@ -154,14 +163,29 @@ export type ServeRuntime = {
       }>
     >
     listSessions?: (filter?: { parentSessionId?: string | null }) => Promise<Array<{ id: string }>>
+    listStreamEventsAfter?: (
+      sessionId: string,
+      afterSeq: number,
+    ) => Promise<SequencedStreamEvent[]>
+    lastStreamSeq?: (sessionId: string) => Promise<number>
+    upsertSession?: (session: SessionRecord) => Promise<void>
+    loadSession?: (sessionId: string) => Promise<{ session: SessionRecord; messages: Message[] }>
+    persistAssistant?: (
+      sessionId: string,
+      message: Extract<Message, { role: 'assistant' }>,
+    ) => Promise<void>
+    persistToolCalls?: (
+      sessionId: string,
+      message: Extract<Message, { role: 'assistant' }>,
+    ) => Promise<void>
   }
 }
 
-export type SessionEventSink = (event: StreamEvent) => void
+export type SessionEventSink = (event: SequencedStreamEvent) => void
 
 export type SessionEventHub = {
   subscribe: (sessionId: string, sink: SessionEventSink) => () => void
-  publish: (sessionId: string, event: StreamEvent) => void
+  publish: (sessionId: string, event: StreamEvent) => Promise<number>
 }
 
 export type ServeAskHost = {
@@ -214,10 +238,14 @@ export type ServeRequestContext = {
   runtimeForSession: (sessionId: string) => Promise<ServeRuntime | undefined>
   createSession?: (sessionId: string) => Promise<ServeRuntime>
   settleAsk?: (callId: string, answer: PendingAskAnswer) => boolean
+  gh?: (args: string[], cwd: string) => { ok: boolean; stdout: string; stderr: string }
 }
 
-export function createSessionEventHub(): SessionEventHub {
+export function createSessionEventHub(
+  store?: Pick<SessionStore, 'appendStreamEvent'>,
+): SessionEventHub {
   const listeners = new Map<string, Set<SessionEventSink>>()
+  let localSeq = 0
   return {
     subscribe(sessionId, sink) {
       let set = listeners.get(sessionId)
@@ -231,22 +259,26 @@ export function createSessionEventHub(): SessionEventHub {
         if (set.size === 0) listeners.delete(sessionId)
       }
     },
-    publish(sessionId, event) {
+    async publish(sessionId, event) {
+      const seq = store ? await store.appendStreamEvent(sessionId, event) : ++localSeq
+      const sequenced: SequencedStreamEvent = { ...event, seq }
       const set = listeners.get(sessionId)
-      if (!set) return
-      for (const sink of set) sink(event)
+      if (set) {
+        for (const sink of set) sink(sequenced)
+      }
+      return seq
     },
   }
 }
 
 async function* tapAsyncGen<T, R>(
   gen: AsyncGenerator<T, R>,
-  onValue: (value: T) => void,
+  onValue: (value: T) => void | Promise<void>,
 ): AsyncGenerator<T, R> {
   while (true) {
     const next = await gen.next()
     if (next.done) return next.value
-    onValue(next.value)
+    await onValue(next.value)
     yield next.value
   }
 }
@@ -365,8 +397,16 @@ async function publishParkedAsks(
       event.saveAs = row.saveAs as Extract<StreamEvent, { type: 'permission_ask' }>['saveAs']
     }
     if (row.sessionId !== sessionId) event.childSessionId = row.sessionId
-    hub.publish(sessionId, event)
+    await hub.publish(sessionId, event)
   }
+}
+
+function parseAfterParam(raw: string | null): { ok: true; after?: number } | { ok: false } {
+  if (raw === null) return { ok: true }
+  if (!/^\d+$/.test(raw)) return { ok: false }
+  const after = Number(raw)
+  if (!Number.isSafeInteger(after)) return { ok: false }
+  return { ok: true, after }
 }
 
 function unauthorized(): Response {
@@ -385,7 +425,8 @@ async function readJsonBody(req: Request): Promise<{ ok: true; body: unknown } |
   }
 }
 
-const SESSION_PATH = /^\/v1\/session\/([^/]+)\/(stream|cancel|compact|resolve|submit)$/
+const SESSION_PATH = /^\/v1\/session\/([^/]+)\/(stream|cancel|compact|resolve|submit|pr)$/
+const SESSION_ID_PATH = /^\/v1\/session\/([^/]+)$/
 
 async function loadSessionRuntime(
   ctx: ServeRequestContext,
@@ -398,6 +439,32 @@ async function loadSessionRuntime(
   } catch (error) {
     return { ok: false, res: sessionOpenErrorResponse(error) }
   }
+}
+
+async function collectSnapshotPendingAsks(
+  runtime: ServeRuntime,
+  sessionId: string,
+): Promise<Array<{ callId: string; tool: string; message: string; childSessionId?: string }>> {
+  const store = runtime.store
+  if (!store?.listPendingAsks) return []
+  const rows = [...(await store.listPendingAsks(sessionId))]
+  if (store.listSessions) {
+    const children = await store.listSessions({ parentSessionId: sessionId })
+    for (const child of children) {
+      for (const row of await store.listPendingAsks(child.id)) {
+        rows.push({ ...row, sessionId: child.id })
+      }
+    }
+  }
+  return rows.map((row) => {
+    const ask: { callId: string; tool: string; message: string; childSessionId?: string } = {
+      callId: row.callId,
+      tool: row.tool,
+      message: row.message,
+    }
+    if (row.sessionId !== sessionId) ask.childSessionId = row.sessionId
+    return ask
+  })
 }
 
 export async function handleServeRequest(req: Request, ctx: ServeRequestContext): Promise<Response> {
@@ -437,19 +504,47 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
     const sessionId = sessionRoute[1] ?? ''
     const action = sessionRoute[2]
     if (req.method === 'GET' && action === 'stream') {
+      const parsedAfter = parseAfterParam(url.searchParams.get('after'))
+      if (!parsedAfter.ok) return Response.json({ error: 'invalid after' }, { status: 400 })
       const loaded = await loadSessionRuntime(ctx, sessionId)
       if (!loaded.ok) return loaded.res
+      const after = parsedAfter.after
       const encoder = new TextEncoder()
       let unsub = () => {}
       const stream = new ReadableStream<Uint8Array>({
-        start(controller) {
-          unsub = ctx.hub.subscribe(sessionId, (event) => {
+        async start(controller) {
+          const write = (event: SequencedStreamEvent) => {
             try {
               controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`))
             } catch {
               unsub()
             }
+          }
+          let lastSeq = after ?? 0
+          let replaying = after !== undefined
+          const buffered: SequencedStreamEvent[] = []
+          unsub = ctx.hub.subscribe(sessionId, (event) => {
+            if (replaying) {
+              buffered.push(event)
+              return
+            }
+            if (after !== undefined && event.seq <= lastSeq) return
+            write(event)
+            lastSeq = event.seq
           })
+          if (after !== undefined) {
+            const replay = (await loaded.runtime.store?.listStreamEventsAfter?.(sessionId, after)) ?? []
+            for (const event of replay) {
+              write(event)
+              lastSeq = event.seq
+            }
+            replaying = false
+            for (const event of buffered) {
+              if (event.seq <= lastSeq) continue
+              write(event)
+              lastSeq = event.seq
+            }
+          }
           void publishParkedAsks(loaded.runtime, sessionId, ctx.hub)
           const onAbort = () => {
             unsub()
@@ -476,7 +571,25 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
     if (req.method === 'POST' && action === 'cancel') {
       const loaded = await loadSessionRuntime(ctx, sessionId)
       if (!loaded.ok) return loaded.res
-      loaded.runtime.engine.abort()
+      const raw = await req.text()
+      let parsed: ReturnType<typeof parseCancelBody>
+      if (raw.trim() === '') {
+        parsed = parseCancelBody(undefined)
+      } else {
+        let body: unknown
+        try {
+          body = JSON.parse(raw)
+        } catch {
+          return Response.json({ error: 'invalid json' }, { status: 400 })
+        }
+        parsed = parseCancelBody(body)
+      }
+      if (!parsed.ok) return Response.json({ error: parsed.error }, { status: 400 })
+      const live = loaded.runtime.engine.liveTurnId?.() ?? null
+      if (parsed.turnId !== undefined ? parsed.turnId !== live : live === null) {
+        return Response.json({ ok: true, status: 'no_active_turn' })
+      }
+      loaded.runtime.engine.abort('cancel')
       return Response.json({ ok: true })
     }
     if (req.method === 'POST' && action === 'compact') {
@@ -533,7 +646,86 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
       })
       return Response.json({ accepted: true, sessionId: sid }, { status: 202 })
     }
+    if (req.method === 'POST' && action === 'pr') {
+      const loaded = await loadSessionRuntime(ctx, sessionId)
+      if (!loaded.ok) return loaded.res
+      let title: string | undefined
+      let body: string | undefined
+      const raw = await req.text()
+      if (raw.trim() !== '') {
+        let parsed: unknown
+        try {
+          parsed = JSON.parse(raw) as unknown
+        } catch {
+          return Response.json({ error: 'invalid json' }, { status: 400 })
+        }
+        if (parsed !== null && typeof parsed === 'object') {
+          const rec = parsed as Record<string, unknown>
+          if (typeof rec.title === 'string') title = rec.title
+          if (typeof rec.body === 'string') body = rec.body
+        }
+      }
+      const session = loaded.runtime.engine.session
+      if (!session.job) {
+        return Response.json({ ok: false, notice: 'no job record' })
+      }
+      const store = loaded.runtime.store
+      const out = await applySessionDraftPr({
+        job: session.job,
+        cwd: session.job.worktreePath,
+        ...(title !== undefined ? { title } : {}),
+        ...(body !== undefined ? { body } : {}),
+        ...(ctx.gh ? { gh: ctx.gh } : {}),
+        sessionId: session.id,
+        ...(store?.loadSession
+          ? { loadMessages: async () => (await store.loadSession!(session.id)).messages }
+          : {}),
+        ...(store?.persistAssistant
+          ? { persistAssistant: (id, message) => store.persistAssistant!(id, message) }
+          : {}),
+        ...(store?.persistToolCalls
+          ? { persistToolCalls: (id, message) => store.persistToolCalls!(id, message) }
+          : {}),
+      })
+      if (out.job) {
+        session.job = out.job
+        await store?.upsertSession?.(session as SessionRecord)
+      }
+      const json: { ok: boolean; notice: string; snapshot?: typeof out.snapshot } = {
+        ok: out.ok,
+        notice: out.notice,
+      }
+      if (out.snapshot) json.snapshot = out.snapshot
+      return Response.json(json)
+    }
     return Response.json({ error: 'not found' }, { status: 404 })
+  }
+
+  const sessionIdRoute = SESSION_ID_PATH.exec(url.pathname)
+  if (sessionIdRoute && req.method === 'GET') {
+    if (!requireBearer(req, ctx.secret)) return unauthorized()
+    const sessionId = sessionIdRoute[1] ?? ''
+    const loaded = await loadSessionRuntime(ctx, sessionId)
+    if (!loaded.ok) return loaded.res
+    const { engine, store } = loaded.runtime
+    const pendingAsks = await collectSnapshotPendingAsks(loaded.runtime, sessionId)
+    const lastSeq = store?.lastStreamSeq ? await store.lastStreamSeq(sessionId) : 0
+    const body: {
+      id: string
+      job?: SessionJob
+      pendingAsks: Array<{ callId: string; tool: string; message: string; childSessionId?: string }>
+      lastSeq: number
+      permissionMode: PermissionMode
+      live: boolean
+    } = {
+      id: engine.session.id,
+      pendingAsks,
+      lastSeq,
+      permissionMode: engine.session.permissionMode,
+      live: (engine.liveTurnId?.() ?? null) !== null,
+    }
+    if (engine.session.job !== undefined) body.job = engine.session.job
+    return Response.json(body)
   }
 
   return Response.json({ error: 'not found' }, { status: 404 })
@@ -554,8 +746,6 @@ export async function runServe(opts: { flags: ConfigFlags }): Promise<number> {
   const home = ravenclawHome()
   const map = loadSessionMap(home)
   const turnFlights = new Map<string, Promise<unknown>>()
-  const hub = createSessionEventHub()
-  const caches = createServeRuntimeCaches(hub)
   const asks = createServeAskHost()
   const shared = await bootCli({
     flags: { ...opts.flags, dontAsk: true },
@@ -563,6 +753,8 @@ export async function runServe(opts: { flags: ConfigFlags }): Promise<number> {
     surface: 'headless',
     lockHolder: 'serve',
   })
+  const hub = createSessionEventHub(shared.store)
+  const caches = createServeRuntimeCaches(hub)
   shared.ask.bind(asks.askUser)
   const sessionBoot = {
     ...shared,
@@ -645,7 +837,8 @@ export async function runServe(opts: { flags: ConfigFlags }): Promise<number> {
 
   process.stdout.write(`raven serve ${server.hostname}:${server.port}\n`)
   process.stdout.write('POST /v1/turn  Authorization: Bearer <GATEWAY_SECRET>\n')
-  process.stdout.write('GET  /v1/session/:id/stream  NDJSON live tail\n')
+  process.stdout.write('GET  /v1/session/:id  snapshot JSON\n')
+  process.stdout.write('GET  /v1/session/:id/stream[?after=seq]  NDJSON\n')
   process.stdout.write('POST /v1/session/:id/submit|/cancel|/compact|/resolve\n')
   process.stdout.write('POST /webhooks/<route>  X-Raven-Signature: t=<unix>,v1=<hmac>\n')
   const stopMailbox = startMailboxPoller(caches.liveEngines(), turnFlights)

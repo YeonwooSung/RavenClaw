@@ -27,6 +27,7 @@ import type {
   RoundEnd,
   SessionEngine,
   SessionEngineOptions,
+  SessionJob,
   SessionRecord,
   SessionStore,
   StreamEvent,
@@ -192,7 +193,12 @@ async function spawnChild(
     input.description,
     childSessionId,
   )
-  const isolated = prepareChildWorktree(ctx.turn.cwd, childSession.id, input.isolation ?? 'none')
+  const isolated = prepareChildWorktree(
+    ctx.turn.cwd,
+    childSession.id,
+    input.isolation ?? 'none',
+    await loadParentJob(ctx, opts.store),
+  )
   const userMessage = buildChildUserMessage(input, definition, now)
   const preambleMessages = buildChildPreamble(definition, ctx.turn.messages)
   const parentCwd = childSession.cwd
@@ -225,6 +231,10 @@ async function spawnChild(
 
   try {
     await opts.store.createSession(childSession)
+    if (isolated.job) {
+      childSession.job = isolated.job
+      await opts.store.upsertSession(childSession)
+    }
 
     const oneShot = await maybeRunCommandRunner(input, definition, childTools, childTurn, ctx, opts)
     if (oneShot?.done) {
@@ -383,6 +393,19 @@ function formatParallelResults(
 function settledReason(reason: unknown): string {
   if (reason instanceof Error) return reason.message
   return String(reason)
+}
+
+async function loadParentJob(
+  ctx: ToolContext,
+  store: SessionStore,
+): Promise<SessionJob | undefined> {
+  if (ctx.session?.job) return ctx.session.job
+  const loader = ctx.store ?? store
+  try {
+    return (await loader.loadSession(ctx.turn.sessionId)).session.job
+  } catch {
+    return undefined
+  }
 }
 
 function buildChildSession(

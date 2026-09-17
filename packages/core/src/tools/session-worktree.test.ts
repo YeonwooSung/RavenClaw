@@ -3,6 +3,8 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { createMemoryStore } from '../session/memory-store'
+import type { SessionRecord } from '../types'
 import {
   enterSessionWorktree,
   exitSessionWorktree,
@@ -48,8 +50,22 @@ function initGitRepo(dir: string): void {
   run(['commit', '--allow-empty', '-m', 'init'])
 }
 
+function sessionRecord(id: string, cwd: string): SessionRecord {
+  return {
+    id,
+    createdAt: 1,
+    updatedAt: 1,
+    cwd,
+    model: 'dummy',
+    permissionMode: 'default',
+    compactGeneration: 0,
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    funding: 'byok',
+  }
+}
+
 describe('session worktree map', () => {
-  test('enter creates a detached worktree under .ravenclaw/worktrees', () => {
+  test('enter creates a named worktree under .ravenclaw/worktrees', () => {
     const cwd = tempDir('ravenclaw-swt-enter-')
     initGitRepo(cwd)
     const sessionId = nextSession()
@@ -61,6 +77,43 @@ describe('session worktree map', () => {
     expect(mapped?.originalCwd).toBe(cwd)
     expect(mapped?.worktreePath).toBe(result.cwd)
     expect(mapped?.name).toBe('iso')
+    const branch = spawnSync('git', ['-C', result.cwd, 'rev-parse', '--abbrev-ref', 'HEAD'], {
+      encoding: 'utf8',
+    })
+    expect(branch.stdout.trim()).not.toBe('HEAD')
+    expect(branch.stdout.trim()).toBe(result.job?.shadowBranch)
+  })
+
+  test('enter creates a named raven/* branch and records baseSha', () => {
+    const cwd = tempDir('ravenclaw-swt-job-')
+    initGitRepo(cwd)
+    const sessionId = nextSession()
+    const result = enterSessionWorktree(sessionId, cwd)
+    expect(result.ok).toBe(true)
+    expect(result.job?.shadowBranch.startsWith('raven/')).toBe(true)
+    const branch = spawnSync('git', ['-C', result.cwd, 'branch', '--show-current'], {
+      encoding: 'utf8',
+    })
+    expect(branch.stdout.trim()).toBe(result.job?.shadowBranch)
+    const head = spawnSync('git', ['-C', result.cwd, 'rev-parse', 'HEAD'], { encoding: 'utf8' })
+    expect(head.stdout.trim()).toBe(result.job?.baseCommitSha)
+  })
+
+  test('EnterWorktree then loadSession still knows base/shadow/baseSha', async () => {
+    const store = createMemoryStore()
+    const cwd = tempDir('ravenclaw-swt-persist-')
+    initGitRepo(cwd)
+    const session = sessionRecord(nextSession(), cwd)
+    await store.createSession(session)
+    const result = enterSessionWorktree(session.id, cwd)
+    expect(result.ok).toBe(true)
+    session.job = result.job
+    await store.upsertSession(session)
+    const loaded = await store.loadSession(session.id)
+    expect(loaded.session.job?.baseBranch).toBe(result.job?.baseBranch)
+    expect(loaded.session.job?.shadowBranch).toBe(result.job?.shadowBranch)
+    expect(loaded.session.job?.baseCommitSha).toBe(result.job?.baseCommitSha)
+    expect(loaded.session.job?.worktreePath).toBe(result.cwd)
   })
 
   test('uses a short session id when name is omitted', () => {

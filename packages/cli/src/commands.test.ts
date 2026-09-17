@@ -149,6 +149,8 @@ describe('handleSlashCommand', () => {
       'undo',
       'rewind',
       'diff',
+      'job',
+      'pr',
       'steer',
       'add-dir',
       'effort',

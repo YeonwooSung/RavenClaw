@@ -1,6 +1,8 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
+import type { SessionJob } from '../types'
+import { shadowBranchName } from './session-worktree'
 
 export type IsolationMode = 'none' | 'worktree'
 
@@ -14,6 +16,7 @@ export interface ChildWorktree {
   cwd: string
   created: boolean
   cleanup: () => WorktreeCleanupReport
+  job?: SessionJob
 }
 
 const GIT_TIMEOUT_MS = 30_000
@@ -22,6 +25,7 @@ export function prepareChildWorktree(
   parentCwd: string,
   childSessionId: string,
   isolation: IsolationMode,
+  parentJob?: SessionJob,
 ): ChildWorktree {
   const fallback: ChildWorktree = {
     cwd: parentCwd,
@@ -40,12 +44,29 @@ export function prepareChildWorktree(
     return fallback
   }
 
-  const added = runGit(toplevel, ['worktree', 'add', '--detach', worktreePath])
+  let job: SessionJob | undefined
+  let added: { ok: boolean; stdout: string }
+  if (parentJob) {
+    const baseSha = runGit(parentJob.worktreePath, ['rev-parse', 'HEAD']).stdout.trim()
+    const shadow = shadowBranchName(childSessionId)
+    added = runGit(toplevel, ['worktree', 'add', '-b', shadow, worktreePath, baseSha])
+    if (added.ok) {
+      job = {
+        baseBranch: parentJob.shadowBranch,
+        shadowBranch: shadow,
+        baseCommitSha: baseSha,
+        worktreePath,
+      }
+    }
+  } else {
+    added = runGit(toplevel, ['worktree', 'add', '--detach', worktreePath])
+  }
   if (!added.ok) return fallback
 
   return {
     cwd: worktreePath,
     created: true,
+    ...(job !== undefined ? { job } : {}),
     cleanup: () => {
       if (isWorktreeDirty(worktreePath)) {
         return { path: worktreePath, dirty: true, pruned: false }

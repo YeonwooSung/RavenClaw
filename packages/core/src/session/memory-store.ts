@@ -7,6 +7,7 @@ import {
 import type {
   Message,
   PermissionRule,
+  SequencedStreamEvent,
   SessionListFilter,
   SessionRecord,
   SessionStore,
@@ -14,6 +15,7 @@ import type {
 import type { PendingAsk } from './pending-asks'
 import { repairRoleAlternation } from '../loop/repair'
 import { clipAgentMailBody } from '../tasks/mailbox'
+import { streamEventAskCallId, toSequencedStreamEvent } from './stream-events'
 
 type Stored = {
   message: Message
@@ -60,6 +62,7 @@ export function createMemoryStore(): SessionStore {
   const mail = new Map<string, Array<{ id: number; createdAt: number; body: string }>>()
   const locks = new Map<string, MemoryLock>()
   const pendingAsks = new Map<string, PendingAsk>()
+  const streamEvents = new Map<string, SequencedStreamEvent[]>()
   let mailSeq = 0
 
   let tail: Promise<void> = Promise.resolve()
@@ -128,6 +131,25 @@ export function createMemoryStore(): SessionStore {
     return message.blocks.some((block) => block.type === 'tool_use')
   }
 
+  function upsertAssistant(
+    sessionId: string,
+    message: Extract<Message, { role: 'assistant' }>,
+    kind: 'assistant' | 'tool_calls',
+  ): void {
+    const key = kindKey(sessionId, message.id)
+    const existingKind = assistantKind.get(key)
+    if (existingKind !== undefined) {
+      if (existingKind !== kind) {
+        throw new PersistError('unknown', 'assistant row already persisted')
+      }
+      const row = bucket(sessionId).find((stored) => stored.message.id === message.id)
+      if (row) row.message = message
+      return
+    }
+    assistantKind.set(key, kind)
+    pushMessage(sessionId, message)
+  }
+
   const store: SessionStore = {
     async createSession(session) {
       await withWrite(async () => {
@@ -142,6 +164,45 @@ export function createMemoryStore(): SessionStore {
       await withWrite(async () => {
         sessions.set(session.id, { ...session })
       })
+    },
+
+    async updateSessionTodos(sessionId, todos) {
+      await withWrite(async () => {
+        const sess = sessions.get(sessionId)
+        if (!sess) {
+          throw new PersistError('unknown', `session not found: ${sessionId}`)
+        }
+        sess.todos = todos
+        sess.updatedAt = Date.now()
+      })
+    },
+
+    async appendStreamEvent(sessionId, event) {
+      return withWrite(async () => {
+        const rows = streamEvents.get(sessionId) ?? []
+        const askCallId = streamEventAskCallId(event)
+        if (askCallId !== undefined) {
+          const existing = rows.find(
+            (row) => row.type === 'permission_ask' && row.id === askCallId,
+          )
+          if (existing) return existing.seq
+        }
+        const seq = (rows.at(-1)?.seq ?? 0) + 1
+        const sequenced = toSequencedStreamEvent(event, seq)
+        rows.push(sequenced)
+        streamEvents.set(sessionId, rows)
+        return seq
+      })
+    },
+
+    async listStreamEventsAfter(sessionId, afterSeq) {
+      return (streamEvents.get(sessionId) ?? [])
+        .filter((row) => row.seq > afterSeq)
+        .map((row) => ({ ...row }))
+    },
+
+    async lastStreamSeq(sessionId) {
+      return streamEvents.get(sessionId)?.at(-1)?.seq ?? 0
     },
 
     async listSessions(filter?: SessionListFilter) {
@@ -201,6 +262,7 @@ export function createMemoryStore(): SessionStore {
         rules.delete(sessionId)
         mail.delete(sessionId)
         locks.delete(sessionId)
+        streamEvents.delete(sessionId)
         for (const [callId, row] of pendingAsks) {
           if (row.sessionId === sessionId) pendingAsks.delete(callId)
         }
@@ -245,12 +307,7 @@ export function createMemoryStore(): SessionStore {
         if (hasToolUse(message)) {
           throw new PersistError('unknown', 'persistAssistant cannot write tool_use')
         }
-        const key = kindKey(sessionId, message.id)
-        if (assistantKind.has(key)) {
-          throw new PersistError('unknown', 'assistant row already persisted')
-        }
-        assistantKind.set(key, 'assistant')
-        pushMessage(sessionId, message)
+        upsertAssistant(sessionId, message, 'assistant')
       })
     },
 
@@ -259,12 +316,7 @@ export function createMemoryStore(): SessionStore {
         if (!hasToolUse(message)) {
           throw new PersistError('unknown', 'persistToolCalls requires tool_use')
         }
-        const key = kindKey(sessionId, message.id)
-        if (assistantKind.has(key)) {
-          throw new PersistError('unknown', 'assistant row already persisted')
-        }
-        assistantKind.set(key, 'tool_calls')
-        pushMessage(sessionId, message)
+        upsertAssistant(sessionId, message, 'tool_calls')
       })
     },
 

@@ -22,7 +22,6 @@ import {
   type TodoItem,
   loadTodos,
   nearCompact,
-  todosFromToolResult,
 } from '@ravenclaw/core'
 import { AdDock } from './ad-dock'
 import { handleSlashCommand } from './commands'
@@ -109,7 +108,9 @@ export function App(props: AppProps) {
   const [ask, setAsk] = useState<PermissionAsk | undefined>(undefined)
   const [picker, setPicker] = useState<SessionRecord[] | undefined>(undefined)
   const [pickerIndex, setPickerIndex] = useState(0)
-  const [todos, setTodos] = useState<TodoItem[]>(() => loadTodos(props.runtime.cwd))
+  const [todos, setTodos] = useState<TodoItem[]>(
+    () => props.runtime.engine.session.todos ?? loadTodos(props.runtime.cwd),
+  )
   const [tasks, setTasks] = useState<TaskSnapshot[]>(() => props.runtime.engine.tasks.list())
   const [selectedIndex, setSelectedIndex] = useState<number | undefined>(undefined)
   const [expandedIds, setExpandedIds] = useState(() => new Set<string>())
@@ -231,9 +232,11 @@ export function App(props: AppProps) {
       const next = applyStreamEvent(prev, event)
       if (event.type === 'tool_result') {
         const name = next.find((row) => row.kind === 'tool' && row.id === event.id)?.name ?? ''
-        setTodos((prevTodos) =>
-          todosFromToolResult(name, runtimeRef.current.cwd, prevTodos),
-        )
+        if (name === 'TodoWrite') {
+          setTodos(
+            runtimeRef.current.engine.session.todos ?? loadTodos(runtimeRef.current.cwd),
+          )
+        }
         setTasks(runtimeRef.current.engine.tasks.list())
       }
       return next
@@ -335,7 +338,7 @@ export function App(props: AppProps) {
         runtimeRef.current = next
         bindAsk()
         setRows(rowsFromMessages((await next.store.loadSession(id)).messages))
-        setTodos(loadTodos(next.cwd))
+        setTodos(next.engine.session.todos ?? loadTodos(next.cwd))
         setTasks(next.engine.tasks.list())
         setSelectedIndex(undefined)
         setExpandedIds(new Set())
@@ -400,7 +403,7 @@ export function App(props: AppProps) {
             exit()
             return
           case 'stop':
-            runtimeRef.current.engine.abort()
+            runtimeRef.current.engine.abort('cancel')
             setNotice(busyRef.current ? 'stopped' : 'nothing to stop')
             return
           case 'clear':
@@ -411,7 +414,7 @@ export function App(props: AppProps) {
               runtimeRef.current = next
               bindAskQuestions()
               setRows([])
-              setTodos(loadTodos(next.cwd))
+              setTodos(next.engine.session.todos ?? loadTodos(next.cwd))
               setTasks(next.engine.tasks.list())
               setSelectedIndex(undefined)
               setExpandedIds(new Set())
@@ -614,7 +617,7 @@ export function App(props: AppProps) {
       }
       const pending = askRef.current
       if (pending) pending.reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
-      runtimeRef.current.engine.abort()
+      runtimeRef.current.engine.abort('cancel')
       if (abortGateRef.current.press() === 'kill_all') {
         const killed = runtimeRef.current.engine.tasks.killAll()
         setNotice(formatKilledBackgroundNotice(killed.length))

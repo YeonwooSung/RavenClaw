@@ -4,7 +4,7 @@ export { sessionKey } from './gateway/types'
 export type { InboundEvent, ChatType } from './gateway/types'
 export { loadSessionMap, saveSessionMap, resolveSessionId } from './gateway/session-map'
 export { isUserAllowed } from './gateway/authz'
-export { parseTurnRequest, parseResolveBody, checkBearer, webhookSafeTools } from './gateway/http'
+export { parseTurnRequest, parseResolveBody, parseCancelBody, checkBearer, webhookSafeTools } from './gateway/http'
 export { verifyWebhookSignature, safeWebhookToolNames } from './gateway/webhook'
 export {
   parseLoopArg,
@@ -98,7 +98,13 @@ export { applyPatchTool } from './tools/apply-patch'
 export { notebookEditTool } from './tools/notebook-edit'
 export { enterWorktreeTool } from './tools/enter-worktree'
 export { exitWorktreeTool } from './tools/exit-worktree'
-export { enterSessionWorktree, exitSessionWorktree, getSessionWorktree } from './tools/session-worktree'
+export {
+  enterSessionWorktree,
+  exitSessionWorktree,
+  getSessionWorktree,
+  shadowBranchName,
+  jobFromSessionWorktree,
+} from './tools/session-worktree'
 export { createToolSearchTool } from './tools/tool-search'
 export { toolCallTool } from './tools/tool-call'
 export type { ToolCallInput } from './tools/tool-call'
@@ -110,7 +116,15 @@ export type { WorkspaceFs } from './tools/workspace-fs'
 export { createTaskV2Tools } from './tools/task-v2'
 export { createLspTool } from './tools/lsp'
 export { createStructuredOutputTool } from './tools/structured-output'
-export { rewindLastTurn, dropLastUserTurn, formatRewindNotice } from './session/rewind'
+export { rewindLastTurn, rewindToCheckpoint, dropLastUserTurn, formatRewindNotice } from './session/rewind'
+export {
+  applySessionDraftPr,
+  maybeCommitJob,
+  openDraftPr,
+  setJobAutoCommit,
+  stampCheckpoint,
+} from './session/job'
+export type { DraftPrSnapshot, GhRunner } from './session/job'
 export { loadLifecycleHooks, LIFECYCLE_EVENTS } from './hooks/lifecycle'
 export { scanTeamOnboarding, ONBOARDING_USAGE_DAYS } from './onboarding/scan'
 export type { OnboardingScan } from './onboarding/scan'
@@ -120,7 +134,7 @@ export { createAskUserTool, askUserTool, formatAskUserPrompt } from './tools/ask
 export type { AskUserInput, AskUserFn } from './tools/ask-user'
 export { setOutputTool, setChildOutput, takeChildOutput } from './tools/set-output'
 export { todoWriteTool, loadTodos, todosFromToolResult, todoJsonPath } from './tools/todo'
-export type { TodoItem, TodoStatus, TodoWriteInput } from './tools/todo'
+export type { TodoWriteInput } from './tools/todo'
 export { partitionToolCalls } from './tools/partition'
 export {
   COMPACTION_PROMPT_TOKENS,
