@@ -1,13 +1,11 @@
 # RavenClaw next-horizon roadmap (stream version / continuationToken)
 
 Date: 2026-09-18  
-Status: draft  
+Status: implemented on this branch  
 Reviewed against tree at `be5a4a7` (`origin/main` after no-job todo revert).  
 Successor to `2026-09-18-no-job-todo-revert.md` (Status: implemented at `be5a4a7`). Does not reopen that spec’s closed doors. Amends prior OUT for stream `version` / `continuationToken` **only**.
 
 Implementation plan: [2026-09-18-stream-version-token.md](../plans/2026-09-18-stream-version-token.md).
-
-This file is the spec only. Do not implement. A later plan may add detail, not contradict.
 
 Sources: current tree + [eve-analysis.md](../../research/eve-analysis.md) (read-only steal of contract: versioned NDJSON, unknown version fails, client cursor `{ sessionId, streamIndex }`, HTTP resume is a cursor not a second log). Eve’s HTTP API rejects `continuationToken` in the body and keeps channel tokens (`slack:channel:threadTs`) behind the channel boundary; its stream resume is `?startIndex=`. Do not copy eve source, event names, `meta.id` ULIDs, or protocol version 25.
 
@@ -140,14 +138,14 @@ Board as of this branch (`docs/stream-version-token-spec`); not on `main`. Nothi
 
 | ID | Status vs tree |
 |---|---|
-| V0.1 docs point at this spec | **pending** |
-| V1.1 constant + `?version=` parse + snapshot `version` | **pending** |
-| V1.2 every stream frame stamped; version 400 matrix | **pending** |
-| V2.1 encode / decode `continuationToken` | **pending** |
-| V2.2 snapshot `continuationToken` at tip | **pending** |
-| V2.3 stream `?continuationToken=` alias + 400 matrix | **pending** |
-| V2.4 no second log; seq reuse on reconnect | **pending** |
-| V3.1 serve tests lock the wire | **pending** |
+| V0.1 docs point at this spec | **done** |
+| V1.1 constant + `?version=` parse + snapshot `version` | **done** |
+| V1.2 every stream frame stamped; version 400 matrix | **done** |
+| V2.1 encode / decode `continuationToken` | **done** |
+| V2.2 snapshot `continuationToken` at tip | **done** |
+| V2.3 stream `?continuationToken=` alias + 400 matrix | **done** |
+| V2.4 no second log; seq reuse on reconnect | **done** |
+| V3.1 serve tests lock the wire | **done** |
 
 ---
 

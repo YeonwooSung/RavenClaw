@@ -5,7 +5,7 @@ Status: implemented
 Shipped on `main` at `048deff`.  
 Reviewed against tree at `ac2d184` (`main` after job-host PR #9 + shipped-docs PR #11).  
 Successor to `2026-09-17-job-host-state-roadmap.md` (Status: implemented). Does not reopen that spec’s closed doors.  
-Next horizon (implemented at `5eefdde`): [`2026-09-18-cancel-reset-followup.md`](2026-09-18-cancel-reset-followup.md) (amends this spec’s OUT for live cancel abort-pair and reset-on-resume only). After that (this branch): [`2026-09-18-no-job-todo-revert.md`](2026-09-18-no-job-todo-revert.md) (amends ruling 8 / no-job todo revert).
+Next horizon (implemented at `5eefdde`): [`2026-09-18-cancel-reset-followup.md`](2026-09-18-cancel-reset-followup.md) (amends this spec’s OUT for live cancel abort-pair and reset-on-resume only). After that (implemented at `be5a4a7`): [`2026-09-18-no-job-todo-revert.md`](2026-09-18-no-job-todo-revert.md) (amends ruling 8 / no-job todo revert). Then (this branch): [`2026-09-18-stream-version-token.md`](2026-09-18-stream-version-token.md) (amends this spec’s OUT for stream `version` / `continuationToken` only).
 
 Sources: current tree, [y0 analysis](../../research/y0-analysis.md) (`/Users/yeonwoosung/Desktop/y0`, read-only), [eve analysis](../../research/eve-analysis.md) (`/Users/yeonwoosung/Desktop/eve`, Apache-2.0, read-only).
 
@@ -48,7 +48,7 @@ y0 edit-message restores `{ commitSha, todoSnapshot }` then the host resubmits. 
 ## Do not build
 
 - y0’s Next.js + Prisma `Task` + Socket.IO room
-- Web chat UI, keep-id `/clear`, stream `version` / `continuationToken`
+- Web chat UI, keep-id `/clear`, stream `version` / `continuationToken` (amended by `2026-09-18-stream-version-token.md`)
 - Reverting no-job `session.todos` on rewind (amended by `2026-09-18-no-job-todo-revert.md`)
 - Changing no-job order (already persist-then-undo)
 - Changing `TodoWrite` persist-then-file order (already correct)
@@ -234,7 +234,7 @@ Writes `todoJsonPath(root)` as `${JSON.stringify(items, null, 2)}\n`. `mkdirSync
 
 ## Out of this horizon
 
-Web chat UI, Next.js BFF, Prisma Task, Socket.IO, y0 Shadow wiki / indexer, eve compiler, OpenAPI connections, memory slots, `defineState`, credential brokering, self-mod, any new chat network, sandbox network policy, Grep/Glob docker-exec, `ignored`, live cancel abort-pair, keep-id `/clear`, stream `version` / `continuationToken`, no-job todo revert (amended by `2026-09-18-no-job-todo-revert.md`), reset-on-resume recovery, schema v11.
+Web chat UI, Next.js BFF, Prisma Task, Socket.IO, y0 Shadow wiki / indexer, eve compiler, OpenAPI connections, memory slots, `defineState`, credential brokering, self-mod, any new chat network, sandbox network policy, Grep/Glob docker-exec, `ignored`, live cancel abort-pair, keep-id `/clear`, stream `version` / `continuationToken` (amended by `2026-09-18-stream-version-token.md`), no-job todo revert (amended by `2026-09-18-no-job-todo-revert.md`), reset-on-resume recovery, schema v11.
 
 If a later product wants a browser, it still implements G0–G3 on the existing F3 stream. This horizon does not add a client.
 

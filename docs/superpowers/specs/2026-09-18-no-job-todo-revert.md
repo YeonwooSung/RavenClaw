@@ -3,7 +3,8 @@
 Date: 2026-09-18  
 Status: implemented on this branch  
 Reviewed against tree at `9fb6ccc` (`main` after cancel-reset-followup `5eefdde`, docs honesty `5431004`, Dependabot `6716d3a`, residual nits `9fb6ccc`).  
-Successor to `2026-09-18-cancel-reset-followup.md` (Status: implemented). Does not reopen that spec’s closed doors except the one hole named here.
+Successor to `2026-09-18-cancel-reset-followup.md` (Status: implemented). Does not reopen that spec’s closed doors except the one hole named here.  
+Next horizon (this branch): [`2026-09-18-stream-version-token.md`](2026-09-18-stream-version-token.md) (amends this spec’s OUT for stream `version` / `continuationToken` only).
 
 Implementation plan: [2026-09-18-no-job-todo-revert.md](../plans/2026-09-18-no-job-todo-revert.md).
 
@@ -44,7 +45,7 @@ This horizon **unparks only no-job todo revert**. It does not unpark schema v11,
 ## Do not build
 
 - Web chat UI, Next.js BFF, Prisma Task, Socket.IO
-- keep-id `/clear`, stream `version` / `continuationToken`
+- keep-id `/clear`, stream `version` / `continuationToken` (amended by `2026-09-18-stream-version-token.md`)
 - `ignored` as a leftover-ask result
 - Cancel with no live turn abort-pairing parked asks
 - `abort('interrupt')` abort-pairing leftover-asks
@@ -261,7 +262,7 @@ projectSessionTodos(session.cwd, session.todos ?? [])
 
 ## Out of this horizon
 
-Web chat UI, Next.js BFF, Prisma Task, Socket.IO, y0 Shadow wiki / indexer, eve compiler, OpenAPI connections, memory slots, `defineState`, credential brokering, self-mod, any new chat network, sandbox network policy, Grep/Glob docker-exec, `ignored`, keep-id `/clear`, stream `version` / `continuationToken`, schema v11, async `createSessionEngine`, cancel-without-live abort-pair, interrupt abort-pair, parent-cancels-child-ask, no-job git checkpoint, `fileHistory` todo frames.
+Web chat UI, Next.js BFF, Prisma Task, Socket.IO, y0 Shadow wiki / indexer, eve compiler, OpenAPI connections, memory slots, `defineState`, credential brokering, self-mod, any new chat network, sandbox network policy, Grep/Glob docker-exec, `ignored`, keep-id `/clear`, stream `version` / `continuationToken` (amended by `2026-09-18-stream-version-token.md`), schema v11, async `createSessionEngine`, cancel-without-live abort-pair, interrupt abort-pair, parent-cancels-child-ask, no-job git checkpoint, `fileHistory` todo frames.
 
 If a later product wants schema v11, it still needs a column this horizon does not have. Todo-only stamps fit in `checkpoint_json`.
 

@@ -6,7 +6,7 @@ Shipped on `main` at `6e56764` (merge of PR #9 / `feat/job-host-state`).
 Review-fix on the same merge (`981ec2a`): follow-up runs only after this submit wrote `lastEnd`; owned leftover-asks (parent + child) skip the slot; OpenTUI bare `/retry` resubmits `droppedText`.  
 Reviewed against tree at `0ef1554` (`main` after session-as-job + closeout).  
 Successor to `2026-09-16-session-as-job-roadmap.md` (Status: implemented). Does not reopen that spec’s closed doors.  
-Next horizon (implemented at `048deff`): [`2026-09-18-rewind-persist-and-todo-projection.md`](2026-09-18-rewind-persist-and-todo-projection.md). After that (implemented at `5eefdde`): [`2026-09-18-cancel-reset-followup.md`](2026-09-18-cancel-reset-followup.md). Then (this branch): [`2026-09-18-no-job-todo-revert.md`](2026-09-18-no-job-todo-revert.md).
+Next horizon (implemented at `048deff`): [`2026-09-18-rewind-persist-and-todo-projection.md`](2026-09-18-rewind-persist-and-todo-projection.md). After that (implemented at `5eefdde`): [`2026-09-18-cancel-reset-followup.md`](2026-09-18-cancel-reset-followup.md). Then (implemented at `be5a4a7`): [`2026-09-18-no-job-todo-revert.md`](2026-09-18-no-job-todo-revert.md). Then (this branch): [`2026-09-18-stream-version-token.md`](2026-09-18-stream-version-token.md) (amends this spec’s OUT for stream `version` / `continuationToken` only).
 
 Sources: current tree, [y0 analysis](../../research/y0-analysis.md) (`/Users/yeonwoosung/Desktop/y0`, read-only), [eve analysis](../../research/eve-analysis.md) (`/Users/yeonwoosung/Desktop/eve`, Apache-2.0, read-only).
 
@@ -32,7 +32,7 @@ The remaining hole is not “missing a loop.” A job host (serve, later a brows
 
 y0’s leftover lesson: a Task snapshot names `lastEndReason` / `jobError`; exactly one follow-up slot; edit-message restores the prior checkpoint then resubmits; diff is `base...HEAD` ∪ dirty.  
 y0’s trap: Prisma `Task` + Socket.IO room + `TaskStatus` as a second waist.  
-eve’s leftover that this horizon does **not** take: cancel `202` vs `200` envelope polish, keep-id `/clear`, stream `version` / `continuationToken`. Those stay parked.
+eve’s leftover that this horizon does **not** take: cancel `202` vs `200` envelope polish, keep-id `/clear`, stream `version` / `continuationToken`. Those stay parked. Stream `version` / `continuationToken` is later amended by [`2026-09-18-stream-version-token.md`](2026-09-18-stream-version-token.md).
 
 This horizon thickens **session state the host already reads**. Hosts still only `submitMessage` for new user text. `applyAskAnswer` stays the only other closer.
 
@@ -57,7 +57,7 @@ This horizon thickens **session state the host already reads**. Hosts still only
 - Using `SuggestFollowups` as the one-slot (model-proposed chips ≠ host-queued next turn)
 - Arbitrary mid-history edit (only the last user turn)
 - Default-on auto-run of a follow-up after process restart
-- Web chat UI, keep-id `/clear`, stream `version` / `continuationToken` 400
+- Web chat UI, keep-id `/clear`, stream `version` / `continuationToken` 400 (amended by `2026-09-18-stream-version-token.md`)
 - Rewind persist-before-reset / `todo.json` re-project (later shipped at `048deff`: `2026-09-18-rewind-persist-and-todo-projection.md`)
 - WorkspaceFs docker-exec, Grep/Glob docker-exec
 - `ignored`, live cancel abort-pair of a parked leftover-ask
@@ -339,7 +339,7 @@ Prefer in-process `createSessionEngine`. HTTP-driven GET/POST may live in `serve
 
 ## Out of this horizon
 
-Web chat UI, Next.js BFF, Prisma Task, Socket.IO, y0 Shadow wiki / indexer, eve compiler, OpenAPI connections, memory slots, `defineState`, credential brokering, self-mod, any new chat network, sandbox network policy, Grep/Glob docker-exec, NotebookEdit docker port, Slack HMAC, `ignored`, live cancel abort-pair, rewind persist-before-reset, `todo.json` re-project, keep-id `/clear`, stream `version` / `continuationToken`, replacing `/queue`, `SuggestFollowups` as the slot, arbitrary mid-history edit.
+Web chat UI, Next.js BFF, Prisma Task, Socket.IO, y0 Shadow wiki / indexer, eve compiler, OpenAPI connections, memory slots, `defineState`, credential brokering, self-mod, any new chat network, sandbox network policy, Grep/Glob docker-exec, NotebookEdit docker port, Slack HMAC, `ignored`, live cancel abort-pair, rewind persist-before-reset, `todo.json` re-project, keep-id `/clear`, stream `version` / `continuationToken` (amended by `2026-09-18-stream-version-token.md`), replacing `/queue`, `SuggestFollowups` as the slot, arbitrary mid-history edit.
 
 If a later product wants a browser, it implements G0–G3 on the existing F3 stream. It does not add a second loop.
 
