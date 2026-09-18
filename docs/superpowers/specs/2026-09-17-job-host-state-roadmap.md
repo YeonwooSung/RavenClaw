@@ -1,9 +1,12 @@
 # RavenClaw next-horizon roadmap (job-host state)
 
 Date: 2026-09-17  
-Status: not implemented  
+Status: implemented  
+Shipped on `main` at `6e56764` (merge of PR #9 / `feat/job-host-state`).  
+Review-fix on the same merge (`981ec2a`): follow-up runs only after this submit wrote `lastEnd`; owned leftover-asks (parent + child) skip the slot; OpenTUI bare `/retry` resubmits `droppedText`.  
 Reviewed against tree at `0ef1554` (`main` after session-as-job + closeout).  
-Successor to `2026-09-16-session-as-job-roadmap.md` (Status: implemented). Does not reopen that spec’s closed doors.
+Successor to `2026-09-16-session-as-job-roadmap.md` (Status: implemented). Does not reopen that spec’s closed doors.  
+Parked next (no spec yet): rewind persist-before-reset / `todo.json` re-project.
 
 Sources: current tree, [y0 analysis](../../research/y0-analysis.md) (`/Users/yeonwoosung/Desktop/y0`, read-only), [eve analysis](../../research/eve-analysis.md) (`/Users/yeonwoosung/Desktop/eve`, Apache-2.0, read-only).
 
@@ -79,20 +82,20 @@ These lock underspecification. The implementation plan may only add detail, not 
 
 ## Per-slice board
 
-Board as of `0ef1554` on `main`.
+Board as of `6e56764` on `main`. Pre-ship “missing” rows are historical; do not treat them as current.
 
 | ID | Status vs tree |
 |---|---|
-| G0.1 docs point at this spec | **missing** (this file + honesty pass land together) |
-| G0.2 snapshot `title` / `jobAutoCommit` / `lastEnd` / `jobError` | **missing** |
-| G1.1 persist one-slot `followup_text` | **missing** |
-| G1.2 host epilogue run / clear | **missing** |
-| G1.3 snapshot `queued` | **missing** (depends on G1.1) |
-| G2.1 `rewindLast` returns `droppedText` | **missing** |
-| G2.2 serve `POST …/edit` | **missing** |
-| G3.1 `jobDiff` helper | **missing** (`diffStat` is PR-only) |
-| G3.2 serve `GET …/diff` + TUI `/diff` on a job | **missing** |
-| G4.1 eval fixtures | **missing** |
+| G0.1 docs point at this spec | **shipped** (honesty pass after `6e56764`) |
+| G0.2 snapshot `title` / `jobAutoCommit` / `lastEnd` / `jobError` | **shipped** |
+| G1.1 persist one-slot `followup_text` | **shipped** |
+| G1.2 host epilogue run / clear | **shipped** (`runFollowupAfterSubmit`) |
+| G1.3 snapshot `queued` | **shipped** |
+| G2.1 `rewindLast` returns `droppedText` | **shipped** |
+| G2.2 serve `POST …/edit` | **shipped** |
+| G3.1 `jobDiff` helper | **shipped** |
+| G3.2 serve `GET …/diff` + TUI `/diff` on a job | **shipped** |
+| G4.1 eval fixtures | **shipped** |
 
 ---
 

@@ -6,7 +6,7 @@ Shipped on `main` at `ea56edd` (merge of `feat/session-as-job`).
 Closeout shipped on `main` at `0ef1554` (merge of `feat/session-as-job-closeout`): F4.1 `draft_pr` annotation, F4.3 stacked-child `raven/*` branch GC, ACP timeout replay (H1), `TodoWrite failed:` does not apply todos.  
 Reviewed against tree at `d4c73d4` before implementation (eve-inspired horizon + leftover-ask holes PRs #2–#8 on `main`).  
 Successor to `2026-09-15-eve-inspired-roadmap.md` (Status: implemented). Does not reopen that spec’s closed doors.  
-Next horizon: [`2026-09-17-job-host-state-roadmap.md`](2026-09-17-job-host-state-roadmap.md).
+Next horizon (implemented at `6e56764`): [`2026-09-17-job-host-state-roadmap.md`](2026-09-17-job-host-state-roadmap.md). Parked after that (no spec yet): rewind persist-before-reset / `todo.json` re-project.
 
 Sources: current tree, [eve analysis](../../research/eve-analysis.md) (`/Users/yeonwoosung/Desktop/eve`, Apache-2.0, read-only), [y0 analysis](../../research/y0-analysis.md) (`/Users/yeonwoosung/Desktop/y0`, read-only).
 

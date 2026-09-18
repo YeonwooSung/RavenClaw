@@ -884,7 +884,7 @@ One-slot persisted next-turn follow-up on `session.followup` (schema v10). Not `
 | `clear` | `clearFollowup()`; notice `no follow-up` |
 | other text | `setFollowup(text)`; empty/whitespace → notice `follow-up text required`; success notices the stored text |
 
-After a real host turn ends, `maybeRunFollowup` may auto-run the slot (success reasons) or clear it (`cancelled` / `aborted` / model/persist errors) when no pending asks remain. Serve twins: `POST/DELETE /v1/session/:id/followup`; GET snapshot field `queued`.
+After a real host turn ends, `runFollowupAfterSubmit` may auto-run the slot (success reasons on a newly written `lastEnd`) or clear it (`cancelled` / `aborted` / model/persist errors). Owned leftover-asks (parent + child) skip. Serve twins: `POST/DELETE /v1/session/:id/followup`; GET snapshot field `queued`.
 
 Related: `/queue` (host FIFO), `/retry` (edit last user).
 
