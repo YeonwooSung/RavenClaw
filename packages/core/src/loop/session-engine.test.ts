@@ -18,6 +18,7 @@ import type {
 } from '../types'
 import { memoryTool } from '../tools/memory'
 import { enterSessionWorktree, exitSessionWorktree } from '../tools/session-worktree'
+import { todoJsonPath } from '../tools/todo'
 import { createSessionEngine } from './session-engine'
 import { ABORTED_TEXT } from './pairing'
 import { drainAgentMail, enqueueAgentMail } from '../tasks/mailbox'
@@ -2405,5 +2406,311 @@ describe('followup slot', () => {
     await engine.clearFollowup()
     expect(engine.getFollowup()).toBeNull()
     expect((await store.loadSession(sess.id)).session.followup).toBeUndefined()
+  })
+})
+
+describe('clearKeepId', () => {
+  const tempDirs: string[] = []
+  const sessionIds: string[] = []
+  let seq = 0
+
+  afterEach(() => {
+    while (sessionIds.length > 0) {
+      const id = sessionIds.pop()
+      if (id) exitSessionWorktree(id, 'remove', true)
+    }
+    while (tempDirs.length > 0) {
+      const dir = tempDirs.pop()
+      if (dir) rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  function tempDir(prefix: string): string {
+    const dir = mkdtempSync(join(tmpdir(), prefix))
+    tempDirs.push(dir)
+    return dir
+  }
+
+  function nextSession(): string {
+    const id = `sess_clear_${Date.now()}_${seq++}`
+    sessionIds.push(id)
+    return id
+  }
+
+  function initGitRepo(dir: string): void {
+    const run = (args: string[]) => {
+      const result = spawnSync('git', args, { cwd: dir, encoding: 'utf8' })
+      expect(result.status).toBe(0)
+    }
+    run(['init'])
+    run(['config', 'user.email', 'test@example.com'])
+    run(['config', 'user.name', 'Test'])
+    run(['config', 'commit.gpgsign', 'false'])
+    run(['commit', '--allow-empty', '-m', 'init'])
+  }
+
+  function git(cwd: string, args: string[]): string {
+    const result = spawnSync('git', args, { cwd, encoding: 'utf8' })
+    expect(result.status).toBe(0)
+    return result.stdout.trim()
+  }
+
+  async function drain(gen: AsyncGenerator<StreamEvent, import('../types').RoundEnd>) {
+    const events: StreamEvent[] = []
+    while (true) {
+      const next = await gen.next()
+      if (next.done) return { events, result: next.value }
+      events.push(next.value)
+    }
+  }
+
+  test('idle wipe keeps id and empties conversation', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({
+      id: 'sess_clear_idle',
+      title: 'old title',
+      followup: 'run tests',
+      lastEnd: { reason: 'completed' },
+      jobError: 'stale',
+      todos: [{ text: 'ship', status: 'pending' }],
+      usage: { input: 9, output: 3, cacheRead: 1, cacheWrite: 2 },
+    })
+    await store.createSession(sess)
+    const messages: Message[] = [user('u1', 'hello', 1), asst('a1', 'hi', 2)]
+    await persistAll(store, sess.id, messages)
+    await store.upsertPendingAsk({
+      callId: 'parked',
+      sessionId: sess.id,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Bash?',
+      input: { command: 'ls' },
+      createdAt: 3,
+    })
+    await store.appendStreamEvent(sess.id, { type: 'text_delta', text: 'x' })
+    const engine = createSessionEngine({
+      ...engineOpts({ provider: createFakeProvider([]), store, session: sess }),
+      messages,
+    })
+    engine.enqueueSteer('later')
+    const result = await engine.clearKeepId()
+    expect(result).toEqual({ ok: true, notice: 'session cleared' })
+    expect(engine.session.id).toBe('sess_clear_idle')
+    expect(engine.session.title).toBeUndefined()
+    expect(engine.session.followup).toBeUndefined()
+    expect(engine.session.lastEnd).toBeUndefined()
+    expect(engine.session.jobError).toBeUndefined()
+    expect(engine.session.todos).toEqual([])
+    expect(engine.session.usage).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })
+    expect(engine.drainSteering()).toEqual([])
+    expect(await store.loadMessages!(sess.id)).toEqual([])
+    expect(await store.listPendingAsks(sess.id)).toEqual([])
+    expect(await store.lastStreamSeq(sess.id)).toBe(0)
+    const loaded = await store.loadSession(sess.id)
+    expect(loaded.session.id).toBe('sess_clear_idle')
+    expect(loaded.messages).toEqual([])
+    expect(engine.fileHistory.undo()).toEqual({ restored: [], removed: [] })
+  })
+
+  test('persist fail leaves memory and disk unchanged', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({
+      id: 'sess_clear_persist_fail',
+      todos: [{ text: 'keep', status: 'pending' }],
+    })
+    await store.createSession(sess)
+    const messages: Message[] = [user('u1', 'keep me', 1)]
+    await persistAll(store, sess.id, messages)
+    const engine = createSessionEngine({
+      ...engineOpts({ provider: createFakeProvider([]), store, session: sess }),
+      messages,
+    })
+    store.clearConversation = async () => {
+      throw new Error('disk')
+    }
+    const result = await engine.clearKeepId()
+    expect(result).toEqual({ ok: false, notice: 'clear persist failed' })
+    expect(engine.session.todos).toEqual([{ text: 'keep', status: 'pending' }])
+    expect(await store.loadMessages!(sess.id)).toEqual(messages)
+  })
+
+  test('closed engine does not persist', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_clear_closed' })
+    await store.createSession(sess)
+    const engine = createSessionEngine({
+      ...engineOpts({ provider: createFakeProvider([]), store, session: sess }),
+    })
+    let called = false
+    store.clearConversation = async () => {
+      called = true
+    }
+    await engine.close()
+    expect(await engine.clearKeepId()).toEqual({ ok: false, notice: 'session closed' })
+    expect(called).toBe(false)
+  })
+
+  test('empty transcript is an idempotent success', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_clear_empty', followup: 'x', lastEnd: { reason: 'completed' } })
+    await store.createSession(sess)
+    const engine = createSessionEngine({
+      ...engineOpts({ provider: createFakeProvider([]), store, session: sess }),
+    })
+    expect(await engine.clearKeepId()).toEqual({ ok: true, notice: 'session cleared' })
+    expect(await engine.clearKeepId()).toEqual({ ok: true, notice: 'session cleared' })
+    expect(engine.session.id).toBe('sess_clear_empty')
+    expect(engine.session.followup).toBeUndefined()
+    expect(await store.loadMessages!(sess.id)).toEqual([])
+  })
+
+  test('mid-turn abort cancel then wipe', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_clear_live' })
+    await store.createSession(sess)
+    const engine = createSessionEngine({
+      ...engineOpts({
+        provider: createFakeProvider([toolThenStop('call_park', 'Echo', { text: 'hi' })]),
+        store,
+        session: sess,
+        tools: [createAskEcho()],
+      }),
+      askUser: async (_event, signal) => hangAskUser(_event, signal),
+    })
+    const gen = engine.submitMessage('hi')
+    await consumeUntilAsk(gen)
+    expect(engine.liveTurnId()).not.toBeNull()
+    const kinds: Array<string | undefined> = []
+    const origAbort = engine.abort.bind(engine)
+    engine.abort = (kind) => {
+      kinds.push(kind)
+      origAbort(kind)
+    }
+    const pending = drain(gen)
+    const first = engine.clearKeepId()
+    const second = engine.clearKeepId()
+    const [a, b] = await Promise.all([first, second])
+    expect(a).toEqual({ ok: true, notice: 'session cleared' })
+    expect(b).toEqual({ ok: true, notice: 'session cleared' })
+    expect(kinds).toEqual(['cancel'])
+    expect(engine.liveTurnId()).toBeNull()
+    await pending
+    expect(await store.loadMessages!(sess.id)).toEqual([])
+    expect(await store.listPendingAsks(sess.id)).toEqual([])
+  })
+
+  test('refuses unpaired child ask before abort', async () => {
+    const store = createMemoryStore()
+    const parent = makeSession({ id: 'sess_clear_parent' })
+    const child = makeSession({ id: 'sess_clear_child', parentSessionId: parent.id })
+    await store.createSession(parent)
+    await store.createSession(child)
+    const messages: Message[] = [user('u1', 'parent keep', 1)]
+    await persistAll(store, parent.id, messages)
+    let enteredFirst: () => void
+    const firstStreamEntered = new Promise<void>((resolve) => {
+      enteredFirst = resolve
+    })
+    const engine = createSessionEngine({
+      ...engineOpts({
+        provider: {
+          id: 'fake',
+          apiMode: 'openai_compat',
+          profile: (model: string) => defaultModel(model),
+          async *stream(_req, signal) {
+            enteredFirst()
+            await new Promise<void>((resolve) => {
+              if (signal.aborted) {
+                resolve()
+                return
+              }
+              signal.addEventListener('abort', () => resolve(), { once: true })
+            })
+          },
+        },
+        store,
+        session: parent,
+      }),
+      messages,
+    })
+    const gen = engine.submitMessage('live')
+    const pending = drain(gen)
+    await firstStreamEntered
+    await store.upsertPendingAsk({
+      callId: 'call_child',
+      sessionId: child.id,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Run ls?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    expect(engine.liveTurnId()).not.toBeNull()
+    const kinds: Array<string | undefined> = []
+    const origAbort = engine.abort.bind(engine)
+    engine.abort = (kind) => {
+      kinds.push(kind)
+      origAbort(kind)
+    }
+    expect(await engine.clearKeepId()).toEqual({ ok: false, notice: 'pending permission ask' })
+    expect(kinds).toEqual([])
+    expect(engine.liveTurnId()).not.toBeNull()
+    expect((await store.loadMessages!(parent.id)).map((msg) => msg.id)).toContain('u1')
+    expect(await store.listPendingAsks(child.id)).toHaveLength(1)
+
+    engine.abort('cancel')
+    await pending
+    expect(await engine.applyAskAnswer('call_child', 'deny')).toBe('matched')
+    expect(await store.listPendingAsks(child.id)).toHaveLength(0)
+    expect(await engine.clearKeepId()).toEqual({ ok: true, notice: 'session cleared' })
+    expect((await store.loadSession(child.id)).session.id).toBe(child.id)
+    expect((await store.loadSession(child.id)).session.parentSessionId).toBe(parent.id)
+  })
+
+  test('job worktree and dirty files survive; chat fields wipe', async () => {
+    const cwd = tempDir('ravenclaw-clear-job-')
+    initGitRepo(cwd)
+    const id = nextSession()
+    const entered = enterSessionWorktree(id, cwd)
+    expect(entered.ok).toBe(true)
+    const job = entered.job!
+    job.pendingResetSha = job.baseCommitSha
+    const dirty = join(job.worktreePath, 'dirty.txt')
+    writeFileSync(dirty, 'dirty\n')
+    const head = git(job.worktreePath, ['rev-parse', 'HEAD'])
+    const store = createMemoryStore()
+    const sess = makeSession({
+      id,
+      cwd: job.worktreePath,
+      job,
+      title: 'job title',
+      followup: 'next',
+      lastEnd: { reason: 'completed' },
+      jobError: 'stale',
+      todos: [{ text: 'ship', status: 'pending' }],
+      usage: { input: 4, output: 1, cacheRead: 0, cacheWrite: 0 },
+    })
+    await store.createSession(sess)
+    const messages: Message[] = [user('u1', 'job hello', 1), asst('a1', 'ok', 2)]
+    await persistAll(store, id, messages)
+    const engine = createSessionEngine({
+      ...engineOpts({ provider: createFakeProvider([]), store, session: sess }),
+      messages,
+    })
+    expect(await engine.clearKeepId()).toEqual({ ok: true, notice: 'session cleared' })
+    expect(engine.session.id).toBe(id)
+    expect(engine.session.job).toEqual(job)
+    expect(engine.session.job?.pendingResetSha).toBe(job.baseCommitSha)
+    expect(engine.session.cwd).toBe(job.worktreePath)
+    expect(engine.session.todos).toEqual([])
+    expect(engine.session.title).toBeUndefined()
+    expect(engine.session.followup).toBeUndefined()
+    expect(engine.session.lastEnd).toBeUndefined()
+    expect(engine.session.jobError).toBeUndefined()
+    expect(engine.session.usage).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })
+    expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).toBe(head)
+    expect(readFileSync(dirty, 'utf8')).toBe('dirty\n')
+    expect(readFileSync(todoJsonPath(cwd), 'utf8')).toBe('[]\n')
+    expect(await store.loadMessages!(id)).toEqual([])
   })
 })
