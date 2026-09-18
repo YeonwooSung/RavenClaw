@@ -633,6 +633,66 @@ describe('rewindToCheckpoint', () => {
     expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).toBe(job.baseCommitSha)
   })
 
+  test('writes pendingResetSha after compact and before reset, and clears it after success', async () => {
+    const cwd = tempDir('ravenclaw-rewind-flag-order-')
+    initGitRepo(cwd)
+    const id = nextSession()
+    const entered = enterSessionWorktree(id, cwd)
+    expect(entered.ok).toBe(true)
+    const job = entered.job!
+    writeFileSync(join(job.worktreePath, 'extra.txt'), 'later\n')
+    expect(spawnSync('git', ['add', '-A'], { cwd: job.worktreePath, encoding: 'utf8' }).status).toBe(0)
+    expect(
+      spawnSync('git', ['commit', '-m', 'later'], { cwd: job.worktreePath, encoding: 'utf8' }).status,
+    ).toBe(0)
+    const laterSha = git(job.worktreePath, ['rev-parse', 'HEAD'])
+
+    const store = createMemoryStore()
+    const sess = sessionRecord({ id, cwd: job.worktreePath, job })
+    await store.createSession(sess)
+    const messages: Message[] = [user('u1', 'only', 1), assistant('a1', 'ok', 2)]
+    await store.persistUser(id, messages[0] as Extract<Message, { role: 'user' }>)
+    await store.persistAssistant(id, messages[1] as Extract<Message, { role: 'assistant' }>)
+    const flags: Array<string | undefined> = []
+    const heads: string[] = []
+    const orig = store.upsertSession.bind(store)
+    store.upsertSession = async (session) => {
+      flags.push(session.job?.pendingResetSha)
+      heads.push(git(job.worktreePath, ['rev-parse', 'HEAD']))
+      return orig(session)
+    }
+
+    const result = await rewindToCheckpoint({ session: sess, messages, store })
+    expect(result.ok).toBe(true)
+    expect(flags[0]).toBe(job.baseCommitSha)
+    expect(heads[0]).toBe(laterSha)
+    expect(sess.job?.pendingResetSha).toBeUndefined()
+    const loaded = await store.loadSession(id)
+    expect(loaded.session.job?.pendingResetSha).toBeUndefined()
+  })
+
+  test('reset fail keeps pendingResetSha', async () => {
+    const cwd = tempDir('ravenclaw-rewind-flag-keep-')
+    initGitRepo(cwd)
+    const id = nextSession()
+    const entered = enterSessionWorktree(id, cwd)
+    expect(entered.ok).toBe(true)
+    const job = entered.job!
+    job.baseCommitSha = 'not-a-real-commit-sha'
+    const store = createMemoryStore()
+    const sess = sessionRecord({ id, cwd: job.worktreePath, job })
+    await store.createSession(sess)
+    const messages: Message[] = [user('u1', 'only', 1), assistant('a1', 'ok', 2)]
+    await store.persistUser(id, messages[0] as Extract<Message, { role: 'user' }>)
+    await store.persistAssistant(id, messages[1] as Extract<Message, { role: 'assistant' }>)
+
+    const result = await rewindToCheckpoint({ session: sess, messages, store })
+    expect(result.ok).toBe(false)
+    expect(sess.job?.pendingResetSha).toBe('not-a-real-commit-sha')
+    const loaded = await store.loadSession(id)
+    expect(loaded.session.job?.pendingResetSha).toBe('not-a-real-commit-sha')
+  })
+
   test('successful rewind clears session.jobError', async () => {
     const cwd = tempDir('ravenclaw-rewind-clear-err-')
     initGitRepo(cwd)

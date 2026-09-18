@@ -111,6 +111,14 @@ export async function rewindToCheckpoint(opts: {
     }
   }
 
+  opts.session.job = { ...job, pendingResetSha: sha }
+  opts.session.updatedAt = Date.now()
+  try {
+    await opts.store.upsertSession(opts.session)
+  } catch {
+    // still attempt the reset
+  }
+
   const reset = runGit(job.worktreePath, ['reset', '--hard', sha])
   if (!reset.ok) {
     const detail = reset.stderr.trim() || reset.stdout.trim() || 'git reset failed'
@@ -125,6 +133,9 @@ export async function rewindToCheckpoint(opts: {
     return { ok: false, notice, messages: next }
   }
 
+  const nextJob = { ...opts.session.job }
+  delete nextJob.pendingResetSha
+  opts.session.job = nextJob
   opts.session.todos = checkpoint
     ? checkpoint.todoSnapshot.map((item) => ({ ...item }))
     : []

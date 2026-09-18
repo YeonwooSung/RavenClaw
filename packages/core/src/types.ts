@@ -298,6 +298,7 @@ export type SessionJob = {
   worktreePath: string
   prNumber?: number
   prUrl?: string
+  pendingResetSha?: string
 }
 
 export type JobCheckpoint = {
