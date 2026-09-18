@@ -92,6 +92,8 @@ Session routes use an engine that does **not** force `dontAsk`. All require the 
 - `POST /v1/session/:id/edit` — `{ text }` → `rewindLast()` then `submitMessage`. Empty text → 400. Rewind refuse → 200 `{ ok: false, notice, droppedText? }`. Success → **202** `{ accepted, sessionId, droppedText? }` then fire-and-forget submit (same follow-up epilogue as `/submit`). Last user turn only. Job rewind writes `pendingResetSha` after compact and before `git reset --hard`; the first later `submitMessage` / `rewindLast` / host `/diff` finishes a mid-crash reset. `createSessionEngine` stays sync. GET snapshot does not reset.
 - `GET /v1/session/:id/diff` — finishes a pending job rewind reset first (`maybeFinishRewindReset`), then read-only job range: `baseCommitSha...HEAD` ∪ dirty via `jobDiff`. 200 `JobDiff` (`ok: true`, files with `create|update|delete|rename`) or `{ ok: false, notice }` (no job / git fail). Not a model turn.
 
+There is no `POST /v1/session/:id/clear`. Keep-id wipe is `engine.clearKeepId()` (TUI `/clear` / `/new`). Same `session.id`. A later serve route must call that method; it must not mint a new id.
+
 Crash-resolve: after process death, `POST …/resolve` → `applyAskAnswer` **pairs only** (writes the tool result row). It does not resume the model. The client must `POST …/submit` to continue. Live `/resolve` that hits an in-process waiter still unblocks that turn.
 
 Webhooks verify `X-Raven-Signature` over the raw body.

@@ -82,7 +82,7 @@ Ink의 frozen prompt는 `void runTurn(...)`이라 fire-and-forget이다. OpenTUI
 | `review` | shared | 분리 스트림 + `MEMORY.md` | 현재 턴을 막지 않음 | `wrote ${path}` 등 |
 | `title` | shared | 세션 title persist | 동일 | `title ${name}` |
 | `stop` | host | `nothing to stop` | `engine.abort()` | OpenTUI는 3초 안 두 번째가 `killAll` |
-| `clear` | host | 새 세션 | 현재 엔진 close 후 교체 | `new session ${shortId}` |
+| `clear` | host | 같은 id, 빈 대화 | `clearKeepId` (close/openNewSession 없음) | `cleared session ${shortId}` |
 | `model` | shared | 다음 턴 프로필 | **진행 중 `queryLoop`는 안 바꿈** | `model ${id}` |
 | `permissions` | shared | 규칙 파일 경로 | 동일 | 경로 또는 `no extra rules` |
 | `tasks` | shared | list/kill/steer | 백그라운드 레지스트리 | `no background tasks` 등 |
@@ -237,11 +237,12 @@ Ink status line은 모델·mode·usage·`shortSessionId`·funding·near-compact�
 
 - alias: `/new`
 - 분류: host-only
-- `engine.close()`, `mcpCloser?.()`, `openNewSession`
-- 새 세션은 boot config의 model/permissionMode/funding. included면 새 슬롯을 소모할 수 있다
-- notice `new session ${shortSessionId}`
-- Ink: transcript/todos/tasks/선택 초기화. OpenTUI: `view.reset()`, included면 광고 dock 재로드
-- 이전 세션 메시지는 SQLite에 남는다. 파일 체크포인트는 새 `session.id`로 갈린다
+- `engine.clearKeepId()`. 같은 `session.id`, 같은 엔진/락/MCP/job. `close()` / `mcpCloser` / `openNewSession` 없음. included 슬롯을 새로 쓰지 않는다
+- 자식 unpaired leftover-ask가 있으면 `pending permission ask`로 거부 (abort/persist/뷰 리셋 없음)
+- mid-turn은 `abort('cancel')` 후 idle을 기다린 다음 wipe
+- persist-first. persist 실패면 이전 transcript와 뷰를 유지
+- notice `cleared session ${shortSessionId}` (이 id). `new session`이 아니다
+- Ink: transcript/todos/선택 초기화. OpenTUI: `view.reset()`, included면 광고 dock 재로드 (같은 런타임)
 
 ### `/model [id]`
 
@@ -602,13 +603,13 @@ disable 목록: `~/.ravenclaw/skills-disabled.json`. `/reload`와 disable/enable
 | `/job` | `raven/*` worktree + job 기록; `commit on\|off` | 유지 | 유지 (cwd → worktree) | 모델 턴 아님 |
 | `/pr` | shadow draft PR (없거나 dirty면 notice) | 마지막 assistant annotation 가능 | 유지 | 모델 턴 아님 |
 | `/compact` | 없음 | 앞부분 요약/접기 | 유지, `compactGeneration++` | mid-turn은 큐; live splice 안 함 |
-| `/clear` | 새 id의 빈 history | 빈 transcript | **새 id** | 이전 엔진 close |
+| `/clear` | 파일/job 유지 | 빈 transcript (inactivate) | **같은 id** | abort-then-wipe |
 | `/resume` | 대상 세션 history | 저장된 메시지 로드 | **대상 id** | 엔진 교체 |
 | `/stop` | 없음 | 유지 | 유지 | abort |
 
 `/resume` 다음 메시지는 새 턴이다. 과거 툴을 재생하지 않는다.
 
-`/clear`는 included 슬롯을 새로 쓸 수 있다. `/resume`의 included 세션은 게이트웨이 없이는 재개하지 않는다.
+`/clear`는 included 슬롯을 새로 쓰지 않는다. `/resume`의 included 세션은 게이트웨이 없이는 재개하지 않는다.
 
 ## 슬래시가 아닌 CLI 커맨드
 

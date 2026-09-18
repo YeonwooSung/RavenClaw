@@ -32,7 +32,7 @@ The remaining hole is not “missing a loop.” A job host (serve, later a brows
 
 y0’s leftover lesson: a Task snapshot names `lastEndReason` / `jobError`; exactly one follow-up slot; edit-message restores the prior checkpoint then resubmits; diff is `base...HEAD` ∪ dirty.  
 y0’s trap: Prisma `Task` + Socket.IO room + `TaskStatus` as a second waist.  
-eve’s leftover that this horizon does **not** take: cancel `202` vs `200` envelope polish, keep-id `/clear`, stream `version` / `continuationToken`. Those stay parked.
+eve’s leftover that this horizon does **not** take: cancel `202` vs `200` envelope polish, keep-id `/clear`, stream `version` / `continuationToken`. Those stay parked. Amendment: keep-id `/clear` is unparked **only** by [`2026-09-18-keep-id-clear.md`](2026-09-18-keep-id-clear.md).
 
 This horizon thickens **session state the host already reads**. Hosts still only `submitMessage` for new user text. `applyAskAnswer` stays the only other closer.
 
@@ -57,7 +57,7 @@ This horizon thickens **session state the host already reads**. Hosts still only
 - Using `SuggestFollowups` as the one-slot (model-proposed chips ≠ host-queued next turn)
 - Arbitrary mid-history edit (only the last user turn)
 - Default-on auto-run of a follow-up after process restart
-- Web chat UI, keep-id `/clear`, stream `version` / `continuationToken` 400
+- Web chat UI, keep-id `/clear` (amended by `2026-09-18-keep-id-clear.md`), stream `version` / `continuationToken` 400
 - Rewind persist-before-reset / `todo.json` re-project (later shipped at `048deff`: `2026-09-18-rewind-persist-and-todo-projection.md`)
 - WorkspaceFs docker-exec, Grep/Glob docker-exec
 - `ignored`, live cancel abort-pair of a parked leftover-ask

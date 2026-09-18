@@ -1,7 +1,7 @@
 # RavenClaw next-horizon roadmap (keep-id `/clear`)
 
 Date: 2026-09-18  
-Status: draft  
+Status: implemented on this branch  
 Reviewed against tree at `be5a4a7` (`origin/main` after no-job todo revert).  
 Successor to `2026-09-18-no-job-todo-revert.md` (Status: implemented at `be5a4a7`). Amends prior OUT for keep-id `/clear` **only**. Does not reopen that spec’s closed doors.
 
@@ -157,15 +157,15 @@ Board as of this branch (`docs/keep-id-clear-spec`); not on `main`.
 
 | ID | Status vs tree |
 |---|---|
-| K0.1 docs point at this spec | **todo** |
-| K1.1 `FileHistory.reset` | **todo** |
-| K1.2 `SessionStore.clearConversation` (sqlite + memory) | **todo** |
-| K2.1 `clearKeepId` idle wipe + persist-fail | **todo** |
-| K2.2 mid-turn abort-then-wipe | **todo** |
-| K2.3 refuse child unpaired ask (before abort) | **todo** |
-| K2.4 job kept; todos/title/usage/followup/lastEnd wiped | **todo** |
-| K3.1 Ink + OpenTUI call `clearKeepId`; honest notice | **todo** |
-| K4.1 eval fixture | **todo** |
+| K0.1 docs point at this spec | **done** |
+| K1.1 `FileHistory.reset` | **done** |
+| K1.2 `SessionStore.clearConversation` (sqlite + memory) | **done** |
+| K2.1 `clearKeepId` idle wipe + persist-fail | **done** |
+| K2.2 mid-turn abort-then-wipe | **done** |
+| K2.3 refuse child unpaired ask (before abort) | **done** |
+| K2.4 job kept; todos/title/usage/followup/lastEnd wiped | **done** |
+| K3.1 Ink + OpenTUI call `clearKeepId`; honest notice | **done** |
+| K4.1 eval fixture | **done** |
 
 ---
 

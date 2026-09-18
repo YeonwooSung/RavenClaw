@@ -239,7 +239,7 @@ Ink is the default. OpenTUI is `--tui opentui`.
 |---|---|
 | `/help` | This list |
 | `/resume [id]` | Restore a session; next message is a new turn (tools are not re-run) |
-| `/clear` `/new` | New session |
+| `/clear` `/new` | Wipe this session conversation; keep the id |
 | `/compact` | Compact the conversation |
 | `/cost` | Token and USD estimate |
 | `/search [ --all] <q>` | FTS5 search |

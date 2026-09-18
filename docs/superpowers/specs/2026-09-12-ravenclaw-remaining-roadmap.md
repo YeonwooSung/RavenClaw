@@ -8,7 +8,7 @@ Supersedes remaining H1/H2 of `2026-09-12-ravenclaw-roadmap.md`. H0 and harness-
 
 Steal contracts. Do not copy Claude, Hermes, or Freebuff source.
 
-Session-as-job horizon (**implemented** on `main` at `ea56edd`, closeout `0ef1554`): **`2026-09-16-session-as-job-roadmap.md`**. Job-host state (**implemented** on `main` at `6e56764`): **`2026-09-17-job-host-state-roadmap.md`**. Rewind persist-before-reset / `todo.json` projection (**implemented** on `main` at `048deff`): **`2026-09-18-rewind-persist-and-todo-projection.md`**. Cancel abort-pair / reset-on-resume / follow-up persist (**implemented** on `main` at `5eefdde`): **`2026-09-18-cancel-reset-followup.md`**. No-job todo revert (this branch): **`2026-09-18-no-job-todo-revert.md`**. Previous (implemented): `2026-09-15-eve-inspired-roadmap.md`. Prior-art: [eve-analysis.md](../../research/eve-analysis.md), [y0-analysis.md](../../research/y0-analysis.md).
+Session-as-job horizon (**implemented** on `main` at `ea56edd`, closeout `0ef1554`): **`2026-09-16-session-as-job-roadmap.md`**. Job-host state (**implemented** on `main` at `6e56764`): **`2026-09-17-job-host-state-roadmap.md`**. Rewind persist-before-reset / `todo.json` projection (**implemented** on `main` at `048deff`): **`2026-09-18-rewind-persist-and-todo-projection.md`**. Cancel abort-pair / reset-on-resume / follow-up persist (**implemented** on `main` at `5eefdde`): **`2026-09-18-cancel-reset-followup.md`**. No-job todo revert (this branch): **`2026-09-18-no-job-todo-revert.md`**. Keep-id `/clear` (this branch): **`2026-09-18-keep-id-clear.md`**. Previous (implemented): `2026-09-15-eve-inspired-roadmap.md`. Prior-art: [eve-analysis.md](../../research/eve-analysis.md), [y0-analysis.md](../../research/y0-analysis.md).
 
 ---
 
@@ -22,7 +22,7 @@ The coding-agent waist is shipped:
 - Durable mailbox + session locks. Children go through `SessionEngine`.
 - H1.1–H1.3, H1.7 (subdir AGENTS.md, verify-on-stop, coding posture, stall) are in.
 
-Waves 1–4 are on `main`. Eve-inspired horizon is implemented. Session-as-job horizon is implemented (`ea56edd`, closeout `0ef1554`): **`2026-09-16-session-as-job-roadmap.md`**. Job-host state is implemented (`6e56764`): **`2026-09-17-job-host-state-roadmap.md`**. Rewind persist-before-reset / `todo.json` projection is implemented (`048deff`): **`2026-09-18-rewind-persist-and-todo-projection.md`**. Cancel abort-pair / reset-on-resume / follow-up persist is implemented (`5eefdde`): **`2026-09-18-cancel-reset-followup.md`**. No-job todo revert is on this branch: **`2026-09-18-no-job-todo-revert.md`**.
+Waves 1–4 are on `main`. Eve-inspired horizon is implemented. Session-as-job horizon is implemented (`ea56edd`, closeout `0ef1554`): **`2026-09-16-session-as-job-roadmap.md`**. Job-host state is implemented (`6e56764`): **`2026-09-17-job-host-state-roadmap.md`**. Rewind persist-before-reset / `todo.json` projection is implemented (`048deff`): **`2026-09-18-rewind-persist-and-todo-projection.md`**. Cancel abort-pair / reset-on-resume / follow-up persist is implemented (`5eefdde`): **`2026-09-18-cancel-reset-followup.md`**. No-job todo revert is on this branch: **`2026-09-18-no-job-todo-revert.md`**. Keep-id `/clear` is on this branch: **`2026-09-18-keep-id-clear.md`**.
 
 ---
 
