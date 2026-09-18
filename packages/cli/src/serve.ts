@@ -32,6 +32,7 @@ import {
 } from '@ravenclaw/core'
 import { bootCli, openNewSession, resumeRuntime, type CliRuntime } from './engine'
 import { runExec } from './exec'
+import { parseVersionParam, STREAM_PROTOCOL_VERSION } from './serve-stream-protocol'
 
 const DEFAULT_LISTEN = '127.0.0.1:8787'
 
@@ -561,6 +562,8 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
     const sessionId = sessionRoute[1] ?? ''
     const action = sessionRoute[2]
     if (req.method === 'GET' && action === 'stream') {
+      const parsedVersion = parseVersionParam(url.searchParams.get('version'))
+      if (!parsedVersion.ok) return Response.json({ error: parsedVersion.error }, { status: 400 })
       const parsedAfter = parseAfterParam(url.searchParams.get('after'))
       if (!parsedAfter.ok) return Response.json({ error: 'invalid after' }, { status: 400 })
       const loaded = await loadSessionRuntime(ctx, sessionId)
@@ -572,7 +575,11 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
         async start(controller) {
           const write = (event: SequencedStreamEvent) => {
             try {
-              controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`))
+              controller.enqueue(
+                encoder.encode(
+                  `${JSON.stringify({ version: STREAM_PROTOCOL_VERSION, ...event })}\n`,
+                ),
+              )
             } catch {
               unsub()
             }
@@ -849,6 +856,8 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
   const sessionIdRoute = SESSION_ID_PATH.exec(url.pathname)
   if (sessionIdRoute && req.method === 'GET') {
     if (!requireBearer(req, ctx.secret)) return unauthorized()
+    const parsedVersion = parseVersionParam(url.searchParams.get('version'))
+    if (!parsedVersion.ok) return Response.json({ error: parsedVersion.error }, { status: 400 })
     const sessionId = sessionIdRoute[1] ?? ''
     const loaded = await loadSessionRuntime(ctx, sessionId)
     if (!loaded.ok) return loaded.res
@@ -864,6 +873,7 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
       permissionMode: PermissionMode
       live: boolean
       queued: string | null
+      version: typeof STREAM_PROTOCOL_VERSION
       title?: string
       job?: SessionJob
       lastEnd?: SessionRecord['lastEnd']
@@ -876,6 +886,7 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
       permissionMode: session.permissionMode,
       live: (engine.liveTurnId?.() ?? null) !== null,
       queued: session.followup ?? null,
+      version: STREAM_PROTOCOL_VERSION,
     }
     if (session.title !== undefined) body.title = session.title
     if (session.job !== undefined) body.job = session.job

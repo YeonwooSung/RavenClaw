@@ -446,7 +446,7 @@ describe('handleServeRequest', () => {
       ctx,
     )
     expect(turnRes.status).toBe(200)
-    expect(await firstLine).toEqual({ seq: 1, type: 'text_delta', text: 'hi' })
+    expect(await firstLine).toEqual({ version: 1, seq: 1, type: 'text_delta', text: 'hi' })
   })
 
   test('GET /v1/session/:id/stream emits parked permission_ask rows on subscribe', async () => {
@@ -479,6 +479,7 @@ describe('handleServeRequest', () => {
     )
     expect(streamRes.status).toBe(200)
     expect(await readFirstJsonLine(streamRes)).toEqual({
+      version: 1,
       seq: 1,
       type: 'permission_ask',
       id: 'parked_1',
@@ -510,6 +511,7 @@ describe('handleServeRequest', () => {
       // drain so the hub publishes
     }
     expect(await firstLine).toEqual({
+      version: 1,
       seq: 1,
       type: 'permission_ask',
       id: 'c1',
@@ -722,6 +724,7 @@ describe('handleServeRequest', () => {
     )
     expect(submitRes.status).toBe(202)
     expect(await firstLine).toEqual({
+      version: 1,
       seq: 1,
       type: 'permission_ask',
       id: 'c1',
@@ -768,14 +771,14 @@ describe('handleServeRequest', () => {
     for (const event of early) await ctx.hub.publish('s1', event)
     const firstEvents = await firstPending
     expect(firstEvents).toEqual([
-      { seq: 1, type: 'round_start', round: 1, turnId: 't1' },
-      { seq: 2, type: 'text_delta', text: 'a' },
-      { seq: 3, type: 'text_delta', text: 'b' },
+      { version: 1, seq: 1, type: 'round_start', round: 1, turnId: 't1' },
+      { version: 1, seq: 2, type: 'text_delta', text: 'a' },
+      { version: 1, seq: 3, type: 'text_delta', text: 'b' },
     ])
     for (const event of later) await ctx.hub.publish('s1', event)
     expect([await first.next(), await first.next()]).toEqual([
-      { seq: 4, type: 'text_delta', text: 'c' },
-      { seq: 5, type: 'round_end', end: { reason: 'cancelled' } },
+      { version: 1, seq: 4, type: 'text_delta', text: 'c' },
+      { version: 1, seq: 5, type: 'round_end', end: { reason: 'cancelled' } },
     ])
     const secondRes = await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/s1/stream?after=3', { headers: auth }),
@@ -785,14 +788,14 @@ describe('handleServeRequest', () => {
     const second = ndjsonReader(secondRes)
     const replayed = [await second.next(), await second.next()]
     expect(replayed).toEqual([
-      { seq: 4, type: 'text_delta', text: 'c' },
-      { seq: 5, type: 'round_end', end: { reason: 'cancelled' } },
+      { version: 1, seq: 4, type: 'text_delta', text: 'c' },
+      { version: 1, seq: 5, type: 'round_end', end: { reason: 'cancelled' } },
     ])
     const concat = [...firstEvents, ...replayed]
     expect(concat.map((event) => (event as { seq: number }).seq)).toEqual([1, 2, 3, 4, 5])
     expect(new Set(concat.map((event) => (event as { seq: number }).seq)).size).toBe(5)
     await ctx.hub.publish('s1', { type: 'text_delta', text: 'd' })
-    expect(await second.next()).toEqual({ seq: 6, type: 'text_delta', text: 'd' })
+    expect(await second.next()).toEqual({ version: 1, seq: 6, type: 'text_delta', text: 'd' })
     await first.close()
     await second.close()
   })
@@ -826,11 +829,11 @@ describe('handleServeRequest', () => {
     )
     expect(replayRes.status).toBe(200)
     const replay = ndjsonReader(replayRes)
-    expect(await replay.next()).toEqual({ seq: 1, type: 'text_delta', text: 'old' })
+    expect(await replay.next()).toEqual({ version: 1, seq: 1, type: 'text_delta', text: 'old' })
     const replayNext = replay.next()
     await ctx.hub.publish('s1', { type: 'text_delta', text: 'new' })
-    expect(await liveNext).toEqual({ seq: 2, type: 'text_delta', text: 'new' })
-    expect(await replayNext).toEqual({ seq: 2, type: 'text_delta', text: 'new' })
+    expect(await liveNext).toEqual({ version: 1, seq: 2, type: 'text_delta', text: 'new' })
+    expect(await replayNext).toEqual({ version: 1, seq: 2, type: 'text_delta', text: 'new' })
     await live.close()
     await replay.close()
   })
@@ -876,8 +879,8 @@ describe('handleServeRequest', () => {
     await started
     await ctx.hub.publish('s1', { type: 'text_delta', text: 'new' })
     releaseReplay()
-    expect(await first).toEqual({ seq: 1, type: 'text_delta', text: 'old' })
-    expect(await reader.next()).toEqual({ seq: 2, type: 'text_delta', text: 'new' })
+    expect(await first).toEqual({ version: 1, seq: 1, type: 'text_delta', text: 'old' })
+    expect(await reader.next()).toEqual({ version: 1, seq: 2, type: 'text_delta', text: 'new' })
     await reader.close()
   })
 
@@ -911,6 +914,86 @@ describe('handleServeRequest', () => {
     const body = (await res.json()) as { text: string; sessionId: string }
     expect(body.sessionId).toBe('s1')
     expect(typeof body.text).toBe('string')
+  })
+
+  test('GET snapshot includes version 1; ?version=2 is 400 before 404', async () => {
+    const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
+    const ctx = makeServeCtx(secret)
+    const auth = { authorization: 'Bearer secret' }
+    const ok = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1', { headers: auth }),
+      ctx,
+    )
+    expect(ok.status).toBe(200)
+    expect(((await ok.json()) as { version: number }).version).toBe(1)
+
+    const noAuth = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/missing?version=2'),
+      ctx,
+    )
+    expect(noAuth.status).toBe(401)
+
+    const bad = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/missing?version=2', { headers: auth }),
+      ctx,
+    )
+    expect(bad.status).toBe(400)
+    expect(await bad.json()).toEqual({ error: 'unsupported stream version' })
+  })
+
+  test('stream ?version= matrix is 400 before 404; frames stamp version 1', async () => {
+    const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
+    const ctx = makeServeCtx(secret)
+    const auth = { authorization: 'Bearer secret' }
+    for (const raw of ['', 'foo', '1.5', '-1']) {
+      const res = await handleServeRequest(
+        new Request(`http://127.0.0.1/v1/session/missing/stream?version=${raw}`, { headers: auth }),
+        ctx,
+      )
+      expect(res.status).toBe(400)
+      expect(await res.json()).toEqual({ error: 'invalid version' })
+    }
+    for (const raw of ['0', '2', '25']) {
+      const res = await handleServeRequest(
+        new Request(`http://127.0.0.1/v1/session/missing/stream?version=${raw}`, { headers: auth }),
+        ctx,
+      )
+      expect(res.status).toBe(400)
+      expect(await res.json()).toEqual({ error: 'unsupported stream version' })
+    }
+
+    await ctx.hub.publish('s1', { type: 'text_delta', text: 'old' })
+    const replay = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/stream?after=0&version=1', { headers: auth }),
+      ctx,
+    )
+    expect(replay.status).toBe(200)
+    expect(await readFirstJsonLine(replay)).toEqual({
+      version: 1,
+      seq: 1,
+      type: 'text_delta',
+      text: 'old',
+    })
+    const stored = await ctx.store.listStreamEventsAfter('s1', 0)
+    expect(stored[0]).toEqual({ seq: 1, type: 'text_delta', text: 'old' })
+    expect(stored[0] && 'version' in stored[0]).toBe(false)
+  })
+
+  test('POST /v1/turn ignores ?version=', async () => {
+    const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
+    const ctx = makeServeCtx(secret)
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/turn?after=0&version=2', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+        body: JSON.stringify({ text: 'hi' }),
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toContain('application/json')
+    const body = (await res.json()) as { text: string; sessionId: string }
+    expect(body.sessionId).toBe('s1')
   })
 
   test('POST resolve settles a live leftover-ask without applyAskAnswer', async () => {
