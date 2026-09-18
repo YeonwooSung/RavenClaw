@@ -362,6 +362,51 @@ export function createMemoryStore(): SessionStore {
       })
     },
 
+    async clearConversation(opts) {
+      await withWrite(async () => {
+        const sessionId = opts.session.id
+        const prevSession = sessions.get(sessionId)
+        const prevMessages = bucket(sessionId).map((row) => ({
+          message: row.message,
+          active: row.active,
+        }))
+        const prevAsks = [...pendingAsks.entries()]
+          .filter(([, row]) => row.sessionId === sessionId)
+          .map(([callId, row]) => [callId, { ...row }] as const)
+        const prevStream = (streamEvents.get(sessionId) ?? []).map((row) => ({ ...row }))
+        const prevMail = (mail.get(sessionId) ?? []).map((row) => ({ ...row }))
+        try {
+          if (opts.inactivatedIds.length > 0) {
+            const ids = new Set(opts.inactivatedIds)
+            for (const row of bucket(sessionId)) {
+              if (ids.has(row.message.id)) row.active = false
+            }
+          }
+          for (const [callId, row] of pendingAsks) {
+            if (row.sessionId === sessionId) pendingAsks.delete(callId)
+          }
+          streamEvents.delete(sessionId)
+          await store.drainAgentMail(sessionId)
+          sessions.set(sessionId, { ...opts.session })
+        } catch (error) {
+          if (prevSession) sessions.set(sessionId, prevSession)
+          else sessions.delete(sessionId)
+          const rows = bucket(sessionId)
+          rows.length = 0
+          rows.push(...prevMessages)
+          for (const [callId, row] of pendingAsks) {
+            if (row.sessionId === sessionId) pendingAsks.delete(callId)
+          }
+          for (const [callId, row] of prevAsks) pendingAsks.set(callId, row)
+          if (prevStream.length > 0) streamEvents.set(sessionId, prevStream)
+          else streamEvents.delete(sessionId)
+          if (prevMail.length > 0) mail.set(sessionId, prevMail)
+          else mail.delete(sessionId)
+          throw error
+        }
+      })
+    },
+
     async enqueueAgentMail(parentSessionId, text) {
       await withWrite(async () => {
         const body = clipAgentMailBody(text)

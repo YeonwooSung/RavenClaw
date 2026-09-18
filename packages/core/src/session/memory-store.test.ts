@@ -281,4 +281,164 @@ describe('createMemoryStore', () => {
     await store.renewSessionLock('s1', 'b', 50)
     await store.releaseSessionLock('s1', 'b')
   })
+
+  test('clearConversation wipes this session and keeps job, child, and rules', async () => {
+    const store = createMemoryStore()
+    const job = {
+      baseBranch: 'main',
+      shadowBranch: 'raven/s',
+      baseCommitSha: 'abc123',
+      worktreePath: '/tmp/wt',
+      pendingResetSha: 'def456',
+    }
+    await store.createSession(
+      session({
+        permissionMode: 'acceptEdits',
+        title: 'old title',
+        followup: 'run tests',
+        lastEnd: { reason: 'completed' },
+        jobError: 'stale',
+        todos: [{ text: 'ship', status: 'pending' }],
+        usage: { input: 10, output: 4, cacheRead: 1, cacheWrite: 2 },
+        job,
+      }),
+    )
+    await store.createSession(session({ id: 'child', parentSessionId: 's1' }))
+    await store.persistUser('s1', {
+      id: 'u1',
+      role: 'user',
+      blocks: [{ type: 'text', text: 'hi' }],
+      createdAt: 1,
+    })
+    await store.persistUser('child', {
+      id: 'cu1',
+      role: 'user',
+      blocks: [{ type: 'text', text: 'child' }],
+      createdAt: 2,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_parent',
+      sessionId: 's1',
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Bash?',
+      input: {},
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_child',
+      sessionId: 'child',
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Child?',
+      input: {},
+      createdAt: 2,
+    })
+    await store.appendStreamEvent('s1', { type: 'text_delta', text: 'x' })
+    await store.appendStreamEvent('child', { type: 'text_delta', text: 'y' })
+    await store.enqueueAgentMail('s1', 'old-mail')
+    await store.setPermissionRules('s1', [
+      { id: 'r1', sessionId: 's1', tool: 'Bash', spec: {}, behavior: 'allow' },
+    ])
+    await store.acquireSessionLock('s1', { holderId: 'a', holderName: 'tui' })
+
+    const next = session({
+      permissionMode: 'acceptEdits',
+      compactGeneration: 1,
+      todos: [],
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      job,
+      updatedAt: 99,
+    })
+    await store.clearConversation({ session: next, inactivatedIds: ['u1'], generation: 1 })
+
+    const loaded = await store.loadSession('s1')
+    expect(loaded.session.id).toBe('s1')
+    expect(loaded.messages).toEqual([])
+    expect(loaded.session.job).toEqual(job)
+    expect(loaded.session.permissionMode).toBe('acceptEdits')
+    expect(loaded.session.todos).toEqual([])
+    expect(loaded.session.title).toBeUndefined()
+    expect(loaded.session.followup).toBeUndefined()
+    expect(loaded.session.lastEnd).toBeUndefined()
+    expect(loaded.session.jobError).toBeUndefined()
+    expect(loaded.session.usage).toEqual({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0 })
+    expect(loaded.session.compactGeneration).toBe(1)
+    expect(await store.listPendingAsks('s1')).toEqual([])
+    expect(await store.lastStreamSeq('s1')).toBe(0)
+    expect(await store.peekAgentMail('s1')).toEqual([])
+    expect(await store.listPendingAsks('child')).toHaveLength(1)
+    expect(await store.lastStreamSeq('child')).toBe(1)
+    const child = await store.loadSession('child')
+    expect(child.messages.map((msg) => msg.id)).toEqual(['cu1'])
+    expect(await store.listPermissionRules('s1')).toHaveLength(1)
+    await expect(store.createSession(session())).rejects.toBeInstanceOf(PersistError)
+    await expect(
+      store.acquireSessionLock('s1', { holderId: 'b', holderName: 'serve' }),
+    ).rejects.toMatchObject({ name: 'SessionLockError' })
+    await store.releaseSessionLock('s1', 'a')
+  })
+
+  test('clearConversation with no ids skips the generation bump', async () => {
+    const store = createMemoryStore()
+    await store.createSession(session({ compactGeneration: 4 }))
+    await store.clearConversation({
+      session: session({ compactGeneration: 4, todos: [], updatedAt: 2 }),
+      inactivatedIds: [],
+      generation: 4,
+    })
+    const loaded = await store.loadSession('s1')
+    expect(loaded.session.compactGeneration).toBe(4)
+    expect(loaded.messages).toEqual([])
+  })
+
+  test('clearConversation throw leaves transcript, asks, and stream', async () => {
+    const store = createMemoryStore()
+    await store.createSession(
+      session({
+        lastEnd: { reason: 'completed' },
+        todos: [{ text: 'keep', status: 'pending' }],
+      }),
+    )
+    await store.persistUser('s1', {
+      id: 'u1',
+      role: 'user',
+      blocks: [{ type: 'text', text: 'keep' }],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_keep',
+      sessionId: 's1',
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Bash?',
+      input: {},
+      createdAt: 2,
+    })
+    await store.appendStreamEvent('s1', { type: 'text_delta', text: 'x' })
+    const orig = store.drainAgentMail.bind(store)
+    store.drainAgentMail = async (parentSessionId) => {
+      await orig(parentSessionId)
+      throw new Error('disk')
+    }
+
+    await expect(
+      store.clearConversation({
+        session: session({
+          compactGeneration: 1,
+          todos: [],
+          updatedAt: 99,
+        }),
+        inactivatedIds: ['u1'],
+        generation: 1,
+      }),
+    ).rejects.toBeInstanceOf(Error)
+
+    const loaded = await store.loadSession('s1')
+    expect(loaded.messages.map((msg) => msg.id)).toEqual(['u1'])
+    expect(loaded.session.lastEnd).toEqual({ reason: 'completed' })
+    expect(loaded.session.todos).toEqual([{ text: 'keep', status: 'pending' }])
+    expect(await store.listPendingAsks('s1')).toHaveLength(1)
+    expect(await store.lastStreamSeq('s1')).toBe(1)
+  })
 })
