@@ -4,7 +4,8 @@ Date: 2026-09-18
 Status: implemented  
 Shipped on `main` at `048deff`.  
 Reviewed against tree at `ac2d184` (`main` after job-host PR #9 + shipped-docs PR #11).  
-Successor to `2026-09-17-job-host-state-roadmap.md` (Status: implemented). Does not reopen that spec’s closed doors.
+Successor to `2026-09-17-job-host-state-roadmap.md` (Status: implemented). Does not reopen that spec’s closed doors.  
+Next horizon: [`2026-09-18-cancel-reset-followup.md`](2026-09-18-cancel-reset-followup.md) (amends this spec’s OUT for live cancel abort-pair and reset-on-resume only).
 
 Sources: current tree, [y0 analysis](../../research/y0-analysis.md) (`/Users/yeonwoosung/Desktop/y0`, read-only), [eve analysis](../../research/eve-analysis.md) (`/Users/yeonwoosung/Desktop/eve`, Apache-2.0, read-only).
 
