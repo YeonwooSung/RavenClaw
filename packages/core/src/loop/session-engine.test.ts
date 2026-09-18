@@ -1824,6 +1824,67 @@ describe('job auto-commit', () => {
     const loaded = await store.loadSession(id)
     expect(loaded.messages.map((msg) => msg.id)).toEqual(['u0', 'a0'])
   })
+
+  test('maybeFinishRewindReset no-ops under a live turn; rewindLast refuses', async () => {
+    const cwd = tempDir('ravenclaw-job-finish-live-')
+    initGitRepo(cwd)
+    const id = nextSession()
+    const entered = enterSessionWorktree(id, cwd)
+    expect(entered.ok).toBe(true)
+    const job = entered.job!
+    writeFileSync(join(job.worktreePath, 'extra.txt'), 'later\n')
+    expect(spawnSync('git', ['add', '-A'], { cwd: job.worktreePath, encoding: 'utf8' }).status).toBe(0)
+    expect(
+      spawnSync('git', ['commit', '-m', 'later'], { cwd: job.worktreePath, encoding: 'utf8' }).status,
+    ).toBe(0)
+    const later = git(job.worktreePath, ['rev-parse', 'HEAD'])
+    expect(later).not.toBe(job.baseCommitSha)
+    const store = createMemoryStore()
+    const sess = makeSession({
+      id,
+      cwd: job.worktreePath,
+      job,
+    })
+    await store.createSession(sess)
+    let enteredStream: () => void
+    const streamEntered = new Promise<void>((resolve) => {
+      enteredStream = resolve
+    })
+    const provider: Provider = {
+      id: 'fake',
+      apiMode: 'openai_compat',
+      profile(model: string) {
+        return defaultModel(model)
+      },
+      async *stream(_req, signal) {
+        enteredStream()
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) {
+            resolve()
+            return
+          }
+          signal.addEventListener('abort', () => resolve(), { once: true })
+        })
+      },
+    }
+    const engine = createSessionEngine({
+      ...engineOpts({ provider, store, session: sess }),
+    })
+    const gen = engine.submitMessage('hi')
+    const pending = drain(gen)
+    await streamEntered
+    job.pendingResetSha = job.baseCommitSha
+    const finished = await engine.maybeFinishRewindReset()
+    expect(finished).toEqual({ ran: false, ok: true })
+    expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).toBe(later)
+    expect(engine.session.job?.pendingResetSha).toBe(job.baseCommitSha)
+    const rewind = await engine.rewindLast()
+    expect(rewind).toEqual({ ok: false, notice: 'a turn is in progress' })
+    expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).toBe(later)
+    expect(engine.session.job?.pendingResetSha).toBe(job.baseCommitSha)
+    engine.abort()
+    await pending
+  })
 })
 
 describe('cancel', () => {

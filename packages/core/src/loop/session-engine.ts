@@ -484,7 +484,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
     },
 
     async rewindLast() {
-      const finished = await maybeFinishRewindReset({ session, store: opts.store, messages })
+      const finished = await this.maybeFinishRewindReset()
       if (finished.ran) {
         return finished.ok
           ? { ok: true, notice: finished.notice ?? 'nothing to rewind' }
@@ -528,6 +528,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
     },
 
     maybeFinishRewindReset() {
+      if (liveTurn !== null) return Promise.resolve({ ran: false, ok: true })
       return maybeFinishRewindReset({ session, store: opts.store, messages })
     },
 
