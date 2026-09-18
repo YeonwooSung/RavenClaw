@@ -444,7 +444,7 @@ If `included.gatewayUrl` is a real URL and `GET /v1/entitlement` admits the sess
 - Prior art notes: [Hermes](docs/research/hermes-agent-analysis.md), [Freebuff](docs/research/freebuff-analysis.md), [Claude Code loop](docs/research/claude-code-analysis.md), [eve](docs/research/eve-analysis.md) ([한국어](docs/research/eve-analysis.ko.md)), [y0](docs/research/y0-analysis.md) ([한국어](docs/research/y0-analysis.ko.md))
 - Session-as-job horizon (named shadow, checkpoint rewind, reconnectable serve, optional `/pr`; **implemented** at `ea56edd`, closeout `0ef1554`): [2026-09-16-session-as-job-roadmap.md](docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md)
 - Job-host state (snapshot end-reason, one-slot follow-up, edit-resubmit, job diff; **implemented** at `6e56764`): [2026-09-17-job-host-state-roadmap.md](docs/superpowers/specs/2026-09-17-job-host-state-roadmap.md)
-- Parked next (no spec yet): rewind persist-before-reset / `todo.json` re-project
+- Next horizon (rewind persist-before-reset / `todo.json` projection): [2026-09-18-rewind-persist-and-todo-projection.md](docs/superpowers/specs/2026-09-18-rewind-persist-and-todo-projection.md)
 - Previous horizon (durable HITL, sandbox port, session HTTP; implemented): [2026-09-15-eve-inspired-roadmap.md](docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md)
 
 ## Develop

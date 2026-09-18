@@ -321,4 +321,4 @@ If we ever add a browser client, **eve’s session API is the right waist**, not
 
 y0 still teaches Task-as-job UX (shadow branch, PR, wiki). eve teaches the **runtime contract** that makes that UX safe across process death. Neither replaces the waist.
 
-That eve-inspired horizon is implemented. Session-as-job is implemented (`docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md`). Job-host state is implemented (`docs/superpowers/specs/2026-09-17-job-host-state-roadmap.md` at `6e56764`). Parked next (no spec yet): rewind persist-before-reset / `todo.json` re-project.
+That eve-inspired horizon is implemented. Session-as-job is implemented (`docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md`). Job-host state is implemented (`docs/superpowers/specs/2026-09-17-job-host-state-roadmap.md` at `6e56764`). Next: `docs/superpowers/specs/2026-09-18-rewind-persist-and-todo-projection.md`.
