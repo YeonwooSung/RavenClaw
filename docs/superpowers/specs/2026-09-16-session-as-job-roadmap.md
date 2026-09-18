@@ -6,7 +6,8 @@ Shipped on `main` at `ea56edd` (merge of `feat/session-as-job`).
 Closeout shipped on `main` at `0ef1554` (merge of `feat/session-as-job-closeout`): F4.1 `draft_pr` annotation, F4.3 stacked-child `raven/*` branch GC, ACP timeout replay (H1), `TodoWrite failed:` does not apply todos.  
 Reviewed against tree at `d4c73d4` before implementation (eve-inspired horizon + leftover-ask holes PRs #2–#8 on `main`).  
 Successor to `2026-09-15-eve-inspired-roadmap.md` (Status: implemented). Does not reopen that spec’s closed doors.  
-Next horizon (implemented at `6e56764`): [`2026-09-17-job-host-state-roadmap.md`](2026-09-17-job-host-state-roadmap.md). After that (implemented at `048deff`): [`2026-09-18-rewind-persist-and-todo-projection.md`](2026-09-18-rewind-persist-and-todo-projection.md). Then: [`2026-09-18-cancel-reset-followup.md`](2026-09-18-cancel-reset-followup.md).
+Next horizon (implemented at `6e56764`): [`2026-09-17-job-host-state-roadmap.md`](2026-09-17-job-host-state-roadmap.md). After that (implemented at `048deff`): [`2026-09-18-rewind-persist-and-todo-projection.md`](2026-09-18-rewind-persist-and-todo-projection.md). Then (implemented on this branch at `6300238`): [`2026-09-18-cancel-reset-followup.md`](2026-09-18-cancel-reset-followup.md).  
+Amended by `2026-09-18-cancel-reset-followup.md`: live cancel abort-pairs this session’s leftover-ask.
 
 Sources: current tree, [eve analysis](../../research/eve-analysis.md) (`/Users/yeonwoosung/Desktop/eve`, Apache-2.0, read-only), [y0 analysis](../../research/y0-analysis.md) (`/Users/yeonwoosung/Desktop/y0`, read-only).
 
@@ -99,7 +100,7 @@ Board as of `ea56edd` on `main`. Pre-ship “missing” rows are historical; do 
 - Grep/Glob docker-exec, NotebookEdit docker port (v1 host jail stays; label it)
 - Slack signing-secret HMAC (Socket Mode stays)
 - `ignored` dismiss-on-message
-- live `/cancel` abort-pair of a parked leftover-ask (still: cancel a live turn; parked rows stay; stream must say so)
+- live `/cancel` abort-pair of a parked leftover-ask — amended — see [`2026-09-18-cancel-reset-followup.md`](2026-09-18-cancel-reset-followup.md)
 - Sandbox network policy / authored `sandbox.stop()` (per-command `docker run` is not a session VM)
 
 ---

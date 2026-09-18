@@ -1,7 +1,8 @@
 # RavenClaw next-horizon roadmap (cancel abort-pair, reset-on-resume, follow-up persist)
 
 Date: 2026-09-18  
-Status: not implemented  
+Status: implemented  
+Implemented on this branch at `6300238` (`feat/cancel-reset-followup`; not yet on `main`).  
 Reviewed against tree at `77a09f3` (`main` after rewind persist PR land + shipped-docs PR #13).  
 Successor to `2026-09-18-rewind-persist-and-todo-projection.md` (Status: implemented). Does not reopen that spec’s closed doors except the three holes named here.
 
@@ -17,7 +18,7 @@ Steal contracts. Do not copy eve, y0, Claude, Hermes, or Freebuff source. Do not
 
 The waist is shipped: leftover-ask, session-as-job, job-host, persist-before-reset rewind, project `todo.json` projection.
 
-Three leftover honesty holes remain. None of them is a new product surface.
+Three leftover honesty holes were open at review time. None of them is a new product surface. Landed on this branch at `6300238`. The table below is the pre-land snapshot.
 
 | Piece | Tree at `77a09f3` |
 |---|---|
@@ -95,16 +96,16 @@ These lock underspecification. The implementation plan may only add detail, not 
 
 | ID | Status vs tree |
 |---|---|
-| I0.1 docs point at this spec | **missing** (this file + pointer pass land together) |
-| I1.1 `writeFollowup` persist-then-assign | **missing** |
-| I1.2 upsert fail leaves memory and `getFollowup()` | **missing** |
-| I2.1 live cancel abort-pairs this session’s leftover-asks | **missing** |
-| I2.2 persist fail leaves the row + `ask still pending` | **missing** |
-| I2.3 no live turn / interrupt / child ask unchanged | **missing** |
-| I3.1 `pendingResetSha` on job rewind | **missing** |
-| I3.2 `maybeFinishRewindReset` on first submit / rewindLast / host diff | **missing** |
-| I3.3 reset-fail keeps the flag | **missing** |
-| I4.1 eval fixtures | **missing** |
+| I0.1 docs point at this spec | **done** |
+| I1.1 `writeFollowup` persist-then-assign | **done** |
+| I1.2 upsert fail leaves memory and `getFollowup()` | **done** |
+| I2.1 live cancel abort-pairs this session’s leftover-asks | **done** |
+| I2.2 persist fail leaves the row + `ask still pending` | **done** |
+| I2.3 no live turn / interrupt / child ask unchanged | **done** |
+| I3.1 `pendingResetSha` on job rewind | **done** |
+| I3.2 `maybeFinishRewindReset` on first submit / rewindLast / host diff | **done** |
+| I3.3 reset-fail keeps the flag | **done** |
+| I4.1 eval fixtures | **done** |
 
 ---
 
