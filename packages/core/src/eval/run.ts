@@ -7,7 +7,9 @@ import { createSessionEngine } from '../loop/session-engine'
 import { maybeRunFollowup } from '../session/followup'
 import { jobDiff } from '../session/job-diff'
 import { createMemoryStore } from '../session/memory-store'
+import { rewindToCheckpoint } from '../session/rewind'
 import { enterSessionWorktree, exitSessionWorktree } from '../tools/session-worktree'
+import { todoJsonPath } from '../tools/todo'
 import { writeTool } from '../tools/write'
 import type {
   CompactPolicy,
@@ -42,6 +44,8 @@ type EvalExpect = {
   followupRan?: boolean
   editResubmit?: boolean
   jobDiffListsDirty?: boolean
+  rewindPersistBeforeReset?: boolean
+  rewindTodoProject?: boolean
 }
 
 type EvalCase = {
@@ -96,6 +100,14 @@ export async function runEvalDir(dir: string): Promise<void> {
     }
     if (name === 'job-diff') {
       await runJobDiff(spec)
+      continue
+    }
+    if (name === 'rewind-persist-before-reset') {
+      await runRewindPersistBeforeReset(spec)
+      continue
+    }
+    if (name === 'rewind-todo-project') {
+      await runRewindTodoProject(spec)
       continue
     }
     throw new Error(`unknown eval fixture: ${name}`)
@@ -778,6 +790,206 @@ async function runJobDiff(spec: EvalCase): Promise<void> {
       const paths = diff.files.map((file) => file.path)
       if (!paths.includes('committed.txt') || !paths.includes('dirty.txt')) {
         throw new Error(`job-diff: expected committed.txt and dirty.txt, got ${JSON.stringify(paths)}`)
+      }
+    }
+  } finally {
+    exitSessionWorktree(sessionId, 'remove', true)
+    rmSync(cwd, { recursive: true, force: true })
+  }
+}
+
+async function runRewindPersistBeforeReset(spec: EvalCase): Promise<void> {
+  const cwd = mkdtempSync(join(tmpdir(), 'raven-eval-rewind-persist-'))
+  const sessionId = `sess_eval_rewind_persist_${crypto.randomUUID()}`
+  try {
+    initGitRepo(cwd)
+    const entered = enterSessionWorktree(sessionId, cwd)
+    if (!entered.ok || entered.job === undefined) {
+      throw new Error(`rewind-persist-before-reset: enter failed: ${entered.error ?? 'no job'}`)
+    }
+    const job = entered.job
+    writeFileSync(join(job.worktreePath, 'extra.txt'), 'later\n')
+    const add = spawnSync('git', ['-C', job.worktreePath, 'add', 'extra.txt'], { encoding: 'utf8' })
+    if (add.status !== 0) throw new Error(`rewind-persist-before-reset: git add failed: ${add.stderr}`)
+    const commit = spawnSync('git', ['-C', job.worktreePath, 'commit', '-m', 'later'], {
+      encoding: 'utf8',
+    })
+    if (commit.status !== 0) {
+      throw new Error(`rewind-persist-before-reset: git commit failed: ${commit.stderr}`)
+    }
+    const later = spawnSync('git', ['-C', job.worktreePath, 'rev-parse', 'HEAD'], { encoding: 'utf8' })
+    const laterSha = later.stdout.trim()
+
+    if (spec.expect.rewindPersistBeforeReset === true) {
+      const store = createMemoryStore()
+      const session = makeSession({
+        id: sessionId,
+        cwd: job.worktreePath,
+        job,
+        todos: [{ text: 'keep', status: 'pending' }],
+      })
+      await store.createSession(session)
+      const messages: Message[] = [
+        {
+          id: 'u1',
+          role: 'user',
+          blocks: [{ type: 'text', text: 'only' }],
+          createdAt: 1,
+        },
+        {
+          id: 'a1',
+          role: 'assistant',
+          blocks: [{ type: 'text', text: 'ok' }],
+          createdAt: 2,
+        },
+      ]
+      await store.persistUser(sessionId, messages[0] as Extract<Message, { role: 'user' }>)
+      await store.persistAssistant(sessionId, messages[1] as Extract<Message, { role: 'assistant' }>)
+      store.recordCompact = async () => {
+        throw new Error('disk full')
+      }
+      const failed = await rewindToCheckpoint({ session, messages, store })
+      if (failed.ok) throw new Error('rewind-persist-before-reset: persist fail unexpectedly ok')
+      if (failed.notice !== 'rewind persist failed') {
+        throw new Error(`rewind-persist-before-reset: notice ${JSON.stringify(failed.notice)}`)
+      }
+      const headAfterFail = spawnSync('git', ['-C', job.worktreePath, 'rev-parse', 'HEAD'], {
+        encoding: 'utf8',
+      })
+      if (headAfterFail.stdout.trim() !== laterSha) {
+        throw new Error('rewind-persist-before-reset: persist fail moved HEAD')
+      }
+
+      const store2 = createMemoryStore()
+      const session2 = makeSession({
+        id: `${sessionId}_ok`,
+        cwd: job.worktreePath,
+        job,
+      })
+      await store2.createSession(session2)
+      const messages2: Message[] = [
+        {
+          id: 'u2',
+          role: 'user',
+          blocks: [{ type: 'text', text: 'only' }],
+          createdAt: 1,
+        },
+        {
+          id: 'a2',
+          role: 'assistant',
+          blocks: [{ type: 'text', text: 'ok' }],
+          createdAt: 2,
+        },
+      ]
+      await store2.persistUser(session2.id, messages2[0] as Extract<Message, { role: 'user' }>)
+      await store2.persistAssistant(session2.id, messages2[1] as Extract<Message, { role: 'assistant' }>)
+      const heads: string[] = []
+      const orig = store2.recordCompact.bind(store2)
+      store2.recordCompact = async (sid, generation, summary, ids) => {
+        const now = spawnSync('git', ['-C', job.worktreePath, 'rev-parse', 'HEAD'], {
+          encoding: 'utf8',
+        })
+        heads.push(now.stdout.trim())
+        return orig(sid, generation, summary, ids)
+      }
+      const ok = await rewindToCheckpoint({ session: session2, messages: messages2, store: store2 })
+      if (!ok.ok) throw new Error(`rewind-persist-before-reset: success path failed: ${ok.notice}`)
+      if (heads[0] !== laterSha) {
+        throw new Error(
+          `rewind-persist-before-reset: recordCompact ran after reset: ${JSON.stringify(heads)}`,
+        )
+      }
+      const headAfterOk = spawnSync('git', ['-C', job.worktreePath, 'rev-parse', 'HEAD'], {
+        encoding: 'utf8',
+      })
+      if (headAfterOk.stdout.trim() !== job.baseCommitSha) {
+        throw new Error('rewind-persist-before-reset: success path did not reset to base')
+      }
+    }
+  } finally {
+    exitSessionWorktree(sessionId, 'remove', true)
+    rmSync(cwd, { recursive: true, force: true })
+  }
+}
+
+async function runRewindTodoProject(spec: EvalCase): Promise<void> {
+  const cwd = mkdtempSync(join(tmpdir(), 'raven-eval-rewind-todo-'))
+  const sessionId = `sess_eval_rewind_todo_${crypto.randomUUID()}`
+  try {
+    initGitRepo(cwd)
+    const entered = enterSessionWorktree(sessionId, cwd)
+    if (!entered.ok || entered.job === undefined) {
+      throw new Error(`rewind-todo-project: enter failed: ${entered.error ?? 'no job'}`)
+    }
+    const job = entered.job
+    const project = cwd
+    writeFileSync(join(job.worktreePath, 'extra.txt'), 'later\n')
+    const add = spawnSync('git', ['-C', job.worktreePath, 'add', 'extra.txt'], { encoding: 'utf8' })
+    if (add.status !== 0) throw new Error(`rewind-todo-project: git add failed: ${add.stderr}`)
+    const commit = spawnSync('git', ['-C', job.worktreePath, 'commit', '-m', 'later'], {
+      encoding: 'utf8',
+    })
+    if (commit.status !== 0) throw new Error(`rewind-todo-project: git commit failed: ${commit.stderr}`)
+
+    if (spec.expect.rewindTodoProject === true) {
+      const store = createMemoryStore()
+      const snapshot: TodoItem[] = [{ text: 'a', status: 'pending' }]
+      const session = makeSession({
+        id: sessionId,
+        cwd: job.worktreePath,
+        job,
+        todos: [{ text: 'later', status: 'pending' }],
+      })
+      await store.createSession(session)
+      const messages: Message[] = [
+        {
+          id: 'u1',
+          role: 'user',
+          blocks: [{ type: 'text', text: 'first' }],
+          createdAt: 1,
+        },
+        {
+          id: 'a1',
+          role: 'assistant',
+          blocks: [{ type: 'text', text: 'ok' }],
+          createdAt: 2,
+          checkpoint: {
+            commitSha: job.baseCommitSha,
+            todoSnapshot: snapshot,
+            dirty: false,
+          },
+        },
+        {
+          id: 'u2',
+          role: 'user',
+          blocks: [{ type: 'text', text: 'second' }],
+          createdAt: 3,
+        },
+        {
+          id: 'a2',
+          role: 'assistant',
+          blocks: [{ type: 'text', text: 'later' }],
+          createdAt: 4,
+        },
+      ]
+      await store.persistUser(sessionId, messages[0] as Extract<Message, { role: 'user' }>)
+      await store.persistAssistant(sessionId, messages[1] as Extract<Message, { role: 'assistant' }>)
+      await store.persistUser(sessionId, messages[2] as Extract<Message, { role: 'user' }>)
+      await store.persistAssistant(sessionId, messages[3] as Extract<Message, { role: 'assistant' }>)
+      const result = await rewindToCheckpoint({ session, messages, store })
+      if (!result.ok) throw new Error(`rewind-todo-project: rewind failed: ${result.notice}`)
+      const loaded = await store.loadSession(sessionId)
+      const fileRaw = readFileSync(todoJsonPath(project), 'utf8')
+      const fileItems = JSON.parse(fileRaw) as TodoItem[]
+      if (JSON.stringify(fileItems) !== JSON.stringify(loaded.session.todos)) {
+        throw new Error(
+          `rewind-todo-project: file ${fileRaw} !== session.todos ${JSON.stringify(loaded.session.todos)}`,
+        )
+      }
+      if (JSON.stringify(loaded.session.todos) !== JSON.stringify(snapshot)) {
+        throw new Error(
+          `rewind-todo-project: session.todos ${JSON.stringify(loaded.session.todos)} !== snapshot`,
+        )
       }
     }
   } finally {
