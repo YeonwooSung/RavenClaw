@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createSessionEngine } from '../loop/session-engine'
@@ -14,7 +14,8 @@ import type {
   SessionStore,
   StreamEvent,
 } from '../types'
-import { enterSessionWorktree, exitSessionWorktree } from '../tools/session-worktree'
+import { enterSessionWorktree, exitSessionWorktree, getSessionWorktree } from '../tools/session-worktree'
+import { todoJsonPath } from '../tools/todo'
 import { createFileHistory } from './file-history'
 import { createMemoryStore } from './memory-store'
 import {
@@ -704,5 +705,140 @@ describe('rewindToCheckpoint', () => {
       withTools.checkpoint,
     )
     store.close()
+  })
+
+  test('successful job rewind writes project todo.json from the restored snapshot', async () => {
+    const cwd = tempDir('ravenclaw-rewind-todo-proj-')
+    initGitRepo(cwd)
+    const id = nextSession()
+    const entered = enterSessionWorktree(id, cwd)
+    expect(entered.ok).toBe(true)
+    const job = entered.job!
+    const project = getSessionWorktree(id)?.originalCwd ?? cwd
+    mkdirSync(join(project, '.ravenclaw'), { recursive: true })
+    writeFileSync(
+      todoJsonPath(project),
+      `${JSON.stringify([{ text: 'later', status: 'pending' }], null, 2)}\n`,
+      'utf8',
+    )
+    writeFileSync(join(job.worktreePath, 'extra.txt'), 'later\n')
+    expect(spawnSync('git', ['add', '-A'], { cwd: job.worktreePath, encoding: 'utf8' }).status).toBe(0)
+    expect(
+      spawnSync('git', ['commit', '-m', 'later'], { cwd: job.worktreePath, encoding: 'utf8' }).status,
+    ).toBe(0)
+
+    const store = createMemoryStore()
+    const snapshot = [{ text: 'a', status: 'pending' as const }]
+    const sess = sessionRecord({
+      id,
+      cwd: job.worktreePath,
+      job,
+      todos: [{ text: 'later', status: 'pending' }],
+    })
+    await store.createSession(sess)
+    const messages: Message[] = [
+      user('u1', 'first', 1),
+      {
+        id: 'a1',
+        role: 'assistant',
+        blocks: [{ type: 'text', text: 'ok' }],
+        createdAt: 2,
+        checkpoint: {
+          commitSha: job.baseCommitSha,
+          todoSnapshot: snapshot,
+          dirty: false,
+        },
+      },
+      user('u2', 'second', 3),
+      assistant('a2', 'later', 4),
+    ]
+    await store.persistUser(id, messages[0] as Extract<Message, { role: 'user' }>)
+    await store.persistAssistant(id, messages[1] as Extract<Message, { role: 'assistant' }>)
+    await store.persistUser(id, messages[2] as Extract<Message, { role: 'user' }>)
+    await store.persistAssistant(id, messages[3] as Extract<Message, { role: 'assistant' }>)
+
+    const result = await rewindToCheckpoint({ session: sess, messages, store })
+    expect(result.ok).toBe(true)
+    expect(sess.todos).toEqual(snapshot)
+    expect(readFileSync(todoJsonPath(project), 'utf8')).toBe(`${JSON.stringify(snapshot, null, 2)}\n`)
+    expect(existsSync(todoJsonPath(job.worktreePath))).toBe(false)
+  })
+
+  test('empty snapshot writes [] to project todo.json', async () => {
+    const cwd = tempDir('ravenclaw-rewind-todo-empty-')
+    initGitRepo(cwd)
+    const id = nextSession()
+    const entered = enterSessionWorktree(id, cwd)
+    expect(entered.ok).toBe(true)
+    const job = entered.job!
+    const project = getSessionWorktree(id)?.originalCwd ?? cwd
+    mkdirSync(join(project, '.ravenclaw'), { recursive: true })
+    writeFileSync(
+      todoJsonPath(project),
+      `${JSON.stringify([{ text: 'gone', status: 'pending' }], null, 2)}\n`,
+      'utf8',
+    )
+    writeFileSync(join(job.worktreePath, 'extra.txt'), 'later\n')
+    expect(spawnSync('git', ['add', '-A'], { cwd: job.worktreePath, encoding: 'utf8' }).status).toBe(0)
+    expect(
+      spawnSync('git', ['commit', '-m', 'later'], { cwd: job.worktreePath, encoding: 'utf8' }).status,
+    ).toBe(0)
+
+    const store = createMemoryStore()
+    const sess = sessionRecord({
+      id,
+      cwd: job.worktreePath,
+      job,
+      todos: [{ text: 'gone', status: 'pending' }],
+    })
+    await store.createSession(sess)
+    const messages: Message[] = [user('u1', 'only', 1), assistant('a1', 'ok', 2)]
+    await store.persistUser(id, messages[0] as Extract<Message, { role: 'user' }>)
+    await store.persistAssistant(id, messages[1] as Extract<Message, { role: 'assistant' }>)
+
+    const result = await rewindToCheckpoint({ session: sess, messages, store })
+    expect(result.ok).toBe(true)
+    expect(sess.todos).toEqual([])
+    expect(readFileSync(todoJsonPath(project), 'utf8')).toBe('[]\n')
+  })
+
+  test('todo.json write failure does not undo persist or reset', async () => {
+    const cwd = tempDir('ravenclaw-rewind-todo-fail-')
+    initGitRepo(cwd)
+    const id = nextSession()
+    const entered = enterSessionWorktree(id, cwd)
+    expect(entered.ok).toBe(true)
+    const job = entered.job!
+    const project = getSessionWorktree(id)?.originalCwd ?? cwd
+    // enterSessionWorktree already created <project>/.ravenclaw/ as a directory
+    // (worktrees live under it), so a file at that path cannot be the I/O stub.
+    mkdirSync(todoJsonPath(project), { recursive: true })
+    writeFileSync(join(job.worktreePath, 'extra.txt'), 'later\n')
+    expect(spawnSync('git', ['add', '-A'], { cwd: job.worktreePath, encoding: 'utf8' }).status).toBe(0)
+    expect(
+      spawnSync('git', ['commit', '-m', 'later'], { cwd: job.worktreePath, encoding: 'utf8' }).status,
+    ).toBe(0)
+
+    const store = createMemoryStore()
+    const sess = sessionRecord({
+      id,
+      cwd: job.worktreePath,
+      job,
+      todos: [{ text: 'gone', status: 'pending' }],
+    })
+    await store.createSession(sess)
+    const messages: Message[] = [user('u1', 'only', 1), assistant('a1', 'ok', 2)]
+    await store.persistUser(id, messages[0] as Extract<Message, { role: 'user' }>)
+    await store.persistAssistant(id, messages[1] as Extract<Message, { role: 'assistant' }>)
+
+    const result = await rewindToCheckpoint({ session: sess, messages, store })
+    expect(result.ok).toBe(true)
+    expect(result.notice).toContain('todo.json write failed')
+    expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).toBe(job.baseCommitSha)
+    expect(sess.todos).toEqual([])
+    expect(sess.jobError).toBeUndefined()
+    const loaded = await store.loadSession(id)
+    expect(loaded.messages.map((msg) => msg.id)).toEqual([])
+    expect(loaded.session.jobError).toBeUndefined()
   })
 })

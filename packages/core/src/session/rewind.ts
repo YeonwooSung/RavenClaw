@@ -1,4 +1,5 @@
-import { runGit } from '../tools/session-worktree'
+import { getSessionWorktree, runGit } from '../tools/session-worktree'
+import { projectSessionTodos } from '../tools/todo'
 import type { JobCheckpoint, Message, SessionRecord, SessionStore } from '../types'
 import { formatUndoNotice, type FileHistory, type UndoResult } from './file-history'
 import { clearSessionJobError, setSessionJobError } from './job'
@@ -135,9 +136,14 @@ export async function rewindToCheckpoint(opts: {
     return { ok: false, notice: 'rewind persist failed', messages: next }
   }
 
-  return {
-    ok: true,
-    notice: formatRewindNotice({ restored: [], removed: [] }, droppedIds.length),
-    messages: next,
+  const root = getSessionWorktree(opts.session.id)?.originalCwd ?? opts.session.cwd
+  let notice = formatRewindNotice({ restored: [], removed: [] }, droppedIds.length)
+  try {
+    projectSessionTodos(root, opts.session.todos ?? [])
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    notice = `${notice}; todo.json write failed: ${detail}`
   }
+
+  return { ok: true, notice, messages: next }
 }
