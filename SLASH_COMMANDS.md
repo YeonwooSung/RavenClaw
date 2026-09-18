@@ -461,7 +461,7 @@ Does **not** drop conversation messages. That is `/rewind`.
 `engine.rewindLast()`:
 
 1. If `liveTurn` or a running `type === 'agent'` task: `{ ok: false, notice: 'a turn is in progress' }`
-2. **Job session** (`session.job`): `rewindToCheckpoint` — drop the last user turn, `git reset --hard` in the job worktree to the nearest earlier assistant checkpoint sha (or `job.baseCommitSha`), restore that todo snapshot, persist compact `rewind`. Failure notices: `rewind reset failed: …` / `rewind persist failed` / `nothing to rewind`.
+2. **Job session** (`session.job`): `rewindToCheckpoint` — drop the last user turn, persist compact `rewind` **before** `git reset --hard` in the job worktree to the nearest earlier assistant checkpoint sha (or `job.baseCommitSha`), restore that todo snapshot, write project `.ravenclaw/todo.json`. Failure notices: `rewind persist failed` (HEAD unchanged) / `rewind reset failed: …` (drop kept) / `nothing to rewind`. Projection I/O fail appends `; todo.json write failed: …` and stays `ok`.
 3. **No-job session:** if the last file-history generation is still open → `a turn is in progress`; else drop messages from the last user turn onward (`dropLastUserTurn`), persist via `store.recordCompact(..., 'rewind', droppedIds)` (failure: `rewind persist failed`, messages unchanged), then `fileHistory.undo()`.
 4. Notice (`formatRewindNotice`):
    - no file change and no drop: `nothing to rewind`

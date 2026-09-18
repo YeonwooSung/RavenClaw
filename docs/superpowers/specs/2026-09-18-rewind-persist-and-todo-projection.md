@@ -1,7 +1,7 @@
 # RavenClaw next-horizon roadmap (rewind persist-before-reset)
 
 Date: 2026-09-18  
-Status: not implemented  
+Status: implemented  
 Reviewed against tree at `ac2d184` (`main` after job-host PR #9 + shipped-docs PR #11).  
 Successor to `2026-09-17-job-host-state-roadmap.md` (Status: implemented). Does not reopen that spec’s closed doors.
 
@@ -75,18 +75,18 @@ These lock underspecification. The implementation plan may only add detail, not 
 
 ## Per-slice board
 
-Board as of `ac2d184` on `main`.
+Board as of this branch (`feat/rewind-persist-todo`); H0.1 shipped on `main` at `c851668` (PR #12).
 
 | ID | Status vs tree |
 |---|---|
-| H0.1 docs point at this spec | **missing** (this file + pointer pass land together) |
-| H1.1 persist drop before `git reset --hard` | **missing** (`rewindToCheckpoint` resets first) |
-| H1.2 persist fail leaves HEAD and messages | **missing** (persist currently runs after reset) |
-| H1.3 reset fail after persist keeps the drop | **missing** (today reset-fail skips persist) |
-| H2.1 `projectSessionTodos(root, items)` helper | **missing** (write is inlined in `TodoWrite`) |
-| H2.2 job rewind re-projects after upsert | **missing** |
-| H2.3 projection fail is a notice suffix | **missing** |
-| H3.1 eval fixtures | **missing** |
+| H0.1 docs point at this spec | **shipped** (PR #12 / `c851668`) |
+| H1.1 persist drop before `git reset --hard` | **shipped** |
+| H1.2 persist fail leaves HEAD and messages | **shipped** |
+| H1.3 reset fail after persist keeps the drop | **shipped** |
+| H2.1 `projectSessionTodos(root, items)` helper | **shipped** |
+| H2.2 job rewind re-projects after upsert | **shipped** |
+| H2.3 projection fail is a notice suffix | **shipped** |
+| H3.1 eval fixtures | **shipped** |
 
 ---
 
@@ -112,7 +112,7 @@ H2 may start after H1.1 (needs a successful persist-then-reset path). H2.1 can l
 **Contract.**
 
 - Mark this file as the next horizon from `2026-09-17-job-host-state-roadmap.md`, `2026-09-16-session-as-job-roadmap.md`, `2026-09-12-ravenclaw-remaining-roadmap.md`, `ARCHITECTURE.md` / `.ko.md`, `README.md`, eve/y0 analysis closers.
-- Do not mark this spec implemented until it lands on `main`.
+- Historical: pointers landed on `main` before code (`c851668` / PR #12); Status is `implemented` on this branch so the merge is honest.
 
 **Done when.** Those files link here. Job-host no longer says “no spec yet.”
 

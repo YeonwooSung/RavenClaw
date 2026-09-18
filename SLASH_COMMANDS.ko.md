@@ -286,7 +286,7 @@ Ink status line은 모델·mode·usage·`shortSessionId`·funding·near-compact�
 - 분류: shared
 - live turn이거나 running `type === 'agent'` 태스크가 있으면 `a turn is in progress`
 - unpaired owned `pending_asks`가 있으면 `pending permission ask` (drop 없음)
-- **job 세션** (`session.job`): `rewindToCheckpoint` — 마지막 user 턴 drop, job worktree에서 이전 assistant 체크포인트 sha(없으면 `baseCommitSha`)로 `git reset --hard`, todo 스냅샷 복원, compact `rewind` persist. 실패 notice: `rewind reset failed: …` / `rewind persist failed` / `nothing to rewind`
+- **job 세션** (`session.job`): `rewindToCheckpoint` — 마지막 user 턴 drop, compact `rewind` persist를 `git reset --hard` **전에**, job worktree에서 이전 assistant 체크포인트 sha(또는 `job.baseCommitSha`)로 reset, 해당 todo 스냅샷 복원, 프로젝트 `.ravenclaw/todo.json` 기록. 실패 notice: `rewind persist failed` (HEAD 불변) / `rewind reset failed: …` (drop 유지) / `nothing to rewind`. projection I/O 실패는 `; todo.json write failed: …`를 붙이고 `ok` 유지
 - **job 없는 세션**: 열린 file-history generation이면 `a turn is in progress`. 아니면 마지막 user부터 drop + 그 generation undo. persist 실패: `rewind persist failed` (메시지는 그대로)
 - 성공 시 `droppedText`는 마지막 user text 블록 연결(이미지 무시). `/rewind` 슬래시는 notice만 출력
 - notice: `nothing to rewind` / `dropped 1 message` / `dropped N messages` / 파일 부분과 `; `로 결합
