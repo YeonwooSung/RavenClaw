@@ -96,6 +96,20 @@ export async function rewindToCheckpoint(opts: {
   const droppedIds = opts.messages.slice(next.length).map((msg) => msg.id)
   const checkpoint = lastAssistantCheckpoint(next)
   const sha = checkpoint?.commitSha ?? job.baseCommitSha
+
+  if (droppedIds.length > 0) {
+    try {
+      await opts.store.recordCompact(
+        opts.session.id,
+        opts.session.compactGeneration,
+        'rewind',
+        droppedIds,
+      )
+    } catch {
+      return { ok: false, notice: 'rewind persist failed', messages: opts.messages }
+    }
+  }
+
   const reset = runGit(job.worktreePath, ['reset', '--hard', sha])
   if (!reset.ok) {
     const detail = reset.stderr.trim() || reset.stdout.trim() || 'git reset failed'
@@ -107,20 +121,7 @@ export async function rewindToCheckpoint(opts: {
     } catch {
       // surface the reset failure even if jobError persist fails
     }
-    return { ok: false, notice, messages: opts.messages }
-  }
-
-  if (droppedIds.length > 0) {
-    try {
-      await opts.store.recordCompact(
-        opts.session.id,
-        opts.session.compactGeneration,
-        'rewind',
-        droppedIds,
-      )
-    } catch {
-      return { ok: false, notice: 'rewind persist failed', messages: next }
-    }
+    return { ok: false, notice, messages: next }
   }
 
   opts.session.todos = checkpoint

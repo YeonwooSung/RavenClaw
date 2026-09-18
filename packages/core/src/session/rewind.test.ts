@@ -517,7 +517,7 @@ describe('rewindToCheckpoint', () => {
     expect(result.messages).toEqual([])
   })
 
-  test('reset failure does not inactivate messages and returns originals', async () => {
+  test('reset failure after persist keeps the drop, sets jobError, and does not apply todos', async () => {
     const cwd = tempDir('ravenclaw-rewind-reset-fail-')
     initGitRepo(cwd)
     const id = nextSession()
@@ -547,14 +547,89 @@ describe('rewindToCheckpoint', () => {
     const result = await rewindToCheckpoint({ session: sess, messages, store })
     expect(result.ok).toBe(false)
     expect(result.notice.startsWith('rewind reset failed:')).toBe(true)
-    expect(result.messages).toBe(messages)
-    expect(inactivated).toEqual([])
+    expect(result.messages.map((msg) => msg.id)).toEqual([])
+    expect(inactivated).toEqual(['u1', 'a1'])
     expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).toBe(headBefore)
     expect(sess.todos).toEqual([{ text: 'keep', status: 'pending' }])
     expect(sess.jobError?.startsWith('rewind reset failed:')).toBe(true)
     const loaded = await store.loadSession(id)
-    expect(loaded.messages.map((msg) => msg.id)).toEqual(['u1', 'a1'])
+    expect(loaded.messages.map((msg) => msg.id)).toEqual([])
     expect(loaded.session.jobError?.startsWith('rewind reset failed:')).toBe(true)
+  })
+
+  test('persist fail leaves HEAD and original messages and does not set jobError', async () => {
+    const cwd = tempDir('ravenclaw-rewind-persist-fail-')
+    initGitRepo(cwd)
+    const id = nextSession()
+    const entered = enterSessionWorktree(id, cwd)
+    expect(entered.ok).toBe(true)
+    const job = entered.job!
+    writeFileSync(join(job.worktreePath, 'extra.txt'), 'later\n')
+    expect(spawnSync('git', ['add', '-A'], { cwd: job.worktreePath, encoding: 'utf8' }).status).toBe(0)
+    expect(
+      spawnSync('git', ['commit', '-m', 'later'], { cwd: job.worktreePath, encoding: 'utf8' }).status,
+    ).toBe(0)
+    const laterSha = git(job.worktreePath, ['rev-parse', 'HEAD'])
+    expect(laterSha).not.toBe(job.baseCommitSha)
+
+    const store = createMemoryStore()
+    const sess = sessionRecord({
+      id,
+      cwd: job.worktreePath,
+      job,
+      todos: [{ text: 'keep', status: 'pending' }],
+    })
+    await store.createSession(sess)
+    const messages: Message[] = [user('u1', 'only', 1), assistant('a1', 'ok', 2)]
+    await store.persistUser(id, messages[0] as Extract<Message, { role: 'user' }>)
+    await store.persistAssistant(id, messages[1] as Extract<Message, { role: 'assistant' }>)
+    store.recordCompact = async () => {
+      throw new Error('disk full')
+    }
+
+    const result = await rewindToCheckpoint({ session: sess, messages, store })
+    expect(result.ok).toBe(false)
+    expect(result.notice).toBe('rewind persist failed')
+    expect(result.messages).toBe(messages)
+    expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).toBe(laterSha)
+    expect(sess.todos).toEqual([{ text: 'keep', status: 'pending' }])
+    expect(sess.jobError).toBeUndefined()
+    const loaded = await store.loadSession(id)
+    expect(loaded.messages.map((msg) => msg.id)).toEqual(['u1', 'a1'])
+    expect(loaded.session.jobError).toBeUndefined()
+  })
+
+  test('recordCompact runs while HEAD is still the later sha', async () => {
+    const cwd = tempDir('ravenclaw-rewind-persist-order-')
+    initGitRepo(cwd)
+    const id = nextSession()
+    const entered = enterSessionWorktree(id, cwd)
+    expect(entered.ok).toBe(true)
+    const job = entered.job!
+    writeFileSync(join(job.worktreePath, 'extra.txt'), 'later\n')
+    expect(spawnSync('git', ['add', '-A'], { cwd: job.worktreePath, encoding: 'utf8' }).status).toBe(0)
+    expect(
+      spawnSync('git', ['commit', '-m', 'later'], { cwd: job.worktreePath, encoding: 'utf8' }).status,
+    ).toBe(0)
+    const laterSha = git(job.worktreePath, ['rev-parse', 'HEAD'])
+
+    const store = createMemoryStore()
+    const sess = sessionRecord({ id, cwd: job.worktreePath, job })
+    await store.createSession(sess)
+    const messages: Message[] = [user('u1', 'only', 1), assistant('a1', 'ok', 2)]
+    await store.persistUser(id, messages[0] as Extract<Message, { role: 'user' }>)
+    await store.persistAssistant(id, messages[1] as Extract<Message, { role: 'assistant' }>)
+    const headsDuringPersist: string[] = []
+    const orig = store.recordCompact.bind(store)
+    store.recordCompact = async (sessionId, generation, summary, ids) => {
+      headsDuringPersist.push(git(job.worktreePath, ['rev-parse', 'HEAD']))
+      return orig(sessionId, generation, summary, ids)
+    }
+
+    const result = await rewindToCheckpoint({ session: sess, messages, store })
+    expect(result.ok).toBe(true)
+    expect(headsDuringPersist).toEqual([laterSha])
+    expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).toBe(job.baseCommitSha)
   })
 
   test('successful rewind clears session.jobError', async () => {
