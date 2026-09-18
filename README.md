@@ -250,7 +250,7 @@ Ink is the default. OpenTUI is `--tui opentui`.
 | `/review` | Append a read-only review to `.ravenclaw/MEMORY.md` |
 | `/interview` | Ask clarifying questions (`AskUser`) before coding |
 | `/undo` | Restore files from the last closed edit checkpoint |
-| `/rewind` | Job: persist compact then checkpoint `git reset --hard` + re-project todos; no-job: undo files **and** drop last user turn |
+| `/rewind` | Job: persist compact then checkpoint `git reset --hard` + re-project todos; no-job: undo files, drop last user turn, restore `session.todos` / `todo.json` |
 | `/job [name]` | Enter a named `raven/*` job worktree; `/job commit on\|off` flips opt-in turn-end commit |
 | `/pr [title]` | Open or update a draft PR from the session shadow (default off) |
 | `/diff` | Uncommitted + staged git diff |
@@ -446,6 +446,7 @@ If `included.gatewayUrl` is a real URL and `GET /v1/entitlement` admits the sess
 - Job-host state (snapshot end-reason, one-slot follow-up, edit-resubmit, job diff; **implemented** at `6e56764`): [2026-09-17-job-host-state-roadmap.md](docs/superpowers/specs/2026-09-17-job-host-state-roadmap.md)
 - Rewind persist-before-reset / `todo.json` projection (**implemented** at `048deff`): [2026-09-18-rewind-persist-and-todo-projection.md](docs/superpowers/specs/2026-09-18-rewind-persist-and-todo-projection.md)
 - Cancel abort-pair / reset-on-resume / `writeFollowup` persist-first (**implemented** at `5eefdde`): [2026-09-18-cancel-reset-followup.md](docs/superpowers/specs/2026-09-18-cancel-reset-followup.md)
+- No-job todo revert (**this branch**): [2026-09-18-no-job-todo-revert.md](docs/superpowers/specs/2026-09-18-no-job-todo-revert.md)
 - Previous horizon (durable HITL, sandbox port, session HTTP; implemented): [2026-09-15-eve-inspired-roadmap.md](docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md)
 
 ## Develop

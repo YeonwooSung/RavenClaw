@@ -462,7 +462,7 @@ Does **not** drop conversation messages. That is `/rewind`.
 
 1. If `liveTurn` or a running `type === 'agent'` task: `{ ok: false, notice: 'a turn is in progress' }`
 2. **Job session** (`session.job`): `rewindToCheckpoint` — drop the last user turn, persist compact `rewind` **before** `git reset --hard` in the job worktree to the nearest earlier assistant checkpoint sha (or `job.baseCommitSha`), restore that todo snapshot, write project `.ravenclaw/todo.json`. Failure notices: `rewind persist failed` (HEAD unchanged) / `rewind reset failed: …` (drop kept) / `nothing to rewind`. Projection I/O fail appends `; todo.json write failed: …` and stays `ok`.
-3. **No-job session:** if the last file-history generation is still open → `a turn is in progress`; else drop messages from the last user turn onward (`dropLastUserTurn`), persist via `store.recordCompact(..., 'rewind', droppedIds)` (failure: `rewind persist failed`, messages unchanged), then `fileHistory.undo()`.
+3. **No-job session:** if the last file-history generation is still open → `a turn is in progress`; else drop messages from the last user turn onward (`dropLastUserTurn`), persist via `store.recordCompact(..., 'rewind', droppedIds)` (failure: `rewind persist failed`, messages unchanged), then `fileHistory.undo()`. After a successful drop, restore `session.todos` from the last remaining assistant `todoSnapshot` (persist-first upsert) and re-project `.ravenclaw/todo.json` under `session.cwd`. No remaining assistant → `[]`. Remaining assistants with no checkpoint (pre-horizon) leave todos and do not write the file. Projection I/O fail appends `; todo.json write failed: …` and stays `ok`. `/undo` does not restore todos.
 4. Notice (`formatRewindNotice`):
    - no file change and no drop: `nothing to rewind`
    - files only: same as `/undo`
@@ -1113,7 +1113,7 @@ Discovery order (later wins on name): builtin → `~/.ravenclaw/skills` → `<cw
 | Command | Files | Transcript | Session id |
 |---|---|---|---|
 | `/undo` | Restore last **closed** edit checkpoint | Unchanged | Same |
-| `/rewind` | Job: persist compact then `git reset --hard` + todo snapshot + project `todo.json`. No-job: file-history undo + drop last user turn (persisted compact `rewind`) | Truncated | Same |
+| `/rewind` | Job: persist compact then `git reset --hard` + todo snapshot + project `todo.json`. No-job: file-history undo + drop last user turn + restore `session.todos` / `todo.json` from remaining `todoSnapshot` | Truncated | Same |
 | `/job` | Enter `raven/*` worktree + job record; `/job commit on\|off` flips auto-commit | Unchanged | Same (cwd → worktree) |
 | `/pr` | Draft PR from shadow (notice-only if no job / dirty) | May annotate last assistant | Same |
 | `/compact` | Unchanged | Prefix summarized; `compactGeneration++` | Same |

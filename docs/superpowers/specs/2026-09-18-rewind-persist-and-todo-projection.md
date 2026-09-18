@@ -5,7 +5,7 @@ Status: implemented
 Shipped on `main` at `048deff`.  
 Reviewed against tree at `ac2d184` (`main` after job-host PR #9 + shipped-docs PR #11).  
 Successor to `2026-09-17-job-host-state-roadmap.md` (Status: implemented). Does not reopen that spec’s closed doors.  
-Next horizon (implemented at `5eefdde`): [`2026-09-18-cancel-reset-followup.md`](2026-09-18-cancel-reset-followup.md) (amends this spec’s OUT for live cancel abort-pair and reset-on-resume only).
+Next horizon (implemented at `5eefdde`): [`2026-09-18-cancel-reset-followup.md`](2026-09-18-cancel-reset-followup.md) (amends this spec’s OUT for live cancel abort-pair and reset-on-resume only). After that (this branch): [`2026-09-18-no-job-todo-revert.md`](2026-09-18-no-job-todo-revert.md) (amends ruling 8 / no-job todo revert).
 
 Sources: current tree, [y0 analysis](../../research/y0-analysis.md) (`/Users/yeonwoosung/Desktop/y0`, read-only), [eve analysis](../../research/eve-analysis.md) (`/Users/yeonwoosung/Desktop/eve`, Apache-2.0, read-only).
 
@@ -49,7 +49,7 @@ y0 edit-message restores `{ commitSha, todoSnapshot }` then the host resubmits. 
 
 - y0’s Next.js + Prisma `Task` + Socket.IO room
 - Web chat UI, keep-id `/clear`, stream `version` / `continuationToken`
-- Reverting no-job `session.todos` on rewind (no-job has no checkpoint snapshot)
+- Reverting no-job `session.todos` on rewind (amended by `2026-09-18-no-job-todo-revert.md`)
 - Changing no-job order (already persist-then-undo)
 - Changing `TodoWrite` persist-then-file order (already correct)
 - Making `.ravenclaw/todo.json` the source of truth again
@@ -70,7 +70,7 @@ These lock underspecification. The implementation plan may only add detail, not 
 5. **`session.todos` is the source of truth.** After a successful job rewind, set `session.todos` from `checkpoint.todoSnapshot` (or `[]` when rewinding to `baseCommitSha` with no earlier assistant checkpoint), then `upsertSession`.
 6. **`.ravenclaw/todo.json` is a projection of `session.todos`.** After that upsert, write the file under the **project** root: `getSessionWorktree(session.id)?.originalCwd ?? session.cwd` (same root `TodoWrite` uses via `projectCwd ?? cwd`). Pretty-print + trailing newline, same as `TodoWrite`. Empty list writes `[]\n` (do not delete the file).
 7. **Projection fail does not undo rewind.** Persist + reset + session upsert already succeeded. Append a notice suffix (`todo.json write failed: …`). `ok` stays `true`. `session.todos` stays restored. `jobError` is **not** set (file projection is not a job epilogue).
-8. **No-job rewind does not re-project** unless this horizon later finds `session.todos` diverged from the file without a checkpoint. Out of scope: do not invent a no-job todo snapshot.
+8. **No-job rewind does not re-project** unless a later spec invents a snapshot. Amended by [`2026-09-18-no-job-todo-revert.md`](2026-09-18-no-job-todo-revert.md): no-job success turns stamp a sha-less `todoSnapshot`; rewind restores and re-projects.
 9. **Targeted `bun test <files>` only.** Isolated worktree. Do not implement on `main` without consent. Do not copy y0/eve source.
 
 ---
@@ -234,7 +234,7 @@ Writes `todoJsonPath(root)` as `${JSON.stringify(items, null, 2)}\n`. `mkdirSync
 
 ## Out of this horizon
 
-Web chat UI, Next.js BFF, Prisma Task, Socket.IO, y0 Shadow wiki / indexer, eve compiler, OpenAPI connections, memory slots, `defineState`, credential brokering, self-mod, any new chat network, sandbox network policy, Grep/Glob docker-exec, `ignored`, live cancel abort-pair, keep-id `/clear`, stream `version` / `continuationToken`, no-job todo revert, reset-on-resume recovery, schema v11.
+Web chat UI, Next.js BFF, Prisma Task, Socket.IO, y0 Shadow wiki / indexer, eve compiler, OpenAPI connections, memory slots, `defineState`, credential brokering, self-mod, any new chat network, sandbox network policy, Grep/Glob docker-exec, `ignored`, live cancel abort-pair, keep-id `/clear`, stream `version` / `continuationToken`, no-job todo revert (amended by `2026-09-18-no-job-todo-revert.md`), reset-on-resume recovery, schema v11.
 
 If a later product wants a browser, it still implements G0–G3 on the existing F3 stream. This horizon does not add a client.
 

@@ -4,7 +4,8 @@ Date: 2026-09-18
 Status: implemented  
 Shipped on `main` at `5eefdde`.  
 Reviewed against tree at `77a09f3` (`main` after rewind persist PR land + shipped-docs PR #13).  
-Successor to `2026-09-18-rewind-persist-and-todo-projection.md` (Status: implemented). Does not reopen that spec’s closed doors except the three holes named here.
+Successor to `2026-09-18-rewind-persist-and-todo-projection.md` (Status: implemented). Does not reopen that spec’s closed doors except the three holes named here.  
+Next horizon (this branch): [`2026-09-18-no-job-todo-revert.md`](2026-09-18-no-job-todo-revert.md) (amends this spec’s OUT for no-job todo revert only).
 
 Implementation plan: [2026-09-18-cancel-reset-followup.md](../plans/2026-09-18-cancel-reset-followup.md).
 
@@ -211,7 +212,7 @@ I1 and I2 may run in parallel (disjoint files). I3 after I0. I4 last.
 
 ## Out of this horizon
 
-Web chat UI, Next.js BFF, Prisma Task, Socket.IO, y0 Shadow wiki / indexer, eve compiler, OpenAPI connections, memory slots, `defineState`, credential brokering, self-mod, any new chat network, sandbox network policy, Grep/Glob docker-exec, `ignored`, keep-id `/clear`, stream `version` / `continuationToken`, no-job todo revert, schema v11, async `createSessionEngine`, cancel-without-live abort-pair, interrupt abort-pair, parent-cancels-child-ask.
+Web chat UI, Next.js BFF, Prisma Task, Socket.IO, y0 Shadow wiki / indexer, eve compiler, OpenAPI connections, memory slots, `defineState`, credential brokering, self-mod, any new chat network, sandbox network policy, Grep/Glob docker-exec, `ignored`, keep-id `/clear`, stream `version` / `continuationToken`, no-job todo revert (amended by `2026-09-18-no-job-todo-revert.md`), schema v11, async `createSessionEngine`, cancel-without-live abort-pair, interrupt abort-pair, parent-cancels-child-ask.
 
 ---
 

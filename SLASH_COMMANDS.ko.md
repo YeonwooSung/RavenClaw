@@ -287,7 +287,7 @@ Ink status line은 모델·mode·usage·`shortSessionId`·funding·near-compact�
 - live turn이거나 running `type === 'agent'` 태스크가 있으면 `a turn is in progress`
 - unpaired owned `pending_asks`가 있으면 `pending permission ask` (drop 없음)
 - **job 세션** (`session.job`): `rewindToCheckpoint` — 마지막 user 턴 drop, compact `rewind` persist를 `git reset --hard` **전에**, job worktree에서 이전 assistant 체크포인트 sha(또는 `job.baseCommitSha`)로 reset, 해당 todo 스냅샷 복원, 프로젝트 `.ravenclaw/todo.json` 기록. 실패 notice: `rewind persist failed` (HEAD 불변) / `rewind reset failed: …` (drop 유지) / `nothing to rewind`. projection I/O 실패는 `; todo.json write failed: …`를 붙이고 `ok` 유지
-- **job 없는 세션**: 열린 file-history generation이면 `a turn is in progress`. 아니면 마지막 user부터 drop + 그 generation undo. persist 실패: `rewind persist failed` (메시지는 그대로)
+- **job 없는 세션**: 열린 file-history generation이면 `a turn is in progress`. 아니면 마지막 user부터 drop + 그 generation undo. persist 실패: `rewind persist failed` (메시지는 그대로). drop 성공 후 남은 assistant `todoSnapshot`으로 `session.todos` 복원(persist-first)하고 `session.cwd`의 `.ravenclaw/todo.json`을 다시 씀. 남은 assistant가 없으면 `[]`. checkpoint 없는 예전 transcript는 todos를 그대로 두고 파일을 쓰지 않음. projection I/O 실패는 `; todo.json write failed: …`이고 `ok` 유지. `/undo`는 todos를 되돌리지 않음
 - 성공 시 `droppedText`는 마지막 user text 블록 연결(이미지 무시). `/rewind` 슬래시는 notice만 출력
 - notice: `nothing to rewind` / `dropped 1 message` / `dropped N messages` / 파일 부분과 `; `로 결합
 - compact 세대에 `rewind`로 기록
@@ -597,7 +597,7 @@ disable 목록: `~/.ravenclaw/skills-disabled.json`. `/reload`와 disable/enable
 | 커맨드 | 파일 | 대화 | 세션 id | 진행 중 턴 |
 |---|---|---|---|---|
 | `/undo` | 마지막 닫힌 generation 복원/삭제 | 유지 | 유지 | 열려 있으면 block |
-| `/rewind` | job: compact persist 후 `git reset --hard` + todo 스냅샷 + 프로젝트 `todo.json`. no-job: file-history undo | 마지막 user부터 drop | 유지 | `a turn is in progress` / `pending permission ask` |
+| `/rewind` | job: compact persist 후 `git reset --hard` + todo 스냅샷 + 프로젝트 `todo.json`. no-job: file-history undo + 남은 `todoSnapshot`으로 todos/`todo.json` 복원 | 마지막 user부터 drop | 유지 | `a turn is in progress` / `pending permission ask` |
 | `/retry` | `/rewind`와 동일 | drop 후 composer 복원 또는 새 text로 `runTurn` | 유지 | `/rewind`와 동일 |
 | `/job` | `raven/*` worktree + job 기록; `commit on\|off` | 유지 | 유지 (cwd → worktree) | 모델 턴 아님 |
 | `/pr` | shadow draft PR (없거나 dirty면 notice) | 마지막 assistant annotation 가능 | 유지 | 모델 턴 아님 |
