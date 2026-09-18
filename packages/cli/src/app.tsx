@@ -450,8 +450,12 @@ export function App(props: AppProps) {
             exit()
             return
           case 'stop':
-            runtimeRef.current.engine.abort('cancel')
-            setNotice(busyRef.current ? 'stopped' : 'nothing to stop')
+            void (async () => {
+              const wasLive = runtimeRef.current.engine.liveTurnId() !== null
+              runtimeRef.current.engine.abort('cancel')
+              const tree = await runtimeRef.current.engine.whenTreeStop()
+              setNotice(wasLive || tree.descendantWork ? 'stopped' : 'nothing to stop')
+            })()
             return
           case 'clear':
             void (async () => {

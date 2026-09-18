@@ -36,7 +36,7 @@ function fakeEngine(opts: {
   events?: unknown[]
   end?: unknown
   onSubmit?: (input: UserSubmitInput) => void
-  onAbort?: () => void
+  onAbort?: (kind?: 'cancel' | 'interrupt') => void
 }): AcpEngine {
   return {
     async *submitMessage(input: UserSubmitInput) {
@@ -44,8 +44,8 @@ function fakeEngine(opts: {
       for (const event of opts.events ?? []) yield event
       return opts.end ?? { reason: 'completed' }
     },
-    abort() {
-      opts.onAbort?.()
+    abort(kind?: 'cancel' | 'interrupt') {
+      opts.onAbort?.(kind)
     },
   }
 }
@@ -270,13 +270,13 @@ describe('createAcpServer', () => {
   })
 
   test('session/cancel calls engine.abort', async () => {
-    const aborted: string[] = []
+    const aborted: Array<{ id: string; kind?: 'cancel' | 'interrupt' }> = []
     const engines = new Map<string, AcpEngine>()
     const server = createAcpServer({
       engineFactory: (sessionId) => {
         const engine = fakeEngine({
-          onAbort: () => {
-            aborted.push(sessionId)
+          onAbort: (kind) => {
+            aborted.push({ id: sessionId, kind })
           },
         })
         engines.set(sessionId, engine)
@@ -296,7 +296,7 @@ describe('createAcpServer', () => {
       method: ACP_METHODS.sessionCancel,
       params: { sessionId },
     })
-    expect(aborted).toEqual([sessionId])
+    expect(aborted).toEqual([{ id: sessionId, kind: 'cancel' }])
     expect(response.result).toBeNull()
     expect(engines.get(sessionId)).toBeDefined()
   })

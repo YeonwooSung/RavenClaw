@@ -214,6 +214,7 @@ describe('startMailboxPoller', () => {
 function makeServeCtx(secret = ''): ServeRequestContext & {
   store: ReturnType<typeof createMemoryStore>
   abortCalls: number
+  abortKinds: Array<'cancel' | 'interrupt' | undefined>
   compactCalls: number
   applyCalls: Array<{ callId: string; answer: 'allow' | 'deny' | 'allow_always' }>
   submitted: UserSubmitInput[]
@@ -221,6 +222,7 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
   replayEvents: StreamEvent[]
   submitHold?: Promise<void>
   submitEnd: { reason: string }
+  setLiveTurnId: (id: string | null) => void
 } {
   const store = createMemoryStore()
   const submitEvents: StreamEvent[] = []
@@ -229,17 +231,21 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
   const applyCalls: Array<{ callId: string; answer: 'allow' | 'deny' | 'allow_always' }> = []
   const state: {
     abortCalls: number
+    abortKinds: Array<'cancel' | 'interrupt' | undefined>
     compactCalls: number
     liveTurnId: string | null
     submitHold?: Promise<void>
     submitEnd: { reason: string }
     writeLastEnd: boolean
+    descendantWork: boolean
   } = {
     abortCalls: 0,
+    abortKinds: [],
     compactCalls: 0,
     liveTurnId: 'live-1',
     submitEnd: { reason: 'completed' },
     writeLastEnd: true,
+    descendantWork: false,
   }
   const engine = {
     session: { id: 's1', permissionMode: 'default' as const } as {
@@ -258,8 +264,12 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
     liveTurnId() {
       return state.liveTurnId
     },
-    abort() {
+    abort(kind?: 'cancel' | 'interrupt') {
       state.abortCalls += 1
+      state.abortKinds.push(kind)
+    },
+    async whenTreeStop() {
+      return { descendantWork: state.descendantWork }
     },
     async compactNow() {
       state.compactCalls += 1
@@ -302,8 +312,17 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
     get abortCalls() {
       return state.abortCalls
     },
+    get abortKinds() {
+      return state.abortKinds
+    },
     get compactCalls() {
       return state.compactCalls
+    },
+    setLiveTurnId(id: string | null) {
+      state.liveTurnId = id
+    },
+    set descendantWork(value: boolean) {
+      state.descendantWork = value
     },
     applyCalls,
     submitted,
@@ -566,6 +585,153 @@ describe('handleServeRequest', () => {
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ ok: true, status: 'no_active_turn' })
     expect(ctx.abortCalls).toBe(0)
+  })
+
+  test('POST cancel on a live parent returns ok without awaiting tree-stop', async () => {
+    const ctx = makeServeCtx('t')
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/cancel', {
+        method: 'POST',
+        headers: { authorization: 'Bearer t' },
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true })
+    expect(ctx.abortCalls).toBe(1)
+    expect(ctx.abortKinds).toEqual(['cancel'])
+  })
+
+  test('POST cancel idle parent with descendant leftover-ask returns ok and walks', async () => {
+    const ctx = makeServeCtx('t')
+    ctx.setLiveTurnId(null)
+    ctx.descendantWork = true
+    await ctx.store.createSession({
+      id: 'child_cancel',
+      createdAt: 1,
+      updatedAt: 1,
+      cwd: '/tmp',
+      model: 'dummy',
+      permissionMode: 'default',
+      compactGeneration: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      funding: 'byok',
+      parentSessionId: 's1',
+    })
+    await ctx.store.upsertPendingAsk({
+      callId: 'call_child_cancel',
+      sessionId: 'child_cancel',
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Bash?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    } satisfies PendingAsk)
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/cancel', {
+        method: 'POST',
+        headers: { authorization: 'Bearer t', 'content-type': 'application/json' },
+        body: JSON.stringify({ turnId: 'ended-turn' }),
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true })
+    expect(ctx.abortCalls).toBe(1)
+  })
+
+  test('POST cancel idle parent with no descendant work is no_active_turn', async () => {
+    const ctx = makeServeCtx('t')
+    ctx.setLiveTurnId(null)
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/cancel', {
+        method: 'POST',
+        headers: { authorization: 'Bearer t' },
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true, status: 'no_active_turn' })
+    expect(ctx.abortCalls).toBe(0)
+  })
+
+  test('POST cancel idle parent with stale turnId still tree-stops descendants', async () => {
+    const ctx = makeServeCtx('t')
+    ctx.setLiveTurnId(null)
+    ctx.descendantWork = true
+    await ctx.store.createSession({
+      id: 'child_stale',
+      createdAt: 1,
+      updatedAt: 1,
+      cwd: '/tmp',
+      model: 'dummy',
+      permissionMode: 'default',
+      compactGeneration: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      funding: 'byok',
+      parentSessionId: 's1',
+    })
+    await ctx.store.upsertPendingAsk({
+      callId: 'call_stale_child',
+      sessionId: 'child_stale',
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Bash?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    } satisfies PendingAsk)
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/cancel', {
+        method: 'POST',
+        headers: { authorization: 'Bearer t', 'content-type': 'application/json' },
+        body: JSON.stringify({ turnId: 'stale' }),
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true })
+    expect(ctx.abortCalls).toBe(1)
+  })
+
+  test('POST cancel on a live parent aborts a cached child runtime', async () => {
+    const ctx = makeServeCtx('t')
+    await ctx.store.createSession({
+      id: 'child_cached',
+      createdAt: 1,
+      updatedAt: 1,
+      cwd: '/tmp',
+      model: 'dummy',
+      permissionMode: 'default',
+      compactGeneration: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      funding: 'byok',
+      parentSessionId: 's1',
+    })
+    const childAborts: Array<'cancel' | 'interrupt' | undefined> = []
+    ctx.liveRuntimes = () => [
+      [
+        'child_cached',
+        {
+          engine: {
+            abort(kind?: 'cancel' | 'interrupt') {
+              childAborts.push(kind)
+            },
+            liveTurnId: () => 'child-live',
+          },
+        },
+      ],
+    ]
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/cancel', {
+        method: 'POST',
+        headers: { authorization: 'Bearer t' },
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true })
+    expect(childAborts).toEqual(['cancel'])
+    expect(ctx.abortCalls).toBe(1)
   })
 
   test('missing session is 404; lock is 409; other resume errors are 500', async () => {
