@@ -32,7 +32,12 @@ import {
 } from '@ravenclaw/core'
 import { bootCli, openNewSession, resumeRuntime, type CliRuntime } from './engine'
 import { runExec } from './exec'
-import { parseVersionParam, STREAM_PROTOCOL_VERSION } from './serve-stream-protocol'
+import {
+  decodeContinuationToken,
+  encodeContinuationToken,
+  parseVersionParam,
+  STREAM_PROTOCOL_VERSION,
+} from './serve-stream-protocol'
 
 const DEFAULT_LISTEN = '127.0.0.1:8787'
 
@@ -564,11 +569,24 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
     if (req.method === 'GET' && action === 'stream') {
       const parsedVersion = parseVersionParam(url.searchParams.get('version'))
       if (!parsedVersion.ok) return Response.json({ error: parsedVersion.error }, { status: 400 })
+      const hasAfter = url.searchParams.has('after')
+      const hasToken = url.searchParams.has('continuationToken')
+      if (hasAfter && hasToken) {
+        return Response.json({ error: 'resume conflict' }, { status: 400 })
+      }
       const parsedAfter = parseAfterParam(url.searchParams.get('after'))
       if (!parsedAfter.ok) return Response.json({ error: 'invalid after' }, { status: 400 })
+      let after = parsedAfter.after
+      if (hasToken) {
+        const decoded = decodeContinuationToken(url.searchParams.get('continuationToken') ?? '')
+        if (!decoded.ok) return Response.json({ error: decoded.error }, { status: 400 })
+        if (decoded.cursor.sessionId !== sessionId) {
+          return Response.json({ error: 'invalid continuationToken' }, { status: 400 })
+        }
+        after = decoded.cursor.lastSeq
+      }
       const loaded = await loadSessionRuntime(ctx, sessionId)
       if (!loaded.ok) return loaded.res
-      const after = parsedAfter.after
       const encoder = new TextEncoder()
       let unsub = () => {}
       const stream = new ReadableStream<Uint8Array>({
@@ -874,6 +892,7 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
       live: boolean
       queued: string | null
       version: typeof STREAM_PROTOCOL_VERSION
+      continuationToken: string
       title?: string
       job?: SessionJob
       lastEnd?: SessionRecord['lastEnd']
@@ -887,6 +906,7 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
       live: (engine.liveTurnId?.() ?? null) !== null,
       queued: session.followup ?? null,
       version: STREAM_PROTOCOL_VERSION,
+      continuationToken: encodeContinuationToken({ sessionId, lastSeq }),
     }
     if (session.title !== undefined) body.title = session.title
     if (session.job !== undefined) body.job = session.job

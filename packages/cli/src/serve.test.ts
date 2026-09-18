@@ -29,6 +29,7 @@ import {
   type ServeEngine,
   type ServeRequestContext,
 } from './serve'
+import { decodeContinuationToken, encodeContinuationToken } from './serve-stream-protocol'
 
 describe('parseListen', () => {
   test('defaults to loopback 8787', () => {
@@ -993,6 +994,283 @@ describe('handleServeRequest', () => {
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toContain('application/json')
     const body = (await res.json()) as { text: string; sessionId: string }
+    expect(body.sessionId).toBe('s1')
+  })
+
+  test('GET snapshot always includes a tip continuationToken', async () => {
+    const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
+    const ctx = makeServeCtx(secret)
+    const auth = { authorization: 'Bearer secret' }
+    const empty = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1', { headers: auth }),
+      ctx,
+    )
+    expect(empty.status).toBe(200)
+    const emptyBody = (await empty.json()) as {
+      lastSeq: number
+      version: number
+      continuationToken: string
+    }
+    expect(emptyBody.version).toBe(1)
+    expect(emptyBody.lastSeq).toBe(0)
+    expect(decodeContinuationToken(emptyBody.continuationToken)).toEqual({
+      ok: true,
+      cursor: { version: 1, sessionId: 's1', lastSeq: 0 },
+    })
+
+    await ctx.hub.publish('s1', { type: 'text_delta', text: 'x' })
+    await ctx.hub.publish('s1', { type: 'text_delta', text: 'y' })
+    const tip = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1?after=foo&continuationToken=garbage', {
+        headers: auth,
+      }),
+      ctx,
+    )
+    expect(tip.status).toBe(200)
+    const tipBody = (await tip.json()) as { lastSeq: number; continuationToken: string }
+    expect(tipBody.lastSeq).toBe(2)
+    expect(decodeContinuationToken(tipBody.continuationToken)).toEqual({
+      ok: true,
+      cursor: { version: 1, sessionId: 's1', lastSeq: 2 },
+    })
+  })
+
+  test('stream continuationToken concatenates like after=', async () => {
+    const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
+    const ctx = makeServeCtx(secret)
+    const auth = { authorization: 'Bearer secret' }
+    await ctx.store.createSession({
+      id: 's1',
+      createdAt: 1,
+      updatedAt: 1,
+      cwd: '/tmp',
+      model: 'dummy',
+      permissionMode: 'default',
+      compactGeneration: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      funding: 'byok',
+    })
+    for (const text of ['a', 'b', 'c']) {
+      await ctx.hub.publish('s1', { type: 'text_delta', text })
+    }
+    const snap = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1', { headers: auth }),
+      ctx,
+    )
+    const { lastSeq, continuationToken } = (await snap.json()) as {
+      lastSeq: number
+      continuationToken: string
+    }
+    expect(lastSeq).toBe(3)
+    await ctx.hub.publish('s1', { type: 'text_delta', text: 'd' })
+    await ctx.hub.publish('s1', { type: 'text_delta', text: 'e' })
+
+    const tokenRes = await handleServeRequest(
+      new Request(
+        `http://127.0.0.1/v1/session/s1/stream?continuationToken=${encodeURIComponent(continuationToken)}`,
+        { headers: auth },
+      ),
+      ctx,
+    )
+    const afterRes = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/stream?after=3', { headers: auth }),
+      ctx,
+    )
+    expect(tokenRes.status).toBe(200)
+    expect(afterRes.status).toBe(200)
+    const tokenReader = ndjsonReader(tokenRes)
+    const afterReader = ndjsonReader(afterRes)
+    const tokenReplay = [await tokenReader.next(), await tokenReader.next()]
+    const afterReplay = [await afterReader.next(), await afterReader.next()]
+    expect(tokenReplay).toEqual([
+      { version: 1, seq: 4, type: 'text_delta', text: 'd' },
+      { version: 1, seq: 5, type: 'text_delta', text: 'e' },
+    ])
+    expect(afterReplay).toEqual(tokenReplay)
+    const concat = [
+      { seq: 1 },
+      { seq: 2 },
+      { seq: 3 },
+      ...(tokenReplay as Array<{ seq: number }>),
+    ]
+    expect(concat.map((event) => event.seq)).toEqual([1, 2, 3, 4, 5])
+    expect(new Set(concat.map((event) => event.seq)).size).toBe(5)
+    await tokenReader.close()
+    await afterReader.close()
+  })
+
+  test('stream continuationToken 400 matrix and resume conflict', async () => {
+    const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
+    const ctx = makeServeCtx(secret)
+    const auth = { authorization: 'Bearer secret' }
+    const other = encodeContinuationToken({ sessionId: 'other', lastSeq: 1 })
+    const v2 = Buffer.from(JSON.stringify({ v: 2, s: 's1', q: 1 }), 'utf8').toString('base64url')
+
+    const empty = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/missing/stream?continuationToken=', {
+        headers: auth,
+      }),
+      ctx,
+    )
+    expect(empty.status).toBe(400)
+    expect(await empty.json()).toEqual({ error: 'invalid continuationToken' })
+
+    const garbage = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/missing/stream?continuationToken=%%%', {
+        headers: auth,
+      }),
+      ctx,
+    )
+    expect(garbage.status).toBe(400)
+    expect(await garbage.json()).toEqual({ error: 'invalid continuationToken' })
+
+    const cross = await handleServeRequest(
+      new Request(
+        `http://127.0.0.1/v1/session/s1/stream?continuationToken=${encodeURIComponent(other)}`,
+        { headers: auth },
+      ),
+      ctx,
+    )
+    expect(cross.status).toBe(400)
+    expect(await cross.json()).toEqual({ error: 'invalid continuationToken' })
+
+    const future = await handleServeRequest(
+      new Request(
+        `http://127.0.0.1/v1/session/missing/stream?continuationToken=${encodeURIComponent(v2)}`,
+        { headers: auth },
+      ),
+      ctx,
+    )
+    expect(future.status).toBe(400)
+    expect(await future.json()).toEqual({ error: 'unsupported stream version' })
+
+    const conflict = await handleServeRequest(
+      new Request(
+        `http://127.0.0.1/v1/session/s1/stream?after=1&continuationToken=${encodeURIComponent(other)}`,
+        { headers: auth },
+      ),
+      ctx,
+    )
+    expect(conflict.status).toBe(400)
+    expect(await conflict.json()).toEqual({ error: 'resume conflict' })
+
+    const emptyConflict = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/stream?after=&continuationToken=', {
+        headers: auth,
+      }),
+      ctx,
+    )
+    expect(emptyConflict.status).toBe(400)
+    expect(await emptyConflict.json()).toEqual({ error: 'resume conflict' })
+  })
+
+  test('token reconnect does not allocate a new seq until publish', async () => {
+    const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
+    const ctx = makeServeCtx(secret)
+    const auth = { authorization: 'Bearer secret' }
+    await ctx.store.createSession({
+      id: 's1',
+      createdAt: 1,
+      updatedAt: 1,
+      cwd: '/tmp',
+      model: 'dummy',
+      permissionMode: 'default',
+      compactGeneration: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      funding: 'byok',
+    })
+    await ctx.hub.publish('s1', { type: 'text_delta', text: 'a' })
+    await ctx.hub.publish('s1', { type: 'text_delta', text: 'b' })
+    const before = await ctx.store.lastStreamSeq('s1')
+    expect(before).toBe(2)
+    const token = encodeContinuationToken({ sessionId: 's1', lastSeq: 2 })
+    const res = await handleServeRequest(
+      new Request(
+        `http://127.0.0.1/v1/session/s1/stream?continuationToken=${encodeURIComponent(token)}`,
+        { headers: auth },
+      ),
+      ctx,
+    )
+    expect(res.status).toBe(200)
+    const reader = ndjsonReader(res)
+    await Promise.resolve()
+    expect(await ctx.store.lastStreamSeq('s1')).toBe(2)
+    await ctx.hub.publish('s1', { type: 'text_delta', text: 'c' })
+    expect(await reader.next()).toEqual({ version: 1, seq: 3, type: 'text_delta', text: 'c' })
+    expect(await ctx.store.lastStreamSeq('s1')).toBe(3)
+    await reader.close()
+  })
+
+  test('token reconnect reuses permission_ask seq', async () => {
+    const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
+    const ctx = makeServeCtx(secret)
+    const auth = { authorization: 'Bearer secret' }
+    await ctx.store.createSession({
+      id: 's1',
+      createdAt: 1,
+      updatedAt: 1,
+      cwd: '/tmp',
+      model: 'dummy',
+      permissionMode: 'default',
+      compactGeneration: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      funding: 'byok',
+    })
+    await ctx.store.upsertPendingAsk({
+      callId: 'parked_1',
+      sessionId: 's1',
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    const first = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/stream', { headers: auth }),
+      ctx,
+    )
+    expect(await readFirstJsonLine(first)).toEqual({
+      version: 1,
+      seq: 1,
+      type: 'permission_ask',
+      id: 'parked_1',
+      tool: 'Echo',
+      input: { text: 'hi' },
+      message: 'Echo?',
+    })
+    expect(await ctx.store.lastStreamSeq('s1')).toBe(1)
+    const token = encodeContinuationToken({ sessionId: 's1', lastSeq: 1 })
+    const second = await handleServeRequest(
+      new Request(
+        `http://127.0.0.1/v1/session/s1/stream?continuationToken=${encodeURIComponent(token)}`,
+        { headers: auth },
+      ),
+      ctx,
+    )
+    expect(second.status).toBe(200)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(await ctx.store.lastStreamSeq('s1')).toBe(1)
+    const stored = await ctx.store.listStreamEventsAfter('s1', 0)
+    expect(stored).toHaveLength(1)
+    expect(stored[0]?.seq).toBe(1)
+    expect(stored[0] && 'version' in stored[0]).toBe(false)
+    await second.body?.cancel()
+  })
+
+  test('POST /v1/turn ignores continuationToken query and body', async () => {
+    const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
+    const ctx = makeServeCtx(secret)
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/turn?continuationToken=garbage&version=2', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+        body: JSON.stringify({ text: 'hi', continuationToken: 'nope' }),
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { sessionId: string }
     expect(body.sessionId).toBe('s1')
   })
 
