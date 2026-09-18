@@ -57,7 +57,7 @@ function session(over: Partial<SessionRecord> = {}): SessionRecord {
 }
 
 describe('createSqliteStore', () => {
-  test('fresh install uses WAL and schema_version 9', () => {
+  test('fresh install uses WAL and schema_version 10', () => {
     const path = tempDbPath()
     openStore(path)
     const db = new Database(path, { readonly: true })
@@ -67,7 +67,7 @@ describe('createSqliteStore', () => {
       const version = db
         .query("SELECT value FROM meta WHERE key = 'schema_version'")
         .get() as { value: string }
-      expect(version.value).toBe('9')
+      expect(version.value).toBe('10')
       expect(
         db
           .query("SELECT 1 AS ok FROM sqlite_master WHERE name = 'messages_fts'")
@@ -82,6 +82,29 @@ describe('createSqliteStore', () => {
     } finally {
       db.close()
     }
+  })
+
+  test('lastEnd, jobError, and followup round-trip through upsertSession', async () => {
+    const store = openStore()
+    await store.createSession(
+      session({
+        lastEnd: { reason: 'cancelled' },
+        jobError: 'git commit failed',
+        followup: 'run tests',
+      }),
+    )
+    const loaded = await store.loadSession('s1')
+    expect(loaded.session.lastEnd).toEqual({ reason: 'cancelled' })
+    expect(loaded.session.jobError).toBe('git commit failed')
+    expect(loaded.session.followup).toBe('run tests')
+    delete loaded.session.jobError
+    delete loaded.session.followup
+    loaded.session.lastEnd = { reason: 'completed' }
+    await store.upsertSession(loaded.session)
+    const again = await store.loadSession('s1')
+    expect(again.session.lastEnd).toEqual({ reason: 'completed' })
+    expect(again.session.jobError).toBeUndefined()
+    expect(again.session.followup).toBeUndefined()
   })
 
   test('updateSessionTodos writes todos without pairing messages', async () => {

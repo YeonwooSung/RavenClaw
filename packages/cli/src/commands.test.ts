@@ -74,6 +74,11 @@ describe('handleSlashCommand', () => {
     ['/cron', { type: 'command', name: 'cron' }],
     ['/cron add every 30m lint', { type: 'command', name: 'cron', arg: 'add every 30m lint' }],
     ['/queue', { type: 'command', name: 'queue' }],
+    ['/follow', { type: 'command', name: 'follow' }],
+    ['/follow run tests', { type: 'command', name: 'follow', arg: 'run tests' }],
+    ['/follow clear', { type: 'command', name: 'follow', arg: 'clear' }],
+    ['/retry', { type: 'command', name: 'retry' }],
+    ['/retry new text', { type: 'command', name: 'retry', arg: 'new text' }],
     ['/copy', { type: 'command', name: 'copy' }],
     ['/interview', { type: 'command', name: 'interview' }],
     ['/team-onboarding', { type: 'command', name: 'team-onboarding' }],
@@ -121,6 +126,8 @@ describe('handleSlashCommand', () => {
     expect(SLASH_HELP).toContain('/loop')
     expect(SLASH_HELP).toContain('/cron')
     expect(SLASH_HELP).toContain('/queue')
+    expect(SLASH_HELP).toContain('/follow')
+    expect(SLASH_HELP).toContain('/retry')
     expect(SLASH_HELP).toContain('/copy')
     expect(SLASH_HELP).toContain('/interview')
     expect(SLASH_HELP).toContain('/team-onboarding')
@@ -162,6 +169,8 @@ describe('handleSlashCommand', () => {
       'loop',
       'cron',
       'queue',
+      'follow',
+      'retry',
       'copy',
       'interview',
       'team-onboarding',

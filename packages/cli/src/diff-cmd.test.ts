@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import {
   formatDiffPanel,
   formatGitDiff,
+  formatJobDiffPanel,
   loadGitDiff,
   mergeDiffFiles,
   parseDiffArg,
@@ -137,6 +138,25 @@ describe('parseUnifiedDiff and mergeDiffFiles', () => {
     expect(merged[0]?.staged).toBe(true)
     expect(merged[0]?.unstaged).toBe(true)
     expect(merged[0]?.patch).toContain('-alpha')
+  })
+})
+
+describe('formatJobDiffPanel', () => {
+  test('formatJobDiffPanel lists op and plus/minus', () => {
+    const lines = formatJobDiffPanel({
+      ok: true,
+      baseCommitSha: 'aaa',
+      shadowBranch: 'raven/s',
+      head: 'bbb',
+      dirty: true,
+      files: [{ path: 'a.ts', op: 'create', plus: 3, minus: 0 }],
+    })
+    expect(lines[0]).toContain('raven/s')
+    expect(lines.some((l) => l.includes('a.ts') && l.includes('create'))).toBe(true)
+  })
+
+  test('formatJobDiffPanel surfaces jobDiff failure notice', () => {
+    expect(formatJobDiffPanel({ ok: false, notice: 'git failed' })).toEqual(['git failed'])
   })
 })
 

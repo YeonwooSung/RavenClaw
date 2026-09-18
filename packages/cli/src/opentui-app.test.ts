@@ -736,6 +736,48 @@ describe('runOpenTuiApp', () => {
     expect(out).not.toContain('unknown command')
   })
 
+  test('bare /retry restores droppedText and empty enter resubmits it', async () => {
+    const submitted: string[] = []
+    const engine = fakeEngine(makeSession(), async function* (text) {
+      submitted.push(text)
+      return { reason: 'completed' }
+    })
+    engine.rewindLast = async () => ({
+      ok: true,
+      notice: 'dropped 2 messages',
+      droppedText: 'old prompt',
+    })
+    const written: string[] = []
+    const code = await runOpenTuiApp(fakeRuntime(engine), {
+      input: asyncLines('/retry', '', '/quit'),
+      write: (chunk) => {
+        written.push(chunk)
+      },
+    })
+    expect(code).toBe(0)
+    expect(submitted).toEqual(['old prompt'])
+    expect(written.join('')).toContain('dropped 2 messages')
+  })
+
+  test('/retry with text resubmits the arg and does not use droppedText', async () => {
+    const submitted: string[] = []
+    const engine = fakeEngine(makeSession(), async function* (text) {
+      submitted.push(text)
+      return { reason: 'completed' }
+    })
+    engine.rewindLast = async () => ({
+      ok: true,
+      notice: 'dropped 2 messages',
+      droppedText: 'old prompt',
+    })
+    const code = await runOpenTuiApp(fakeRuntime(engine), {
+      input: asyncLines('/retry new prompt', '/quit'),
+      write: () => {},
+    })
+    expect(code).toBe(0)
+    expect(submitted).toEqual(['new prompt'])
+  })
+
   test('/add-dir /effort /agents /hooks are not unknown', async () => {
     const written: string[] = []
     const code = await runOpenTuiApp(fakeRuntime(fakeEngine(makeSession(), emptyTurn)), {

@@ -58,6 +58,18 @@ function fakeEngine(session: SessionRecord): SessionEngine & { reloads: number }
     },
     abort() {},
     async close() {},
+    async setFollowup(text: string) {
+      const trimmed = text.trim()
+      if (trimmed === '') return { ok: false as const, notice: 'follow-up text required' }
+      session.followup = trimmed
+      return { ok: true as const }
+    },
+    async clearFollowup() {
+      delete session.followup
+    },
+    getFollowup() {
+      return session.followup ?? null
+    },
     get reloads() {
       return reloads.n
     },
@@ -255,6 +267,39 @@ describe('dispatchSharedSlash', () => {
     expect(host.notices).toEqual(['unknown command: /foo'])
   })
 
+  test('/follow with no arg prints no follow-up or the text', async () => {
+    const session = makeSession()
+    const engine = fakeEngine(session)
+    const host = fakeHost(fakeRuntime(engine))
+    expect(await dispatchSharedSlash(cmd('follow'), host)).toBe('handled')
+    expect(host.notices).toEqual(['no follow-up'])
+
+    session.followup = 'run tests'
+    host.notices.length = 0
+    expect(await dispatchSharedSlash(cmd('follow'), host)).toBe('handled')
+    expect(host.notices).toEqual(['run tests'])
+  })
+
+  test('/follow clear clears the slot', async () => {
+    const session = makeSession({ followup: 'run tests' })
+    const engine = fakeEngine(session)
+    const host = fakeHost(fakeRuntime(engine))
+    expect(await dispatchSharedSlash(cmd('follow', 'clear'), host)).toBe('handled')
+    expect(session.followup).toBeUndefined()
+    expect(engine.getFollowup()).toBeNull()
+    expect(host.notices).toEqual(['no follow-up'])
+  })
+
+  test('/follow text sets the slot', async () => {
+    const session = makeSession()
+    const engine = fakeEngine(session)
+    const host = fakeHost(fakeRuntime(engine))
+    expect(await dispatchSharedSlash(cmd('follow', 'run tests'), host)).toBe('handled')
+    expect(session.followup).toBe('run tests')
+    expect(engine.getFollowup()).toBe('run tests')
+    expect(host.notices).toEqual(['run tests'])
+  })
+
   test('/job commit on flips jobAutoCommit and upserts', async () => {
     const session = makeSession()
     const runtime = fakeRuntime(fakeEngine(session))
@@ -303,6 +348,35 @@ describe('dispatchSharedSlash', () => {
     expect(host.notices).toEqual(['worktree is dirty'])
     expect(host.ghCalls).toEqual([])
     expect(host.turns).toEqual([])
+  })
+
+  test('/pr failure sets jobError; success clears it', async () => {
+    const dirty = tempGitRepo(true)
+    const failSession = makeSession({ cwd: dirty, job: jobAt(dirty) })
+    const failRuntime = fakeRuntime(fakeEngine(failSession))
+    failRuntime.cwd = dirty
+    const failUpserted: SessionRecord[] = []
+    failRuntime.store.upsertSession = async (next) => {
+      failUpserted.push({ ...next })
+    }
+    const failHost = fakeHost(failRuntime)
+    expect(await dispatchSharedSlash(cmd('pr'), failHost)).toBe('handled')
+    expect(failSession.jobError).toBe('worktree is dirty')
+    expect(failUpserted[0]?.jobError).toBe('worktree is dirty')
+
+    const clean = tempGitRepo(false)
+    const okSession = makeSession({ cwd: clean, job: jobAt(clean), jobError: 'worktree is dirty' })
+    const okRuntime = fakeRuntime(fakeEngine(okSession))
+    okRuntime.cwd = clean
+    const okUpserted: SessionRecord[] = []
+    okRuntime.store.upsertSession = async (next) => {
+      okUpserted.push({ ...next })
+    }
+    const okHost = fakeHost(okRuntime)
+    expect(await dispatchSharedSlash(cmd('pr'), okHost)).toBe('handled')
+    expect(okSession.jobError).toBeUndefined()
+    expect(okUpserted.some((row) => row.jobError === undefined)).toBe(true)
+    expect(okHost.ghCalls.length).toBeGreaterThan(0)
   })
 })
 

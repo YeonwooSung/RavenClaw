@@ -11,6 +11,7 @@ import type {
   Message,
   PermissionMode,
   PermissionRule,
+  RoundEnd,
   SessionJob,
   SessionListFilter,
   SessionRecord,
@@ -56,6 +57,9 @@ type SessionRow = {
   todos_json: string | null
   job_json: string | null
   job_auto_commit: number
+  last_end_json: string | null
+  job_error: string | null
+  followup_text: string | null
 }
 
 type MessageRow = {
@@ -161,7 +165,50 @@ function sessionFromRow(row: SessionRow): SessionRecord {
   const job = jobFromJson(row.job_json)
   if (job !== undefined) session.job = job
   if (row.job_auto_commit === 1) session.jobAutoCommit = true
+  const lastEnd = lastEndFromJson(row.last_end_json)
+  if (lastEnd !== undefined) session.lastEnd = lastEnd
+  if (row.job_error != null && row.job_error !== '') session.jobError = row.job_error
+  if (row.followup_text != null && row.followup_text !== '') session.followup = row.followup_text
   return session
+}
+
+function serializeLastEnd(end: RoundEnd): string {
+  if (end.reason === 'max_rounds') return JSON.stringify({ reason: 'max_rounds', round: end.round })
+  if (
+    end.reason === 'model_error' ||
+    end.reason === 'persist_failed' ||
+    end.reason === 'results_persist_failed'
+  ) {
+    return JSON.stringify({ reason: end.reason, error: String(end.error).slice(0, 500) })
+  }
+  return JSON.stringify({ reason: end.reason })
+}
+
+function lastEndFromJson(raw: string | null): RoundEnd | undefined {
+  if (raw == null || raw === '') return undefined
+  try {
+    const parsed = JSON.parse(raw) as { reason?: unknown; round?: unknown; error?: unknown }
+    if (typeof parsed.reason !== 'string') return undefined
+    switch (parsed.reason) {
+      case 'completed':
+      case 'hook_stopped':
+      case 'aborted':
+      case 'cancelled':
+      case 'context_full':
+        return { reason: parsed.reason }
+      case 'max_rounds':
+        if (typeof parsed.round !== 'number') return undefined
+        return { reason: 'max_rounds', round: parsed.round }
+      case 'model_error':
+      case 'persist_failed':
+      case 'results_persist_failed':
+        return { reason: parsed.reason, error: String(parsed.error ?? '') }
+      default:
+        return undefined
+    }
+  } catch {
+    return undefined
+  }
 }
 
 function jobFromJson(raw: string | null): SessionJob | undefined {
@@ -277,6 +324,11 @@ function sessionBind(session: SessionRecord) {
     $todos_json: session.todos !== undefined ? JSON.stringify(session.todos) : null,
     $job_json: session.job !== undefined ? JSON.stringify(session.job) : null,
     $job_auto_commit: session.jobAutoCommit === true ? 1 : 0,
+    $last_end_json: session.lastEnd !== undefined ? serializeLastEnd(session.lastEnd) : null,
+    $job_error:
+      session.jobError !== undefined && session.jobError !== '' ? session.jobError : null,
+    $followup_text:
+      session.followup !== undefined && session.followup !== '' ? session.followup : null,
   }
 }
 
@@ -341,22 +393,22 @@ export function createSqliteStore(dbPath: string): SessionStore {
     `INSERT INTO sessions (
        id, created_at, updated_at, cwd, model, permission_mode, pre_plan_mode,
        compact_generation, usage_json, title, parent_session_id, funding, todos_json,
-       job_json, job_auto_commit
+       job_json, job_auto_commit, last_end_json, job_error, followup_text
      ) VALUES (
        $id, $created_at, $updated_at, $cwd, $model, $permission_mode, $pre_plan_mode,
        $compact_generation, $usage_json, $title, $parent_session_id, $funding, $todos_json,
-       $job_json, $job_auto_commit
+       $job_json, $job_auto_commit, $last_end_json, $job_error, $followup_text
      )`,
   )
   const upsertSessionSql = db.query(
     `INSERT INTO sessions (
        id, created_at, updated_at, cwd, model, permission_mode, pre_plan_mode,
        compact_generation, usage_json, title, parent_session_id, funding, todos_json,
-       job_json, job_auto_commit
+       job_json, job_auto_commit, last_end_json, job_error, followup_text
      ) VALUES (
        $id, $created_at, $updated_at, $cwd, $model, $permission_mode, $pre_plan_mode,
        $compact_generation, $usage_json, $title, $parent_session_id, $funding, $todos_json,
-       $job_json, $job_auto_commit
+       $job_json, $job_auto_commit, $last_end_json, $job_error, $followup_text
      )
      ON CONFLICT(id) DO UPDATE SET
        created_at = excluded.created_at,
@@ -372,7 +424,10 @@ export function createSqliteStore(dbPath: string): SessionStore {
        funding = excluded.funding,
        todos_json = excluded.todos_json,
        job_json = excluded.job_json,
-       job_auto_commit = excluded.job_auto_commit`,
+       job_auto_commit = excluded.job_auto_commit,
+       last_end_json = excluded.last_end_json,
+       job_error = excluded.job_error,
+       followup_text = excluded.followup_text`,
   )
   const updateSessionTodosSql = db.query(
     `UPDATE sessions SET todos_json = ?, updated_at = ? WHERE id = ?`,

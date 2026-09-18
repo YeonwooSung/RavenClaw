@@ -34,8 +34,14 @@ import {
 } from './pairing'
 import { forgetReadsNotInTail, markReadPath, recordReadFile, stampReadMtime } from '../tools/read-files'
 import type { TodoItem } from '../tools/todo'
-import { rewindLastTurn, rewindToCheckpoint } from '../session/rewind'
-import { maybeCommitJob, stampCheckpoint } from '../session/job'
+import { lastUserText, rewindLastTurn, rewindToCheckpoint } from '../session/rewind'
+import {
+  clearSessionJobError,
+  maybeCommitJob,
+  setSessionJobError,
+  stampCheckpoint,
+} from '../session/job'
+import { writeFollowup } from '../session/followup'
 import { getSessionWorktree } from '../tools/session-worktree'
 import { applyPermissionMode } from '../prompt/builder'
 import { injectMidTurnHint } from '../prompt/cache'
@@ -101,6 +107,18 @@ function isJobSuccessReason(reason: RoundEnd['reason']): boolean {
     reason === 'max_rounds' ||
     reason === 'context_full'
   )
+}
+
+function persistableLastEnd(end: RoundEnd): RoundEnd {
+  if (end.reason === 'max_rounds') return { reason: 'max_rounds', round: end.round }
+  if (
+    end.reason === 'model_error' ||
+    end.reason === 'persist_failed' ||
+    end.reason === 'results_persist_failed'
+  ) {
+    return { reason: end.reason, error: String(end.error).slice(0, 500) }
+  }
+  return { reason: end.reason }
 }
 
 export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
@@ -465,6 +483,13 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
     },
 
     async rewindLast() {
+      const pending = await listOwnedPendingAsks()
+      for (const row of pending) {
+        if (!(await isCallPaired(row.callId, row.sessionId))) {
+          return { ok: false, notice: 'pending permission ask' }
+        }
+      }
+      const droppedText = lastUserText(messages)
       if (liveTurn) {
         return { ok: false, notice: 'a turn is in progress' }
       }
@@ -478,7 +503,9 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
           store: opts.store,
         })
         messages = result.messages
-        return { ok: result.ok, notice: result.notice }
+        return result.ok
+          ? { ok: true, notice: result.notice, ...(droppedText !== undefined ? { droppedText } : {}) }
+          : { ok: false, notice: result.notice }
       }
       const result = await rewindLastTurn({
         fileHistory,
@@ -488,7 +515,9 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         generation: session.compactGeneration,
       })
       messages = result.messages
-      return { ok: result.ok, notice: result.notice }
+      return result.ok
+        ? { ok: true, notice: result.notice, ...(droppedText !== undefined ? { droppedText } : {}) }
+        : { ok: false, notice: result.notice }
     },
 
     async *submitMessage(input: UserSubmitInput): AsyncGenerator<StreamEvent, RoundEnd> {
@@ -523,9 +552,13 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         yield { type: 'status', message: blocked.message ?? 'stopped by hook' }
         const stop = await lifecycle.run('Stop', { sessionId: session.id, reason: 'completed' })
         if (stop?.message) yield { type: 'status', message: stop.message }
-        return stop?.preventContinuation === true
-          ? { reason: 'hook_stopped' as const }
-          : { reason: 'completed' as const }
+        if (stop?.preventContinuation === true) {
+          session.lastEnd = { reason: 'hook_stopped' }
+          session.updatedAt = Date.now()
+          await opts.store.upsertSession(session)
+          return { reason: 'hook_stopped' as const }
+        }
+        return { reason: 'completed' as const }
       }
       const userMsg: Extract<Message, { role: 'user' }> = {
         id: crypto.randomUUID(),
@@ -656,6 +689,8 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         session.permissionMode = turn.permissionMode
         if (turn.prePlanMode !== undefined) session.prePlanMode = turn.prePlanMode
         session.cwd = turn.cwd
+        session.lastEnd = persistableLastEnd(end)
+        if (session.job && end.reason === 'completed') clearSessionJobError(session)
         session.updatedAt = Date.now()
         await opts.store.upsertSession(session)
         if (
@@ -670,6 +705,15 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
               cwd: session.job.worktreePath,
             })
             if (result.notice) yield { type: 'status', message: result.notice }
+            if (result.notice && !result.committed) {
+              setSessionJobError(session, result.notice)
+              session.updatedAt = Date.now()
+              await opts.store.upsertSession(session)
+            } else if (result.committed) {
+              clearSessionJobError(session)
+              session.updatedAt = Date.now()
+              await opts.store.upsertSession(session)
+            }
           }
           const asst = lastAssistant(turn.messages)
           if (asst) {
@@ -758,6 +802,18 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       session.updatedAt = Date.now()
       await opts.store.upsertSession(session)
       if (system !== undefined) system = applyPermissionMode(system, mode)
+    },
+
+    async setFollowup(text: string) {
+      return writeFollowup(session, opts.store, text)
+    },
+
+    async clearFollowup() {
+      await writeFollowup(session, opts.store, null)
+    },
+
+    getFollowup() {
+      return session.followup ?? null
     },
 
     liveTurnId() {

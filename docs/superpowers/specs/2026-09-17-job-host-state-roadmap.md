@@ -7,6 +7,8 @@ Successor to `2026-09-16-session-as-job-roadmap.md` (Status: implemented). Does 
 
 Sources: current tree, [y0 analysis](../../research/y0-analysis.md) (`/Users/yeonwoosung/Desktop/y0`, read-only), [eve analysis](../../research/eve-analysis.md) (`/Users/yeonwoosung/Desktop/eve`, Apache-2.0, read-only).
 
+Implementation plan: [2026-09-17-job-host-state-implementation.md](../plans/2026-09-17-job-host-state-implementation.md) (11 TDD tasks, Waves G0–G4). Binding plan rulings live at the top of that file (schema v10, `lastEnd` serialize, one-slot `followup`, `maybeRunFollowup`, `jobDiff`).
+
 Steal contracts. Do not copy eve, y0, Claude, Hermes, or Freebuff source. Do not become an agent framework. Do not become a hosted Task runner. Do not add a web UI.
 
 ---

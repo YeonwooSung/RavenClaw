@@ -322,6 +322,9 @@ export interface SessionRecord {
   todos?: TodoItem[]
   job?: SessionJob
   jobAutoCommit?: boolean
+  lastEnd?: RoundEnd
+  jobError?: string
+  followup?: string
 }
 
 export interface SessionListFilter {
@@ -478,11 +481,14 @@ export interface SessionEngine {
   drainSteering(): string[]
   /** Host `/queue` drain. Called after each tool round; one item per batch. */
   bindDrainQueued(fn: (() => string | undefined) | undefined): void
-  rewindLast(): Promise<{ ok: boolean; notice: string }>
+  rewindLast(): Promise<{ ok: boolean; notice: string; droppedText?: string }>
   compactNow(): Promise<void>
   setModel(profile: ModelProfile): Promise<void>
   setPermissionMode(mode: PermissionMode): Promise<void>
   reloadSystem(system: SystemPart[]): void
+  setFollowup(text: string): Promise<{ ok: true } | { ok: false; notice: string }>
+  clearFollowup(): Promise<void>
+  getFollowup(): string | null
   abort(kind?: 'cancel' | 'interrupt'): void
   liveTurnId(): string | null
   /** Fire SessionEnd once, then release the session lock. Safe to call more than once. */

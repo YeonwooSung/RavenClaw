@@ -119,12 +119,24 @@ export { createStructuredOutputTool } from './tools/structured-output'
 export { rewindLastTurn, rewindToCheckpoint, dropLastUserTurn, formatRewindNotice } from './session/rewind'
 export {
   applySessionDraftPr,
+  clearSessionJobError,
   maybeCommitJob,
   openDraftPr,
   setJobAutoCommit,
+  setSessionJobError,
   stampCheckpoint,
 } from './session/job'
 export type { DraftPrSnapshot, GhRunner } from './session/job'
+export { jobDiff } from './session/job-diff'
+export type { JobDiff, JobDiffFile, JobDiffOp } from './session/job-diff'
+export {
+  followupNotice,
+  lastEndWrittenThisTurn,
+  listOwnedPendingAsks,
+  maybeRunFollowup,
+  runFollowupAfterSubmit,
+  writeFollowup,
+} from './session/followup'
 export { loadLifecycleHooks, LIFECYCLE_EVENTS } from './hooks/lifecycle'
 export { scanTeamOnboarding, ONBOARDING_USAGE_DAYS } from './onboarding/scan'
 export type { OnboardingScan } from './onboarding/scan'

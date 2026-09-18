@@ -41,7 +41,7 @@ flowchart TD
   L --> M{"HOST_ONLY?"}
   M -->|yes return host| N["Ink app.tsx or OpenTUI opentui-app.ts"]
   M -->|handled| O["shared notice / store / runTurn"]
-  N --> P["quit stop clear resume diff queue loop bash"]
+  N --> P["quit stop clear resume diff retry queue loop bash"]
 ```
 
 `handleSlashCommand` (`packages/cli/src/commands.ts`):
@@ -60,7 +60,7 @@ Both TUI hosts then call `dispatchSharedSlash`. That function returns:
 
 `HOST_ONLY` is exactly:
 
-`quit`, `stop`, `clear`, `resume`, `diff`, `queue`, `loop`, `bash`
+`quit`, `stop`, `clear`, `resume`, `diff`, `retry`, `queue`, `loop`, `bash`
 
 Slack and Discord reuse `createChatSessionHost` + `streamChatTurn` to open/resume a `SessionEngine` and stream text. They do **not** call `handleSlashCommand`. A Discord/Slack message that starts with `/help` is a user prompt to the model.
 
@@ -70,7 +70,7 @@ Slack and Discord reuse `createChatSessionHost` + `streamChatTurn` to open/resum
 
 | Kind | Commands | Where implemented | Surfaces |
 |---|---|---|---|
-| Host-only | `/quit`, `/stop` (`/cancel`), `/clear` (`/new`), `/resume`, `/diff`, `/queue`, `/loop`, `/bash` | `app.tsx` and `opentui-app.ts` (must stay in sync) | Ink and OpenTUI only |
+| Host-only | `/quit`, `/stop` (`/cancel`), `/clear` (`/new`), `/resume`, `/diff`, `/retry`, `/queue`, `/loop`, `/bash` | `app.tsx` and `opentui-app.ts` (must stay in sync) | Ink and OpenTUI only |
 | Shared | everything else in `SLASH_COMMANDS` | `dispatchSharedSlash` | Any `SlashHost` (both TUIs) |
 | Not a slash | `raven exec`, `raven discord`, `raven slack`, `raven serve`, `raven acp`, `raven pairing`, … | `packages/cli/src/args.ts` + `index.ts` | CLI process |
 
@@ -130,9 +130,9 @@ Shared dispatch and host-only handlers run even while a turn is live. They do **
 | Abort the live turn | `/stop`, `/cancel`; Ink Escape |
 | Enqueue a **new** turn if busy (`queued (n)`) | Any `host.runTurn`: `/learn`, `/interview`, `/skill:<name>`, `/team-onboarding`; also `/loop`’s first prompt; leftover steering / mailbox |
 | Inject into the **live** turn (next tool round) | `/steer <text>`; `/queue` items via `drainQueued`; `/tasks steer <id> <text>` (child agent) |
-| Refuse if a turn (or running agent task) is live | `/rewind` → `a turn is in progress` |
+| Refuse if a turn (or running agent task) is live | `/rewind`, `/retry` → `a turn is in progress` (also pending unpaired asks → `pending permission ask`) |
 | Refuse file undo of the **open** generation | `/undo` → `undo after the turn finishes` (a **closed** previous generation can still undo) |
-| Run immediately (notice / store / panel) | `/help`, `/cost`, `/search`, `/mode`, `/model`, `/title`, `/permissions`, `/tasks`, `/diff`, `/queue`, `/cron`, `/copy`, `/mcp`, `/skills`, `/reload`, `/agents`, `/hooks`, `/config`, `/context`, `/add-dir`, `/effort`, `/compact`, `/review`, `/bash`, `/quit`, `/clear`, `/resume` |
+| Run immediately (notice / store / panel) | `/help`, `/cost`, `/search`, `/mode`, `/model`, `/title`, `/permissions`, `/tasks`, `/diff`, `/retry` (no-arg composer restore), `/queue`, `/follow`, `/cron`, `/copy`, `/mcp`, `/skills`, `/reload`, `/agents`, `/hooks`, `/config`, `/context`, `/add-dir`, `/effort`, `/compact`, `/review`, `/bash`, `/quit`, `/clear`, `/resume` |
 | `/compact` mid-turn | sets a one-slot flag; runs after `liveTurn` is null |
 | `/mode` mid-turn | Writes `liveTurn.permissionMode` as well as the session |
 | `/model` mid-turn | Updates session + `config.profile` for the **next** `queryLoop`. Does not mutate the in-flight loop’s captured profile |
@@ -469,7 +469,28 @@ Does **not** drop conversation messages. That is `/rewind`.
    - messages only: `dropped 1 message` / `dropped N messages`
    - both: `undo: …; dropped N messages`
 
-Related: `/undo` (files only), `/job` (enters a job so rewind becomes checkpoint-based), `/clear` (new session).
+Related: `/undo` (files only), `/retry` (rewind then composer or resubmit), `/job` (enters a job so rewind becomes checkpoint-based), `/clear` (new session).
+
+---
+
+### `/retry [text]`
+
+- **Aliases:** none
+- **Kind:** host-only (needs the composer)
+- **When:** same refuse rules as `/rewind` (live turn, running agent, pending unpaired ask, nothing to rewind)
+
+`engine.rewindLast()` first. Always print `notice`.
+
+| Arg | Action |
+|---|---|
+| missing / empty | if `ok` and `droppedText` is set, put `droppedText` in the composer (`setDraft` / OpenTUI draft). **Do not** `runTurn`. |
+| non-empty text | if `ok`, `runTurn(arg)` with the new text |
+
+Does not call serve. Headless twin: `POST /v1/session/:id/edit` `{ text }` (empty text is 400; rewind fail is 200 `{ ok: false, notice }`; success is 202 then `submitMessage`).
+
+`/rewind` stays notice-only and never fills the composer or submits.
+
+Related: `/rewind`, `/follow` (park next prompt without dropping the last turn).
 
 ---
 
@@ -844,6 +865,28 @@ Sinks:
 - After the turn, if no leftover steering
 
 There is no `/queue add` verb; enqueue happens by submitting text mid-turn.
+
+Different from `/follow` (one persisted next-turn slot on the session, not the in-memory FIFO).
+
+---
+
+### `/follow [text|clear]`
+
+- **Aliases:** none
+- **Kind:** shared
+- **When:** idle or mid-turn (session field only; does not start a turn by itself)
+
+One-slot persisted next-turn follow-up on `session.followup` (schema v10). Not `/queue`, not `SuggestFollowups`.
+
+| Arg | Action |
+|---|---|
+| missing / empty | show current slot via `followupNotice` (`no follow-up` or the text) |
+| `clear` | `clearFollowup()`; notice `no follow-up` |
+| other text | `setFollowup(text)`; empty/whitespace → notice `follow-up text required`; success notices the stored text |
+
+After a real host turn ends, `maybeRunFollowup` may auto-run the slot (success reasons) or clear it (`cancelled` / `aborted` / model/persist errors) when no pending asks remain. Serve twins: `POST/DELETE /v1/session/:id/followup`; GET snapshot field `queued`.
+
+Related: `/queue` (host FIFO), `/retry` (edit last user).
 
 ---
 

@@ -4,6 +4,7 @@ import {
   discoverSkills,
   formatTasksNotice,
   formatUndoNotice,
+  followupNotice,
   getModelProfile,
   LIFECYCLE_EVENTS,
   parseTasksArg,
@@ -11,9 +12,11 @@ import {
   scanTeamOnboarding,
   setSkillDisabled,
   applySessionDraftPr,
+  clearSessionJobError,
   enterSessionWorktree,
   getSessionWorktree,
   setJobAutoCommit,
+  setSessionJobError,
 } from '@ravenclaw/core'
 import {
   INTERVIEW_PROMPT,
@@ -44,6 +47,7 @@ const HOST_ONLY = new Set([
   'clear',
   'resume',
   'diff',
+  'retry',
   'queue',
   'loop',
   'bash',
@@ -220,14 +224,39 @@ export async function dispatchSharedSlash(
       const name = arg === '' ? undefined : arg
       const entered = enterSessionWorktree(session.id, parent, name)
       if (!entered.ok) {
-        host.notice(entered.error ?? 'job failed')
+        const notice = entered.error ?? 'job failed'
+        setSessionJobError(session, notice)
+        session.updatedAt = Date.now()
+        await runtime.store.upsertSession(session)
+        host.notice(notice)
         return 'handled'
       }
       if (entered.job) session.job = entered.job
       session.cwd = entered.cwd
       runtime.cwd = entered.cwd
+      clearSessionJobError(session)
+      session.updatedAt = Date.now()
       await runtime.store.upsertSession(session)
       host.notice(`job ${entered.job?.shadowBranch ?? entered.cwd}`)
+      return 'handled'
+    }
+    case 'follow': {
+      const arg = parsed.arg?.trim() ?? ''
+      if (arg === '') {
+        host.notice(followupNotice(runtime.engine.getFollowup()))
+        return 'handled'
+      }
+      if (arg === 'clear') {
+        await runtime.engine.clearFollowup()
+        host.notice('no follow-up')
+        return 'handled'
+      }
+      const result = await runtime.engine.setFollowup(arg)
+      if (!result.ok) {
+        host.notice(result.notice)
+        return 'handled'
+      }
+      host.notice(followupNotice(runtime.engine.getFollowup()))
       return 'handled'
     }
     case 'pr': {
@@ -247,11 +276,11 @@ export async function dispatchSharedSlash(
         persistAssistant: (sessionId, message) => runtime.store.persistAssistant(sessionId, message),
         persistToolCalls: (sessionId, message) => runtime.store.persistToolCalls(sessionId, message),
       })
-      if (out.job) {
-        session.job = out.job
-        session.updatedAt = Date.now()
-        await runtime.store.upsertSession(session)
-      }
+      if (out.job) session.job = out.job
+      if (out.ok) clearSessionJobError(session)
+      else setSessionJobError(session, out.notice)
+      session.updatedAt = Date.now()
+      await runtime.store.upsertSession(session)
       host.notice(out.notice)
       return 'handled'
     }

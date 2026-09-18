@@ -220,6 +220,7 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
   submitEvents: StreamEvent[]
   replayEvents: StreamEvent[]
   submitHold?: Promise<void>
+  submitEnd: { reason: string }
 } {
   const store = createMemoryStore()
   const submitEvents: StreamEvent[] = []
@@ -231,13 +232,22 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
     compactCalls: number
     liveTurnId: string | null
     submitHold?: Promise<void>
+    submitEnd: { reason: string }
+    writeLastEnd: boolean
   } = {
     abortCalls: 0,
     compactCalls: 0,
     liveTurnId: 'live-1',
+    submitEnd: { reason: 'completed' },
+    writeLastEnd: true,
   }
   const engine = {
-    session: { id: 's1', permissionMode: 'default' as const },
+    session: { id: 's1', permissionMode: 'default' as const } as {
+      id: string
+      permissionMode: 'default'
+      followup?: string
+      lastEnd?: { reason: string }
+    },
     async applyAskAnswer(callId: string, answer: 'allow' | 'deny' | 'allow_always') {
       applyCalls.push({ callId, answer })
       const row = await store.getPendingAsk(callId)
@@ -254,10 +264,27 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
     async compactNow() {
       state.compactCalls += 1
     },
+    async setFollowup(text: string) {
+      if (text.trim() === '') return { ok: false as const, notice: 'follow-up text required' }
+      engine.session.followup = text.trim()
+      return { ok: true as const }
+    },
+    async clearFollowup() {
+      delete engine.session.followup
+    },
+    getFollowup() {
+      return engine.session.followup ?? null
+    },
     async *submitMessage(input: UserSubmitInput) {
       submitted.push(input)
+      if (state.liveTurnId === null) state.liveTurnId = 'live-1'
       for (const event of submitEvents) yield event
       if (state.submitHold) await state.submitHold
+      state.liveTurnId = null
+      if (state.writeLastEnd) {
+        engine.session.lastEnd = state.submitEnd
+      }
+      return state.submitEnd
     },
     async *replayPendingAsks() {
       for (const event of replayEvents) yield event
@@ -284,6 +311,12 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
     replayEvents,
     set submitHold(value: Promise<void> | undefined) {
       state.submitHold = value
+    },
+    set submitEnd(value: { reason: string }) {
+      state.submitEnd = value
+    },
+    set writeLastEnd(value: boolean) {
+      state.writeLastEnd = value
     },
   }
   return ctx
@@ -940,6 +973,8 @@ describe('handleServeRequest', () => {
       lastSeq: number
       permissionMode: string
       live: boolean
+      queued: string | null
+      jobAutoCommit: boolean
     }
     expect(body.id).toBe('s1')
     expect(body.job?.shadowBranch).toBe('raven/s1')
@@ -949,6 +984,233 @@ describe('handleServeRequest', () => {
     expect(body.lastSeq).toBe(2)
     expect(body.permissionMode).toBe('default')
     expect(body.live).toBe(true)
+    expect(body.queued).toBeNull()
+    expect(body.jobAutoCommit).toBe(false)
+  })
+
+  test('GET /v1/session/:id includes title, jobAutoCommit, lastEnd, jobError, queued', async () => {
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const runtime = await ctx.runtimeForSession('s1')
+    if (!runtime) throw new Error('expected runtime')
+    runtime.engine.session = {
+      id: 's1',
+      title: 'fix login',
+      permissionMode: 'default',
+      jobAutoCommit: true,
+      lastEnd: { reason: 'cancelled' },
+      jobError: 'gh missing',
+      followup: 'run tests',
+      job: {
+        baseBranch: 'main',
+        shadowBranch: 'raven/s1',
+        baseCommitSha: 'abc',
+        worktreePath: '/tmp/wt',
+      },
+    }
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1', {
+        headers: { authorization: 'Bearer secret' },
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as Record<string, unknown>
+    expect(body.title).toBe('fix login')
+    expect(body.jobAutoCommit).toBe(true)
+    expect(body.lastEnd).toEqual({ reason: 'cancelled' })
+    expect(body.jobError).toBe('gh missing')
+    expect(body.queued).toBe('run tests')
+    expect(body.live).toBe(true)
+  })
+
+  test('GET /v1/session/:id queued is null when followup is unset', async () => {
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1', {
+        headers: { authorization: 'Bearer secret' },
+      }),
+      ctx,
+    )
+    const body = (await res.json()) as { queued: string | null; jobAutoCommit: boolean }
+    expect(body.queued).toBeNull()
+    expect(body.jobAutoCommit).toBe(false)
+  })
+
+  test('POST submit runs follow-up after completed; cancelled clears without submit', async () => {
+    const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
+    const ctx = makeServeCtx(secret)
+    const auth = { authorization: 'Bearer secret', 'content-type': 'application/json' }
+
+    const setRes = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/followup', {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ text: 'next please' }),
+      }),
+      ctx,
+    )
+    expect(setRes.status).toBe(200)
+
+    const submitRes = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/submit', {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ text: 'go' }),
+      }),
+      ctx,
+    )
+    expect(submitRes.status).toBe(202)
+    await Promise.all([...ctx.turnFlights.values()])
+    expect(ctx.submitted).toEqual([
+      { text: 'go', turnPolicy: 'queue' },
+      { text: 'next please', turnPolicy: 'queue' },
+    ])
+    const runtime = await ctx.runtimeForSession('s1')
+    expect(runtime?.engine.session.followup).toBeUndefined()
+
+    const ctx2 = makeServeCtx(secret)
+    ctx2.submitEnd = { reason: 'cancelled' }
+    await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/followup', {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ text: 'nope' }),
+      }),
+      ctx2,
+    )
+    await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/submit', {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ text: 'go' }),
+      }),
+      ctx2,
+    )
+    await Promise.all([...ctx2.turnFlights.values()])
+    expect(ctx2.submitted).toEqual([{ text: 'go', turnPolicy: 'queue' }])
+    const runtime2 = await ctx2.runtimeForSession('s1')
+    expect(runtime2?.engine.session.followup).toBeUndefined()
+  })
+
+  test('POST submit does not run follow-up when lastEnd was not persisted', async () => {
+    const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
+    const ctx = makeServeCtx(secret)
+    ctx.writeLastEnd = false
+    const auth = { authorization: 'Bearer secret', 'content-type': 'application/json' }
+    await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/followup', {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ text: 'next please' }),
+      }),
+      ctx,
+    )
+    await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/submit', {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ text: 'go' }),
+      }),
+      ctx,
+    )
+    await Promise.all([...ctx.turnFlights.values()])
+    expect(ctx.submitted).toEqual([{ text: 'go', turnPolicy: 'queue' }])
+    const runtime = await ctx.runtimeForSession('s1')
+    expect(runtime?.engine.session.followup).toBe('next please')
+  })
+
+  test('POST submit leaves follow-up when a child leftover-ask is parked', async () => {
+    const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
+    const ctx = makeServeCtx(secret)
+    const auth = { authorization: 'Bearer secret', 'content-type': 'application/json' }
+    await ctx.store.upsertSession({
+      id: 'child',
+      createdAt: 1,
+      updatedAt: 1,
+      cwd: '/tmp',
+      model: 'dummy',
+      permissionMode: 'default',
+      compactGeneration: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      funding: 'byok',
+      parentSessionId: 's1',
+    })
+    await ctx.store.upsertPendingAsk({
+      callId: 'call_child',
+      sessionId: 'child',
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Allow Bash?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/followup', {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ text: 'next please' }),
+      }),
+      ctx,
+    )
+    await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/submit', {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ text: 'go' }),
+      }),
+      ctx,
+    )
+    await Promise.all([...ctx.turnFlights.values()])
+    expect(ctx.submitted).toEqual([{ text: 'go', turnPolicy: 'queue' }])
+    const runtime = await ctx.runtimeForSession('s1')
+    expect(runtime?.engine.session.followup).toBe('next please')
+  })
+
+  test('POST /v1/session/:id/followup overwrites; DELETE clears; empty is 400', async () => {
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const runtime = await ctx.runtimeForSession('s1')
+    if (!runtime) throw new Error('expected runtime')
+
+    const bad = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/followup', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+        body: JSON.stringify({ text: '' }),
+      }),
+      ctx,
+    )
+    expect(bad.status).toBe(400)
+
+    const first = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/followup', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'first' }),
+      }),
+      ctx,
+    )
+    expect(first.status).toBe(200)
+    expect(await first.json()).toEqual({ ok: true, queued: 'first' })
+
+    await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/followup', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'second' }),
+      }),
+      ctx,
+    )
+    expect(runtime.engine.session.followup).toBe('second')
+
+    const del = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/followup', {
+        method: 'DELETE',
+        headers: { authorization: 'Bearer secret' },
+      }),
+      ctx,
+    )
+    expect(del.status).toBe(200)
+    expect(await del.json()).toEqual({ ok: true, queued: null })
   })
 
   test('GET /v1/session/:id does not create', async () => {
@@ -1067,6 +1329,116 @@ describe('handleServeRequest', () => {
     expect(ghCalls[0]?.[0]).toBe('pr')
     expect(ghCalls[0]?.[1]).toBe('create')
     expect(ctx.submitted).toEqual([])
+  })
+
+  test('POST /v1/session/:id/edit rewinds then submits; empty is 400; pending refuses', async () => {
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const runtime = await ctx.runtimeForSession('s1')
+    if (!runtime) throw new Error('expected runtime')
+    let rewindCalls = 0
+    runtime.engine.rewindLast = async () => {
+      rewindCalls += 1
+      return { ok: true, notice: 'dropped 2 messages', droppedText: 'old prompt' }
+    }
+
+    const empty = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/edit', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+        body: JSON.stringify({ text: '' }),
+      }),
+      ctx,
+    )
+    expect(empty.status).toBe(400)
+    expect(rewindCalls).toBe(0)
+
+    const ok = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/edit', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'new prompt' }),
+      }),
+      ctx,
+    )
+    expect(ok.status).toBe(202)
+    expect(await ok.json()).toEqual({
+      accepted: true,
+      sessionId: 's1',
+      droppedText: 'old prompt',
+    })
+    expect(rewindCalls).toBe(1)
+    await Promise.all([...ctx.turnFlights.values()])
+    expect(ctx.submitted).toEqual([{ text: 'new prompt', turnPolicy: 'queue' }])
+
+    runtime.engine.rewindLast = async () => ({ ok: false, notice: 'pending permission ask' })
+    const refused = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/edit', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret', 'content-type': 'application/json' },
+        body: JSON.stringify({ text: 'x' }),
+      }),
+      ctx,
+    )
+    expect(refused.status).toBe(200)
+    expect(await refused.json()).toEqual({ ok: false, notice: 'pending permission ask' })
+    expect(ctx.submitted).toHaveLength(1)
+  })
+
+  test('GET /v1/session/:id/diff without a job is a notice', async () => {
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/diff', {
+        headers: { authorization: 'Bearer secret' },
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: false, notice: 'no job record' })
+  })
+
+  test('GET /v1/session/:id/diff with a job returns jobDiff', async () => {
+    const cwd = tempGitRepo(false)
+    const base = spawnSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).stdout.trim()
+    writeFileSync(join(cwd, 'new.ts'), 'hello\n')
+    spawnSync('git', ['add', 'new.ts'], { cwd, encoding: 'utf8' })
+    spawnSync('git', ['commit', '-m', 'add new'], { cwd, encoding: 'utf8' })
+    writeFileSync(join(cwd, 'dirty.txt'), 'x\n')
+
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const runtime = await ctx.runtimeForSession('s1')
+    if (!runtime) throw new Error('expected runtime')
+    runtime.engine.session = {
+      id: 's1',
+      permissionMode: 'default',
+      job: {
+        baseBranch: 'main',
+        shadowBranch: 'raven/s',
+        baseCommitSha: base,
+        worktreePath: cwd,
+      },
+    }
+
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/diff', {
+        headers: { authorization: 'Bearer secret' },
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      ok: boolean
+      baseCommitSha?: string
+      shadowBranch?: string
+      dirty?: boolean
+      files?: Array<{ path: string; op: string }>
+      notice?: string
+    }
+    expect(body.ok).toBe(true)
+    expect(body.baseCommitSha).toBe(base)
+    expect(body.shadowBranch).toBe('raven/s')
+    expect(body.dirty).toBe(true)
+    expect(body.files?.some((f) => f.path === 'new.ts' && f.op === 'create')).toBe(true)
+    expect(body.files?.some((f) => f.path === 'dirty.txt' && f.op === 'create')).toBe(true)
   })
 })
 

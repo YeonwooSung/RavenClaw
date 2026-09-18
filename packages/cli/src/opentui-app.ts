@@ -13,6 +13,7 @@ import {
   formatLoopStatus,
   shouldAdvanceLoop,
   maybePruneSkillsOnIdle,
+  runFollowupAfterSubmit,
   createSecondAbortGate,
   formatKilledBackgroundNotice,
   type StreamEvent,
@@ -37,6 +38,7 @@ import {
 import {
   formatDiffPanel,
   loadGitDiff,
+  loadSessionDiff,
   parseDiffArg,
   type GitDiffView,
 } from './diff-cmd'
@@ -72,6 +74,13 @@ export async function runOpenTuiApp(
   const abortGate = createSecondAbortGate()
 
   const writeDiffPanel = () => {
+    if (current.engine.session.job) {
+      const panel = loadSessionDiff(current.engine.session, current.cwd)
+      if (panel.kind === 'job') {
+        write(`${panel.lines.join('\n')}\n`)
+        return
+      }
+    }
     const next = readDiff(current.cwd)
     if (next.kind === 'files') {
       diffSelected = Math.min(diffSelected, Math.max(0, next.files.length - 1))
@@ -130,6 +139,7 @@ export async function runOpenTuiApp(
 
   const queue = createMessageQueue()
   let turnBusy = false
+  let draft = ''
   let loopState: import('@ravenclaw/core').LoopState | null = null
 
   const runTurn = async (text: string) => {
@@ -145,12 +155,14 @@ export async function runOpenTuiApp(
     view.append(`you  ${text}`)
     flush()
     let advanceLoop = false
+    let followupRan = false
     try {
       const payload = collectUserImages(expanded.text, current.cwd, readClipboardImage)
       const queued =
         typeof payload === 'string'
           ? { text: payload, turnPolicy: 'queue' as const }
           : { ...payload, turnPolicy: 'queue' as const }
+      const beforeLastEnd = current.engine.session.lastEnd
       const gen = current.engine.submitMessage(queued)
       while (true) {
         const next = await gen.next()
@@ -158,6 +170,19 @@ export async function runOpenTuiApp(
           view.apply({ type: 'round_end', end: next.value })
           flush()
           advanceLoop = shouldAdvanceLoop(next.value.reason)
+          if (
+            typeof current.engine.getFollowup === 'function' &&
+            typeof current.engine.clearFollowup === 'function' &&
+            typeof current.engine.liveTurnId === 'function'
+          ) {
+            const flag = await runFollowupAfterSubmit({
+              engine: current.engine,
+              store: current.store,
+              sessionId: current.engine.session.id,
+              beforeLastEnd,
+            })
+            followupRan = flag === 'ran'
+          }
           break
         }
         renderEvent(next.value)
@@ -171,7 +196,7 @@ export async function runOpenTuiApp(
       turnBusy = false
       const leftover = current.engine.drainSteering()
       if (leftover.length > 0) void runTurn(leftover.join('\n'))
-      else {
+      else if (!followupRan) {
         const queued = dequeue(queue)
         if (queued !== undefined) void runTurn(queued)
         else if (advanceLoop) {
@@ -252,14 +277,20 @@ export async function runOpenTuiApp(
     await replayPending()
     while (true) {
       if (diffOpen) writeDiffPanel()
-      write(`${composerLine()}\n`)
+      write(`${composerLine(draft)}\n`)
       const line = await readLine()
       if (line === undefined) return 0
+      const restored = draft
+      draft = ''
       lastActivityAt = Date.now()
 
       const parsed = handleSlashCommand(line)
       if (parsed.type === 'prompt') {
         if (parsed.text === '') {
+          if (restored !== '') {
+            await runTurn(restored)
+            continue
+          }
           if (!readClipboardImage()) continue
           await runTurn('')
           continue
@@ -347,6 +378,17 @@ export async function runOpenTuiApp(
           if (action.action === 'select') diffSelected = action.index
           diffOpen = true
           writeDiffPanel()
+          continue
+        }
+        case 'retry': {
+          const rewound = await current.engine.rewindLast()
+          write(`${rewound.notice}\n`)
+          if (!rewound.ok) continue
+          if (parsed.arg !== undefined && parsed.arg.trim() !== '') {
+            await runTurn(parsed.arg)
+            continue
+          }
+          if (rewound.droppedText !== undefined) draft = rewound.droppedText
           continue
         }
         case 'queue': {

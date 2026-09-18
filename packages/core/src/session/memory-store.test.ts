@@ -21,6 +21,29 @@ function session(over: Partial<SessionRecord> = {}): SessionRecord {
 }
 
 describe('createMemoryStore', () => {
+  test('lastEnd, jobError, and followup round-trip through upsertSession', async () => {
+    const store = createMemoryStore()
+    await store.createSession(
+      session({
+        lastEnd: { reason: 'cancelled' },
+        jobError: 'git commit failed',
+        followup: 'run tests',
+      }),
+    )
+    const loaded = await store.loadSession('s1')
+    expect(loaded.session.lastEnd).toEqual({ reason: 'cancelled' })
+    expect(loaded.session.jobError).toBe('git commit failed')
+    expect(loaded.session.followup).toBe('run tests')
+    delete loaded.session.jobError
+    delete loaded.session.followup
+    loaded.session.lastEnd = { reason: 'completed' }
+    await store.upsertSession(loaded.session)
+    const again = await store.loadSession('s1')
+    expect(again.session.lastEnd).toEqual({ reason: 'completed' })
+    expect(again.session.jobError).toBeUndefined()
+    expect(again.session.followup).toBeUndefined()
+  })
+
   test('persistAssistant rejects tool_use; persistToolCalls rejects text-only', async () => {
     const store = createMemoryStore()
     await store.createSession(session())

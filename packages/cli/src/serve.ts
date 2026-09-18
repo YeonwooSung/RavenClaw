@@ -16,7 +16,12 @@ import {
   type PermissionMode,
   type SequencedStreamEvent,
   applySessionDraftPr,
+  clearSessionJobError,
+  setSessionJobError,
+  runFollowupAfterSubmit,
+  jobDiff,
   type Message,
+  type RoundEnd,
   type SessionEngine,
   type SessionJob,
   type SessionRecord,
@@ -66,11 +71,49 @@ export function singleFlight<T>(
   return task
 }
 
-async function consumeSubmit(gen: AsyncGenerator<unknown, unknown>): Promise<void> {
+async function consumeSubmit(gen: AsyncGenerator<unknown, unknown>): Promise<unknown> {
   while (true) {
     const next = await gen.next()
-    if (next.done) return
+    if (next.done) return next.value
   }
+}
+
+function isRoundEnd(value: unknown): value is RoundEnd {
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    'reason' in value &&
+    typeof (value as { reason: unknown }).reason === 'string'
+  )
+}
+
+async function runServeFollowup(
+  engine: SessionEngine,
+  store: SessionStore | undefined,
+  sessionId: string,
+  beforeLastEnd: RoundEnd | undefined,
+): Promise<void> {
+  if (
+    typeof engine.getFollowup !== 'function' ||
+    typeof engine.clearFollowup !== 'function' ||
+    typeof engine.liveTurnId !== 'function'
+  ) {
+    return
+  }
+  await runFollowupAfterSubmit({
+    engine: {
+      session: engine.session,
+      submitMessage: (input) => engine.submitMessage(input),
+      getFollowup: () => engine.getFollowup?.() ?? null,
+      clearFollowup: async () => {
+        await engine.clearFollowup?.()
+      },
+      liveTurnId: () => engine.liveTurnId?.() ?? null,
+    },
+    store,
+    sessionId,
+    beforeLastEnd,
+  })
 }
 
 export async function tickMailbox(
@@ -136,7 +179,16 @@ export function gatewaySecret(env = process.env): string {
 }
 
 export type ServeEngine = {
-  session: { id: string; permissionMode: PermissionMode; job?: SessionJob }
+  session: {
+    id: string
+    permissionMode: PermissionMode
+    job?: SessionJob
+    followup?: string
+    title?: string
+    jobAutoCommit?: boolean
+    lastEnd?: SessionRecord['lastEnd']
+    jobError?: string
+  }
   submitMessage: (input: UserSubmitInput) => AsyncGenerator<StreamEvent, unknown>
   applyAskAnswer: (
     callId: string,
@@ -146,6 +198,10 @@ export type ServeEngine = {
   abort: (kind?: 'cancel' | 'interrupt') => void
   liveTurnId?: () => string | null
   compactNow: () => Promise<void>
+  setFollowup?: (text: string) => Promise<{ ok: true } | { ok: false; notice: string }>
+  clearFollowup?: () => Promise<void>
+  getFollowup?: () => string | null
+  rewindLast?: () => Promise<{ ok: boolean; notice: string; droppedText?: string }>
   close?: SessionEngine['close']
 }
 
@@ -425,7 +481,7 @@ async function readJsonBody(req: Request): Promise<{ ok: true; body: unknown } |
   }
 }
 
-const SESSION_PATH = /^\/v1\/session\/([^/]+)\/(stream|cancel|compact|resolve|submit|pr)$/
+const SESSION_PATH = /^\/v1\/session\/([^/]+)\/(stream|cancel|compact|resolve|submit|pr|followup|edit|diff)$/
 const SESSION_ID_PATH = /^\/v1\/session\/([^/]+)$/
 
 async function loadSessionRuntime(
@@ -637,14 +693,101 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
       const sid = loaded.runtime.engine.session.id
       void singleFlight(ctx.turnFlights, sid, async () => {
         try {
-          await consumeSubmit(
-            loaded.runtime.engine.submitMessage({ text: parsed.text, turnPolicy: 'queue' }),
+          const engine = loaded.runtime.engine
+          const beforeLastEnd = engine.session.lastEnd
+          const end = await consumeSubmit(
+            engine.submitMessage({ text: parsed.text, turnPolicy: 'queue' }),
           )
+          if (!isRoundEnd(end)) return
+          await runServeFollowup(engine, loaded.runtime.store, sid, beforeLastEnd)
         } catch {
           // session submit is fire-and-forget; the stream carries errors
         }
       })
       return Response.json({ accepted: true, sessionId: sid }, { status: 202 })
+    }
+    if (req.method === 'POST' && action === 'edit') {
+      const parsedBody = await readJsonBody(req)
+      if (!parsedBody.ok) return parsedBody.res
+      const rec = parsedBody.body
+      const text =
+        rec !== null && typeof rec === 'object' && typeof (rec as { text?: unknown }).text === 'string'
+          ? (rec as { text: string }).text
+          : ''
+      if (text.trim() === '') return Response.json({ error: 'text required' }, { status: 400 })
+      const loaded = await loadSessionRuntime(ctx, sessionId)
+      if (!loaded.ok) return loaded.res
+      const rewindLast = loaded.runtime.engine.rewindLast
+      if (!rewindLast) {
+        return Response.json({ ok: false, notice: 'rewind unavailable' })
+      }
+      const rewound = await rewindLast()
+      if (!rewound.ok) {
+        return Response.json({
+          ok: false,
+          notice: rewound.notice,
+          ...(rewound.droppedText !== undefined ? { droppedText: rewound.droppedText } : {}),
+        })
+      }
+      const sid = loaded.runtime.engine.session.id
+      void singleFlight(ctx.turnFlights, sid, async () => {
+        try {
+          const engine = loaded.runtime.engine
+          const beforeLastEnd = engine.session.lastEnd
+          const end = await consumeSubmit(
+            engine.submitMessage({ text, turnPolicy: 'queue' }),
+          )
+          if (!isRoundEnd(end)) return
+          await runServeFollowup(engine, loaded.runtime.store, sid, beforeLastEnd)
+        } catch {
+          // session edit is fire-and-forget; the stream carries errors
+        }
+      })
+      return Response.json(
+        {
+          accepted: true,
+          sessionId: sid,
+          ...(rewound.droppedText !== undefined ? { droppedText: rewound.droppedText } : {}),
+        },
+        { status: 202 },
+      )
+    }
+    if (req.method === 'POST' && action === 'followup') {
+      const loaded = await loadSessionRuntime(ctx, sessionId)
+      if (!loaded.ok) return loaded.res
+      const parsedBody = await readJsonBody(req)
+      if (!parsedBody.ok) return parsedBody.res
+      const rec =
+        parsedBody.body !== null && typeof parsedBody.body === 'object'
+          ? (parsedBody.body as Record<string, unknown>)
+          : null
+      const text = typeof rec?.text === 'string' ? rec.text : ''
+      const setFollowup = loaded.runtime.engine.setFollowup
+      if (!setFollowup) {
+        return Response.json({ error: 'follow-up text required' }, { status: 400 })
+      }
+      const result = await setFollowup(text)
+      if (!result.ok) {
+        return Response.json({ error: result.notice }, { status: 400 })
+      }
+      const queued =
+        loaded.runtime.engine.getFollowup?.() ?? loaded.runtime.engine.session.followup ?? text.trim()
+      return Response.json({ ok: true, queued })
+    }
+    if (req.method === 'DELETE' && action === 'followup') {
+      const loaded = await loadSessionRuntime(ctx, sessionId)
+      if (!loaded.ok) return loaded.res
+      await loaded.runtime.engine.clearFollowup?.()
+      return Response.json({ ok: true, queued: null })
+    }
+    if (req.method === 'GET' && action === 'diff') {
+      const loaded = await loadSessionRuntime(ctx, sessionId)
+      if (!loaded.ok) return loaded.res
+      const job = loaded.runtime.engine.session.job
+      if (!job) return Response.json({ ok: false, notice: 'no job record' })
+      const diff = jobDiff(job)
+      if (!diff.ok) return Response.json(diff)
+      return Response.json(diff)
     }
     if (req.method === 'POST' && action === 'pr') {
       const loaded = await loadSessionRuntime(ctx, sessionId)
@@ -687,10 +830,10 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
           ? { persistToolCalls: (id, message) => store.persistToolCalls!(id, message) }
           : {}),
       })
-      if (out.job) {
-        session.job = out.job
-        await store?.upsertSession?.(session as SessionRecord)
-      }
+      if (out.job) session.job = out.job
+      if (out.ok) clearSessionJobError(session)
+      else setSessionJobError(session, out.notice)
+      await store?.upsertSession?.(session as SessionRecord)
       const json: { ok: boolean; notice: string; snapshot?: typeof out.snapshot } = {
         ok: out.ok,
         notice: out.notice,
@@ -710,21 +853,32 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
     const { engine, store } = loaded.runtime
     const pendingAsks = await collectSnapshotPendingAsks(loaded.runtime, sessionId)
     const lastSeq = store?.lastStreamSeq ? await store.lastStreamSeq(sessionId) : 0
+    const session = engine.session
     const body: {
       id: string
-      job?: SessionJob
+      jobAutoCommit: boolean
       pendingAsks: Array<{ callId: string; tool: string; message: string; childSessionId?: string }>
       lastSeq: number
       permissionMode: PermissionMode
       live: boolean
+      queued: string | null
+      title?: string
+      job?: SessionJob
+      lastEnd?: SessionRecord['lastEnd']
+      jobError?: string
     } = {
-      id: engine.session.id,
+      id: session.id,
+      jobAutoCommit: session.jobAutoCommit === true,
       pendingAsks,
       lastSeq,
-      permissionMode: engine.session.permissionMode,
+      permissionMode: session.permissionMode,
       live: (engine.liveTurnId?.() ?? null) !== null,
+      queued: session.followup ?? null,
     }
-    if (engine.session.job !== undefined) body.job = engine.session.job
+    if (session.title !== undefined) body.title = session.title
+    if (session.job !== undefined) body.job = session.job
+    if (session.lastEnd !== undefined) body.lastEnd = session.lastEnd
+    if (session.jobError !== undefined) body.jobError = session.jobError
     return Response.json(body)
   }
 

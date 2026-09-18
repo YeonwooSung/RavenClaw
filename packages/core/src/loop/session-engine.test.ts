@@ -1639,6 +1639,56 @@ describe('job auto-commit', () => {
     expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).toBe(head)
     expect(git(job.worktreePath, ['status', '--porcelain'])).toContain('note.txt')
   })
+
+  test('jobAutoCommit failure sets session.jobError; completed success clears it', async () => {
+    const store = createMemoryStore()
+    const bad = makeSession({
+      id: 'sess_job_err_commit',
+      job: {
+        baseBranch: 'main',
+        shadowBranch: 'raven/x',
+        baseCommitSha: 'abc',
+        worktreePath: '',
+      },
+      jobAutoCommit: true,
+      jobError: 'stale',
+    })
+    await store.createSession(bad)
+    const failEngine = createSessionEngine({
+      ...engineOpts({
+        provider: createFakeProvider([
+          [{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: 'end' }],
+        ]),
+        store,
+        session: bad,
+      }),
+    })
+    const failed = await drain(failEngine.submitMessage('hi'))
+    expect(failed.result).toEqual({ reason: 'completed' })
+    expect(failEngine.session.lastEnd).toEqual({ reason: 'completed' })
+    expect(failEngine.session.jobError).toBe('job commit failed: no worktree')
+    const loadedFail = await store.loadSession(bad.id)
+    expect(loadedFail.session.jobError).toBe('job commit failed: no worktree')
+
+    const { store: okStore, sess, job } = await startJobSession({ jobAutoCommit: true })
+    sess.jobError = 'prior'
+    await okStore.upsertSession(sess)
+    const okEngine = createSessionEngine({
+      ...engineOpts({
+        provider: createFakeProvider([
+          [{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: 'end' }],
+        ]),
+        store: okStore,
+        session: sess,
+      }),
+    })
+    writeFileSync(join(job.worktreePath, 'extra.txt'), 'x\n')
+    const ok = await drain(okEngine.submitMessage('hi'))
+    expect(ok.result).toEqual({ reason: 'completed' })
+    expect(okEngine.session.jobError).toBeUndefined()
+    const loadedOk = await okStore.loadSession(sess.id)
+    expect(loadedOk.session.jobError).toBeUndefined()
+  })
 })
 
 describe('cancel', () => {
@@ -1742,5 +1792,89 @@ describe('cancel', () => {
       ),
     ).toBe(true)
     expect(await store.listPendingAsks(sess.id)).toHaveLength(1)
+  })
+
+  test('cancelled turn persists lastEnd; pending-gate submit does not overwrite it', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_last_end_cancel' })
+    await store.createSession(session)
+    let enteredFirst: () => void
+    const firstStreamEntered = new Promise<void>((resolve) => {
+      enteredFirst = resolve
+    })
+    const provider: Provider = {
+      id: 'fake',
+      apiMode: 'openai_compat',
+      profile(model: string) {
+        return defaultModel(model)
+      },
+      async *stream(_req, signal) {
+        enteredFirst()
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) {
+            resolve()
+            return
+          }
+          signal.addEventListener('abort', () => resolve(), { once: true })
+        })
+      },
+    }
+    const engine = createSessionEngine({
+      ...engineOpts({ provider, store, session }),
+    })
+    const gen = engine.submitMessage('go')
+    const pending = drain(gen)
+    await firstStreamEntered
+    engine.abort('cancel')
+    expect((await pending).result).toEqual({ reason: 'cancelled' })
+    expect(engine.session.lastEnd).toEqual({ reason: 'cancelled' })
+    const loaded = await store.loadSession(session.id)
+    expect(loaded.session.lastEnd).toEqual({ reason: 'cancelled' })
+
+    await store.upsertPendingAsk({
+      callId: 'parked',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Bash?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    const gated = await drain(engine.submitMessage('again'))
+    expect(gated.result).toEqual({ reason: 'completed' })
+    expect(engine.session.lastEnd).toEqual({ reason: 'cancelled' })
+  })
+})
+
+describe('followup slot', () => {
+  test('setFollowup overwrites; empty is an error; clear removes', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_followup' })
+    await store.createSession(sess)
+    const engine = createSessionEngine({
+      session: sess,
+      provider: createFakeProvider([]),
+      store,
+      tools: [],
+      compact: defaultCompact({ enabled: false }),
+      model: defaultModel(),
+      maxRounds: 8,
+      async askUser() {
+        return 'deny'
+      },
+    })
+
+    expect(await engine.setFollowup('  ')).toEqual({ ok: false, notice: 'follow-up text required' })
+    expect(engine.session.followup).toBeUndefined()
+    expect(engine.getFollowup()).toBeNull()
+
+    expect(await engine.setFollowup('first')).toEqual({ ok: true })
+    expect(await engine.setFollowup('second')).toEqual({ ok: true })
+    expect(engine.getFollowup()).toBe('second')
+    expect((await store.loadSession(sess.id)).session.followup).toBe('second')
+
+    await engine.clearFollowup()
+    expect(engine.getFollowup()).toBeNull()
+    expect((await store.loadSession(sess.id)).session.followup).toBeUndefined()
   })
 })

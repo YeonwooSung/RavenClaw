@@ -33,7 +33,11 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
   { name: 'tasks', usage: '/tasks [kill <id>|steer <id> <text>]', summary: 'list, stop, or steer background tasks' },
   { name: 'undo', usage: '/undo', summary: 'restore files from the last edit checkpoint' },
   { name: 'rewind', usage: '/rewind', summary: 'undo last turn files and drop that conversation turn' },
-  { name: 'diff', usage: '/diff [n|close]', summary: 'open working-tree git diff panel' },
+  {
+    name: 'diff',
+    usage: '/diff [n|close]',
+    summary: 'open git diff; job sessions show base...HEAD ∪ dirty',
+  },
   { name: 'job', usage: '/job [name] | /job commit on|off', summary: 'enter a named raven/* job worktree; flip opt-in turn-end commit' },
   { name: 'pr', usage: '/pr [title]', summary: 'open or update a draft PR from the session shadow branch' },
   { name: 'steer', usage: '/steer <text>', summary: 'inject text into the live turn (next tool round)' },
@@ -55,6 +59,16 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
   { name: 'loop', usage: '/loop [stop|<n> <prompt>]', summary: 'repeat a prompt n times (max 20)' },
   { name: 'cron', usage: '/cron [add|rm|on|off]', summary: 'list or edit local scheduled jobs' },
   { name: 'queue', usage: '/queue [drop n|clear]', summary: 'list or edit queued prompts (mid-turn or next turn)' },
+  {
+    name: 'follow',
+    usage: '/follow [text|clear]',
+    summary: 'set, show, or clear the one-slot next-turn follow-up',
+  },
+  {
+    name: 'retry',
+    usage: '/retry [text]',
+    summary: 'rewind last user turn; no arg restores text to composer, arg resubmits',
+  },
   { name: 'copy', usage: '/copy', summary: 'copy this conversation as markdown' },
   { name: 'interview', usage: '/interview', summary: 'ask clarifying questions before implementing' },
   {

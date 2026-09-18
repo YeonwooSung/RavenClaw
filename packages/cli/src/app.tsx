@@ -13,6 +13,7 @@ import {
   shouldAdvanceLoop,
   type LoopState,
   maybePruneSkillsOnIdle,
+  runFollowupAfterSubmit,
   type Funding,
   type PermissionMode,
   type SessionRecord,
@@ -50,7 +51,7 @@ import {
   removeAt,
 } from './message-queue'
 import { formatAskUserDialog, parseAskUserAnswer } from './ask-host'
-import { loadGitDiff, parseDiffArg, type GitDiffView } from './diff-cmd'
+import { loadSessionDiff, parseDiffArg, type GitDiffView } from './diff-cmd'
 import { DiffPanel } from './diff-panel'
 import type { AskUserInput } from '@ravenclaw/core'
 import { keyToPermission, PermissionDialog, type PermissionAsk } from './permission-dialog'
@@ -98,6 +99,7 @@ export function App(props: AppProps) {
   const [mode, setMode] = useState<PermissionMode>(props.runtime.engine.session.permissionMode)
   const [diffOpen, setDiffOpen] = useState(false)
   const [diffView, setDiffView] = useState<GitDiffView | undefined>()
+  const [diffLines, setDiffLines] = useState<string[] | undefined>()
   const [diffSelected, setDiffSelected] = useState(0)
   const diffOpenRef = useRef(false)
   const abortGateRef = useRef(createSecondAbortGate())
@@ -126,12 +128,20 @@ export function App(props: AppProps) {
   }, [])
 
   const applyDiffView = useCallback((select?: number) => {
-    const view = loadGitDiff(runtimeRef.current.cwd)
-    setDiffView(view)
+    const runtime = runtimeRef.current
+    const panel = loadSessionDiff(runtime.engine.session, runtime.cwd)
     diffOpenRef.current = true
     setDiffOpen(true)
-    if (view.kind === 'files') {
-      const max = view.files.length - 1
+    if (panel.kind === 'job') {
+      setDiffLines(panel.lines)
+      setDiffView(undefined)
+      setDiffSelected(0)
+      return
+    }
+    setDiffLines(undefined)
+    setDiffView(panel.view)
+    if (panel.view.kind === 'files') {
+      const max = panel.view.files.length - 1
       setDiffSelected(select === undefined ? 0 : Math.min(max, Math.max(0, select)))
     } else {
       setDiffSelected(0)
@@ -145,10 +155,17 @@ export function App(props: AppProps) {
 
   const refreshDiff = useCallback(() => {
     if (!diffOpenRef.current) return
-    const view = loadGitDiff(runtimeRef.current.cwd)
-    setDiffView(view)
-    if (view.kind === 'files') {
-      setDiffSelected((index) => Math.min(index, view.files.length - 1))
+    const runtime = runtimeRef.current
+    const panel = loadSessionDiff(runtime.engine.session, runtime.cwd)
+    if (panel.kind === 'job') {
+      setDiffLines(panel.lines)
+      setDiffView(undefined)
+      return
+    }
+    setDiffLines(undefined)
+    setDiffView(panel.view)
+    if (panel.view.kind === 'files') {
+      setDiffSelected((index) => Math.min(index, panel.view.files.length - 1))
     }
   }, [])
 
@@ -280,6 +297,7 @@ export function App(props: AppProps) {
       historyIndexRef.current = null
       setRows((prev) => [...prev, { kind: 'user', text }])
       let advanceLoop = false
+      let followupRan = false
       try {
         const payload = collectUserImages(
           prompt,
@@ -290,11 +308,26 @@ export function App(props: AppProps) {
           typeof payload === 'string'
             ? { text: payload, turnPolicy: 'queue' as const }
             : { ...payload, turnPolicy: 'queue' as const }
-        const gen = runtimeRef.current.engine.submitMessage(queued)
+        const engine = runtimeRef.current.engine
+        const beforeLastEnd = engine.session.lastEnd
+        const gen = engine.submitMessage(queued)
         while (true) {
           const next = await gen.next()
           if (next.done) {
             advanceLoop = shouldAdvanceLoop(next.value.reason)
+            if (
+              typeof engine.getFollowup === 'function' &&
+              typeof engine.clearFollowup === 'function' &&
+              typeof engine.liveTurnId === 'function'
+            ) {
+              const flag = await runFollowupAfterSubmit({
+                engine,
+                store: runtimeRef.current.store,
+                sessionId: engine.session.id,
+                beforeLastEnd,
+              })
+              followupRan = flag === 'ran'
+            }
             break
           }
           applyLiveEvent(next.value)
@@ -310,7 +343,7 @@ export function App(props: AppProps) {
         setBusy(false)
         const leftover = runtimeRef.current.engine.drainSteering()
         if (leftover.length > 0) void runTurn(leftover.join('\n'))
-        else {
+        else if (!followupRan) {
           const queued = dequeue(queueRef.current)
           if (queued !== undefined) void runTurn(queued)
           else if (advanceLoop) {
@@ -455,6 +488,19 @@ export function App(props: AppProps) {
               return
             }
             applyDiffView(action.action === 'select' ? action.index : undefined)
+            return
+          }
+          case 'retry': {
+            void (async () => {
+              const rewound = await runtimeRef.current.engine.rewindLast()
+              setNotice(rewound.notice)
+              if (!rewound.ok) return
+              if (parsed.arg !== undefined && parsed.arg.trim() !== '') {
+                void runTurn(parsed.arg)
+                return
+              }
+              if (rewound.droppedText !== undefined) setDraft(rewound.droppedText)
+            })()
             return
           }
           case 'queue': {
@@ -721,7 +767,11 @@ export function App(props: AppProps) {
         selectedIndex={selectedIndex}
         expandedIds={expandedIds}
       />
-      {diffOpen && diffView ? <DiffPanel view={diffView} selected={diffSelected} /> : null}
+      {diffOpen && diffLines ? (
+        <DiffPanel lines={diffLines} />
+      ) : diffOpen && diffView ? (
+        <DiffPanel view={diffView} selected={diffSelected} />
+      ) : null}
       <TodoPanel items={todos} />
       <ChildAgentList tasks={tasks} />
       {picker ? <ResumePicker sessions={picker} index={pickerIndex} /> : null}
