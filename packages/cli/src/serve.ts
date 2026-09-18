@@ -19,6 +19,7 @@ import {
   clearSessionJobError,
   setSessionJobError,
   runFollowupAfterSubmit,
+  listOwnedPendingAsks,
   jobDiff,
   type Message,
   type RoundEnd,
@@ -433,15 +434,14 @@ async function publishParkedAsks(
 ): Promise<void> {
   const store = runtime.store
   if (!store?.listPendingAsks) return
-  const rows = [...(await store.listPendingAsks(sessionId))]
-  if (store.listSessions) {
-    const children = await store.listSessions({ parentSessionId: sessionId })
-    for (const child of children) {
-      for (const row of await store.listPendingAsks(child.id)) {
-        rows.push({ ...row, sessionId: child.id })
-      }
-    }
-  }
+  const rows = (await listOwnedPendingAsks(store, sessionId)) as Array<{
+    callId: string
+    sessionId: string
+    tool: string
+    message: string
+    input: unknown
+    saveAs?: string
+  }>
   for (const row of rows) {
     const event: Extract<StreamEvent, { type: 'permission_ask' }> = {
       type: 'permission_ask',
@@ -504,15 +504,12 @@ async function collectSnapshotPendingAsks(
 ): Promise<Array<{ callId: string; tool: string; message: string; childSessionId?: string }>> {
   const store = runtime.store
   if (!store?.listPendingAsks) return []
-  const rows = [...(await store.listPendingAsks(sessionId))]
-  if (store.listSessions) {
-    const children = await store.listSessions({ parentSessionId: sessionId })
-    for (const child of children) {
-      for (const row of await store.listPendingAsks(child.id)) {
-        rows.push({ ...row, sessionId: child.id })
-      }
-    }
-  }
+  const rows = (await listOwnedPendingAsks(store, sessionId)) as Array<{
+    callId: string
+    sessionId: string
+    tool: string
+    message: string
+  }>
   return rows.map((row) => {
     const ask: { callId: string; tool: string; message: string; childSessionId?: string } = {
       callId: row.callId,

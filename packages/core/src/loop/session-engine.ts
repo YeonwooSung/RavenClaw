@@ -43,7 +43,7 @@ import {
   stampCheckpoint,
   stampTodoSnapshot,
 } from '../session/job'
-import { writeFollowup } from '../session/followup'
+import { listDescendantSessionIds, listOwnedPendingAsks as listOwnedPendingAsksFromStore, writeFollowup } from '../session/followup'
 import { getSessionWorktree } from '../tools/session-worktree'
 import { applyPermissionMode } from '../prompt/builder'
 import { injectMidTurnHint } from '../prompt/cache'
@@ -186,16 +186,8 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
     }
   }
 
-  async function listOwnedPendingAsks() {
-    const own = await opts.store.listPendingAsks(session.id)
-    const children = opts.store.listSessions
-      ? await opts.store.listSessions({ parentSessionId: session.id })
-      : []
-    const nested: PendingAsk[] = []
-    for (const child of children) {
-      nested.push(...(await opts.store.listPendingAsks(child.id)))
-    }
-    return [...own, ...nested]
+  async function listOwnedPendingAsks(): Promise<PendingAsk[]> {
+    return (await listOwnedPendingAsksFromStore(opts.store, session.id)) as PendingAsk[]
   }
 
   async function resolveAskTarget(callId: string): Promise<
@@ -231,13 +223,14 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         ...(session.prePlanMode !== undefined ? { prePlanMode: session.prePlanMode } : {}),
       }
     }
+    const descendants = new Set(await listDescendantSessionIds(opts.store, session.id))
+    if (!descendants.has(row.sessionId)) return { status: 'unmatched' }
     let child: Awaited<ReturnType<SessionStore['loadSession']>>
     try {
       child = await opts.store.loadSession(row.sessionId)
     } catch {
       return { status: 'unmatched' }
     }
-    if (child.session.parentSessionId !== session.id) return { status: 'unmatched' }
     if (await isCallPaired(callId, row.sessionId)) {
       await dropPendingAsk(callId)
       return { status: 'paired' }

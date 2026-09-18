@@ -1920,6 +1920,77 @@ describe('job auto-commit', () => {
   })
 })
 
+describe('applyAskAnswer descendants', () => {
+  test('parent applyAskAnswer settles a grandchild leftover-ask onto the grandchild session', async () => {
+    const store = createMemoryStore()
+    const parent = makeSession({ id: 'sess_apply_grand_parent' })
+    const child = makeSession({ id: 'sess_apply_grand_child', parentSessionId: parent.id })
+    const grand = makeSession({ id: 'sess_apply_grand', parentSessionId: child.id })
+    await store.createSession(parent)
+    await store.createSession(child)
+    await store.createSession(grand)
+    await store.persistToolCalls(grand.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_grand', name: 'Echo', input: { text: 'hi' } }],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_grand',
+      sessionId: grand.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    const echo = createAskEcho()
+    const engine = createSessionEngine({
+      ...engineOpts({
+        provider: createFakeProvider([]),
+        store,
+        session: parent,
+        tools: [echo],
+      }),
+    })
+    expect(await engine.applyAskAnswer('call_grand', 'allow')).toBe('matched')
+    expect(await store.listPendingAsks(grand.id)).toHaveLength(0)
+    const grandLoaded = await store.loadSession(grand.id)
+    const tools = grandLoaded.messages.filter((m) => m.role === 'tool' && m.toolUseId === 'call_grand')
+    expect(tools).toHaveLength(1)
+    expect(tools[0]?.ok).toBe(true)
+    const parentLoaded = await store.loadSession(parent.id)
+    expect(parentLoaded.messages.some((m) => m.role === 'tool')).toBe(false)
+  })
+
+  test('applyAskAnswer stays unmatched for a non-descendant leftover-ask', async () => {
+    const store = createMemoryStore()
+    const parent = makeSession({ id: 'sess_apply_other_parent' })
+    const other = makeSession({ id: 'sess_apply_other' })
+    await store.createSession(parent)
+    await store.createSession(other)
+    await store.upsertPendingAsk({
+      callId: 'call_other',
+      sessionId: other.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    const engine = createSessionEngine({
+      ...engineOpts({
+        provider: createFakeProvider([]),
+        store,
+        session: parent,
+        tools: [createAskEcho()],
+      }),
+    })
+    expect(await engine.applyAskAnswer('call_other', 'deny')).toBe('unmatched')
+    expect(await store.listPendingAsks(other.id)).toHaveLength(1)
+  })
+})
+
 describe('cancel', () => {
   async function drain(gen: AsyncGenerator<StreamEvent, import('../types').RoundEnd>) {
     const events: StreamEvent[] = []

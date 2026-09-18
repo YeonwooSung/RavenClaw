@@ -8,6 +8,27 @@ export function lastEndWrittenThisTurn(
   return after
 }
 
+export async function listDescendantSessionIds(
+  store: { listSessions(filter: { parentSessionId: string }): Promise<Array<{ id: string }>> },
+  sessionId: string,
+): Promise<string[]> {
+  const out: string[] = []
+  const seen = new Set<string>([sessionId])
+  const queue = [sessionId]
+  while (queue.length > 0) {
+    const current = queue.shift()
+    if (current === undefined) break
+    const children = await store.listSessions({ parentSessionId: current })
+    for (const child of children) {
+      if (seen.has(child.id)) continue
+      seen.add(child.id)
+      out.push(child.id)
+      queue.push(child.id)
+    }
+  }
+  return out
+}
+
 export async function listOwnedPendingAsks(
   store:
     | {
@@ -20,10 +41,9 @@ export async function listOwnedPendingAsks(
   if (!store?.listPendingAsks) return []
   const own = await store.listPendingAsks(sessionId)
   if (!store.listSessions) return own
-  const children = await store.listSessions({ parentSessionId: sessionId })
   const nested: unknown[] = []
-  for (const child of children) {
-    nested.push(...(await store.listPendingAsks(child.id)))
+  for (const id of await listDescendantSessionIds(store, sessionId)) {
+    nested.push(...(await store.listPendingAsks(id)))
   }
   return [...own, ...nested]
 }

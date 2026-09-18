@@ -981,11 +981,64 @@ describe('handleServeRequest', () => {
     expect(body.pendingAsks[0]?.callId).toBe('parked_snap')
     expect(body.pendingAsks[0]?.tool).toBe('Bash')
     expect(body.pendingAsks[0]?.message).toBe('Bash?')
+    expect(body.pendingAsks[0]?.childSessionId).toBeUndefined()
     expect(body.lastSeq).toBe(2)
     expect(body.permissionMode).toBe('default')
     expect(body.live).toBe(true)
     expect(body.queued).toBeNull()
     expect(body.jobAutoCommit).toBe(false)
+  })
+
+  test('GET snapshot pending list includes a grandchild leftover-ask', async () => {
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const parent = await ctx.runtimeForSession('s1')
+    if (!parent) throw new Error('expected runtime')
+    await ctx.store.createSession({
+      id: 'child_snap',
+      createdAt: 1,
+      updatedAt: 1,
+      cwd: '/tmp',
+      model: 'dummy',
+      permissionMode: 'default',
+      compactGeneration: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      funding: 'byok',
+      parentSessionId: 's1',
+    })
+    await ctx.store.createSession({
+      id: 'grand_snap',
+      createdAt: 1,
+      updatedAt: 1,
+      cwd: '/tmp',
+      model: 'dummy',
+      permissionMode: 'default',
+      compactGeneration: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      funding: 'byok',
+      parentSessionId: 'child_snap',
+    })
+    await ctx.store.upsertPendingAsk({
+      callId: 'call_grand_snap',
+      sessionId: 'grand_snap',
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Bash?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    } satisfies PendingAsk)
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1', {
+        headers: { authorization: 'Bearer secret' },
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as {
+      pendingAsks: Array<{ callId: string; childSessionId?: string }>
+    }
+    expect(body.pendingAsks).toEqual([
+      { callId: 'call_grand_snap', tool: 'Bash', message: 'Bash?', childSessionId: 'grand_snap' },
+    ])
   })
 
   test('GET /v1/session/:id includes title, jobAutoCommit, lastEnd, jobError, queued', async () => {
