@@ -45,6 +45,9 @@ function fakeEngine(session: SessionRecord): SessionEngine & { reloads: number }
     async rewindLast() {
       return { ok: false, notice: 'nothing to rewind' }
     },
+    async maybeFinishRewindReset() {
+      return { ran: false, ok: true }
+    },
     async *submitMessage() {
       return { reason: 'completed' as const }
     },

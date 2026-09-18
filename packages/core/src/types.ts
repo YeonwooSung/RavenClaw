@@ -483,6 +483,7 @@ export interface SessionEngine {
   /** Host `/queue` drain. Called after each tool round; one item per batch. */
   bindDrainQueued(fn: (() => string | undefined) | undefined): void
   rewindLast(): Promise<{ ok: boolean; notice: string; droppedText?: string }>
+  maybeFinishRewindReset(): Promise<{ ran: boolean; ok: boolean; notice?: string }>
   compactNow(): Promise<void>
   setModel(profile: ModelProfile): Promise<void>
   setPermissionMode(mode: PermissionMode): Promise<void>

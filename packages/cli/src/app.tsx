@@ -129,23 +129,30 @@ export function App(props: AppProps) {
 
   const applyDiffView = useCallback((select?: number) => {
     const runtime = runtimeRef.current
-    const panel = loadSessionDiff(runtime.engine.session, runtime.cwd)
-    diffOpenRef.current = true
-    setDiffOpen(true)
-    if (panel.kind === 'job') {
-      setDiffLines(panel.lines)
-      setDiffView(undefined)
-      setDiffSelected(0)
+    const apply = () => {
+      const panel = loadSessionDiff(runtime.engine.session, runtime.cwd)
+      diffOpenRef.current = true
+      setDiffOpen(true)
+      if (panel.kind === 'job') {
+        setDiffLines(panel.lines)
+        setDiffView(undefined)
+        setDiffSelected(0)
+        return
+      }
+      setDiffLines(undefined)
+      setDiffView(panel.view)
+      if (panel.view.kind === 'files') {
+        const max = panel.view.files.length - 1
+        setDiffSelected(select === undefined ? 0 : Math.min(max, Math.max(0, select)))
+      } else {
+        setDiffSelected(0)
+      }
+    }
+    if (runtime.engine.maybeFinishRewindReset) {
+      void runtime.engine.maybeFinishRewindReset().then(apply)
       return
     }
-    setDiffLines(undefined)
-    setDiffView(panel.view)
-    if (panel.view.kind === 'files') {
-      const max = panel.view.files.length - 1
-      setDiffSelected(select === undefined ? 0 : Math.min(max, Math.max(0, select)))
-    } else {
-      setDiffSelected(0)
-    }
+    apply()
   }, [])
 
   const closeDiff = useCallback(() => {
@@ -156,17 +163,24 @@ export function App(props: AppProps) {
   const refreshDiff = useCallback(() => {
     if (!diffOpenRef.current) return
     const runtime = runtimeRef.current
-    const panel = loadSessionDiff(runtime.engine.session, runtime.cwd)
-    if (panel.kind === 'job') {
-      setDiffLines(panel.lines)
-      setDiffView(undefined)
+    const apply = () => {
+      const panel = loadSessionDiff(runtime.engine.session, runtime.cwd)
+      if (panel.kind === 'job') {
+        setDiffLines(panel.lines)
+        setDiffView(undefined)
+        return
+      }
+      setDiffLines(undefined)
+      setDiffView(panel.view)
+      if (panel.view.kind === 'files') {
+        setDiffSelected((index) => Math.min(index, panel.view.files.length - 1))
+      }
+    }
+    if (runtime.engine.maybeFinishRewindReset) {
+      void runtime.engine.maybeFinishRewindReset().then(apply)
       return
     }
-    setDiffLines(undefined)
-    setDiffView(panel.view)
-    if (panel.view.kind === 'files') {
-      setDiffSelected((index) => Math.min(index, panel.view.files.length - 1))
-    }
+    apply()
   }, [])
 
   const bindAskQuestions = useCallback(() => {

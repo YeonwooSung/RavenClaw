@@ -1066,6 +1066,9 @@ function attachRavenclawLog(engine: SessionEngine, log: RavenclawLog): SessionEn
     rewindLast() {
       return engine.rewindLast()
     },
+    maybeFinishRewindReset() {
+      return engine.maybeFinishRewindReset()
+    },
     compactNow() {
       return engine.compactNow()
     },

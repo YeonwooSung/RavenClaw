@@ -89,6 +89,9 @@ export function wrapSessionEngineLog(
     rewindLast() {
       return engine.rewindLast()
     },
+    maybeFinishRewindReset() {
+      return engine.maybeFinishRewindReset()
+    },
     compactNow() {
       return engine.compactNow()
     },

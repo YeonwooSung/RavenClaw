@@ -22,6 +22,7 @@ import {
   dropLastUserTurn,
   formatRewindNotice,
   lastUserText,
+  maybeFinishRewindReset,
   rewindLastTurn,
   rewindToCheckpoint,
 } from './rewind'
@@ -900,5 +901,84 @@ describe('rewindToCheckpoint', () => {
     const loaded = await store.loadSession(id)
     expect(loaded.messages.map((msg) => msg.id)).toEqual([])
     expect(loaded.session.jobError).toBeUndefined()
+  })
+
+  test('maybeFinishRewindReset is a no-op without the flag and does not move HEAD', async () => {
+    const cwd = tempDir('ravenclaw-finish-noop-')
+    initGitRepo(cwd)
+    const id = nextSession()
+    const entered = enterSessionWorktree(id, cwd)
+    expect(entered.ok).toBe(true)
+    const job = entered.job!
+    const later = git(job.worktreePath, ['rev-parse', 'HEAD'])
+    const store = createMemoryStore()
+    const sess = sessionRecord({ id, cwd: job.worktreePath, job })
+    await store.createSession(sess)
+    const out = await maybeFinishRewindReset({ session: sess, store })
+    expect(out).toEqual({ ran: false, ok: true })
+    expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).toBe(later)
+  })
+
+  test('maybeFinishRewindReset resets to the flag sha and clears it', async () => {
+    const cwd = tempDir('ravenclaw-finish-ok-')
+    initGitRepo(cwd)
+    const id = nextSession()
+    const entered = enterSessionWorktree(id, cwd)
+    expect(entered.ok).toBe(true)
+    const job = entered.job!
+    writeFileSync(join(job.worktreePath, 'extra.txt'), 'later\n')
+    expect(spawnSync('git', ['add', '-A'], { cwd: job.worktreePath, encoding: 'utf8' }).status).toBe(0)
+    expect(
+      spawnSync('git', ['commit', '-m', 'later'], { cwd: job.worktreePath, encoding: 'utf8' }).status,
+    ).toBe(0)
+    job.pendingResetSha = job.baseCommitSha
+    const store = createMemoryStore()
+    const sess = sessionRecord({
+      id,
+      cwd: job.worktreePath,
+      job,
+      todos: [{ text: 'later', status: 'pending' }],
+    })
+    await store.createSession(sess)
+    const checkpoint = { commitSha: job.baseCommitSha, todoSnapshot: [{ text: 'early', status: 'done' as const }], dirty: false }
+    const messages: Message[] = [
+      user('u0', 'first', 1),
+      { ...assistant('a0', 'ok', 2), checkpoint },
+    ]
+    await store.persistUser(id, messages[0] as Extract<Message, { role: 'user' }>)
+    await store.persistAssistant(id, messages[1] as Extract<Message, { role: 'assistant' }>)
+
+    const out = await maybeFinishRewindReset({ session: sess, store, messages })
+    expect(out.ran).toBe(true)
+    expect(out.ok).toBe(true)
+    expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).toBe(job.baseCommitSha)
+    expect(sess.job?.pendingResetSha).toBeUndefined()
+    expect(sess.todos).toEqual([{ text: 'early', status: 'done' }])
+    expect(sess.jobError).toBeUndefined()
+  })
+
+  test('maybeFinishRewindReset reset-fail keeps the flag and does not apply todos', async () => {
+    const cwd = tempDir('ravenclaw-finish-fail-')
+    initGitRepo(cwd)
+    const id = nextSession()
+    const entered = enterSessionWorktree(id, cwd)
+    expect(entered.ok).toBe(true)
+    const job = entered.job!
+    job.pendingResetSha = 'not-a-real-commit-sha'
+    const store = createMemoryStore()
+    const sess = sessionRecord({
+      id,
+      cwd: job.worktreePath,
+      job,
+      todos: [{ text: 'keep', status: 'pending' }],
+    })
+    await store.createSession(sess)
+    const out = await maybeFinishRewindReset({ session: sess, store })
+    expect(out.ran).toBe(true)
+    expect(out.ok).toBe(false)
+    expect(out.notice?.startsWith('rewind reset failed:')).toBe(true)
+    expect(sess.job?.pendingResetSha).toBe('not-a-real-commit-sha')
+    expect(sess.todos).toEqual([{ text: 'keep', status: 'pending' }])
+    expect(sess.jobError?.startsWith('rewind reset failed:')).toBe(true)
   })
 })

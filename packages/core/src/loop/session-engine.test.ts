@@ -1743,6 +1743,87 @@ describe('job auto-commit', () => {
     const loadedOk = await okStore.loadSession(sess.id)
     expect(loadedOk.session.jobError).toBeUndefined()
   })
+
+  test('submitMessage finishes a pending rewind reset; construct does not', async () => {
+    const cwd = tempDir('ravenclaw-job-finish-submit-')
+    initGitRepo(cwd)
+    const id = nextSession()
+    const entered = enterSessionWorktree(id, cwd)
+    expect(entered.ok).toBe(true)
+    const job = entered.job!
+    writeFileSync(join(job.worktreePath, 'extra.txt'), 'later\n')
+    expect(spawnSync('git', ['add', '-A'], { cwd: job.worktreePath, encoding: 'utf8' }).status).toBe(0)
+    expect(
+      spawnSync('git', ['commit', '-m', 'later'], { cwd: job.worktreePath, encoding: 'utf8' }).status,
+    ).toBe(0)
+    const later = git(job.worktreePath, ['rev-parse', 'HEAD'])
+    expect(later).not.toBe(job.baseCommitSha)
+    job.pendingResetSha = job.baseCommitSha
+    const store = createMemoryStore()
+    const sess = makeSession({
+      id,
+      cwd: job.worktreePath,
+      job,
+    })
+    await store.createSession(sess)
+    const engine = createSessionEngine({
+      ...engineOpts({
+        provider: createFakeProvider([
+          [{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: 'end' }],
+        ]),
+        store,
+        session: sess,
+      }),
+    })
+    expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).toBe(later)
+    expect(engine.session.job?.pendingResetSha).toBe(job.baseCommitSha)
+    await drain(engine.submitMessage('hi'))
+    expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).toBe(job.baseCommitSha)
+    expect(engine.session.job?.pendingResetSha).toBeUndefined()
+  })
+
+  test('rewindLast finishes a pending reset and does not drop another turn', async () => {
+    const cwd = tempDir('ravenclaw-job-finish-rewind-')
+    initGitRepo(cwd)
+    const id = nextSession()
+    const entered = enterSessionWorktree(id, cwd)
+    expect(entered.ok).toBe(true)
+    const job = entered.job!
+    writeFileSync(join(job.worktreePath, 'extra.txt'), 'later\n')
+    expect(spawnSync('git', ['add', '-A'], { cwd: job.worktreePath, encoding: 'utf8' }).status).toBe(0)
+    expect(
+      spawnSync('git', ['commit', '-m', 'later'], { cwd: job.worktreePath, encoding: 'utf8' }).status,
+    ).toBe(0)
+    const later = git(job.worktreePath, ['rev-parse', 'HEAD'])
+    expect(later).not.toBe(job.baseCommitSha)
+    job.pendingResetSha = job.baseCommitSha
+    const store = createMemoryStore()
+    const sess = makeSession({
+      id,
+      cwd: job.worktreePath,
+      job,
+    })
+    await store.createSession(sess)
+    const messages: Message[] = [user('u0', 'first', 1), asst('a0', 'ok', 2)]
+    await persistAll(store, id, messages)
+    const engine = createSessionEngine({
+      ...engineOpts({
+        provider: createFakeProvider([
+          [{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: 'end' }],
+        ]),
+        store,
+        session: sess,
+      }),
+      messages,
+    })
+    expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).toBe(later)
+    const result = await engine.rewindLast()
+    expect(result.ok).toBe(true)
+    expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).toBe(job.baseCommitSha)
+    expect(engine.session.job?.pendingResetSha).toBeUndefined()
+    const loaded = await store.loadSession(id)
+    expect(loaded.messages.map((msg) => msg.id)).toEqual(['u0', 'a0'])
+  })
 })
 
 describe('cancel', () => {

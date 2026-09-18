@@ -158,3 +158,52 @@ export async function rewindToCheckpoint(opts: {
 
   return { ok: true, notice, messages: next }
 }
+
+export async function maybeFinishRewindReset(opts: {
+  session: SessionRecord
+  store: SessionStore
+  messages?: Message[]
+}): Promise<{ ran: boolean; ok: boolean; notice?: string }> {
+  const job = opts.session.job
+  const sha = job?.pendingResetSha
+  if (!job || !sha) return { ran: false, ok: true }
+
+  const reset = runGit(job.worktreePath, ['reset', '--hard', sha])
+  if (!reset.ok) {
+    const detail = reset.stderr.trim() || reset.stdout.trim() || 'git reset failed'
+    const notice = `rewind reset failed: ${detail}`
+    setSessionJobError(opts.session, notice)
+    opts.session.updatedAt = Date.now()
+    try {
+      await opts.store.upsertSession(opts.session)
+    } catch {
+      // surface the reset failure even if jobError persist fails
+    }
+    return { ran: true, ok: false, notice }
+  }
+
+  const rows = opts.messages ?? (opts.store.loadMessages ? await opts.store.loadMessages(opts.session.id) : [])
+  const checkpoint = lastAssistantCheckpoint(rows)
+  opts.session.todos = checkpoint
+    ? checkpoint.todoSnapshot.map((item) => ({ ...item }))
+    : []
+  const nextJob = { ...job }
+  delete nextJob.pendingResetSha
+  opts.session.job = nextJob
+  clearSessionJobError(opts.session)
+  opts.session.updatedAt = Date.now()
+  try {
+    await opts.store.upsertSession(opts.session)
+  } catch {
+    return { ran: true, ok: false, notice: 'rewind persist failed' }
+  }
+  const root = getSessionWorktree(opts.session.id)?.originalCwd ?? opts.session.cwd
+  let notice = formatRewindNotice({ restored: [], removed: [] }, 0)
+  try {
+    projectSessionTodos(root, opts.session.todos ?? [])
+  } catch (error) {
+    const detail = error instanceof Error ? error.message : String(error)
+    notice = `${notice}; todo.json write failed: ${detail}`
+  }
+  return { ran: true, ok: true, notice }
+}

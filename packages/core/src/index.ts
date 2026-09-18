@@ -116,7 +116,7 @@ export type { WorkspaceFs } from './tools/workspace-fs'
 export { createTaskV2Tools } from './tools/task-v2'
 export { createLspTool } from './tools/lsp'
 export { createStructuredOutputTool } from './tools/structured-output'
-export { rewindLastTurn, rewindToCheckpoint, dropLastUserTurn, formatRewindNotice } from './session/rewind'
+export { rewindLastTurn, rewindToCheckpoint, dropLastUserTurn, formatRewindNotice, maybeFinishRewindReset } from './session/rewind'
 export {
   applySessionDraftPr,
   clearSessionJobError,

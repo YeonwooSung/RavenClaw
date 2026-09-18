@@ -132,6 +132,9 @@ function fakeEngine(
     async rewindLast() {
       return { ok: false, notice: 'nothing to rewind' }
     },
+    async maybeFinishRewindReset() {
+      return { ran: false, ok: true }
+    },
     submitMessage(input: UserSubmitInput) {
       const text = typeof input === 'string' ? input : (input.text ?? '')
       return submit(text)

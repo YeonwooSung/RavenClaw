@@ -1440,6 +1440,54 @@ describe('handleServeRequest', () => {
     expect(body.files?.some((f) => f.path === 'new.ts' && f.op === 'create')).toBe(true)
     expect(body.files?.some((f) => f.path === 'dirty.txt' && f.op === 'create')).toBe(true)
   })
+
+  test('GET /v1/session/:id/diff finishes a pending rewind reset', async () => {
+    const cwd = tempGitRepo(false)
+    const base = spawnSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).stdout.trim()
+    writeFileSync(join(cwd, 'later.txt'), 'later\n')
+    spawnSync('git', ['add', 'later.txt'], { cwd, encoding: 'utf8' })
+    spawnSync('git', ['commit', '-m', 'later'], { cwd, encoding: 'utf8' })
+    const later = spawnSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).stdout.trim()
+    expect(later).not.toBe(base)
+
+    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const runtime = await ctx.runtimeForSession('s1')
+    if (!runtime) throw new Error('expected runtime')
+    runtime.engine.session = {
+      id: 's1',
+      permissionMode: 'default',
+      job: {
+        baseBranch: 'main',
+        shadowBranch: 'raven/s',
+        baseCommitSha: base,
+        worktreePath: cwd,
+        pendingResetSha: base,
+      },
+    }
+    runtime.engine.maybeFinishRewindReset = async () => {
+      const job = runtime.engine.session.job
+      const sha = job?.pendingResetSha
+      if (!job || !sha) return { ran: false, ok: true }
+      const reset = spawnSync('git', ['reset', '--hard', sha], {
+        cwd: job.worktreePath,
+        encoding: 'utf8',
+      })
+      if (reset.status !== 0) return { ran: true, ok: false }
+      delete job.pendingResetSha
+      return { ran: true, ok: true }
+    }
+
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/diff', {
+        headers: { authorization: 'Bearer secret' },
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(200)
+    expect(
+      spawnSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).stdout.trim(),
+    ).toBe(base)
+  })
 })
 
 const serveTempDirs: string[] = []

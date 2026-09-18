@@ -35,7 +35,7 @@ import {
 } from './pairing'
 import { forgetReadsNotInTail, markReadPath, recordReadFile, stampReadMtime } from '../tools/read-files'
 import type { TodoItem } from '../tools/todo'
-import { lastUserText, rewindLastTurn, rewindToCheckpoint } from '../session/rewind'
+import { lastUserText, maybeFinishRewindReset, rewindLastTurn, rewindToCheckpoint } from '../session/rewind'
 import {
   clearSessionJobError,
   maybeCommitJob,
@@ -484,6 +484,12 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
     },
 
     async rewindLast() {
+      const finished = await maybeFinishRewindReset({ session, store: opts.store, messages })
+      if (finished.ran) {
+        return finished.ok
+          ? { ok: true, notice: finished.notice ?? 'nothing to rewind' }
+          : { ok: false, notice: finished.notice ?? 'rewind reset failed' }
+      }
       const pending = await listOwnedPendingAsks()
       for (const row of pending) {
         if (!(await isCallPaired(row.callId, row.sessionId))) {
@@ -521,6 +527,10 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         : { ok: false, notice: result.notice }
     },
 
+    maybeFinishRewindReset() {
+      return maybeFinishRewindReset({ session, store: opts.store, messages })
+    },
+
     async *submitMessage(input: UserSubmitInput): AsyncGenerator<StreamEvent, RoundEnd> {
       cancelBackgroundReview?.()
       cancelBackgroundReview = undefined
@@ -530,6 +540,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       }
       const stopLockRenew = lock ? startLockRenew(opts.store, session.id, lock) : undefined
       try {
+      await maybeFinishRewindReset({ session, store: opts.store, messages })
       const pending = await listOwnedPendingAsks()
       let askBlocked = false
       for (const row of pending) {

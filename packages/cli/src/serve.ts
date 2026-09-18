@@ -202,6 +202,7 @@ export type ServeEngine = {
   clearFollowup?: () => Promise<void>
   getFollowup?: () => string | null
   rewindLast?: () => Promise<{ ok: boolean; notice: string; droppedText?: string }>
+  maybeFinishRewindReset?: () => Promise<{ ran: boolean; ok: boolean; notice?: string }>
   close?: SessionEngine['close']
 }
 
@@ -783,6 +784,7 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
     if (req.method === 'GET' && action === 'diff') {
       const loaded = await loadSessionRuntime(ctx, sessionId)
       if (!loaded.ok) return loaded.res
+      await loaded.runtime.engine.maybeFinishRewindReset?.()
       const job = loaded.runtime.engine.session.job
       if (!job) return Response.json({ ok: false, notice: 'no job record' })
       const diff = jobDiff(job)

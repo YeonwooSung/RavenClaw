@@ -142,6 +142,9 @@ function stubEngine(sessionId: string, end: RoundEnd, events: StreamEvent[] = []
     async rewindLast() {
       return { ok: true, notice: '' }
     },
+    async maybeFinishRewindReset() {
+      return { ran: false, ok: true }
+    },
     async compactNow() {},
     async setModel() {},
     async setPermissionMode() {},
