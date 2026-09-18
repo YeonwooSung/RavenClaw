@@ -2299,6 +2299,82 @@ describe('cancel', () => {
   })
 })
 
+describe('no-job todo stamp', () => {
+  async function drain(gen: AsyncGenerator<StreamEvent, import('../types').RoundEnd>) {
+    const events: StreamEvent[] = []
+    while (true) {
+      const next = await gen.next()
+      if (next.done) return { events, result: next.value }
+      events.push(next.value)
+    }
+  }
+
+  test('no-job success turn stamps a sha-less todo snapshot', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({
+      id: 'sess_stamp_todo',
+      todos: [{ text: 'b', status: 'pending' }],
+    })
+    await store.createSession(sess)
+    const engine = createSessionEngine({
+      ...engineOpts({
+        provider: createFakeProvider([
+          [{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: null }],
+        ]),
+        store,
+        session: sess,
+      }),
+    })
+    const result = await drain(engine.submitMessage('hi'))
+    expect(result.result.reason).toBe('completed')
+    const loaded = await store.loadSession(sess.id)
+    const last = [...loaded.messages].reverse().find((msg) => msg.role === 'assistant')
+    expect(last && last.role === 'assistant' ? last.checkpoint : undefined).toEqual({
+      todoSnapshot: [{ text: 'b', status: 'pending' }],
+      dirty: false,
+    })
+  })
+
+  test('cancelled no-job turn does not stamp', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_stamp_cancel' })
+    await store.createSession(sess)
+    let enteredFirst: () => void
+    const firstStreamEntered = new Promise<void>((resolve) => {
+      enteredFirst = resolve
+    })
+    const engine = createSessionEngine({
+      ...engineOpts({
+        provider: {
+          id: 'fake',
+          apiMode: 'openai_compat',
+          profile: (model: string) => defaultModel(model),
+          async *stream(_req, signal) {
+            enteredFirst()
+            await new Promise<void>((resolve) => {
+              if (signal.aborted) {
+                resolve()
+                return
+              }
+              signal.addEventListener('abort', () => resolve(), { once: true })
+            })
+          },
+        },
+        store,
+        session: sess,
+      }),
+    })
+    const pending = drain(engine.submitMessage('hi'))
+    await firstStreamEntered
+    engine.abort('cancel')
+    await pending
+    const loaded = await store.loadSession(sess.id)
+    for (const msg of loaded.messages) {
+      if (msg.role === 'assistant') expect(msg.checkpoint).toBeUndefined()
+    }
+  })
+})
+
 describe('followup slot', () => {
   test('setFollowup overwrites; empty is an error; clear removes', async () => {
     const store = createMemoryStore()

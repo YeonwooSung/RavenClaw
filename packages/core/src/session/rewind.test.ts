@@ -694,6 +694,59 @@ describe('rewindToCheckpoint', () => {
     expect(loaded.session.job?.pendingResetSha).toBe('not-a-real-commit-sha')
   })
 
+  test('job rewind skips a sha-less last assistant and uses the earlier git checkpoint', async () => {
+    const cwd = tempDir('ravenclaw-rewind-skip-shaless-')
+    initGitRepo(cwd)
+    const id = nextSession()
+    const entered = enterSessionWorktree(id, cwd)
+    expect(entered.ok).toBe(true)
+    const job = entered.job!
+    writeFileSync(join(job.worktreePath, 'extra.txt'), 'later\n')
+    expect(spawnSync('git', ['add', '-A'], { cwd: job.worktreePath, encoding: 'utf8' }).status).toBe(0)
+    expect(
+      spawnSync('git', ['commit', '-m', 'later'], { cwd: job.worktreePath, encoding: 'utf8' }).status,
+    ).toBe(0)
+    const laterSha = git(job.worktreePath, ['rev-parse', 'HEAD'])
+    const store = createMemoryStore()
+    const sess = sessionRecord({
+      id,
+      cwd: job.worktreePath,
+      job,
+      todos: [{ text: 'later', status: 'pending' }],
+    })
+    await store.createSession(sess)
+    const messages: Message[] = [
+      user('u1', 'first', 1),
+      {
+        id: 'a1',
+        role: 'assistant',
+        blocks: [{ type: 'text', text: 'ok' }],
+        createdAt: 2,
+        checkpoint: {
+          commitSha: job.baseCommitSha,
+          todoSnapshot: [{ text: 'a', status: 'pending' }],
+          dirty: false,
+        },
+      },
+      user('u2', 'second', 3),
+      {
+        id: 'a2',
+        role: 'assistant',
+        blocks: [{ type: 'text', text: 'later' }],
+        createdAt: 4,
+        checkpoint: { todoSnapshot: [{ text: 'b', status: 'done' }], dirty: false },
+      },
+      user('u3', 'third', 5),
+      assistant('a3', 'drop me', 6),
+    ]
+    const result = await rewindToCheckpoint({ session: sess, messages, store })
+    expect(result.ok).toBe(true)
+    expect(result.messages.map((msg) => msg.id)).toEqual(['u1', 'a1', 'u2', 'a2'])
+    expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).toBe(job.baseCommitSha)
+    expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).not.toBe(laterSha)
+    expect(sess.todos).toEqual([{ text: 'a', status: 'pending' }])
+  })
+
   test('successful rewind clears session.jobError', async () => {
     const cwd = tempDir('ravenclaw-rewind-clear-err-')
     initGitRepo(cwd)

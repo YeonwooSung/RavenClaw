@@ -75,10 +75,11 @@ export async function rewindLastTurn(opts: {
   return { ok: true, notice: formatRewindNotice(undo, droppedIds.length), messages: next }
 }
 
-function lastAssistantCheckpoint(messages: Message[]): JobCheckpoint | undefined {
+function lastGitCheckpoint(messages: Message[]): JobCheckpoint | undefined {
   for (let i = messages.length - 1; i >= 0; i--) {
     const msg = messages[i]
-    if (msg?.role === 'assistant' && msg.checkpoint) return msg.checkpoint
+    const sha = msg?.role === 'assistant' ? msg.checkpoint?.commitSha : undefined
+    if (msg?.role === 'assistant' && sha) return msg.checkpoint
   }
   return undefined
 }
@@ -95,7 +96,7 @@ export async function rewindToCheckpoint(opts: {
 
   const next = dropLastUserTurn(opts.messages)
   const droppedIds = opts.messages.slice(next.length).map((msg) => msg.id)
-  const checkpoint = lastAssistantCheckpoint(next)
+  const checkpoint = lastGitCheckpoint(next)
   const sha = checkpoint?.commitSha ?? job.baseCommitSha
 
   if (droppedIds.length > 0) {
@@ -183,7 +184,7 @@ export async function maybeFinishRewindReset(opts: {
   }
 
   const rows = opts.messages ?? (opts.store.loadMessages ? await opts.store.loadMessages(opts.session.id) : [])
-  const checkpoint = lastAssistantCheckpoint(rows)
+  const checkpoint = lastGitCheckpoint(rows)
   opts.session.todos = checkpoint
     ? checkpoint.todoSnapshot.map((item) => ({ ...item }))
     : []

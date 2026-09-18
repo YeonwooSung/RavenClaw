@@ -41,6 +41,7 @@ import {
   maybeCommitJob,
   setSessionJobError,
   stampCheckpoint,
+  stampTodoSnapshot,
 } from '../session/job'
 import { writeFollowup } from '../session/followup'
 import { getSessionWorktree } from '../tools/session-worktree'
@@ -767,6 +768,25 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
               } catch {
                 // checkpoint persist must not fail the turn
               }
+            }
+          }
+        }
+        if (
+          !session.job &&
+          isJobSuccessReason(end.reason) &&
+          (await opts.store.listPendingAsks(session.id)).length === 0
+        ) {
+          const asst = lastAssistant(turn.messages)
+          if (asst) {
+            stampTodoSnapshot(asst, session.todos)
+            try {
+              if (asst.blocks.some((block) => block.type === 'tool_use')) {
+                await opts.store.persistToolCalls(session.id, asst)
+              } else {
+                await opts.store.persistAssistant(session.id, asst)
+              }
+            } catch {
+              // todo snapshot persist must not fail the turn
             }
           }
         }
