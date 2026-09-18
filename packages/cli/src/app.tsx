@@ -31,7 +31,6 @@ import { Composer } from './composer'
 import { fireCronJob } from './cron-fire'
 import {
   compactPolicyFromConfig,
-  openNewSession,
   resumeRuntime,
   type CliRuntime,
 } from './engine'
@@ -455,19 +454,20 @@ export function App(props: AppProps) {
             return
           case 'clear':
             void (async () => {
-              await runtimeRef.current.engine.close()
-              await runtimeRef.current.mcpCloser?.()
-              const next = await openNewSession(runtimeRef.current)
-              runtimeRef.current = next
-              bindAskQuestions()
+              const result = await runtimeRef.current.engine.clearKeepId()
+              if (!result.ok) {
+                setNotice(result.notice)
+                return
+              }
+              const current = runtimeRef.current
               setRows([])
-              setTodos(next.engine.session.todos ?? loadTodos(next.cwd))
-              setTasks(next.engine.tasks.list())
+              setTodos(current.engine.session.todos ?? loadTodos(current.cwd))
+              setTasks(current.engine.tasks.list())
               setSelectedIndex(undefined)
               setExpandedIds(new Set())
               setLastAssembleInput(0)
               syncSession()
-              setNotice(`new session ${shortSessionId(next.engine.session.id)}`)
+              setNotice(`cleared session ${shortSessionId(current.engine.session.id)}`)
             })()
             return
           case 'loop': {

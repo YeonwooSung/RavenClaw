@@ -21,7 +21,7 @@ import {
 import { handleSlashCommand } from './commands'
 import { fireCronJob } from './cron-fire'
 import { formatSkillPruneResult } from './skills-list'
-import { openNewSession, resumeRuntime, type CliRuntime } from './engine'
+import { resumeRuntime, type CliRuntime } from './engine'
 import { dispatchSharedSlash } from './slash/dispatch'
 import { collectUserImages, readClipboardImage } from './image-paste'
 import { parseBangLine, runBangCommand } from './bash-line'
@@ -63,7 +63,6 @@ export async function runOpenTuiApp(
     process.stdout.write(chunk)
   })
   const resume = io.resumeRuntime ?? resumeRuntime
-  const startNew = io.openNewSession ?? openNewSession
   const readDiff = io.loadGitDiff ?? loadGitDiff
   let diffOpen = false
   let diffSelected = 0
@@ -337,12 +336,13 @@ export async function runOpenTuiApp(
           continue
         case 'clear': {
           try {
-            await current.engine.close()
-            await current.mcpCloser?.()
-            current = await startNew(current)
-            bindHosts()
+            const result = await current.engine.clearKeepId()
+            if (!result.ok) {
+              write(`${result.notice}\n`)
+              continue
+            }
             view.reset()
-            write(`new session ${shortSessionId(current.engine.session.id)}\n`)
+            write(`cleared session ${shortSessionId(current.engine.session.id)}\n`)
             await writeIncludedAds(current)
           } catch (error) {
             const message = error instanceof Error ? error.message : String(error)

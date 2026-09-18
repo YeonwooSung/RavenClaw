@@ -135,6 +135,9 @@ function fakeEngine(
     async maybeFinishRewindReset() {
       return { ran: false, ok: true }
     },
+    async clearKeepId() {
+      return { ok: true as const, notice: 'session cleared' }
+    },
     submitMessage(input: UserSubmitInput) {
       const text = typeof input === 'string' ? input : (input.text ?? '')
       return submit(text)
@@ -659,29 +662,58 @@ describe('runOpenTuiApp', () => {
     expect(out).not.toContain('+new')
   })
 
-  test('/clear and /new replace the runtime and later turns use the new engine', async () => {
+  test('/clear and /new keep the engine id and later turns use it', async () => {
     const submitted: string[] = []
-    const original = fakeEngine(makeSession(), async function* (text) {
-      submitted.push(`original:${text}`)
+    const session = makeSession({ id: 'sess_opentui' })
+    let clears = 0
+    let opened = 0
+    const engine = fakeEngine(session, async function* (text) {
+      submitted.push(`${session.id}:${text}`)
+      yield { type: 'text_delta', text: 'from same' }
       return { reason: 'completed' }
     })
-    const fresh = fakeEngine(makeSession({ id: 'newsession-aaaa' }), async function* (text) {
-      submitted.push(`fresh:${text}`)
-      yield { type: 'text_delta', text: 'from fresh' }
-      return { reason: 'completed' }
-    })
+    engine.clearKeepId = async () => {
+      clears += 1
+      return { ok: true, notice: 'session cleared' }
+    }
     const written: string[] = []
-    const code = await runOpenTuiApp(fakeRuntime(original, { store: fakeStore() }), {
+    const code = await runOpenTuiApp(fakeRuntime(engine, { store: fakeStore() }), {
       input: asyncLines('/clear', 'hello', '/new', 'again', '/quit'),
       write: (chunk) => {
         written.push(chunk)
       },
-      openNewSession: async (runtime) => ({ ...runtime, engine: fresh }),
+      openNewSession: async (runtime) => {
+        opened += 1
+        return runtime
+      },
     })
     expect(code).toBe(0)
-    expect(written.join('')).toContain('new session newsessi')
-    expect(written.join('')).toContain('from fresh')
-    expect(submitted).toEqual(['fresh:hello', 'fresh:again'])
+    expect(written.join('')).toContain('cleared session sess_ope')
+    expect(written.join('')).not.toContain('new session')
+    expect(written.join('')).toContain('from same')
+    expect(submitted).toEqual(['sess_opentui:hello', 'sess_opentui:again'])
+    expect(clears).toBe(2)
+    expect(opened).toBe(0)
+  })
+
+  test('/clear persist-fail leaves the previous view text', async () => {
+    const session = makeSession({ id: 'sess_opentui' })
+    const engine = fakeEngine(session, async function* () {
+      yield { type: 'text_delta', text: 'keep-me' }
+      return { reason: 'completed' }
+    })
+    engine.clearKeepId = async () => ({ ok: false, notice: 'clear persist failed' })
+    const written: string[] = []
+    const code = await runOpenTuiApp(fakeRuntime(engine, { store: fakeStore() }), {
+      input: asyncLines('hello', '/clear', '/quit'),
+      write: (chunk) => {
+        written.push(chunk)
+      },
+    })
+    expect(code).toBe(0)
+    expect(written.join('')).toContain('keep-me')
+    expect(written.join('')).toContain('clear persist failed')
+    expect(written.join('')).not.toContain('cleared session')
   })
 
   test('/model prints or persists the session model', async () => {
