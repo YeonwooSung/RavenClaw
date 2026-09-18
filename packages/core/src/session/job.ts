@@ -227,6 +227,16 @@ function diffStat(cwd: string, fromSha: string): { files: number; plus: number; 
   return { files, plus, minus }
 }
 
+export function stampTodoSnapshot(
+  message: Extract<Message, { role: 'assistant' }>,
+  todos: TodoItem[] | undefined,
+): void {
+  message.checkpoint = {
+    todoSnapshot: (todos ?? []).map((item) => ({ ...item })),
+    dirty: false,
+  }
+}
+
 export function stampCheckpoint(
   message: Extract<Message, { role: 'assistant' }>,
   job: SessionJob,

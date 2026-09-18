@@ -13,6 +13,7 @@ import {
   setJobAutoCommit,
   setSessionJobError,
   stampCheckpoint,
+  stampTodoSnapshot,
 } from './job'
 
 const tempDirs: string[] = []
@@ -250,6 +251,38 @@ describe('stampCheckpoint', () => {
     stampCheckpoint(message, job, undefined, '/tmp')
     expect(message.checkpoint?.commitSha).toBe(git(job.worktreePath, ['rev-parse', 'HEAD']))
     expect(message.checkpoint?.dirty).toBe(false)
+  })
+})
+
+describe('stampTodoSnapshot', () => {
+  test('copies todos and omits commitSha', () => {
+    const message: Extract<Message, { role: 'assistant' }> = {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'text', text: 'ok' }],
+      createdAt: 1,
+    }
+    const todos = [{ text: 'a', status: 'pending' as const }]
+    stampTodoSnapshot(message, todos)
+    expect(message.checkpoint).toEqual({
+      todoSnapshot: [{ text: 'a', status: 'pending' }],
+      dirty: false,
+    })
+    expect(message.checkpoint && 'commitSha' in message.checkpoint).toBe(false)
+    expect(message.checkpoint?.todoSnapshot).not.toBe(todos)
+    todos.push({ text: 'b', status: 'pending' })
+    expect(message.checkpoint?.todoSnapshot).toEqual([{ text: 'a', status: 'pending' }])
+  })
+
+  test('undefined todos become an empty snapshot', () => {
+    const message: Extract<Message, { role: 'assistant' }> = {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'text', text: 'ok' }],
+      createdAt: 1,
+    }
+    stampTodoSnapshot(message, undefined)
+    expect(message.checkpoint).toEqual({ todoSnapshot: [], dirty: false })
   })
 })
 

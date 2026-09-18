@@ -163,6 +163,31 @@ describe('createSqliteStore', () => {
     expect(loaded.session.todos).toEqual([{ text: 'beta', status: 'done' }])
   })
 
+  test('persistAssistant round-trips a sha-less todo snapshot', async () => {
+    const store = openStore()
+    await store.createSession(session())
+    const textOnly: Extract<Message, { role: 'assistant' }> = {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'text', text: 'ok' }],
+      createdAt: 1,
+      checkpoint: {
+        todoSnapshot: [{ text: 'a', status: 'pending' }],
+        dirty: false,
+      },
+    }
+    await store.persistAssistant('s1', textOnly)
+    const loaded = await store.loadSession('s1')
+    const asst = loaded.messages.find((msg) => msg.id === 'a1')
+    expect(asst && asst.role === 'assistant' ? asst.checkpoint : undefined).toEqual({
+      todoSnapshot: [{ text: 'a', status: 'pending' }],
+      dirty: false,
+    })
+    expect(
+      asst && asst.role === 'assistant' ? asst.checkpoint?.commitSha : 'missing',
+    ).toBeUndefined()
+  })
+
   test('persistAssistant rejects tool_use; persistToolCalls rejects text-only', async () => {
     const store = openStore()
     await store.createSession(session())

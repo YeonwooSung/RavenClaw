@@ -125,6 +125,7 @@ export {
   setJobAutoCommit,
   setSessionJobError,
   stampCheckpoint,
+  stampTodoSnapshot,
 } from './session/job'
 export type { DraftPrSnapshot, GhRunner } from './session/job'
 export { jobDiff } from './session/job-diff'

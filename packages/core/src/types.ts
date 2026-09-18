@@ -302,7 +302,7 @@ export type SessionJob = {
 }
 
 export type JobCheckpoint = {
-  commitSha: string
+  commitSha?: string
   todoSnapshot: TodoItem[]
   dirty: boolean
 }

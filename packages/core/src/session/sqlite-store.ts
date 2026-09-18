@@ -253,14 +253,17 @@ function checkpointFromJson(raw: string | null): JobCheckpoint | undefined {
   if (raw == null) return undefined
   try {
     const parsed = JSON.parse(raw) as Partial<JobCheckpoint>
-    if (typeof parsed.commitSha !== 'string' || typeof parsed.dirty !== 'boolean') {
+    if (typeof parsed.dirty !== 'boolean') {
       return undefined
     }
-    return {
-      commitSha: parsed.commitSha,
+    const checkpoint: JobCheckpoint = {
       todoSnapshot: parseTodoItems(parsed.todoSnapshot),
       dirty: parsed.dirty,
     }
+    if (typeof parsed.commitSha === 'string' && parsed.commitSha.length > 0) {
+      checkpoint.commitSha = parsed.commitSha
+    }
+    return checkpoint
   } catch {
     return undefined
   }
