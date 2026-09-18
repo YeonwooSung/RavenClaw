@@ -107,6 +107,27 @@ describe('createSqliteStore', () => {
     expect(again.session.followup).toBeUndefined()
   })
 
+  test('job pendingResetSha survives sqlite upsert and loadSession', async () => {
+    const store = openStore()
+    await store.createSession(
+      session({
+        job: {
+          baseBranch: 'main',
+          shadowBranch: 'raven/s',
+          baseCommitSha: 'abc123',
+          worktreePath: '/tmp/wt',
+          pendingResetSha: 'def456',
+        },
+      }),
+    )
+    const loaded = await store.loadSession('s1')
+    expect(loaded.session.job?.pendingResetSha).toBe('def456')
+    loaded.session.job = { ...loaded.session.job!, pendingResetSha: 'ghi789' }
+    await store.upsertSession(loaded.session)
+    const again = await store.loadSession('s1')
+    expect(again.session.job?.pendingResetSha).toBe('ghi789')
+  })
+
   test('updateSessionTodos writes todos without pairing messages', async () => {
     const store = openStore()
     await store.createSession(session())

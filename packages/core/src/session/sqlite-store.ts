@@ -231,6 +231,7 @@ function jobFromJson(raw: string | null): SessionJob | undefined {
     }
     if (typeof parsed.prNumber === 'number') job.prNumber = parsed.prNumber
     if (typeof parsed.prUrl === 'string') job.prUrl = parsed.prUrl
+    if (typeof parsed.pendingResetSha === 'string') job.pendingResetSha = parsed.pendingResetSha
     return job
   } catch {
     return undefined
