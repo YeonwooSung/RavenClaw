@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { INCOMPLETE_TEXT, unpairedToolUseIds } from '../loop/pairing'
 import { createSessionEngine } from '../loop/session-engine'
-import { maybeRunFollowup } from '../session/followup'
+import { maybeRunFollowup, writeFollowup } from '../session/followup'
 import { jobDiff } from '../session/job-diff'
 import { createMemoryStore } from '../session/memory-store'
 import { rewindToCheckpoint } from '../session/rewind'
@@ -46,6 +46,9 @@ type EvalExpect = {
   jobDiffListsDirty?: boolean
   rewindPersistBeforeReset?: boolean
   rewindTodoProject?: boolean
+  cancelAbortPair?: boolean
+  rewindResetOnResume?: boolean
+  followupPersistOrder?: boolean
 }
 
 type EvalCase = {
@@ -108,6 +111,18 @@ export async function runEvalDir(dir: string): Promise<void> {
     }
     if (name === 'rewind-todo-project') {
       await runRewindTodoProject(spec)
+      continue
+    }
+    if (name === 'cancel-abort-pair') {
+      await runCancelAbortPair(spec)
+      continue
+    }
+    if (name === 'rewind-reset-on-resume') {
+      await runRewindResetOnResume(spec)
+      continue
+    }
+    if (name === 'followup-persist-order') {
+      await runFollowupPersistOrder(spec)
       continue
     }
     throw new Error(`unknown eval fixture: ${name}`)
@@ -998,6 +1013,179 @@ async function runRewindTodoProject(spec: EvalCase): Promise<void> {
   }
 }
 
+async function runCancelAbortPair(spec: EvalCase): Promise<void> {
+  const store = createMemoryStore()
+  const session = makeSession({ id: 'sess_eval_cancel_abort_pair' })
+  await store.createSession(session)
+  const held = new Promise<'allow' | 'deny' | 'allow_always'>(() => {})
+  const engine = createSessionEngine({
+    session,
+    provider: createFakeProvider([toolThenStop('call_park', 'Echo', { text: 'hi' })]),
+    store,
+    tools: [createAskEcho()],
+    compact: defaultCompact(),
+    model: defaultModel(),
+    maxRounds: 8,
+    bare: true,
+    askUser: async (_event, signal) => Promise.race([held, hangAskUser(_event, signal)]),
+  })
+
+  if (spec.expect.cancelAbortPair === true) {
+    const gen = engine.submitMessage(spec.prompt)
+    await consumeUntilAsk(gen)
+    if ((await store.listPendingAsks(session.id)).length === 0) {
+      throw new Error('cancel-abort-pair: leftover-ask never became pending')
+    }
+    engine.abort('cancel')
+    const { events } = await drainEvents(gen)
+    const leftover = await store.listPendingAsks(session.id)
+    if (leftover.length !== 0) {
+      throw new Error(`cancel-abort-pair: pending remains: ${leftover.length}`)
+    }
+    if (events.some((e) => e.type === 'status' && e.message === 'cancelled, ask still pending')) {
+      throw new Error('cancel-abort-pair: status line fired')
+    }
+    const loaded = await store.loadSession(session.id)
+    const tools = loaded.messages.filter((m) => m.role === 'tool' && m.toolUseId === 'call_park')
+    if (tools.length !== 1) {
+      throw new Error(`cancel-abort-pair: tool rows for call_park = ${tools.length}`)
+    }
+
+    const idleStore = createMemoryStore()
+    const idle = makeSession({ id: 'sess_eval_cancel_abort_idle' })
+    await idleStore.createSession(idle)
+    await idleStore.upsertPendingAsk({
+      callId: 'parked',
+      sessionId: idle.id,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Run ls?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    const idleEngine = createSessionEngine({
+      session: idle,
+      provider: createFakeProvider([]),
+      store: idleStore,
+      tools: [],
+      compact: defaultCompact(),
+      model: defaultModel(),
+      maxRounds: 8,
+      bare: true,
+      askUser: async () => 'deny',
+    })
+    idleEngine.abort('cancel')
+    const still = await idleStore.listPendingAsks(idle.id)
+    if (still.length !== 1) {
+      throw new Error(`cancel-abort-pair: idle cancel dropped leftover: ${still.length}`)
+    }
+    await idleEngine.close()
+  }
+
+  await engine.close()
+}
+
+async function runRewindResetOnResume(spec: EvalCase): Promise<void> {
+  const cwd = mkdtempSync(join(tmpdir(), 'raven-eval-rewind-reset-'))
+  const sessionId = `sess_eval_rewind_reset_${crypto.randomUUID()}`
+  try {
+    initGitRepo(cwd)
+    const entered = enterSessionWorktree(sessionId, cwd)
+    if (!entered.ok || entered.job === undefined) {
+      throw new Error(`rewind-reset-on-resume: enter failed: ${entered.error ?? 'no job'}`)
+    }
+    const job = entered.job
+    writeFileSync(join(job.worktreePath, 'extra.txt'), 'later\n')
+    const add = spawnSync('git', ['-C', job.worktreePath, 'add', 'extra.txt'], { encoding: 'utf8' })
+    if (add.status !== 0) throw new Error(`rewind-reset-on-resume: git add failed: ${add.stderr}`)
+    const commit = spawnSync('git', ['-C', job.worktreePath, 'commit', '-m', 'later'], {
+      encoding: 'utf8',
+    })
+    if (commit.status !== 0) {
+      throw new Error(`rewind-reset-on-resume: git commit failed: ${commit.stderr}`)
+    }
+    const later = spawnSync('git', ['-C', job.worktreePath, 'rev-parse', 'HEAD'], { encoding: 'utf8' })
+    const laterSha = later.stdout.trim()
+    if (laterSha === job.baseCommitSha) {
+      throw new Error('rewind-reset-on-resume: later HEAD equals base')
+    }
+
+    if (spec.expect.rewindResetOnResume === true) {
+      job.pendingResetSha = job.baseCommitSha
+      const store = createMemoryStore()
+      const session = makeSession({
+        id: sessionId,
+        cwd: job.worktreePath,
+        job,
+      })
+      await store.createSession(session)
+      const engine = createSessionEngine({
+        session,
+        provider: createFakeProvider([textThenStop('ok')]),
+        store,
+        tools: [],
+        compact: defaultCompact(),
+        model: defaultModel(),
+        maxRounds: 8,
+        bare: true,
+        askUser: async () => 'deny',
+      })
+      const headAfterConstruct = spawnSync('git', ['-C', job.worktreePath, 'rev-parse', 'HEAD'], {
+        encoding: 'utf8',
+      })
+      if (headAfterConstruct.stdout.trim() !== laterSha) {
+        throw new Error('rewind-reset-on-resume: createSessionEngine reset HEAD')
+      }
+      if (engine.session.job?.pendingResetSha !== job.baseCommitSha) {
+        throw new Error('rewind-reset-on-resume: flag cleared on construct')
+      }
+      await drain(engine.submitMessage(spec.prompt))
+      const headAfterSubmit = spawnSync('git', ['-C', job.worktreePath, 'rev-parse', 'HEAD'], {
+        encoding: 'utf8',
+      })
+      if (headAfterSubmit.stdout.trim() !== job.baseCommitSha) {
+        throw new Error(
+          `rewind-reset-on-resume: submit HEAD ${JSON.stringify(headAfterSubmit.stdout.trim())} !== base`,
+        )
+      }
+      if (engine.session.job?.pendingResetSha !== undefined) {
+        throw new Error('rewind-reset-on-resume: flag still set after submit')
+      }
+      await engine.close()
+    }
+  } finally {
+    exitSessionWorktree(sessionId, 'remove', true)
+    rmSync(cwd, { recursive: true, force: true })
+  }
+}
+
+async function runFollowupPersistOrder(spec: EvalCase): Promise<void> {
+  if (spec.expect.followupPersistOrder !== true) return
+  const store = createMemoryStore()
+  const session = makeSession({ id: 'sess_eval_followup_persist' })
+  await store.createSession(session)
+  const first = await writeFollowup(session, store, 'keep')
+  if (!first.ok) {
+    throw new Error(`followup-persist-order: first write failed: ${first.notice}`)
+  }
+  if (session.followup !== 'keep') {
+    throw new Error(`followup-persist-order: first write did not set slot: ${session.followup}`)
+  }
+  store.upsertSession = async () => {
+    throw new Error('disk')
+  }
+  const failed = await writeFollowup(session, store, 'next')
+  if (failed.ok) {
+    throw new Error('followup-persist-order: persist fail unexpectedly ok')
+  }
+  if (failed.notice !== 'follow-up persist failed') {
+    throw new Error(`followup-persist-order: notice ${JSON.stringify(failed.notice)}`)
+  }
+  if (session.followup !== 'keep') {
+    throw new Error(`followup-persist-order: previous slot lost: ${JSON.stringify(session.followup)}`)
+  }
+}
+
 function hasUserText(messages: Message[], text: string): boolean {
   return messages.some(
     (msg) =>
@@ -1225,6 +1413,39 @@ async function drain(gen: AsyncGenerator<StreamEvent, unknown>): Promise<unknown
     const next = await gen.next()
     if (next.done) return next.value
   }
+}
+
+async function drainEvents(
+  gen: AsyncGenerator<StreamEvent, unknown>,
+): Promise<{ events: StreamEvent[]; result: unknown }> {
+  const events: StreamEvent[] = []
+  while (true) {
+    const next = await gen.next()
+    if (next.done) return { events, result: next.value }
+    events.push(next.value)
+  }
+}
+
+async function consumeUntilAsk(gen: AsyncGenerator<StreamEvent, unknown>): Promise<void> {
+  while (true) {
+    const next = await gen.next()
+    if (next.done) throw new Error('cancel-abort-pair: ended before permission_ask')
+    if (next.value.type === 'permission_ask') return
+  }
+}
+
+function hangAskUser(
+  _event: unknown,
+  signal: AbortSignal,
+): Promise<'allow' | 'deny' | 'allow_always'> {
+  return new Promise((_, reject) => {
+    const fail = () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+    if (signal.aborted) {
+      fail()
+      return
+    }
+    signal.addEventListener('abort', fail, { once: true })
+  })
 }
 
 function sleep(ms: number): Promise<void> {
