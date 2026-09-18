@@ -144,6 +144,18 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
   const applyFlights = new Map<string, Promise<unknown>>()
   const executedAsks = new Set<string>()
   const claimedAsks = new Set<string>()
+  const childEngines = new Map<string, SessionEngine>()
+  let treeStopFlight: Promise<{ descendantWork: boolean }> | undefined
+  let treeStopRequested = false
+  let treeStopAbortedLiveChild = false
+
+  function registerChildEngine(engine: SessionEngine): () => void {
+    const id = engine.session.id
+    childEngines.set(id, engine)
+    return () => {
+      if (childEngines.get(id) === engine) childEngines.delete(id)
+    }
+  }
 
   function claimAsk(callId: string): boolean {
     if (claimedAsks.has(callId) || executedAsks.has(callId)) return false
@@ -188,6 +200,86 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
 
   async function listOwnedPendingAsks(): Promise<PendingAsk[]> {
     return (await listOwnedPendingAsksFromStore(opts.store, session.id)) as PendingAsk[]
+  }
+
+  async function persistBeforeDropAsk(row: PendingAsk): Promise<boolean> {
+    if (!(await isCallPaired(row.callId, row.sessionId))) {
+      try {
+        await persistSettledTool(makeToolMessage(row.callId, false, ABORTED_TEXT), row.sessionId)
+      } catch {
+        return true
+      }
+    }
+    try {
+      await opts.store.deletePendingAsk(row.callId)
+      return false
+    } catch {
+      return true
+    }
+  }
+
+  async function waitRegisteredChildrenIdle(): Promise<void> {
+    for (let i = 0; i < 200; i++) {
+      let busy = false
+      for (const child of childEngines.values()) {
+        if (child.liveTurnId() !== null) {
+          busy = true
+          break
+        }
+      }
+      if (!busy) return
+      await new Promise((resolve) => setTimeout(resolve, 5))
+    }
+  }
+
+  async function runTreeStopPass(abortedLiveChild: boolean): Promise<{ descendantWork: boolean }> {
+    await waitRegisteredChildrenIdle()
+    let attemptedAsk = false
+    const ids = await listDescendantSessionIds(opts.store, session.id)
+    for (const id of ids) {
+      const child = childEngines.get(id)
+      if (child && child.liveTurnId() !== null) continue
+      const rows = await opts.store.listPendingAsks(id)
+      for (const row of rows) {
+        attemptedAsk = true
+        try {
+          await persistBeforeDropAsk(row)
+        } catch {
+          // continue other descendant rows
+        }
+      }
+    }
+    return { descendantWork: abortedLiveChild || attemptedAsk }
+  }
+
+  function startTreeStopFlight(abortedLiveChild: boolean): void {
+    treeStopRequested = true
+    treeStopAbortedLiveChild = treeStopAbortedLiveChild || abortedLiveChild
+  }
+
+  function enqueueTreeStopPass(abortedLiveChild: boolean): Promise<{ descendantWork: boolean }> {
+    const prev = treeStopFlight
+    const pass = (async () => {
+      const prior = prev ? await prev : { descendantWork: false }
+      try {
+        const next = await runTreeStopPass(abortedLiveChild)
+        return { descendantWork: prior.descendantWork || next.descendantWork }
+      } catch {
+        return { descendantWork: prior.descendantWork || abortedLiveChild }
+      }
+    })()
+    treeStopFlight = pass
+    return pass
+  }
+
+  function whenTreeStop(): Promise<{ descendantWork: boolean }> {
+    if (treeStopRequested) {
+      const abortedLiveChild = treeStopAbortedLiveChild
+      treeStopAbortedLiveChild = false
+      treeStopRequested = false
+      return enqueueTreeStopPass(abortedLiveChild)
+    }
+    return treeStopFlight ?? Promise.resolve({ descendantWork: false })
   }
 
   async function resolveAskTarget(callId: string): Promise<
@@ -342,6 +434,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       store: opts.store,
       tasks,
       fileHistory,
+      registerChildEngine,
     }
     if (target.sessionId === session.id) ctx.session = session
 
@@ -484,6 +577,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
           ? { ok: true, notice: finished.notice ?? 'nothing to rewind' }
           : { ok: false, notice: finished.notice ?? 'rewind reset failed' }
       }
+      await this.whenTreeStop()
       const pending = await listOwnedPendingAsks()
       for (const row of pending) {
         if (!(await isCallPaired(row.callId, row.sessionId))) {
@@ -546,6 +640,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       const stopLockRenew = lock ? startLockRenew(opts.store, session.id, lock) : undefined
       try {
       await maybeFinishRewindReset({ session, store: opts.store, messages })
+      await whenTreeStop()
       const pending = await listOwnedPendingAsks()
       let askBlocked = false
       for (const row of pending) {
@@ -681,6 +776,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         if (opts.jsonSchema !== undefined) loopOpts.jsonSchema = opts.jsonSchema
         if (opts.verifyOnStop === true) loopOpts.verifyOnStop = true
         if (opts.refreshTools !== undefined) loopOpts.refreshTools = opts.refreshTools
+        loopOpts.registerChildEngine = registerChildEngine
         loopOpts.session = session
         const todos = sessionTodosOf(session)
         if (todos !== undefined) loopOpts.todos = todos
@@ -707,6 +803,12 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
             } catch {
               remaining = true
               continue
+            }
+          }
+          await whenTreeStop()
+          if (!remaining) {
+            for (const row of await listOwnedPendingAsks()) {
+              if (!(await isCallPaired(row.callId, row.sessionId))) remaining = true
             }
           }
           if (remaining) {
@@ -873,10 +975,25 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       return liveTurn?.id ?? null
     },
 
+    whenTreeStop,
+
     abort(kind?: 'cancel' | 'interrupt') {
       cancelBackgroundReview?.()
       cancelBackgroundReview = undefined
       replayAbort?.abort()
+      if (kind === 'cancel') {
+        let abortedLiveChild = false
+        for (const child of childEngines.values()) {
+          if (child.liveTurnId() !== null) abortedLiveChild = true
+          child.abort('cancel')
+        }
+        if (liveTurn) {
+          if (liveTurn.cancelKind === undefined) liveTurn.cancelKind = 'cancel'
+          abortTurn(liveTurn.abort)
+        }
+        startTreeStopFlight(abortedLiveChild)
+        return
+      }
       if (liveTurn) {
         if (liveTurn.cancelKind === undefined) liveTurn.cancelKind = kind ?? 'interrupt'
         abortTurn(liveTurn.abort)

@@ -93,6 +93,7 @@ export async function maybeRunFollowup(opts: {
     getFollowup: () => string | null
     clearFollowup: () => Promise<void>
     liveTurnId: () => string | null
+    whenTreeStop?: () => Promise<{ descendantWork: boolean }>
   }
   listPendingAsks: () => Promise<unknown[]>
   lastEnd: RoundEnd
@@ -100,6 +101,7 @@ export async function maybeRunFollowup(opts: {
 }): Promise<'ran' | 'cleared' | 'skipped'> {
   if (opts.chain === true) return 'skipped'
   if (opts.engine.liveTurnId() !== null) return 'skipped'
+  if (opts.engine.whenTreeStop) await opts.engine.whenTreeStop()
   const text = opts.engine.getFollowup()
   if (text == null) return 'skipped'
   if (CLEAR_REASONS.has(opts.lastEnd.reason)) {
@@ -127,6 +129,7 @@ export async function runFollowupAfterSubmit(opts: {
     getFollowup: () => string | null
     clearFollowup: () => Promise<void>
     liveTurnId: () => string | null
+    whenTreeStop?: () => Promise<{ descendantWork: boolean }>
   }
   store?: {
     listPendingAsks?: (sessionId: string) => Promise<unknown[]>

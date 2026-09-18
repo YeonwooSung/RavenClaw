@@ -1257,6 +1257,7 @@ async function executeOneCall(
   if (state.fileHistory) ctx.fileHistory = state.fileHistory
   if (state.store) ctx.store = state.store
   if (state.session) ctx.session = state.session
+  if (state.registerChildEngine) ctx.registerChildEngine = state.registerChildEngine
 
   let allowed = false
   try {

@@ -232,6 +232,7 @@ export interface ToolContext {
   fileHistory?: import('./session/file-history').FileHistory
   store?: SessionStore
   session?: SessionRecord
+  registerChildEngine?(engine: SessionEngine): () => void
 }
 
 export interface ToolResult {
@@ -484,6 +485,7 @@ export interface SessionEngine {
   bindDrainQueued(fn: (() => string | undefined) | undefined): void
   rewindLast(): Promise<{ ok: boolean; notice: string; droppedText?: string }>
   maybeFinishRewindReset(): Promise<{ ran: boolean; ok: boolean; notice?: string }>
+  whenTreeStop(): Promise<{ descendantWork: boolean }>
   compactNow(): Promise<void>
   setModel(profile: ModelProfile): Promise<void>
   setPermissionMode(mode: PermissionMode): Promise<void>
@@ -519,6 +521,8 @@ export interface QueryLoopOptions {
   verifyOnStop?: boolean
   /** After a tool batch, return newly ready deferred tools (MCP). Prefix stays unchanged. */
   refreshTools?: () => Promise<Tool[] | undefined> | Tool[] | undefined
+  /** Parent registrar for in-process child engines. Tree-stop calls child.abort('cancel'). */
+  registerChildEngine?: (engine: SessionEngine) => () => void
   /** Live session record. TodoWrite mutates `todos` in place for mid-turn compact/TUI. */
   session?: SessionRecord
   /** Session todos for compact restore. Unset until the engine has a session list. */

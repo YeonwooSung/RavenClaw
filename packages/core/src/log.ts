@@ -92,6 +92,9 @@ export function wrapSessionEngineLog(
     maybeFinishRewindReset() {
       return engine.maybeFinishRewindReset()
     },
+    whenTreeStop() {
+      return engine.whenTreeStop()
+    },
     compactNow() {
       return engine.compactNow()
     },

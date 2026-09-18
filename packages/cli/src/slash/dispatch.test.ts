@@ -48,6 +48,9 @@ function fakeEngine(session: SessionRecord): SessionEngine & { reloads: number }
     async maybeFinishRewindReset() {
       return { ran: false, ok: true }
     },
+    async whenTreeStop() {
+      return { descendantWork: false }
+    },
     async *submitMessage() {
       return { reason: 'completed' as const }
     },

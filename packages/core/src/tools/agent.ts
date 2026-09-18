@@ -269,6 +269,7 @@ async function spawnChild(
       engine = wrapSessionEngineLog(createSessionEngine(engineOpts), openRavenclawLog(), {
         closeLog: false,
       })
+      const unregister = ctx.registerChildEngine?.(engine)
       if (taskId !== undefined) ctx.tasks?.attachEngine(taskId, engine)
       const unlinkEngine = linkEngineAbort(ctx.signal, engine)
       try {
@@ -281,6 +282,7 @@ async function spawnChild(
       } finally {
         unlinkEngine()
         await engine.close({ releaseLock: false }).catch(() => undefined)
+        unregister?.()
       }
     }
   } catch (error) {

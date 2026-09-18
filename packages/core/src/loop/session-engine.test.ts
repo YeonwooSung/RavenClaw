@@ -2249,10 +2249,170 @@ describe('cancel', () => {
     expect(await store.listPendingAsks(sess.id)).toHaveLength(1)
   })
 
-  test('parent cancel leaves a child leftover-ask', async () => {
+  test('parent cancel abort-pairs a child leftover-ask', async () => {
     const store = createMemoryStore()
     const parent = makeSession({ id: 'sess_parent_cancel' })
     const child = makeSession({ id: 'sess_child_ask', parentSessionId: parent.id })
+    await store.createSession(parent)
+    await store.createSession(child)
+    await store.persistToolCalls(child.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_child', name: 'Bash', input: { command: 'ls' } }],
+      createdAt: 1,
+    })
+    let enteredFirst: () => void
+    const firstStreamEntered = new Promise<void>((resolve) => {
+      enteredFirst = resolve
+    })
+    const engine = createSessionEngine({
+      ...engineOpts({
+        provider: {
+          id: 'fake',
+          apiMode: 'openai_compat',
+          profile: (model: string) => defaultModel(model),
+          async *stream(_req, signal) {
+            enteredFirst()
+            await new Promise<void>((resolve) => {
+              if (signal.aborted) {
+                resolve()
+                return
+              }
+              signal.addEventListener('abort', () => resolve(), { once: true })
+            })
+          },
+        },
+        store,
+        session: parent,
+      }),
+    })
+    const gen = engine.submitMessage('hi')
+    const pending = drain(gen)
+    await firstStreamEntered
+    await store.upsertPendingAsk({
+      callId: 'call_child',
+      sessionId: child.id,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Run ls?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    engine.abort('cancel')
+    const { events, result } = await pending
+    expect(result).toEqual({ reason: 'cancelled' })
+    await expect(engine.whenTreeStop()).resolves.toEqual({ descendantWork: true })
+    expect(await store.listPendingAsks(child.id)).toHaveLength(0)
+    expect(await store.listPendingAsks(parent.id)).toHaveLength(0)
+    expect(
+      events.some((e) => e.type === 'status' && e.message === 'cancelled, ask still pending'),
+    ).toBe(false)
+    const childLoaded = await store.loadSession(child.id)
+    const childTools = childLoaded.messages.filter((m) => m.role === 'tool' && m.toolUseId === 'call_child')
+    expect(childTools).toHaveLength(1)
+    expect(childTools[0]?.ok).toBe(false)
+    expect((childTools[0]?.blocks[0] as { text?: string })?.text).toBe(ABORTED_TEXT)
+    const parentLoaded = await store.loadSession(parent.id)
+    expect(parentLoaded.messages.filter((m) => m.role === 'tool')).toHaveLength(0)
+    expect(engine.session.lastEnd).toEqual({ reason: 'cancelled' })
+  })
+
+  test('parent cancel cancels a live child turn', async () => {
+    const store = createMemoryStore()
+    const parent = makeSession({ id: 'sess_parent_live_child' })
+    const child = makeSession({ id: 'sess_child_live', parentSessionId: parent.id })
+    await store.createSession(parent)
+    await store.createSession(child)
+    let childEntered: () => void
+    const childStreamEntered = new Promise<void>((resolve) => {
+      childEntered = resolve
+    })
+    const childEngine = createSessionEngine({
+      ...engineOpts({
+        provider: {
+          id: 'fake',
+          apiMode: 'openai_compat',
+          profile: (model: string) => defaultModel(model),
+          async *stream(_req, signal) {
+            childEntered()
+            await new Promise<void>((resolve) => {
+              if (signal.aborted) {
+                resolve()
+                return
+              }
+              signal.addEventListener('abort', () => resolve(), { once: true })
+            })
+          },
+        },
+        store,
+        session: child,
+      }),
+    })
+    const register = {
+      name: 'RegisterChild',
+      description: 'register',
+      inputSchema: { type: 'object', properties: {} },
+      parse() {
+        return { ok: true as const, value: {} }
+      },
+      isConcurrencySafe: () => true,
+      isReadOnly: () => true,
+      async checkPermissions() {
+        return { behavior: 'allow' as const, reason: 'mode' as const }
+      },
+      async execute(_input: unknown, ctx: { registerChildEngine?: (engine: typeof childEngine) => () => void }) {
+        ctx.registerChildEngine?.(childEngine)
+        return 'ok'
+      },
+    }
+    let parentEntered: () => void
+    const parentStreamEntered = new Promise<void>((resolve) => {
+      parentEntered = resolve
+    })
+    let parentStreams = 0
+    const parentEngine = createSessionEngine({
+      ...engineOpts({
+        provider: {
+          id: 'fake',
+          apiMode: 'openai_compat',
+          profile: (model: string) => defaultModel(model),
+          async *stream(_req, signal) {
+            parentStreams += 1
+            if (parentStreams === 1) {
+              yield { type: 'tool_call' as const, id: 'reg', name: 'RegisterChild', input: {} }
+              yield { type: 'stop' as const, reason: 'tool_use' }
+              return
+            }
+            parentEntered()
+            await new Promise<void>((resolve) => {
+              if (signal.aborted) {
+                resolve()
+                return
+              }
+              signal.addEventListener('abort', () => resolve(), { once: true })
+            })
+          },
+        },
+        store,
+        session: parent,
+        tools: [register as never],
+      }),
+    })
+    expect(typeof createSessionEngine).toBe('function')
+    const childPending = drain(childEngine.submitMessage('child'))
+    await childStreamEntered
+    const parentPending = drain(parentEngine.submitMessage('parent'))
+    await parentStreamEntered
+    parentEngine.abort('cancel')
+    expect((await childPending).result).toEqual({ reason: 'cancelled' })
+    expect((await parentPending).result).toEqual({ reason: 'cancelled' })
+    expect(childEngine.session.lastEnd).toEqual({ reason: 'cancelled' })
+  })
+
+  test('parent interrupt leaves a child leftover-ask', async () => {
+    const store = createMemoryStore()
+    const parent = makeSession({ id: 'sess_parent_interrupt' })
+    const child = makeSession({ id: 'sess_child_interrupt', parentSessionId: parent.id })
     await store.createSession(parent)
     await store.createSession(child)
     let enteredFirst: () => void
@@ -2292,10 +2452,131 @@ describe('cancel', () => {
       input: { command: 'ls' },
       createdAt: 1,
     })
-    engine.abort('cancel')
-    await pending
+    engine.abort('interrupt')
+    const { result } = await pending
+    expect(result.reason).toBe('aborted')
     expect(await store.listPendingAsks(child.id)).toHaveLength(1)
-    expect(await store.listPendingAsks(parent.id)).toHaveLength(0)
+  })
+
+  test('idle parent tree-stop drops descendant leftover-asks and keeps this session parked', async () => {
+    const store = createMemoryStore()
+    const parent = makeSession({ id: 'sess_idle_parent_tree' })
+    const child = makeSession({ id: 'sess_idle_child_tree', parentSessionId: parent.id })
+    await store.createSession(parent)
+    await store.createSession(child)
+    await store.persistToolCalls(child.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_child', name: 'Bash', input: { command: 'ls' } }],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_child',
+      sessionId: child.id,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Run ls?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'parked_parent',
+      sessionId: parent.id,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Run pwd?',
+      input: { command: 'pwd' },
+      createdAt: 2,
+    })
+    const engine = createSessionEngine({
+      ...engineOpts({ provider: createFakeProvider([]), store, session: parent }),
+    })
+    expect(engine.session.lastEnd).toBeUndefined()
+    engine.abort('cancel')
+    await expect(engine.whenTreeStop()).resolves.toEqual({ descendantWork: true })
+    expect(await store.listPendingAsks(child.id)).toHaveLength(0)
+    expect(await store.listPendingAsks(parent.id)).toHaveLength(1)
+    expect(engine.session.lastEnd).toBeUndefined()
+    const reloaded = await store.loadSession(parent.id)
+    expect(reloaded.session.lastEnd).toBeUndefined()
+    const childLoaded = await store.loadSession(child.id)
+    expect(childLoaded.session.lastEnd).toBeUndefined()
+    const childTools = childLoaded.messages.filter((m) => m.role === 'tool' && m.toolUseId === 'call_child')
+    expect(childTools).toHaveLength(1)
+    expect((childTools[0]?.blocks[0] as { text?: string })?.text).toBe(ABORTED_TEXT)
+  })
+
+  test('idle parent cancel with no descendants reports no descendant work', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_idle_no_desc' })
+    await store.createSession(sess)
+    await store.upsertPendingAsk({
+      callId: 'parked',
+      sessionId: sess.id,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Run ls?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    const engine = createSessionEngine({
+      ...engineOpts({ provider: createFakeProvider([]), store, session: sess }),
+    })
+    engine.abort('cancel')
+    await expect(engine.whenTreeStop()).resolves.toEqual({ descendantWork: false })
+    expect(await store.listPendingAsks(sess.id)).toHaveLength(1)
+  })
+
+  test('persist-fail on one descendant leftover-ask continues the others', async () => {
+    const store = createMemoryStore()
+    const parent = makeSession({ id: 'sess_persist_fail_parent' })
+    const childA = makeSession({ id: 'sess_persist_fail_a', parentSessionId: parent.id })
+    const childB = makeSession({ id: 'sess_persist_fail_b', parentSessionId: parent.id })
+    const childC = makeSession({ id: 'sess_persist_fail_c', parentSessionId: parent.id })
+    await store.createSession(parent)
+    await store.createSession(childA)
+    await store.createSession(childB)
+    await store.createSession(childC)
+    for (const [sess, callId] of [
+      [childA, 'call_a'],
+      [childB, 'call_b'],
+      [childC, 'call_c'],
+    ] as const) {
+      await store.persistToolCalls(sess.id, {
+        id: `a_${callId}`,
+        role: 'assistant',
+        blocks: [{ type: 'tool_use', id: callId, name: 'Bash', input: { command: 'ls' } }],
+        createdAt: 1,
+      })
+      await store.upsertPendingAsk({
+        callId,
+        sessionId: sess.id,
+        kind: 'leftover',
+        tool: 'Bash',
+        message: 'Run ls?',
+        input: { command: 'ls' },
+        createdAt: 1,
+      })
+    }
+    const innerPersist = store.persistToolResults.bind(store)
+    store.persistToolResults = async (sessionId, messages) => {
+      if (sessionId === childA.id) throw new Error('disk')
+      return innerPersist(sessionId, messages)
+    }
+    const engine = createSessionEngine({
+      ...engineOpts({
+        provider: createFakeProvider([]),
+        store,
+        session: parent,
+      }),
+    })
+    engine.abort('cancel')
+    await expect(engine.whenTreeStop()).resolves.toEqual({ descendantWork: true })
+    expect(await store.listPendingAsks(childA.id)).toHaveLength(1)
+    expect(await store.listPendingAsks(childB.id)).toHaveLength(0)
+    expect(await store.listPendingAsks(childC.id)).toHaveLength(0)
+    store.persistToolResults = innerPersist
+    expect(await engine.applyAskAnswer('call_a', 'deny')).toBe('matched')
   })
 
   test('cancel with no live turn does not drop leftover-asks', async () => {

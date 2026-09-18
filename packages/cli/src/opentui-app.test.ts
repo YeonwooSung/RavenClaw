@@ -135,6 +135,9 @@ function fakeEngine(
     async maybeFinishRewindReset() {
       return { ran: false, ok: true }
     },
+    async whenTreeStop() {
+      return { descendantWork: false }
+    },
     submitMessage(input: UserSubmitInput) {
       const text = typeof input === 'string' ? input : (input.text ?? '')
       return submit(text)

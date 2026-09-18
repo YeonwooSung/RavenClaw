@@ -145,6 +145,9 @@ function stubEngine(sessionId: string, end: RoundEnd, events: StreamEvent[] = []
     async maybeFinishRewindReset() {
       return { ran: false, ok: true }
     },
+    async whenTreeStop() {
+      return { descendantWork: false }
+    },
     async compactNow() {},
     async setModel() {},
     async setPermissionMode() {},
