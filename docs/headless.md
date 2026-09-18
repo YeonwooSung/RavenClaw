@@ -88,6 +88,9 @@ Session routes use an engine that does **not** force `dontAsk`. All require the 
 - `POST /v1/session/:id/compact` — `engine.compactNow()`
 - `POST /v1/session/:id/resolve` — `{ callId, allow: boolean }` → live waiter or `applyAskAnswer`; 200 `{ status }` or 404 if unmatched
 - `POST /v1/session/:id/pr` — optional `{ title, body }` → draft PR from the session shadow (default off; never a model turn). 200 `{ ok, notice, snapshot? }`. Missing job or dirty tree is a notice, not 5xx.
+- `POST /v1/session/:id/followup` — `{ text }` → one-slot `setFollowup`; 200 `{ ok: true, queued }` or 400 if text is missing/empty. `DELETE …/followup` clears; 200 `{ ok: true, queued: null }`. Does not call `submitMessage`. After a real persisted `lastEnd`, serve may auto-run the slot in-process (`runFollowupAfterSubmit`); owned leftover-asks skip. Not `/queue`, not `SuggestFollowups`.
+- `POST /v1/session/:id/edit` — `{ text }` → `rewindLast()` then `submitMessage`. Empty text → 400. Rewind refuse → 200 `{ ok: false, notice, droppedText? }`. Success → **202** `{ accepted, sessionId, droppedText? }` then fire-and-forget submit (same follow-up epilogue as `/submit`). Last user turn only.
+- `GET /v1/session/:id/diff` — read-only job range: `baseCommitSha...HEAD` ∪ dirty via `jobDiff`. 200 `JobDiff` (`ok: true`, files with `create|update|delete|rename`) or `{ ok: false, notice }` (no job / git fail). Not a model turn.
 
 Crash-resolve: after process death, `POST …/resolve` → `applyAskAnswer` **pairs only** (writes the tool result row). It does not resume the model. The client must `POST …/submit` to continue. Live `/resolve` that hits an in-process waiter still unblocks that turn.
 

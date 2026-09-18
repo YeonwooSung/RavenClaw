@@ -441,7 +441,7 @@ Ink status line은 모델·mode·usage·`shortSessionId`·funding·near-compact�
 - 인자 없음: 현재 슬롯 표시 (`no follow-up` 또는 텍스트)
 - `clear`: 슬롯 삭제, notice `no follow-up`
 - 그 외 텍스트: `setFollowup`. 빈/공백만이면 `follow-up text required`
-- 턴 종료 후 `maybeRunFollowup`이 성공 reason이면 자동 실행, cancel/abort/error면 clear (pending ask 있으면 skip)
+- 턴 종료 후 `runFollowupAfterSubmit`이 이번에 쓴 `lastEnd`의 성공 reason이면 자동 실행, cancel/abort/error면 clear (owned leftover-ask면 skip)
 - serve: `POST/DELETE /v1/session/:id/followup`, 스냅샷 `queued`
 - 관련: `/queue`, `/retry`
 

@@ -10,7 +10,7 @@ English: [ARCHITECTURE.md](ARCHITECTURE.md)
 - [SLASH_COMMANDS.ko.md](SLASH_COMMANDS.ko.md)
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [docs/headless.md](docs/headless.md)
-- 구현됨: [2026-09-16-session-as-job-roadmap.md](docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md) (`ea56edd`, closeout `0ef1554`) (이전: [eve-inspired](docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md), implemented; 다음: [job-host state](docs/superpowers/specs/2026-09-17-job-host-state-roadmap.md))
+- 구현됨: [2026-09-16-session-as-job-roadmap.md](docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md) (`ea56edd`, closeout `0ef1554`); [job-host state](docs/superpowers/specs/2026-09-17-job-host-state-roadmap.md) (`6e56764`) (이전: [eve-inspired](docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md), implemented; 다음 주차, 스펙 없음: rewind persist-before-reset / `todo.json` 재투영)
 - 선행 분석: [eve-analysis.ko.md](docs/research/eve-analysis.ko.md), [y0-analysis.ko.md](docs/research/y0-analysis.ko.md)
 
 ---
@@ -182,7 +182,7 @@ ACP `session/new`는 cwd, model, MCP 서버 목록을 overlay할 수 있다. 이
 - `POST /v1/turn`은 `Authorization: Bearer <secret>`이 필요하다. body는 `{ text, sessionKey? }`다. 같은 `sessionKey`는 `~/.ravenclaw/gateway/sessions.json`에 세션 id를 고정한다.
 - `GET  /v1/session/:id` — 재연결 스냅샷 `{ id, title?, job?, jobAutoCommit, pendingAsks, lastSeq, permissionMode, live, lastEnd?, jobError?, queued }` (Bearer). 없으면 404 (생성하지 않음). `live`는 턴 진행 중 true. `jobAutoCommit`은 항상 boolean. `queued`는 one-slot follow-up 텍스트 또는 `null`. `lastEnd` / `jobError`는 세션에 있을 때만 포함.
 - `GET  /v1/session/:id/stream` — NDJSON `{ seq } & StreamEvent` (Bearer). `after` 없으면 live tail. `?after=<seq>`는 `seq > after`를 재생한 뒤 tail. `after=0`은 처음부터. 스트림을 닫는 것은 detach이며 cancel이 아니다.
-- `POST /v1/session/:id/submit` — `{ text }` → `submitMessage({ text, turnPolicy: 'queue' })`, **202** `{ accepted, sessionId }`. 없는 세션은 **default** permission mode로 만든다 (`dontAsk` 아님). 턴이 끝나면 serve가 `maybeRunFollowup`(in-process one-slot epilogue)을 호출할 수 있다.
+- `POST /v1/session/:id/submit` — `{ text }` → `submitMessage({ text, turnPolicy: 'queue' })`, **202** `{ accepted, sessionId }`. 없는 세션은 **default** permission mode로 만든다 (`dontAsk` 아님). 턴이 끝나면 serve가 `runFollowupAfterSubmit`(in-process one-slot epilogue; 이번 submit이 `lastEnd`를 쓰지 않으면 skip)을 호출할 수 있다.
 - `POST /v1/session/:id/resolve` — `{ callId, allow }`가 먼저 live waiter를 처리하고, 없으면 `applyAskAnswer`. crash-resolve는 **pair only**.
 - `POST /v1/session/:id/cancel` — body에 optional `{ turnId? }`. 라이브 턴이 일치하면(또는 `turnId` 생략 시 라이브가 있으면) `engine.abort('cancel')`. stale / 라이브 없음 → **200** `{ ok: true, status: 'no_active_turn' }`. parked leftover-ask 행은 남는다. 스트림은 `cancelled, ask still pending`을 낼 수 있다.
 - `POST /v1/session/:id/compact` — `compactNow()` (`liveTurn !== null`이면 큐).
@@ -277,7 +277,7 @@ SDK `createRootTools`에 없는 CLI 루트 툴: `NotebookEdit`, `TaskSteer`, `Ad
 
 `setPermissionMode`는 라이브 턴에도 즉시 반영한다. `plan`으로 들어갈 때 이전 모드를 `prePlanMode`에 저장하고, 나올 때 지운다. 시스템 파트의 volatile 줄 `Current permission mode:`도 같이 고친다.
 
-`enqueueSteer` / `drainSteering`은 `/steer`와 `TaskSteer`가 쓰는 큐다. `bindDrainQueued`는 `/queue`의 다음 턴 텍스트를 루프에 넘긴다. `rewindLast`는 라이브 턴·running agent·unpaired pending ask가 없을 때만 동작하며 `{ ok, notice, droppedText? }`를 반환한다. **job 세션**은 `rewindToCheckpoint`로 worktree에서 `git reset --hard`(체크포인트 sha 또는 `baseCommitSha`) + todo 스냅샷 복원 + 마지막 user 턴 drop이다. **job 없는 세션**은 `rewindLastTurn`(file-history undo + 마지막 user 턴 drop)이다. serve `POST …/edit`와 TUI `/retry`는 rewind 후 `submitMessage`(또는 composer 복원)를 합성한다. `setFollowup` / `clearFollowup` / `getFollowup`은 `session.followup` one-slot(schema v10)이다. 호스트는 실제 턴 종료 후 `maybeRunFollowup`을 호출한다. `abort(kind?)`는 background review를 취소하고 라이브 턴을 abort한다. serve cancel은 `'cancel'`을 넘긴다. `liveTurnId()`가 serve `turnId` 가드를 받친다. `close`는 `SessionEnd` 후 락을 놓는다.
+`enqueueSteer` / `drainSteering`은 `/steer`와 `TaskSteer`가 쓰는 큐다. `bindDrainQueued`는 `/queue`의 다음 턴 텍스트를 루프에 넘긴다. `rewindLast`는 라이브 턴·running agent·unpaired pending ask가 없을 때만 동작하며 `{ ok, notice, droppedText? }`를 반환한다. **job 세션**은 `rewindToCheckpoint`로 worktree에서 `git reset --hard`(체크포인트 sha 또는 `baseCommitSha`) + todo 스냅샷 복원 + 마지막 user 턴 drop이다. **job 없는 세션**은 `rewindLastTurn`(file-history undo + 마지막 user 턴 drop)이다. serve `POST …/edit`와 TUI `/retry`는 rewind 후 `submitMessage`(또는 composer 복원)를 합성한다. `setFollowup` / `clearFollowup` / `getFollowup`은 `session.followup` one-slot(schema v10)이다. 호스트는 실제 턴 종료 후 `runFollowupAfterSubmit`을 호출한다 (persist된 `lastEnd`만; owned leftover-ask는 skip). `abort(kind?)`는 background review를 취소하고 라이브 턴을 abort한다. serve cancel은 `'cancel'`을 넘긴다. `liveTurnId()`가 serve `turnId` 가드를 받친다. `close`는 `SessionEnd` 후 락을 놓는다.
 
 ---
 
