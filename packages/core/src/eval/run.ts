@@ -7,7 +7,8 @@ import { createSessionEngine } from '../loop/session-engine'
 import { maybeRunFollowup, writeFollowup } from '../session/followup'
 import { jobDiff } from '../session/job-diff'
 import { createMemoryStore } from '../session/memory-store'
-import { rewindToCheckpoint } from '../session/rewind'
+import { createFileHistory } from '../session/file-history'
+import { rewindLastTurn, rewindToCheckpoint } from '../session/rewind'
 import { enterSessionWorktree, exitSessionWorktree, getSessionWorktree } from '../tools/session-worktree'
 import { todoJsonPath } from '../tools/todo'
 import { writeTool } from '../tools/write'
@@ -49,6 +50,7 @@ type EvalExpect = {
   cancelAbortPair?: boolean
   rewindResetOnResume?: boolean
   followupPersistOrder?: boolean
+  rewindNoJobTodoRevert?: boolean
 }
 
 type EvalCase = {
@@ -123,6 +125,10 @@ export async function runEvalDir(dir: string): Promise<void> {
     }
     if (name === 'followup-persist-order') {
       await runFollowupPersistOrder(spec)
+      continue
+    }
+    if (name === 'rewind-no-job-todo-revert') {
+      await runRewindNoJobTodoRevert(spec)
       continue
     }
     throw new Error(`unknown eval fixture: ${name}`)
@@ -1013,6 +1019,138 @@ async function runRewindTodoProject(spec: EvalCase): Promise<void> {
   } finally {
     exitSessionWorktree(sessionId, 'remove', true)
     rmSync(cwd, { recursive: true, force: true })
+  }
+}
+
+async function runRewindNoJobTodoRevert(spec: EvalCase): Promise<void> {
+  if (spec.expect.rewindNoJobTodoRevert !== true) return
+  const home = mkdtempSync(join(tmpdir(), 'raven-eval-nojob-todo-home-'))
+  const cwd = mkdtempSync(join(tmpdir(), 'raven-eval-nojob-todo-'))
+  const sessionId = `sess_eval_nojob_todo_${crypto.randomUUID()}`
+  try {
+    const snapshot: TodoItem[] = [{ text: 'a', status: 'pending' }]
+    const later: TodoItem[] = [{ text: 'b', status: 'done' }]
+    const store = createMemoryStore()
+    const session = makeSession({ id: sessionId, cwd, todos: later })
+    await store.createSession(session)
+    const history = createFileHistory(sessionId, home)
+    history.beginTurn()
+    history.endTurn()
+    const messages: Message[] = [
+      {
+        id: 'u1',
+        role: 'user',
+        blocks: [{ type: 'text', text: 'first' }],
+        createdAt: 1,
+      },
+      {
+        id: 'a1',
+        role: 'assistant',
+        blocks: [{ type: 'text', text: 'ok' }],
+        createdAt: 2,
+        checkpoint: { todoSnapshot: snapshot, dirty: false },
+      },
+      {
+        id: 'u2',
+        role: 'user',
+        blocks: [{ type: 'text', text: 'second' }],
+        createdAt: 3,
+      },
+      {
+        id: 'a2',
+        role: 'assistant',
+        blocks: [{ type: 'text', text: 'later' }],
+        createdAt: 4,
+      },
+    ]
+    await store.persistUser(sessionId, messages[0] as Extract<Message, { role: 'user' }>)
+    await store.persistAssistant(sessionId, messages[1] as Extract<Message, { role: 'assistant' }>)
+    await store.persistUser(sessionId, messages[2] as Extract<Message, { role: 'user' }>)
+    await store.persistAssistant(sessionId, messages[3] as Extract<Message, { role: 'assistant' }>)
+    const ok = await rewindLastTurn({
+      fileHistory: history,
+      messages,
+      store,
+      sessionId,
+      session,
+    })
+    if (!ok.ok) throw new Error(`rewind-no-job-todo-revert: success path failed: ${ok.notice}`)
+    const loaded = await store.loadSession(sessionId)
+    const fileRaw = readFileSync(todoJsonPath(cwd), 'utf8')
+    const fileItems = JSON.parse(fileRaw) as TodoItem[]
+    if (JSON.stringify(fileItems) !== JSON.stringify(snapshot)) {
+      throw new Error(`rewind-no-job-todo-revert: file ${fileRaw} !== snapshot`)
+    }
+    if (JSON.stringify(loaded.session.todos) !== JSON.stringify(snapshot)) {
+      throw new Error(
+        `rewind-no-job-todo-revert: session.todos ${JSON.stringify(loaded.session.todos)} !== snapshot`,
+      )
+    }
+
+    const failCwd = mkdtempSync(join(tmpdir(), 'raven-eval-nojob-todo-fail-'))
+    const failHome = mkdtempSync(join(tmpdir(), 'raven-eval-nojob-todo-fail-home-'))
+    const failPath = join(failCwd, 'keep.txt')
+    writeFileSync(failPath, 'new\n')
+    const failStore = createMemoryStore()
+    const failSess = makeSession({ id: `${sessionId}_fail`, cwd: failCwd, todos: later })
+    await failStore.createSession(failSess)
+    const failHistory = createFileHistory(failSess.id, failHome)
+    failHistory.beginTurn()
+    failHistory.snapshot(failPath)
+    failHistory.endTurn()
+    const failMessages: Message[] = [
+      {
+        id: 'u1',
+        role: 'user',
+        blocks: [{ type: 'text', text: 'first' }],
+        createdAt: 1,
+      },
+      {
+        id: 'a1',
+        role: 'assistant',
+        blocks: [{ type: 'text', text: 'ok' }],
+        createdAt: 2,
+        checkpoint: { todoSnapshot: snapshot, dirty: false },
+      },
+      {
+        id: 'u2',
+        role: 'user',
+        blocks: [{ type: 'text', text: 'second' }],
+        createdAt: 3,
+      },
+    ]
+    await failStore.persistUser(failSess.id, failMessages[0] as Extract<Message, { role: 'user' }>)
+    await failStore.persistAssistant(failSess.id, failMessages[1] as Extract<Message, { role: 'assistant' }>)
+    await failStore.persistUser(failSess.id, failMessages[2] as Extract<Message, { role: 'user' }>)
+    failStore.recordCompact = async () => {
+      throw new Error('disk full')
+    }
+    const failed = await rewindLastTurn({
+      fileHistory: failHistory,
+      messages: failMessages,
+      store: failStore,
+      sessionId: failSess.id,
+      session: failSess,
+    })
+    if (failed.ok) throw new Error('rewind-no-job-todo-revert: persist fail unexpectedly ok')
+    if (failed.notice !== 'rewind persist failed') {
+      throw new Error(`rewind-no-job-todo-revert: notice ${JSON.stringify(failed.notice)}`)
+    }
+    if (readFileSync(failPath, 'utf8') !== 'new\n') {
+      throw new Error('rewind-no-job-todo-revert: persist fail undid files')
+    }
+    const failLoaded = await failStore.loadSession(failSess.id)
+    if (JSON.stringify(failLoaded.session.todos) !== JSON.stringify(later)) {
+      throw new Error('rewind-no-job-todo-revert: persist fail changed todos')
+    }
+    if (!failLoaded.messages.some((msg) => msg.id === 'u2')) {
+      throw new Error('rewind-no-job-todo-revert: persist fail dropped the last user')
+    }
+    rmSync(failCwd, { recursive: true, force: true })
+    rmSync(failHome, { recursive: true, force: true })
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+    rmSync(home, { recursive: true, force: true })
   }
 }
 
