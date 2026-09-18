@@ -229,6 +229,238 @@ describe('rewindLastTurn', () => {
   })
 })
 
+describe('rewindLastTurn todo restore', () => {
+  function sessionOf(over: Partial<SessionRecord> = {}): SessionRecord {
+    return {
+      id: 'sess_todo',
+      createdAt: 1,
+      updatedAt: 1,
+      cwd: '/tmp',
+      model: 'dummy',
+      permissionMode: 'default',
+      compactGeneration: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      funding: 'byok',
+      ...over,
+    }
+  }
+
+  test('restores session.todos from the previous assistant snapshot', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'raven-rewind-todo-'))
+    const cwd = mkdtempSync(join(tmpdir(), 'raven-rewind-todo-cwd-'))
+    const history = createFileHistory('sess_todo', home)
+    history.beginTurn()
+    history.endTurn()
+    const store = createMemoryStore()
+    const sess = sessionOf({ id: 'sess_todo', cwd, todos: [{ text: 'b', status: 'done' }] })
+    await store.createSession(sess)
+    const messages: Message[] = [
+      user('u1', 'first', 1),
+      {
+        id: 'a1',
+        role: 'assistant',
+        blocks: [{ type: 'text', text: 'ok' }],
+        createdAt: 2,
+        checkpoint: { todoSnapshot: [{ text: 'a', status: 'pending' }], dirty: false },
+      },
+      user('u2', 'second', 3),
+      assistant('a2', 'later', 4),
+    ]
+    const result = await rewindLastTurn({
+      fileHistory: history,
+      messages,
+      store,
+      sessionId: sess.id,
+      session: sess,
+    })
+    expect(result.ok).toBe(true)
+    expect(result.messages.map((msg) => msg.id)).toEqual(['u1', 'a1'])
+    expect(sess.todos).toEqual([{ text: 'a', status: 'pending' }])
+    const loaded = await store.loadSession(sess.id)
+    expect(loaded.session.todos).toEqual([{ text: 'a', status: 'pending' }])
+    expect(JSON.parse(readFileSync(todoJsonPath(cwd), 'utf8'))).toEqual([
+      { text: 'a', status: 'pending' },
+    ])
+  })
+
+  test('legacy remaining assistant without checkpoint leaves todos', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'raven-rewind-legacy-'))
+    const cwd = mkdtempSync(join(tmpdir(), 'raven-rewind-legacy-cwd-'))
+    const history = createFileHistory('sess_legacy', home)
+    history.beginTurn()
+    history.endTurn()
+    const store = createMemoryStore()
+    const sess = sessionOf({
+      id: 'sess_legacy',
+      cwd,
+      todos: [{ text: 'keep', status: 'pending' }],
+    })
+    await store.createSession(sess)
+    const messages: Message[] = [user('u1', 'first', 1), assistant('a1', 'ok', 2), user('u2', 'drop', 3)]
+    const result = await rewindLastTurn({
+      fileHistory: history,
+      messages,
+      store,
+      sessionId: sess.id,
+      session: sess,
+    })
+    expect(result.ok).toBe(true)
+    expect(sess.todos).toEqual([{ text: 'keep', status: 'pending' }])
+    expect(existsSync(todoJsonPath(cwd))).toBe(false)
+  })
+
+  test('first-turn rewind with no remaining assistant clears todos', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'raven-rewind-empty-'))
+    const cwd = mkdtempSync(join(tmpdir(), 'raven-rewind-empty-cwd-'))
+    const history = createFileHistory('sess_empty', home)
+    history.beginTurn()
+    history.endTurn()
+    const store = createMemoryStore()
+    const sess = sessionOf({
+      id: 'sess_empty',
+      cwd,
+      todos: [{ text: 'gone', status: 'pending' }],
+    })
+    await store.createSession(sess)
+    const messages: Message[] = [user('u1', 'only', 1), assistant('a1', 'ok', 2)]
+    const result = await rewindLastTurn({
+      fileHistory: history,
+      messages,
+      store,
+      sessionId: sess.id,
+      session: sess,
+    })
+    expect(result.ok).toBe(true)
+    expect(result.messages).toEqual([])
+    expect(sess.todos).toEqual([])
+    expect(readFileSync(todoJsonPath(cwd), 'utf8')).toBe('[]\n')
+  })
+
+  test('no dropped messages does not restore todos', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'raven-rewind-nodrop-'))
+    const cwd = mkdtempSync(join(tmpdir(), 'raven-rewind-nodrop-cwd-'))
+    const history = createFileHistory('sess_nodrop', home)
+    history.beginTurn()
+    history.endTurn()
+    const store = createMemoryStore()
+    const sess = sessionOf({
+      id: 'sess_nodrop',
+      cwd,
+      todos: [{ text: 'keep', status: 'pending' }],
+    })
+    await store.createSession(sess)
+    const messages: Message[] = [
+      {
+        id: 'a1',
+        role: 'assistant',
+        blocks: [{ type: 'text', text: 'ok' }],
+        createdAt: 1,
+        checkpoint: { todoSnapshot: [], dirty: false },
+      },
+    ]
+    const result = await rewindLastTurn({
+      fileHistory: history,
+      messages,
+      store,
+      sessionId: sess.id,
+      session: sess,
+    })
+    expect(result.ok).toBe(true)
+    expect(sess.todos).toEqual([{ text: 'keep', status: 'pending' }])
+  })
+
+  test('upsert fail after undo leaves memory todos and does not un-compact', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'raven-rewind-upsert-'))
+    const cwd = mkdtempSync(join(tmpdir(), 'raven-rewind-upsert-cwd-'))
+    const path = join(cwd, 'keep.txt')
+    writeFileSync(path, 'old\n')
+    const history = createFileHistory('sess_upsert', home)
+    history.beginTurn()
+    history.snapshot(path)
+    writeFileSync(path, 'new\n')
+    history.endTurn()
+    const store = createMemoryStore()
+    const sess = sessionOf({
+      id: 'sess_upsert',
+      cwd,
+      todos: [{ text: 'b', status: 'done' }],
+    })
+    await store.createSession(sess)
+    const orig = store.upsertSession.bind(store)
+    store.upsertSession = async () => {
+      throw new Error('disk full')
+    }
+    const messages: Message[] = [
+      user('u1', 'first', 1),
+      {
+        id: 'a1',
+        role: 'assistant',
+        blocks: [{ type: 'text', text: 'ok' }],
+        createdAt: 2,
+        checkpoint: { todoSnapshot: [{ text: 'a', status: 'pending' }], dirty: false },
+      },
+      user('u2', 'second', 3),
+    ]
+    await store.persistUser(sess.id, messages[0] as Extract<Message, { role: 'user' }>)
+    await store.persistAssistant(sess.id, messages[1] as Extract<Message, { role: 'assistant' }>)
+    await store.persistUser(sess.id, messages[2] as Extract<Message, { role: 'user' }>)
+    const result = await rewindLastTurn({
+      fileHistory: history,
+      messages,
+      store,
+      sessionId: sess.id,
+      generation: 0,
+      session: sess,
+    })
+    expect(result.ok).toBe(false)
+    expect(result.notice).toBe('rewind persist failed')
+    expect(result.messages.map((msg) => msg.id)).toEqual(['u1', 'a1'])
+    expect(sess.todos).toEqual([{ text: 'b', status: 'done' }])
+    store.upsertSession = orig
+    const loaded = await store.loadSession(sess.id)
+    expect(loaded.session.todos).toEqual([{ text: 'b', status: 'done' }])
+    expect(loaded.messages.map((msg) => msg.id)).toEqual(['u1', 'a1'])
+    expect(readFileSync(path, 'utf8')).toBe('old\n')
+  })
+
+  test('projection fail keeps restored todos and ok true', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'raven-rewind-proj-'))
+    const cwd = mkdtempSync(join(tmpdir(), 'raven-rewind-proj-cwd-'))
+    writeFileSync(join(cwd, '.ravenclaw'), 'not-a-dir\n')
+    const history = createFileHistory('sess_proj', home)
+    history.beginTurn()
+    history.endTurn()
+    const store = createMemoryStore()
+    const sess = sessionOf({
+      id: 'sess_proj',
+      cwd,
+      todos: [{ text: 'b', status: 'done' }],
+    })
+    await store.createSession(sess)
+    const messages: Message[] = [
+      user('u1', 'first', 1),
+      {
+        id: 'a1',
+        role: 'assistant',
+        blocks: [{ type: 'text', text: 'ok' }],
+        createdAt: 2,
+        checkpoint: { todoSnapshot: [{ text: 'a', status: 'pending' }], dirty: false },
+      },
+      user('u2', 'second', 3),
+    ]
+    const result = await rewindLastTurn({
+      fileHistory: history,
+      messages,
+      store,
+      sessionId: sess.id,
+      session: sess,
+    })
+    expect(result.ok).toBe(true)
+    expect(result.notice).toContain('todo.json write failed')
+    expect(sess.todos).toEqual([{ text: 'a', status: 'pending' }])
+  })
+})
+
 describe('rewindToCheckpoint', () => {
   const tempDirs: string[] = []
   const sessionIds: string[] = []

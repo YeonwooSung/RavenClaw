@@ -43,6 +43,7 @@ export async function rewindLastTurn(opts: {
   store?: SessionStore
   sessionId?: string
   generation?: number
+  session?: SessionRecord
 }): Promise<{ ok: boolean; notice: string; messages: Message[] }> {
   if (opts.fileHistory.peekLast?.()?.open === true) {
     return {
@@ -72,7 +73,32 @@ export async function rewindLastTurn(opts: {
     return { ok: false, notice: formatRewindNotice(undo, 0), messages: opts.messages }
   }
 
-  return { ok: true, notice: formatRewindNotice(undo, droppedIds.length), messages: next }
+  let notice = formatRewindNotice(undo, droppedIds.length)
+  if (droppedIds.length > 0 && opts.session && opts.store) {
+    const snapshot = lastTodoCheckpoint(next)
+    const hasAssistant = next.some((msg) => msg.role === 'assistant')
+    if (!(snapshot === undefined && hasAssistant)) {
+      const nextTodos = snapshot
+        ? snapshot.todoSnapshot.map((item) => ({ ...item }))
+        : []
+      const toWrite = { ...opts.session, todos: nextTodos, updatedAt: Date.now() }
+      try {
+        await opts.store.upsertSession(toWrite)
+      } catch {
+        return { ok: false, notice: 'rewind persist failed', messages: next }
+      }
+      opts.session.todos = nextTodos
+      opts.session.updatedAt = toWrite.updatedAt
+      try {
+        projectSessionTodos(opts.session.cwd, opts.session.todos ?? [])
+      } catch (error) {
+        const detail = error instanceof Error ? error.message : String(error)
+        notice = `${notice}; todo.json write failed: ${detail}`
+      }
+    }
+  }
+
+  return { ok: true, notice, messages: next }
 }
 
 function lastGitCheckpoint(messages: Message[]): JobCheckpoint | undefined {
@@ -80,6 +106,14 @@ function lastGitCheckpoint(messages: Message[]): JobCheckpoint | undefined {
     const msg = messages[i]
     const sha = msg?.role === 'assistant' ? msg.checkpoint?.commitSha : undefined
     if (msg?.role === 'assistant' && sha) return msg.checkpoint
+  }
+  return undefined
+}
+
+function lastTodoCheckpoint(messages: Message[]): JobCheckpoint | undefined {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]
+    if (msg?.role === 'assistant' && msg.checkpoint) return msg.checkpoint
   }
   return undefined
 }

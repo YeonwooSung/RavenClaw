@@ -526,6 +526,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         store: opts.store,
         sessionId: session.id,
         generation: session.compactGeneration,
+        session,
       })
       messages = result.messages
       return {
