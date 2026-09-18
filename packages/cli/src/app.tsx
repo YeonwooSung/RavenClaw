@@ -508,12 +508,11 @@ export function App(props: AppProps) {
             void (async () => {
               const rewound = await runtimeRef.current.engine.rewindLast()
               setNotice(rewound.notice)
+              if (rewound.droppedText !== undefined) setDraft(rewound.droppedText)
               if (!rewound.ok) return
               if (parsed.arg !== undefined && parsed.arg.trim() !== '') {
                 void runTurn(parsed.arg)
-                return
               }
-              if (rewound.droppedText !== undefined) setDraft(rewound.droppedText)
             })()
             return
           }

@@ -58,20 +58,26 @@ export function jobDiff(job: SessionJob): JobDiff | { ok: false; notice: string 
   const byPath = new Map<string, JobDiffFile>()
 
   for (const row of parseNameStatus(committedName.stdout)) {
-    const stat = stats.get(row.path) ?? { plus: 0, minus: 0 }
-    byPath.set(row.path, fileRow(row, stat))
+    byPath.set(row.path, fileRow(row, statFor(stats, row)))
+    if (row.from !== undefined) byPath.delete(row.from)
   }
 
   for (const row of parseNameStatus(dirtyName.stdout)) {
     const existing = byPath.get(row.path)
-    const stat = stats.get(row.path) ?? { plus: 0, minus: 0 }
+    const stat = statFor(stats, row)
     if (existing) {
       existing.plus = stat.plus
       existing.minus = stat.minus
+      if (row.op === 'rename') {
+        existing.op = 'rename'
+        if (row.from !== undefined) existing.from = row.from
+      }
+      if (row.from !== undefined) byPath.delete(row.from)
       continue
     }
     // Only dirty: prefer name-status op (incl. rename/delete); untracked handled below.
     byPath.set(row.path, fileRow(row, stat))
+    if (row.from !== undefined) byPath.delete(row.from)
   }
 
   for (const line of untracked.stdout.split('\n')) {
@@ -89,6 +95,19 @@ export function jobDiff(job: SessionJob): JobDiff | { ok: false; notice: string 
     dirty: statusResult.stdout.trim() !== '',
     files: [...byPath.values()],
   }
+}
+
+function statFor(
+  stats: Map<string, { plus: number; minus: number }>,
+  row: { path: string; from?: string },
+): { plus: number; minus: number } {
+  const dest = stats.get(row.path)
+  if (dest !== undefined && dest.plus + dest.minus > 0) return dest
+  if (row.from !== undefined) {
+    const from = stats.get(row.from)
+    if (from !== undefined) return from
+  }
+  return dest ?? { plus: 0, minus: 0 }
 }
 
 function fileRow(
@@ -126,7 +145,9 @@ function mergeNumstat(map: Map<string, { plus: number; minus: number }>, stdout:
     if (parts.length < 3) continue
     const plusRaw = parts[0] ?? '0'
     const minusRaw = parts[1] ?? '0'
-    const path = parts.length >= 4 ? (parts[3] ?? '') : (parts[2] ?? '')
+    const rawPath = parts.length >= 4 ? (parts[3] ?? '') : (parts[2] ?? '')
+    const arrow = rawPath.indexOf(' => ')
+    const path = arrow >= 0 ? rawPath.slice(arrow + 4) : rawPath
     if (path === '') continue
     const plus = plusRaw === '-' ? 0 : Number(plusRaw) || 0
     const minus = minusRaw === '-' ? 0 : Number(minusRaw) || 0

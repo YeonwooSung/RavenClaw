@@ -390,12 +390,12 @@ export async function runOpenTuiApp(
         case 'retry': {
           const rewound = await current.engine.rewindLast()
           write(`${rewound.notice}\n`)
+          if (rewound.droppedText !== undefined) draft = rewound.droppedText
           if (!rewound.ok) continue
           if (parsed.arg !== undefined && parsed.arg.trim() !== '') {
             await runTurn(parsed.arg)
             continue
           }
-          if (rewound.droppedText !== undefined) draft = rewound.droppedText
           continue
         }
         case 'queue': {

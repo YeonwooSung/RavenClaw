@@ -1825,6 +1825,39 @@ describe('job auto-commit', () => {
     expect(loaded.messages.map((msg) => msg.id)).toEqual(['u0', 'a0'])
   })
 
+  test('rewindLast reset-fail returns droppedText so /retry can restore it', async () => {
+    const cwd = tempDir('ravenclaw-job-rewind-droptext-')
+    initGitRepo(cwd)
+    const id = nextSession()
+    const entered = enterSessionWorktree(id, cwd)
+    expect(entered.ok).toBe(true)
+    const job = entered.job!
+    job.baseCommitSha = 'not-a-real-commit-sha'
+    const store = createMemoryStore()
+    const sess = makeSession({
+      id,
+      cwd: job.worktreePath,
+      job,
+    })
+    await store.createSession(sess)
+    const messages: Message[] = [user('u1', 'keep this prompt', 1), asst('a1', 'ok', 2)]
+    await persistAll(store, id, messages)
+    const engine = createSessionEngine({
+      ...engineOpts({
+        provider: createFakeProvider([
+          [{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: 'end' }],
+        ]),
+        store,
+        session: sess,
+      }),
+      messages,
+    })
+    const result = await engine.rewindLast()
+    expect(result.ok).toBe(false)
+    expect(result.notice.startsWith('rewind reset failed:')).toBe(true)
+    expect(result.droppedText).toBe('keep this prompt')
+  })
+
   test('maybeFinishRewindReset no-ops under a live turn; rewindLast refuses', async () => {
     const cwd = tempDir('ravenclaw-job-finish-live-')
     initGitRepo(cwd)

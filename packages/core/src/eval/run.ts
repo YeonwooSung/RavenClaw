@@ -8,7 +8,7 @@ import { maybeRunFollowup, writeFollowup } from '../session/followup'
 import { jobDiff } from '../session/job-diff'
 import { createMemoryStore } from '../session/memory-store'
 import { rewindToCheckpoint } from '../session/rewind'
-import { enterSessionWorktree, exitSessionWorktree } from '../tools/session-worktree'
+import { enterSessionWorktree, exitSessionWorktree, getSessionWorktree } from '../tools/session-worktree'
 import { todoJsonPath } from '../tools/todo'
 import { writeTool } from '../tools/write'
 import type {
@@ -877,7 +877,7 @@ async function runRewindPersistBeforeReset(spec: EvalCase): Promise<void> {
 
       const store2 = createMemoryStore()
       const session2 = makeSession({
-        id: `${sessionId}_ok`,
+        id: sessionId,
         cwd: job.worktreePath,
         job,
       })
@@ -909,6 +909,9 @@ async function runRewindPersistBeforeReset(spec: EvalCase): Promise<void> {
       }
       const ok = await rewindToCheckpoint({ session: session2, messages: messages2, store: store2 })
       if (!ok.ok) throw new Error(`rewind-persist-before-reset: success path failed: ${ok.notice}`)
+      if (getSessionWorktree(session2.id) === undefined) {
+        throw new Error(`rewind-persist-before-reset: success session id misses worktree map`)
+      }
       if (heads[0] !== laterSha) {
         throw new Error(
           `rewind-persist-before-reset: recordCompact ran after reset: ${JSON.stringify(heads)}`,

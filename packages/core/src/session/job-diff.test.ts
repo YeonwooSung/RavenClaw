@@ -78,6 +78,9 @@ describe('jobDiff', () => {
     const row = renamed.files.find((f) => f.path === 'renamed.txt')
     expect(row?.op).toBe('rename')
     expect(row?.from).toBe('added.txt')
+    expect(row?.plus).toBe(2)
+    expect(row?.minus).toBe(0)
+    expect(renamed.files.some((f) => f.path === 'added.txt')).toBe(false)
   })
 
   test('jobDiff on a missing worktree is ok: false', () => {

@@ -762,6 +762,29 @@ describe('runOpenTuiApp', () => {
     expect(written.join('')).toContain('dropped 2 messages')
   })
 
+  test('bare /retry restores droppedText when rewind reset fails', async () => {
+    const submitted: string[] = []
+    const engine = fakeEngine(makeSession(), async function* (text) {
+      submitted.push(text)
+      return { reason: 'completed' }
+    })
+    engine.rewindLast = async () => ({
+      ok: false,
+      notice: 'rewind reset failed: git reset failed',
+      droppedText: 'old prompt',
+    })
+    const written: string[] = []
+    const code = await runOpenTuiApp(fakeRuntime(engine), {
+      input: asyncLines('/retry', '', '/quit'),
+      write: (chunk) => {
+        written.push(chunk)
+      },
+    })
+    expect(code).toBe(0)
+    expect(submitted).toEqual(['old prompt'])
+    expect(written.join('')).toContain('rewind reset failed:')
+  })
+
   test('/retry with text resubmits the arg and does not use droppedText', async () => {
     const submitted: string[] = []
     const engine = fakeEngine(makeSession(), async function* (text) {

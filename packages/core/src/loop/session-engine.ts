@@ -497,6 +497,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         }
       }
       const droppedText = lastUserText(messages)
+      const priorLen = messages.length
       if (liveTurn) {
         return { ok: false, notice: 'a turn is in progress' }
       }
@@ -510,9 +511,13 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
           store: opts.store,
         })
         messages = result.messages
-        return result.ok
-          ? { ok: true, notice: result.notice, ...(droppedText !== undefined ? { droppedText } : {}) }
-          : { ok: false, notice: result.notice }
+        return {
+          ok: result.ok,
+          notice: result.notice,
+          ...(droppedText !== undefined && (result.ok || messages.length < priorLen)
+            ? { droppedText }
+            : {}),
+        }
       }
       const result = await rewindLastTurn({
         fileHistory,
@@ -522,9 +527,13 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         generation: session.compactGeneration,
       })
       messages = result.messages
-      return result.ok
-        ? { ok: true, notice: result.notice, ...(droppedText !== undefined ? { droppedText } : {}) }
-        : { ok: false, notice: result.notice }
+      return {
+        ok: result.ok,
+        notice: result.notice,
+        ...(droppedText !== undefined && (result.ok || messages.length < priorLen)
+          ? { droppedText }
+          : {}),
+      }
     },
 
     maybeFinishRewindReset() {
