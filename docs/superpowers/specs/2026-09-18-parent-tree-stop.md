@@ -1,7 +1,7 @@
 # RavenClaw next-horizon roadmap (parent tree-stop)
 
 Date: 2026-09-18  
-Status: draft  
+Status: implemented on this branch  
 Reviewed against tree at `be5a4a7` (`main` after no-job todo revert).  
 Successor to `2026-09-18-no-job-todo-revert.md` (Status: implemented at `be5a4a7`). Amends `2026-09-18-cancel-reset-followup.md` OUT for **parent-cancels-child-ask only**. Does not reopen that spec’s other closed doors.
 
@@ -182,20 +182,20 @@ Board as of this spec (`docs/parent-tree-stop-spec`); not on `main`.
 
 | ID | Status vs tree |
 |---|---|
-| K0.1 docs point at this spec | **pending** |
-| K1.1 `listDescendantSessionIds` BFS + `listOwnedPendingAsks` recursive | **pending** |
-| K1.2 `applyAskAnswer` accepts any descendant | **pending** |
-| K1.3 serve snapshot / parked-ask publish use the same walk | **pending** |
-| K2.1 `registerChildEngine` + parent `abort('cancel')` aborts in-process children first | **pending** |
-| K2.2 serve cache aborts descendant runtimes | **pending** |
-| K2.3 `abort('interrupt')` / `linkEngineAbort` unchanged | **pending** |
-| K3.1 live parent cancelled epilogue + `treeStopFlight` persist-before-drop descendants | **pending** |
-| K3.2 idle parent tree-stop; this session’s parked asks stay | **pending** |
-| K3.3 persist-fail on one descendant continues the others | **pending** |
-| K3.4 lastEnd: live parent `cancelled`; idle parent / idle child invent nothing | **pending** |
-| K4.1 serve envelope (ruling 4 table) | **pending** |
-| K4.2 TUI notice + ACP `abort('cancel')` | **pending** |
-| K5.1 eval fixture | **pending** |
+| K0.1 docs point at this spec | **done** |
+| K1.1 `listDescendantSessionIds` BFS + `listOwnedPendingAsks` recursive | **done** |
+| K1.2 `applyAskAnswer` accepts any descendant | **done** |
+| K1.3 serve snapshot / parked-ask publish use the same walk | **done** |
+| K2.1 `registerChildEngine` + parent `abort('cancel')` aborts in-process children first | **done** |
+| K2.2 serve cache aborts descendant runtimes | **done** |
+| K2.3 `abort('interrupt')` / `linkEngineAbort` unchanged | **done** |
+| K3.1 live parent cancelled epilogue + `treeStopFlight` persist-before-drop descendants | **done** |
+| K3.2 idle parent tree-stop; this session’s parked asks stay | **done** |
+| K3.3 persist-fail on one descendant continues the others | **done** |
+| K3.4 lastEnd: live parent `cancelled`; idle parent / idle child invent nothing | **done** |
+| K4.1 serve envelope (ruling 4 table) | **done** |
+| K4.2 TUI notice + ACP `abort('cancel')` | **done** |
+| K5.1 eval fixture | **done** |
 
 ---
 
