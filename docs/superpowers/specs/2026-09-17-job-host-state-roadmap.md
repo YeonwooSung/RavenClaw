@@ -6,7 +6,7 @@ Shipped on `main` at `6e56764` (merge of PR #9 / `feat/job-host-state`).
 Review-fix on the same merge (`981ec2a`): follow-up runs only after this submit wrote `lastEnd`; owned leftover-asks (parent + child) skip the slot; OpenTUI bare `/retry` resubmits `droppedText`.  
 Reviewed against tree at `0ef1554` (`main` after session-as-job + closeout).  
 Successor to `2026-09-16-session-as-job-roadmap.md` (Status: implemented). Does not reopen that spec’s closed doors.  
-Next horizon: [`2026-09-18-rewind-persist-and-todo-projection.md`](2026-09-18-rewind-persist-and-todo-projection.md).
+Next horizon (implemented at `048deff`): [`2026-09-18-rewind-persist-and-todo-projection.md`](2026-09-18-rewind-persist-and-todo-projection.md).
 
 Sources: current tree, [y0 analysis](../../research/y0-analysis.md) (`/Users/yeonwoosung/Desktop/y0`, read-only), [eve analysis](../../research/eve-analysis.md) (`/Users/yeonwoosung/Desktop/eve`, Apache-2.0, read-only).
 
@@ -58,7 +58,7 @@ This horizon thickens **session state the host already reads**. Hosts still only
 - Arbitrary mid-history edit (only the last user turn)
 - Default-on auto-run of a follow-up after process restart
 - Web chat UI, keep-id `/clear`, stream `version` / `continuationToken` 400
-- Rewind persist-before-reset / `todo.json` re-project (next horizon: `2026-09-18-rewind-persist-and-todo-projection.md`)
+- Rewind persist-before-reset / `todo.json` re-project (later shipped at `048deff`: `2026-09-18-rewind-persist-and-todo-projection.md`)
 - WorkspaceFs docker-exec, Grep/Glob docker-exec
 - `ignored`, live cancel abort-pair of a parked leftover-ask
 - Default-on auto-commit or auto-PR (already shipped off)

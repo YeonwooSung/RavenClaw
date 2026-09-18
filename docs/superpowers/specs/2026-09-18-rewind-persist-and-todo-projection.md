@@ -2,6 +2,7 @@
 
 Date: 2026-09-18  
 Status: implemented  
+Shipped on `main` at `048deff`.  
 Reviewed against tree at `ac2d184` (`main` after job-host PR #9 + shipped-docs PR #11).  
 Successor to `2026-09-17-job-host-state-roadmap.md` (Status: implemented). Does not reopen that spec’s closed doors.
 
@@ -15,7 +16,7 @@ Steal contracts. Do not copy eve, y0, Claude, Hermes, or Freebuff source. Do not
 
 A session can own a named `raven/*` job, reconnect, follow up, edit-resubmit the last user, and read `jobDiff`. Closeout made `TodoWrite` fail-closed and todos session-scoped (`sessions.todos_json`). No-job `/rewind` already persists the transcript drop (`recordCompact`) **before** `fileHistory.undo()`.
 
-The remaining hole is job rewind and the human-visible todo file.
+The remaining hole **at review time** was job rewind and the human-visible todo file. Landed on `main` at `048deff`. The table below is the pre-land snapshot.
 
 | Piece | Tree at `ac2d184` |
 |---|---|
