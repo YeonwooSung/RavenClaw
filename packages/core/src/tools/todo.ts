@@ -15,6 +15,13 @@ export function todoJsonPath(root: string): string {
   return join(root, '.ravenclaw', 'todo.json')
 }
 
+/** Pretty-print session todos to `.ravenclaw/todo.json` under `root`. Throws on I/O. */
+export function projectSessionTodos(root: string, items: TodoItem[]): void {
+  const path = todoJsonPath(root)
+  mkdirSync(dirname(path), { recursive: true })
+  writeFileSync(path, `${JSON.stringify(items, null, 2)}\n`, 'utf8')
+}
+
 /** Fail-open read of `.ravenclaw/todo.json`. Missing or invalid → `[]`. */
 export function loadTodos(root: string): TodoItem[] {
   let raw: string
@@ -125,10 +132,8 @@ export const todoWriteTool: Tool<TodoWriteInput, string> = {
       return `TodoWrite failed: ${message}`
     }
     const root = ctx.turn.projectCwd ?? ctx.turn.cwd
-    const path = todoJsonPath(root)
     try {
-      mkdirSync(dirname(path), { recursive: true })
-      writeFileSync(path, `${JSON.stringify(items, null, 2)}\n`, 'utf8')
+      projectSessionTodos(root, items)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       return `TodoWrite failed: ${message}`

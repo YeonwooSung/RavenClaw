@@ -4,7 +4,13 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { SessionRecord, SessionStore, ToolContext, Turn } from '../types'
 import { createMemoryStore } from '../session/memory-store'
-import { loadTodos, todoJsonPath, todosFromToolResult, todoWriteTool } from './todo'
+import {
+  loadTodos,
+  projectSessionTodos,
+  todoJsonPath,
+  todosFromToolResult,
+  todoWriteTool,
+} from './todo'
 
 const tempDirs: string[] = []
 
@@ -251,6 +257,25 @@ describe('loadTodos', () => {
     mkdirSync(join(root, '.ravenclaw'), { recursive: true })
     writeFileSync(todoJsonPath(root), '{"items":[]}\n', 'utf8')
     expect(loadTodos(root)).toEqual([])
+  })
+})
+
+describe('projectSessionTodos', () => {
+  test('writes the same pretty-print bytes as TodoWrite', () => {
+    const root = fixtureRoot()
+    const items = [
+      { id: 't1', text: 'one', status: 'done' as const },
+      { text: 'two', status: 'in_progress' as const },
+    ]
+    projectSessionTodos(root, items)
+    expect(readFileSync(todoJsonPath(root), 'utf8')).toBe(`${JSON.stringify(items, null, 2)}\n`)
+  })
+
+  test('empty list writes [] and a trailing newline', () => {
+    const root = fixtureRoot()
+    projectSessionTodos(root, [])
+    expect(readFileSync(todoJsonPath(root), 'utf8')).toBe('[]\n')
+    expect(existsSync(todoJsonPath(root))).toBe(true)
   })
 })
 

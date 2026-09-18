@@ -145,7 +145,7 @@ export { suggestFollowupsTool, formatSuggestFollowups, parseFollowupLines } from
 export { createAskUserTool, askUserTool, formatAskUserPrompt } from './tools/ask-user'
 export type { AskUserInput, AskUserFn } from './tools/ask-user'
 export { setOutputTool, setChildOutput, takeChildOutput } from './tools/set-output'
-export { todoWriteTool, loadTodos, todosFromToolResult, todoJsonPath } from './tools/todo'
+export { todoWriteTool, loadTodos, todosFromToolResult, todoJsonPath, projectSessionTodos } from './tools/todo'
 export type { TodoWriteInput } from './tools/todo'
 export { partitionToolCalls } from './tools/partition'
 export {
