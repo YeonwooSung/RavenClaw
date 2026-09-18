@@ -18,7 +18,7 @@ import {
   applySessionDraftPr,
   clearSessionJobError,
   setSessionJobError,
-  maybeRunFollowup,
+  runFollowupAfterSubmit,
   jobDiff,
   type Message,
   type RoundEnd,
@@ -85,6 +85,35 @@ function isRoundEnd(value: unknown): value is RoundEnd {
     'reason' in value &&
     typeof (value as { reason: unknown }).reason === 'string'
   )
+}
+
+async function runServeFollowup(
+  engine: SessionEngine,
+  store: SessionStore | undefined,
+  sessionId: string,
+  beforeLastEnd: RoundEnd | undefined,
+): Promise<void> {
+  if (
+    typeof engine.getFollowup !== 'function' ||
+    typeof engine.clearFollowup !== 'function' ||
+    typeof engine.liveTurnId !== 'function'
+  ) {
+    return
+  }
+  await runFollowupAfterSubmit({
+    engine: {
+      session: engine.session,
+      submitMessage: (input) => engine.submitMessage(input),
+      getFollowup: () => engine.getFollowup?.() ?? null,
+      clearFollowup: async () => {
+        await engine.clearFollowup?.()
+      },
+      liveTurnId: () => engine.liveTurnId?.() ?? null,
+    },
+    store,
+    sessionId,
+    beforeLastEnd,
+  })
 }
 
 export async function tickMailbox(
@@ -664,31 +693,13 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
       const sid = loaded.runtime.engine.session.id
       void singleFlight(ctx.turnFlights, sid, async () => {
         try {
+          const engine = loaded.runtime.engine
+          const beforeLastEnd = engine.session.lastEnd
           const end = await consumeSubmit(
-            loaded.runtime.engine.submitMessage({ text: parsed.text, turnPolicy: 'queue' }),
+            engine.submitMessage({ text: parsed.text, turnPolicy: 'queue' }),
           )
           if (!isRoundEnd(end)) return
-          const engine = loaded.runtime.engine
-          if (
-            typeof engine.getFollowup !== 'function' ||
-            typeof engine.clearFollowup !== 'function' ||
-            typeof engine.liveTurnId !== 'function'
-          ) {
-            return
-          }
-          await maybeRunFollowup({
-            engine: {
-              submitMessage: (input) => engine.submitMessage(input),
-              getFollowup: () => engine.getFollowup?.() ?? null,
-              clearFollowup: async () => {
-                await engine.clearFollowup?.()
-              },
-              liveTurnId: () => engine.liveTurnId?.() ?? null,
-            },
-            listPendingAsks: async () =>
-              (await loaded.runtime.store?.listPendingAsks(sid)) ?? [],
-            lastEnd: end,
-          })
+          await runServeFollowup(engine, loaded.runtime.store, sid, beforeLastEnd)
         } catch {
           // session submit is fire-and-forget; the stream carries errors
         }
@@ -721,31 +732,13 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
       const sid = loaded.runtime.engine.session.id
       void singleFlight(ctx.turnFlights, sid, async () => {
         try {
+          const engine = loaded.runtime.engine
+          const beforeLastEnd = engine.session.lastEnd
           const end = await consumeSubmit(
-            loaded.runtime.engine.submitMessage({ text, turnPolicy: 'queue' }),
+            engine.submitMessage({ text, turnPolicy: 'queue' }),
           )
           if (!isRoundEnd(end)) return
-          const engine = loaded.runtime.engine
-          if (
-            typeof engine.getFollowup !== 'function' ||
-            typeof engine.clearFollowup !== 'function' ||
-            typeof engine.liveTurnId !== 'function'
-          ) {
-            return
-          }
-          await maybeRunFollowup({
-            engine: {
-              submitMessage: (input) => engine.submitMessage(input),
-              getFollowup: () => engine.getFollowup?.() ?? null,
-              clearFollowup: async () => {
-                await engine.clearFollowup?.()
-              },
-              liveTurnId: () => engine.liveTurnId?.() ?? null,
-            },
-            listPendingAsks: async () =>
-              (await loaded.runtime.store?.listPendingAsks(sid)) ?? [],
-            lastEnd: end,
-          })
+          await runServeFollowup(engine, loaded.runtime.store, sid, beforeLastEnd)
         } catch {
           // session edit is fire-and-forget; the stream carries errors
         }

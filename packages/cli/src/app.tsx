@@ -13,7 +13,7 @@ import {
   shouldAdvanceLoop,
   type LoopState,
   maybePruneSkillsOnIdle,
-  maybeRunFollowup,
+  runFollowupAfterSubmit,
   type Funding,
   type PermissionMode,
   type SessionRecord,
@@ -308,19 +308,26 @@ export function App(props: AppProps) {
           typeof payload === 'string'
             ? { text: payload, turnPolicy: 'queue' as const }
             : { ...payload, turnPolicy: 'queue' as const }
-        const gen = runtimeRef.current.engine.submitMessage(queued)
+        const engine = runtimeRef.current.engine
+        const beforeLastEnd = engine.session.lastEnd
+        const gen = engine.submitMessage(queued)
         while (true) {
           const next = await gen.next()
           if (next.done) {
             advanceLoop = shouldAdvanceLoop(next.value.reason)
-            const engine = runtimeRef.current.engine
-            const flag = await maybeRunFollowup({
-              engine,
-              listPendingAsks: () =>
-                runtimeRef.current.store.listPendingAsks(engine.session.id),
-              lastEnd: next.value,
-            })
-            followupRan = flag === 'ran'
+            if (
+              typeof engine.getFollowup === 'function' &&
+              typeof engine.clearFollowup === 'function' &&
+              typeof engine.liveTurnId === 'function'
+            ) {
+              const flag = await runFollowupAfterSubmit({
+                engine,
+                store: runtimeRef.current.store,
+                sessionId: engine.session.id,
+                beforeLastEnd,
+              })
+              followupRan = flag === 'ran'
+            }
             break
           }
           applyLiveEvent(next.value)

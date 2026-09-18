@@ -13,7 +13,7 @@ import {
   formatLoopStatus,
   shouldAdvanceLoop,
   maybePruneSkillsOnIdle,
-  maybeRunFollowup,
+  runFollowupAfterSubmit,
   createSecondAbortGate,
   formatKilledBackgroundNotice,
   type StreamEvent,
@@ -162,6 +162,7 @@ export async function runOpenTuiApp(
         typeof payload === 'string'
           ? { text: payload, turnPolicy: 'queue' as const }
           : { ...payload, turnPolicy: 'queue' as const }
+      const beforeLastEnd = current.engine.session.lastEnd
       const gen = current.engine.submitMessage(queued)
       while (true) {
         const next = await gen.next()
@@ -169,12 +170,19 @@ export async function runOpenTuiApp(
           view.apply({ type: 'round_end', end: next.value })
           flush()
           advanceLoop = shouldAdvanceLoop(next.value.reason)
-          const flag = await maybeRunFollowup({
-            engine: current.engine,
-            listPendingAsks: () => current.store.listPendingAsks(current.engine.session.id),
-            lastEnd: next.value,
-          })
-          followupRan = flag === 'ran'
+          if (
+            typeof current.engine.getFollowup === 'function' &&
+            typeof current.engine.clearFollowup === 'function' &&
+            typeof current.engine.liveTurnId === 'function'
+          ) {
+            const flag = await runFollowupAfterSubmit({
+              engine: current.engine,
+              store: current.store,
+              sessionId: current.engine.session.id,
+              beforeLastEnd,
+            })
+            followupRan = flag === 'ran'
+          }
           break
         }
         renderEvent(next.value)
@@ -272,12 +280,17 @@ export async function runOpenTuiApp(
       write(`${composerLine(draft)}\n`)
       const line = await readLine()
       if (line === undefined) return 0
+      const restored = draft
       draft = ''
       lastActivityAt = Date.now()
 
       const parsed = handleSlashCommand(line)
       if (parsed.type === 'prompt') {
         if (parsed.text === '') {
+          if (restored !== '') {
+            await runTurn(restored)
+            continue
+          }
           if (!readClipboardImage()) continue
           await runTurn('')
           continue

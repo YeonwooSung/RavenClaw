@@ -129,7 +129,14 @@ export {
 export type { DraftPrSnapshot, GhRunner } from './session/job'
 export { jobDiff } from './session/job-diff'
 export type { JobDiff, JobDiffFile, JobDiffOp } from './session/job-diff'
-export { followupNotice, maybeRunFollowup, writeFollowup } from './session/followup'
+export {
+  followupNotice,
+  lastEndWrittenThisTurn,
+  listOwnedPendingAsks,
+  maybeRunFollowup,
+  runFollowupAfterSubmit,
+  writeFollowup,
+} from './session/followup'
 export { loadLifecycleHooks, LIFECYCLE_EVENTS } from './hooks/lifecycle'
 export { scanTeamOnboarding, ONBOARDING_USAGE_DAYS } from './onboarding/scan'
 export type { OnboardingScan } from './onboarding/scan'

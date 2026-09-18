@@ -233,17 +233,20 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
     liveTurnId: string | null
     submitHold?: Promise<void>
     submitEnd: { reason: string }
+    writeLastEnd: boolean
   } = {
     abortCalls: 0,
     compactCalls: 0,
     liveTurnId: 'live-1',
     submitEnd: { reason: 'completed' },
+    writeLastEnd: true,
   }
   const engine = {
     session: { id: 's1', permissionMode: 'default' as const } as {
       id: string
       permissionMode: 'default'
       followup?: string
+      lastEnd?: { reason: string }
     },
     async applyAskAnswer(callId: string, answer: 'allow' | 'deny' | 'allow_always') {
       applyCalls.push({ callId, answer })
@@ -278,6 +281,9 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
       for (const event of submitEvents) yield event
       if (state.submitHold) await state.submitHold
       state.liveTurnId = null
+      if (state.writeLastEnd) {
+        engine.session.lastEnd = state.submitEnd
+      }
       return state.submitEnd
     },
     async *replayPendingAsks() {
@@ -308,6 +314,9 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
     },
     set submitEnd(value: { reason: string }) {
       state.submitEnd = value
+    },
+    set writeLastEnd(value: boolean) {
+      state.writeLastEnd = value
     },
   }
   return ctx
@@ -1081,6 +1090,80 @@ describe('handleServeRequest', () => {
     expect(ctx2.submitted).toEqual([{ text: 'go', turnPolicy: 'queue' }])
     const runtime2 = await ctx2.runtimeForSession('s1')
     expect(runtime2?.engine.session.followup).toBeUndefined()
+  })
+
+  test('POST submit does not run follow-up when lastEnd was not persisted', async () => {
+    const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
+    const ctx = makeServeCtx(secret)
+    ctx.writeLastEnd = false
+    const auth = { authorization: 'Bearer secret', 'content-type': 'application/json' }
+    await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/followup', {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ text: 'next please' }),
+      }),
+      ctx,
+    )
+    await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/submit', {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ text: 'go' }),
+      }),
+      ctx,
+    )
+    await Promise.all([...ctx.turnFlights.values()])
+    expect(ctx.submitted).toEqual([{ text: 'go', turnPolicy: 'queue' }])
+    const runtime = await ctx.runtimeForSession('s1')
+    expect(runtime?.engine.session.followup).toBe('next please')
+  })
+
+  test('POST submit leaves follow-up when a child leftover-ask is parked', async () => {
+    const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
+    const ctx = makeServeCtx(secret)
+    const auth = { authorization: 'Bearer secret', 'content-type': 'application/json' }
+    await ctx.store.upsertSession({
+      id: 'child',
+      createdAt: 1,
+      updatedAt: 1,
+      cwd: '/tmp',
+      model: 'dummy',
+      permissionMode: 'default',
+      compactGeneration: 0,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      funding: 'byok',
+      parentSessionId: 's1',
+    })
+    await ctx.store.upsertPendingAsk({
+      callId: 'call_child',
+      sessionId: 'child',
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Allow Bash?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/followup', {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ text: 'next please' }),
+      }),
+      ctx,
+    )
+    await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/submit', {
+        method: 'POST',
+        headers: auth,
+        body: JSON.stringify({ text: 'go' }),
+      }),
+      ctx,
+    )
+    await Promise.all([...ctx.turnFlights.values()])
+    expect(ctx.submitted).toEqual([{ text: 'go', turnPolicy: 'queue' }])
+    const runtime = await ctx.runtimeForSession('s1')
+    expect(runtime?.engine.session.followup).toBe('next please')
   })
 
   test('POST /v1/session/:id/followup overwrites; DELETE clears; empty is 400', async () => {

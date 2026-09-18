@@ -1,6 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 import type { SessionRecord, UserSubmitInput } from '../types'
-import { followupNotice, maybeRunFollowup, writeFollowup } from './followup'
+import {
+  followupNotice,
+  lastEndWrittenThisTurn,
+  listOwnedPendingAsks,
+  maybeRunFollowup,
+  runFollowupAfterSubmit,
+  writeFollowup,
+} from './followup'
 
 describe('writeFollowup', () => {
   test('setFollowup overwrites; empty is an error; clear removes', async () => {
@@ -106,6 +113,111 @@ describe('maybeRunFollowup', () => {
       lastEnd: { reason: 'completed' },
     })
     expect(result).toBe('skipped')
+    expect(submitted).toEqual([])
+  })
+})
+
+describe('lastEndWrittenThisTurn', () => {
+  test('returns the new lastEnd only when this submit persisted one', () => {
+    const previous = { reason: 'cancelled' as const }
+    const written = { reason: 'completed' as const }
+    expect(lastEndWrittenThisTurn(previous, previous)).toBeUndefined()
+    expect(lastEndWrittenThisTurn(undefined, undefined)).toBeUndefined()
+    expect(lastEndWrittenThisTurn(previous, undefined)).toBeUndefined()
+    expect(lastEndWrittenThisTurn(previous, written)).toBe(written)
+    expect(lastEndWrittenThisTurn(undefined, written)).toBe(written)
+  })
+})
+
+describe('listOwnedPendingAsks', () => {
+  test('includes leftover-asks on child sessions', async () => {
+    const store = {
+      async listPendingAsks(sessionId: string) {
+        if (sessionId === 'parent') return []
+        if (sessionId === 'child') return [{ callId: 'call_child' }]
+        return []
+      },
+      async listSessions(filter: { parentSessionId: string }) {
+        if (filter.parentSessionId === 'parent') return [{ id: 'child' }]
+        return []
+      },
+    }
+    expect(await listOwnedPendingAsks(store, 'parent')).toEqual([{ callId: 'call_child' }])
+    expect(await listOwnedPendingAsks(undefined, 'parent')).toEqual([])
+  })
+})
+
+describe('runFollowupAfterSubmit', () => {
+  test('skips when lastEnd was not persisted; runs only a newly written lastEnd', async () => {
+    const submitted: string[] = []
+    const session = {
+      followup: 'next please',
+      lastEnd: { reason: 'cancelled' as const },
+    }
+    const engine = {
+      session,
+      getFollowup: () => session.followup ?? null,
+      clearFollowup: async () => {
+        delete session.followup
+      },
+      liveTurnId: () => null,
+      async *submitMessage(input: UserSubmitInput) {
+        submitted.push(typeof input === 'string' ? input : (input.text ?? ''))
+      },
+    }
+    const skipped = await runFollowupAfterSubmit({
+      engine,
+      sessionId: 'parent',
+      beforeLastEnd: session.lastEnd,
+    })
+    expect(skipped).toBe('skipped')
+    expect(session.followup).toBe('next please')
+    expect(submitted).toEqual([])
+
+    session.lastEnd = { reason: 'completed' }
+    const ran = await runFollowupAfterSubmit({
+      engine,
+      sessionId: 'parent',
+      beforeLastEnd: { reason: 'cancelled' },
+    })
+    expect(ran).toBe('ran')
+    expect(session.followup).toBeUndefined()
+    expect(submitted).toEqual(['next please'])
+  })
+
+  test('skips and keeps the slot when a child leftover-ask is parked', async () => {
+    const submitted: string[] = []
+    const session = {
+      followup: 'next please',
+      lastEnd: { reason: 'completed' as const },
+    }
+    const engine = {
+      session,
+      getFollowup: () => session.followup ?? null,
+      clearFollowup: async () => {
+        delete session.followup
+      },
+      liveTurnId: () => null,
+      async *submitMessage(input: UserSubmitInput) {
+        submitted.push(typeof input === 'string' ? input : (input.text ?? ''))
+      },
+    }
+    const flag = await runFollowupAfterSubmit({
+      engine,
+      store: {
+        async listPendingAsks(sessionId: string) {
+          if (sessionId === 'child') return [{ callId: 'call_child' }]
+          return []
+        },
+        async listSessions() {
+          return [{ id: 'child' }]
+        },
+      },
+      sessionId: 'parent',
+      beforeLastEnd: undefined,
+    })
+    expect(flag).toBe('skipped')
+    expect(session.followup).toBe('next please')
     expect(submitted).toEqual([])
   })
 })
