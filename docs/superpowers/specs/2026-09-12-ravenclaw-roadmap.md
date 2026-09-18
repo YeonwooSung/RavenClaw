@@ -3,7 +3,7 @@
 Date: 2026-09-12  
 Status: historical (H0 + harness-honesty done at `5629c82`)  
 Remaining H1/H2 and honesty leftovers: **`2026-09-12-ravenclaw-remaining-roadmap.md`** (implemented).  
-Job-host state (**implemented**): **`2026-09-17-job-host-state-roadmap.md`**. Next: **`2026-09-18-rewind-persist-and-todo-projection.md`**. Previous (implemented): `2026-09-16-session-as-job-roadmap.md`, `2026-09-15-eve-inspired-roadmap.md`.  
+Job-host state (**implemented**): **`2026-09-17-job-host-state-roadmap.md`**. Rewind persist-before-reset (**implemented** at `048deff`): **`2026-09-18-rewind-persist-and-todo-projection.md`**. Previous (implemented): `2026-09-16-session-as-job-roadmap.md`, `2026-09-15-eve-inspired-roadmap.md`.  
 Sources: current tree at `d4c018e`+, Hermes (`/Users/yeonwoosung/Desktop/hermes-agent`), eve ([eve-analysis.md](../../research/eve-analysis.md)), original design `2026-09-08-ravenclaw-coding-agent-design.md`.
 
 Steal contracts. Do not copy Claude or Hermes source.

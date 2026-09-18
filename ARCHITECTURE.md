@@ -4,7 +4,7 @@
 
 RavenClaw is a Bun/TypeScript coding agent that reads and edits a workspace, runs a shell, and resumes after crash. It is bring-your-own-key (BYOK): there is no RavenClaw company backend, and the first public tag is BYOK-only. Hosts (Ink TUI, OpenTUI, `exec`, ACP, `serve`, Slack, Discord, SDK) do not reimplement the agent loop. They construct a `SessionEngine` and call `submitMessage`. Licensed Apache-2.0.
 
-Related docs: [README.md](README.md), [SLASH_COMMANDS.md](SLASH_COMMANDS.md) ([한국어](SLASH_COMMANDS.ko.md)), [CONTRIBUTING.md](CONTRIBUTING.md), [docs/headless.md](docs/headless.md). Design notes live under `docs/superpowers/specs/` (implemented: [session-as-job](docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md) at `ea56edd`, closeout `0ef1554`; [job-host state](docs/superpowers/specs/2026-09-17-job-host-state-roadmap.md) at `6e56764`; previous: [eve-inspired](docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md); next: [rewind persist-before-reset](docs/superpowers/specs/2026-09-18-rewind-persist-and-todo-projection.md)). Prior-art research is in `docs/research/` ([eve](docs/research/eve-analysis.md), [y0](docs/research/y0-analysis.md)).
+Related docs: [README.md](README.md), [SLASH_COMMANDS.md](SLASH_COMMANDS.md) ([한국어](SLASH_COMMANDS.ko.md)), [CONTRIBUTING.md](CONTRIBUTING.md), [docs/headless.md](docs/headless.md). Design notes live under `docs/superpowers/specs/` (implemented: [session-as-job](docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md) at `ea56edd`, closeout `0ef1554`; [job-host state](docs/superpowers/specs/2026-09-17-job-host-state-roadmap.md) at `6e56764`; [rewind persist-before-reset](docs/superpowers/specs/2026-09-18-rewind-persist-and-todo-projection.md) at `048deff`; previous: [eve-inspired](docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md)). Prior-art research is in `docs/research/` ([eve](docs/research/eve-analysis.md), [y0](docs/research/y0-analysis.md)).
 
 ## Design invariants
 
@@ -649,7 +649,7 @@ SQLite WAL at `$RAVENCLAW_HOME/state.db` (`PRAGMA journal_mode = WAL`, `busy_tim
 
 FTS5 indexes message body (not tool dumps as the primary search surface). `raven search` / `/search` / `SessionSearch` use it. `search --all` drops the cwd filter.
 
-**Rewind vs undo:** `/undo` is `fileHistory.undo()` only (restore/remove files from the last closed generation). `/rewind` depends on the session: with a job record it is `rewindToCheckpoint` (`git reset --hard` in the worktree + todo snapshot + drop last user turn); without a job it is file-history undo **plus** drop the last user turn and persist a compact boundary. Both refuse an open generation / live turn (`a turn is in progress`).
+**Rewind vs undo:** `/undo` is `fileHistory.undo()` only (restore/remove files from the last closed generation). `/rewind` depends on the session: with a job record it is `rewindToCheckpoint` (persist compact `rewind` first, then `git reset --hard` in the worktree, restore `session.todos`, re-project project `.ravenclaw/todo.json`); without a job it is file-history undo **plus** drop the last user turn and persist a compact boundary. Both refuse an open generation / live turn (`a turn is in progress`).
 
 File history copies pre-images under `$RAVENCLAW_HOME/file-history/<sessionId>/0001…`. `turnWriteCount()` feeds verify-on-stop.
 

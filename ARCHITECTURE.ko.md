@@ -10,7 +10,7 @@ English: [ARCHITECTURE.md](ARCHITECTURE.md)
 - [SLASH_COMMANDS.ko.md](SLASH_COMMANDS.ko.md)
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [docs/headless.md](docs/headless.md)
-- 구현됨: [2026-09-16-session-as-job-roadmap.md](docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md) (`ea56edd`, closeout `0ef1554`); [job-host state](docs/superpowers/specs/2026-09-17-job-host-state-roadmap.md) (`6e56764`) (이전: [eve-inspired](docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md), implemented; 다음: [rewind persist-before-reset](docs/superpowers/specs/2026-09-18-rewind-persist-and-todo-projection.md))
+- 구현됨: [2026-09-16-session-as-job-roadmap.md](docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md) (`ea56edd`, closeout `0ef1554`); [job-host state](docs/superpowers/specs/2026-09-17-job-host-state-roadmap.md) (`6e56764`); [rewind persist-before-reset](docs/superpowers/specs/2026-09-18-rewind-persist-and-todo-projection.md) (`048deff`) (이전: [eve-inspired](docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md), implemented)
 - 선행 분석: [eve-analysis.ko.md](docs/research/eve-analysis.ko.md), [y0-analysis.ko.md](docs/research/y0-analysis.ko.md)
 
 ---
@@ -558,7 +558,7 @@ SQLite WAL, `$RAVENCLAW_HOME/state.db`. `PRAGMA journal_mode = WAL`, `busy_timeo
 
 FTS5는 `raven search` / `/search` / `SessionSearch`가 쓴다. compact로 비활성화된 행은 검색에서 빠진다.
 
-**Rewind vs undo:** `/undo`는 닫힌 마지막 generation의 `fileHistory.undo()`만이다. `/rewind`는 세션에 따라 갈린다. job 기록이 있으면 `rewindToCheckpoint`(`git reset --hard` + todo 스냅샷 + 마지막 user 턴 drop), 없으면 file-history undo + 마지막 user 턴 drop + compact `rewind` 경계. 둘 다 라이브 턴/열린 generation이면 `a turn is in progress`로 거절한다.
+**Rewind vs undo:** `/undo`는 닫힌 마지막 generation의 `fileHistory.undo()`만이다. `/rewind`는 세션에 따라 갈린다. job 기록이 있으면 `rewindToCheckpoint`(compact `rewind` persist 먼저, 그 다음 worktree에서 `git reset --hard`, `session.todos` 복원, 프로젝트 `.ravenclaw/todo.json` 재투영), 없으면 file-history undo + 마지막 user 턴 drop + compact `rewind` 경계. 둘 다 라이브 턴/열린 generation이면 `a turn is in progress`로 거절한다.
 
 ---
 

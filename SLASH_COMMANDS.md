@@ -1113,7 +1113,7 @@ Discovery order (later wins on name): builtin → `~/.ravenclaw/skills` → `<cw
 | Command | Files | Transcript | Session id |
 |---|---|---|---|
 | `/undo` | Restore last **closed** edit checkpoint | Unchanged | Same |
-| `/rewind` | Job: `git reset --hard` + todo snapshot + drop last user turn. No-job: file-history undo + drop last user turn (persisted compact `rewind`) | Truncated | Same |
+| `/rewind` | Job: persist compact then `git reset --hard` + todo snapshot + project `todo.json`. No-job: file-history undo + drop last user turn (persisted compact `rewind`) | Truncated | Same |
 | `/job` | Enter `raven/*` worktree + job record; `/job commit on\|off` flips auto-commit | Unchanged | Same (cwd → worktree) |
 | `/pr` | Draft PR from shadow (notice-only if no job / dirty) | May annotate last assistant | Same |
 | `/compact` | Unchanged | Prefix summarized; `compactGeneration++` | Same |
