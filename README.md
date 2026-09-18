@@ -445,7 +445,7 @@ If `included.gatewayUrl` is a real URL and `GET /v1/entitlement` admits the sess
 - Session-as-job horizon (named shadow, checkpoint rewind, reconnectable serve, optional `/pr`; **implemented** at `ea56edd`, closeout `0ef1554`): [2026-09-16-session-as-job-roadmap.md](docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md)
 - Job-host state (snapshot end-reason, one-slot follow-up, edit-resubmit, job diff; **implemented** at `6e56764`): [2026-09-17-job-host-state-roadmap.md](docs/superpowers/specs/2026-09-17-job-host-state-roadmap.md)
 - Rewind persist-before-reset / `todo.json` projection (**implemented** at `048deff`): [2026-09-18-rewind-persist-and-todo-projection.md](docs/superpowers/specs/2026-09-18-rewind-persist-and-todo-projection.md)
-- Next horizon (live cancel abort-pair, reset-on-resume, `writeFollowup` persist-first): [2026-09-18-cancel-reset-followup.md](docs/superpowers/specs/2026-09-18-cancel-reset-followup.md)
+- Cancel abort-pair / reset-on-resume / `writeFollowup` persist-first (**implemented** at `5eefdde`): [2026-09-18-cancel-reset-followup.md](docs/superpowers/specs/2026-09-18-cancel-reset-followup.md)
 - Previous horizon (durable HITL, sandbox port, session HTTP; implemented): [2026-09-15-eve-inspired-roadmap.md](docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md)
 
 ## Develop

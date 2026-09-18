@@ -330,7 +330,7 @@ The first user prompt of a new session also auto-titles from that text when titl
 - **Kind:** host-only
 - **When:** always
 
-Both hosts: `engine.abort()` (cancels the live turn and any detached background review).
+Both hosts: `engine.abort('cancel')` (cancels the live turn and any detached background review). Live cancel abort-pairs **this** session’s leftover-asks (drop-only when already transcript-paired; unpaired persist one `ABORTED_TEXT` then drop). No live turn, `abort('interrupt')`, and child leftover-asks are unchanged.
 
 - Ink notice: `stopped` if `busyRef`, else `nothing to stop`
 - OpenTUI: same, **unless** the second-abort gate returns `kill_all` (second `/stop` within 3 s) → `tasks.killAll()` and `killed N background task(s)` / `no background tasks to kill`

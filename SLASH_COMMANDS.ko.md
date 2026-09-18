@@ -229,7 +229,7 @@ Ink status line은 모델·mode·usage·`shortSessionId`·funding·near-compact�
 
 - alias: `/cancel`
 - 분류: host-only
-- `engine.abort()` — live turn AbortController, 백그라운드 review 취소
+- `engine.abort('cancel')` — live turn AbortController, 백그라운드 review 취소. 이 세션 leftover-ask는 abort-pair (이미 pair면 drop-only, unpaired면 `ABORTED_TEXT` 한 줄 후 drop). 라이브 턴 없음 / interrupt / 자식 leftover-ask는 그대로.
 - Ink: busy면 `stopped`, 아니면 `nothing to stop`. 백그라운드 kill은 `Escape` 두 번
 - OpenTUI: 같은 notice + 3초 창 두 번째 `/stop`이 `tasks.killAll()` → `killed 1 background task` / `killed N background tasks` / `no background tasks to kill`
 

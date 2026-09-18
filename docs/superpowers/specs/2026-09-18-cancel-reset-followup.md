@@ -2,7 +2,7 @@
 
 Date: 2026-09-18  
 Status: implemented  
-Implemented on this branch at `6300238` (`feat/cancel-reset-followup`; not yet on `main`).  
+Shipped on `main` at `5eefdde`.  
 Reviewed against tree at `77a09f3` (`main` after rewind persist PR land + shipped-docs PR #13).  
 Successor to `2026-09-18-rewind-persist-and-todo-projection.md` (Status: implemented). Does not reopen that spec’s closed doors except the three holes named here.
 
@@ -18,7 +18,7 @@ Steal contracts. Do not copy eve, y0, Claude, Hermes, or Freebuff source. Do not
 
 The waist is shipped: leftover-ask, session-as-job, job-host, persist-before-reset rewind, project `todo.json` projection.
 
-Three leftover honesty holes were open at review time. None of them is a new product surface. Landed on this branch at `6300238`. The table below is the pre-land snapshot.
+Three leftover honesty holes were open at review time. None of them is a new product surface. Landed on `main` at `5eefdde`. The table below is the pre-land snapshot.
 
 | Piece | Tree at `77a09f3` |
 |---|---|

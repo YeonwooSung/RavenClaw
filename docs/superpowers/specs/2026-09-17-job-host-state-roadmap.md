@@ -6,7 +6,7 @@ Shipped on `main` at `6e56764` (merge of PR #9 / `feat/job-host-state`).
 Review-fix on the same merge (`981ec2a`): follow-up runs only after this submit wrote `lastEnd`; owned leftover-asks (parent + child) skip the slot; OpenTUI bare `/retry` resubmits `droppedText`.  
 Reviewed against tree at `0ef1554` (`main` after session-as-job + closeout).  
 Successor to `2026-09-16-session-as-job-roadmap.md` (Status: implemented). Does not reopen that spec’s closed doors.  
-Next horizon (implemented at `048deff`): [`2026-09-18-rewind-persist-and-todo-projection.md`](2026-09-18-rewind-persist-and-todo-projection.md). After that: [`2026-09-18-cancel-reset-followup.md`](2026-09-18-cancel-reset-followup.md).
+Next horizon (implemented at `048deff`): [`2026-09-18-rewind-persist-and-todo-projection.md`](2026-09-18-rewind-persist-and-todo-projection.md). After that (implemented at `5eefdde`): [`2026-09-18-cancel-reset-followup.md`](2026-09-18-cancel-reset-followup.md).
 
 Sources: current tree, [y0 analysis](../../research/y0-analysis.md) (`/Users/yeonwoosung/Desktop/y0`, read-only), [eve analysis](../../research/eve-analysis.md) (`/Users/yeonwoosung/Desktop/eve`, Apache-2.0, read-only).
 
