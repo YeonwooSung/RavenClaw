@@ -42,6 +42,33 @@ describe('writeFollowup', () => {
     expect(session.followup).toBe('run tests')
     expect(session.updatedAt).toBeGreaterThanOrEqual(before)
   })
+
+  test('upsert throw on set leaves the previous slot and returns persist failed', async () => {
+    const session = { id: 's1', updatedAt: 0, followup: 'keep' } as SessionRecord
+    const store = {
+      upsertSession: async () => {
+        throw new Error('disk')
+      },
+    }
+    expect(await writeFollowup(session, store, 'next')).toEqual({
+      ok: false,
+      notice: 'follow-up persist failed',
+    })
+    expect(session.followup).toBe('keep')
+    expect(session.updatedAt).toBe(0)
+  })
+
+  test('upsert throw on clear leaves the slot and rethrows', async () => {
+    const session = { id: 's1', updatedAt: 0, followup: 'keep' } as SessionRecord
+    const store = {
+      upsertSession: async () => {
+        throw new Error('disk')
+      },
+    }
+    await expect(writeFollowup(session, store, null)).rejects.toThrow('disk')
+    expect(session.followup).toBe('keep')
+    expect(session.updatedAt).toBe(0)
+  })
 })
 
 describe('followupNotice', () => {

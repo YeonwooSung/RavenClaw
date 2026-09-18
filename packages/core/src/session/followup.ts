@@ -40,12 +40,21 @@ export async function writeFollowup(
   if (text !== null) {
     const trimmed = text.trim()
     if (trimmed === '') return { ok: false, notice: 'follow-up text required' }
+    const next: SessionRecord = { ...session, followup: trimmed, updatedAt: Date.now() }
+    try {
+      await store.upsertSession(next)
+    } catch {
+      return { ok: false, notice: 'follow-up persist failed' }
+    }
     session.followup = trimmed
-  } else {
-    delete session.followup
+    session.updatedAt = next.updatedAt
+    return { ok: true }
   }
-  session.updatedAt = Date.now()
-  await store.upsertSession(session)
+  const next: SessionRecord = { ...session, updatedAt: Date.now() }
+  delete next.followup
+  await store.upsertSession(next)
+  delete session.followup
+  session.updatedAt = next.updatedAt
   return { ok: true }
 }
 
