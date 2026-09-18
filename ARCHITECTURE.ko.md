@@ -10,7 +10,7 @@ English: [ARCHITECTURE.md](ARCHITECTURE.md)
 - [SLASH_COMMANDS.ko.md](SLASH_COMMANDS.ko.md)
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [docs/headless.md](docs/headless.md)
-- 구현됨: [2026-09-16-session-as-job-roadmap.md](docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md) (`ea56edd`, closeout `0ef1554`); [job-host state](docs/superpowers/specs/2026-09-17-job-host-state-roadmap.md) (`6e56764`) (이전: [eve-inspired](docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md), implemented; 다음 주차, 스펙 없음: rewind persist-before-reset / `todo.json` 재투영)
+- 구현됨: [2026-09-16-session-as-job-roadmap.md](docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md) (`ea56edd`, closeout `0ef1554`); [job-host state](docs/superpowers/specs/2026-09-17-job-host-state-roadmap.md) (`6e56764`) (이전: [eve-inspired](docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md), implemented; 다음: [rewind persist-before-reset](docs/superpowers/specs/2026-09-18-rewind-persist-and-todo-projection.md))
 - 선행 분석: [eve-analysis.ko.md](docs/research/eve-analysis.ko.md), [y0-analysis.ko.md](docs/research/y0-analysis.ko.md)
 
 ---

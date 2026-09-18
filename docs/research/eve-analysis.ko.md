@@ -188,4 +188,4 @@ RavenClaw `MEMORY.md`는 기본 문서로 남긴다. 훔칠 것은 **compact 샌
 
 웹/풀스택을 나중에 붙이면 **eve 세션 API가 허리**다. y0의 Socket.IO+Prisma Task가 아니다. 루프는 하나, leftover-ask는 디스크에, 스트림은 `sessionId` NDJSON, 멀티테넌트면 파일+bash는 샌드박스.
 
-그 eve 호라이즌은 구현됐다. 세션-을-잡은 구현됐다 (`docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md`). Job-host state는 구현됐다 (`docs/superpowers/specs/2026-09-17-job-host-state-roadmap.md`, `6e56764`). 다음 주차(스펙 없음): rewind persist-before-reset / `todo.json` 재투영.
+그 eve 호라이즌은 구현됐다. 세션-을-잡은 구현됐다 (`docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md`). Job-host state는 구현됐다 (`docs/superpowers/specs/2026-09-17-job-host-state-roadmap.md`, `6e56764`). 다음: `docs/superpowers/specs/2026-09-18-rewind-persist-and-todo-projection.md`.

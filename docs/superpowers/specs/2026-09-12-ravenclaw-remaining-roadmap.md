@@ -8,7 +8,7 @@ Supersedes remaining H1/H2 of `2026-09-12-ravenclaw-roadmap.md`. H0 and harness-
 
 Steal contracts. Do not copy Claude, Hermes, or Freebuff source.
 
-Session-as-job horizon (**implemented** on `main` at `ea56edd`, closeout `0ef1554`): **`2026-09-16-session-as-job-roadmap.md`**. Job-host state (**implemented** on `main` at `6e56764`): **`2026-09-17-job-host-state-roadmap.md`**. Parked next (no spec yet): rewind persist-before-reset / `todo.json` re-project. Previous (implemented): `2026-09-15-eve-inspired-roadmap.md`. Prior-art: [eve-analysis.md](../../research/eve-analysis.md), [y0-analysis.md](../../research/y0-analysis.md).
+Session-as-job horizon (**implemented** on `main` at `ea56edd`, closeout `0ef1554`): **`2026-09-16-session-as-job-roadmap.md`**. Job-host state (**implemented** on `main` at `6e56764`): **`2026-09-17-job-host-state-roadmap.md`**. Next: **`2026-09-18-rewind-persist-and-todo-projection.md`**. Previous (implemented): `2026-09-15-eve-inspired-roadmap.md`. Prior-art: [eve-analysis.md](../../research/eve-analysis.md), [y0-analysis.md](../../research/y0-analysis.md).
 
 ---
 
@@ -22,7 +22,7 @@ The coding-agent waist is shipped:
 - Durable mailbox + session locks. Children go through `SessionEngine`.
 - H1.1–H1.3, H1.7 (subdir AGENTS.md, verify-on-stop, coding posture, stall) are in.
 
-Waves 1–4 are on `main`. Eve-inspired horizon is implemented. Session-as-job horizon is implemented (`ea56edd`, closeout `0ef1554`): **`2026-09-16-session-as-job-roadmap.md`**. Job-host state is implemented (`6e56764`): **`2026-09-17-job-host-state-roadmap.md`**. Parked next (no spec yet): rewind persist-before-reset / `todo.json` re-project.
+Waves 1–4 are on `main`. Eve-inspired horizon is implemented. Session-as-job horizon is implemented (`ea56edd`, closeout `0ef1554`): **`2026-09-16-session-as-job-roadmap.md`**. Job-host state is implemented (`6e56764`): **`2026-09-17-job-host-state-roadmap.md`**. Next: **`2026-09-18-rewind-persist-and-todo-projection.md`**.
 
 ---
 

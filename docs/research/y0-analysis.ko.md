@@ -61,4 +61,4 @@ Task는 `{ title, repoFullName, baseBranch, shadowBranch, baseCommitSha, status,
 
 허리는 그대로다. 호스트 → `submitMessage` → `queryLoop` 하나. y0 계약은 **세션/잡 아티팩트와 호스트 에필로그**로만 붙는다. 자기 채팅 루프, Task 행, Socket.IO 룸이 필요하면 y0 제품이다. 두지 않는다.
 
-세션-을-잡 로드맵 (구현됨): `docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md`. Job-host state (구현됨, `6e56764`): `docs/superpowers/specs/2026-09-17-job-host-state-roadmap.md`. 다음 주차(스펙 없음): rewind persist-before-reset / `todo.json` 재투영.
+세션-을-잡 로드맵 (구현됨): `docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md`. Job-host state (구현됨, `6e56764`): `docs/superpowers/specs/2026-09-17-job-host-state-roadmap.md`. 다음: `docs/superpowers/specs/2026-09-18-rewind-persist-and-todo-projection.md`.
