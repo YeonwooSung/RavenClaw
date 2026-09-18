@@ -19,6 +19,7 @@ import type {
 import { memoryTool } from '../tools/memory'
 import { enterSessionWorktree, exitSessionWorktree } from '../tools/session-worktree'
 import { createSessionEngine } from './session-engine'
+import { ABORTED_TEXT } from './pairing'
 import { drainAgentMail, enqueueAgentMail } from '../tasks/mailbox'
 import { applyPermissionMode, buildSystemParts } from '../prompt/builder'
 
@@ -96,6 +97,59 @@ function createFakeProvider(scripts: ProviderChunk[][]): Provider & {
     },
   }
   return provider
+}
+
+function createAskEcho(): Tool<{ text: string }, string> {
+  return {
+    name: 'Echo',
+    description: 'echo',
+    inputSchema: { type: 'object', properties: { text: { type: 'string' } } },
+    parse(input: unknown) {
+      if (!input || typeof input !== 'object' || typeof (input as { text?: unknown }).text !== 'string') {
+        return { ok: false as const, message: 'expected { text: string }' }
+      }
+      return { ok: true as const, value: { text: (input as { text: string }).text } }
+    },
+    isConcurrencySafe: () => true,
+    isReadOnly: () => true,
+    async checkPermissions() {
+      return { behavior: 'ask' as const, message: 'Echo?' }
+    },
+    async execute(input: { text: string }) {
+      return input.text
+    },
+  }
+}
+
+function toolThenStop(id: string, name: string, input: unknown): ProviderChunk[] {
+  return [
+    { type: 'tool_call', id, name, input },
+    { type: 'stop', reason: 'tool_use' },
+  ]
+}
+
+async function consumeUntilAsk(
+  gen: AsyncGenerator<StreamEvent, import('../types').RoundEnd>,
+): Promise<void> {
+  while (true) {
+    const next = await gen.next()
+    if (next.done) throw new Error('ended before permission_ask')
+    if (next.value.type === 'permission_ask') return
+  }
+}
+
+function hangAskUser(
+  _event: unknown,
+  signal: AbortSignal,
+): Promise<'allow' | 'deny' | 'allow_always'> {
+  return new Promise((_, reject) => {
+    const fail = () => reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+    if (signal.aborted) {
+      fail()
+      return
+    }
+    signal.addEventListener('abort', fail, { once: true })
+  })
 }
 
 function engineOpts(over: {
@@ -1748,32 +1802,70 @@ describe('cancel', () => {
     expect(streams).toBe(2)
   })
 
-  test('cancel leaves a parked leftover-ask and yields a status line', async () => {
+  test('live cancel abort-pairs a leftover-ask and does not emit ask still pending', async () => {
     const store = createMemoryStore()
     const sess = makeSession({ id: 'sess_cancel_ask' })
     await store.createSession(sess)
-    const provider: Provider = {
-      id: 'fake',
-      apiMode: 'openai_compat',
-      profile(model: string) {
-        return defaultModel(model)
-      },
-      async *stream(_req, signal) {
-        await new Promise<void>((resolve) => {
-          if (signal.aborted) {
-            resolve()
-            return
-          }
-          signal.addEventListener('abort', () => resolve(), { once: true })
-        })
-      },
-    }
+    const held = new Promise<'allow' | 'deny' | 'allow_always'>(() => {})
     const engine = createSessionEngine({
-      ...engineOpts({ provider, store, session: sess }),
+      ...engineOpts({
+        provider: createFakeProvider([toolThenStop('call_park', 'Echo', { text: 'hi' })]),
+        store,
+        session: sess,
+        tools: [createAskEcho()],
+      }),
+      askUser: async (_event, signal) => Promise.race([held, hangAskUser(_event, signal)]),
     })
     const gen = engine.submitMessage('hi')
-    const first = await gen.next()
-    expect(first.done).toBe(false)
+    await consumeUntilAsk(gen)
+    expect(await store.listPendingAsks(sess.id)).toHaveLength(1)
+    engine.abort('cancel')
+    const { events, result } = await drain(gen)
+    expect(result).toEqual({ reason: 'cancelled' })
+    expect(
+      events.some((e) => e.type === 'status' && e.message === 'cancelled, ask still pending'),
+    ).toBe(false)
+    expect(await store.listPendingAsks(sess.id)).toHaveLength(0)
+    const loaded = await store.loadSession(sess.id)
+    const tools = loaded.messages.filter((m) => m.role === 'tool' && m.toolUseId === 'call_park')
+    expect(tools).toHaveLength(1)
+    expect(tools[0]?.ok).toBe(false)
+    expect((tools[0]?.blocks[0] as { text?: string })?.text).toBe(ABORTED_TEXT)
+    expect(await engine.applyAskAnswer('call_park', 'deny')).toBe('matched')
+  })
+
+  test('unpaired persist-fail on cancel leaves the row and the status line', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_cancel_persist_fail' })
+    await store.createSession(sess)
+    let enteredFirst: () => void
+    const firstStreamEntered = new Promise<void>((resolve) => {
+      enteredFirst = resolve
+    })
+    const engine = createSessionEngine({
+      ...engineOpts({
+        provider: {
+          id: 'fake',
+          apiMode: 'openai_compat',
+          profile: (model: string) => defaultModel(model),
+          async *stream(_req, signal) {
+            enteredFirst()
+            await new Promise<void>((resolve) => {
+              if (signal.aborted) {
+                resolve()
+                return
+              }
+              signal.addEventListener('abort', () => resolve(), { once: true })
+            })
+          },
+        },
+        store,
+        session: sess,
+      }),
+    })
+    const gen = engine.submitMessage('hi')
+    const pending = drain(gen)
+    await firstStreamEntered
     await store.upsertPendingAsk({
       callId: 'parked_1',
       sessionId: sess.id,
@@ -1783,14 +1875,200 @@ describe('cancel', () => {
       input: { command: 'ls' },
       createdAt: 1,
     })
+    store.persistToolResults = async () => {
+      throw new Error('disk')
+    }
     engine.abort('cancel')
-    const { events, result } = await drain(gen)
+    const { events, result } = await pending
     expect(result).toEqual({ reason: 'cancelled' })
     expect(
-      events.some(
-        (event) => event.type === 'status' && event.message === 'cancelled, ask still pending',
-      ),
+      events.some((e) => e.type === 'status' && e.message === 'cancelled, ask still pending'),
     ).toBe(true)
+    expect(await store.listPendingAsks(sess.id)).toHaveLength(1)
+  })
+
+  test('already-paired delete-fail on cancel leaves the row and the status line', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_cancel_drop_fail' })
+    await store.createSession(sess)
+    await store.persistToolCalls(sess.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_park', name: 'Echo', input: { text: 'hi' } }],
+      createdAt: 1,
+    })
+    await store.persistToolResults(sess.id, [
+      {
+        id: 't1',
+        role: 'tool',
+        toolUseId: 'call_park',
+        ok: false,
+        blocks: [{ type: 'text', text: ABORTED_TEXT }],
+        createdAt: 2,
+      },
+    ])
+    let enteredFirst: () => void
+    const firstStreamEntered = new Promise<void>((resolve) => {
+      enteredFirst = resolve
+    })
+    const engine = createSessionEngine({
+      ...engineOpts({
+        provider: {
+          id: 'fake',
+          apiMode: 'openai_compat',
+          profile: (model: string) => defaultModel(model),
+          async *stream(_req, signal) {
+            enteredFirst()
+            await new Promise<void>((resolve) => {
+              if (signal.aborted) {
+                resolve()
+                return
+              }
+              signal.addEventListener('abort', () => resolve(), { once: true })
+            })
+          },
+        },
+        store,
+        session: sess,
+      }),
+    })
+    const gen = engine.submitMessage('hi')
+    const pending = drain(gen)
+    await firstStreamEntered
+    await store.upsertPendingAsk({
+      callId: 'call_park',
+      sessionId: sess.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 3,
+    })
+    store.deletePendingAsk = async () => {
+      throw new Error('disk')
+    }
+    engine.abort('cancel')
+    const { events, result } = await pending
+    expect(result).toEqual({ reason: 'cancelled' })
+    expect(
+      events.some((e) => e.type === 'status' && e.message === 'cancelled, ask still pending'),
+    ).toBe(true)
+    expect(await store.listPendingAsks(sess.id)).toHaveLength(1)
+  })
+
+  test('interrupt leaves a leftover-ask', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_interrupt_ask' })
+    await store.createSession(sess)
+    let enteredFirst: () => void
+    const firstStreamEntered = new Promise<void>((resolve) => {
+      enteredFirst = resolve
+    })
+    const engine = createSessionEngine({
+      ...engineOpts({
+        provider: {
+          id: 'fake',
+          apiMode: 'openai_compat',
+          profile: (model: string) => defaultModel(model),
+          async *stream(_req, signal) {
+            enteredFirst()
+            await new Promise<void>((resolve) => {
+              if (signal.aborted) {
+                resolve()
+                return
+              }
+              signal.addEventListener('abort', () => resolve(), { once: true })
+            })
+          },
+        },
+        store,
+        session: sess,
+      }),
+    })
+    const gen = engine.submitMessage('hi')
+    const pending = drain(gen)
+    await firstStreamEntered
+    await store.upsertPendingAsk({
+      callId: 'parked_1',
+      sessionId: sess.id,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Run ls?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    engine.abort('interrupt')
+    const { result } = await pending
+    expect(result.reason).toBe('aborted')
+    expect(await store.listPendingAsks(sess.id)).toHaveLength(1)
+  })
+
+  test('parent cancel leaves a child leftover-ask', async () => {
+    const store = createMemoryStore()
+    const parent = makeSession({ id: 'sess_parent_cancel' })
+    const child = makeSession({ id: 'sess_child_ask', parentSessionId: parent.id })
+    await store.createSession(parent)
+    await store.createSession(child)
+    let enteredFirst: () => void
+    const firstStreamEntered = new Promise<void>((resolve) => {
+      enteredFirst = resolve
+    })
+    const engine = createSessionEngine({
+      ...engineOpts({
+        provider: {
+          id: 'fake',
+          apiMode: 'openai_compat',
+          profile: (model: string) => defaultModel(model),
+          async *stream(_req, signal) {
+            enteredFirst()
+            await new Promise<void>((resolve) => {
+              if (signal.aborted) {
+                resolve()
+                return
+              }
+              signal.addEventListener('abort', () => resolve(), { once: true })
+            })
+          },
+        },
+        store,
+        session: parent,
+      }),
+    })
+    const gen = engine.submitMessage('hi')
+    const pending = drain(gen)
+    await firstStreamEntered
+    await store.upsertPendingAsk({
+      callId: 'call_child',
+      sessionId: child.id,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Run ls?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    engine.abort('cancel')
+    await pending
+    expect(await store.listPendingAsks(child.id)).toHaveLength(1)
+    expect(await store.listPendingAsks(parent.id)).toHaveLength(0)
+  })
+
+  test('cancel with no live turn does not drop leftover-asks', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_idle_cancel' })
+    await store.createSession(sess)
+    await store.upsertPendingAsk({
+      callId: 'parked',
+      sessionId: sess.id,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Run ls?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    const engine = createSessionEngine({
+      ...engineOpts({ provider: createFakeProvider([]), store, session: sess }),
+    })
+    engine.abort('cancel')
     expect(await store.listPendingAsks(sess.id)).toHaveLength(1)
   })
 

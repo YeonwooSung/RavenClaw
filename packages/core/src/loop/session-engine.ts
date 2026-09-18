@@ -25,6 +25,7 @@ import { queryLoop } from './query-loop'
 import { selectProtectedTail } from './repair'
 import { formatSettledOutput } from './format-output'
 import {
+  ABORTED_TEXT,
   denyText,
   executeFailedText,
   INCOMPLETE_TEXT,
@@ -675,7 +676,24 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         const end = yield* queryLoop(loopOpts)
         if (end.reason === 'cancelled') {
           const leftover = await opts.store.listPendingAsks(session.id)
-          if (leftover.length > 0) {
+          let remaining = false
+          for (const row of leftover) {
+            if (!(await isCallPaired(row.callId, session.id))) {
+              try {
+                await persistSettledTool(makeToolMessage(row.callId, false, ABORTED_TEXT), session.id)
+              } catch {
+                remaining = true
+                continue
+              }
+            }
+            try {
+              await opts.store.deletePendingAsk(row.callId)
+            } catch {
+              remaining = true
+              continue
+            }
+          }
+          if (remaining) {
             yield { type: 'status', message: 'cancelled, ask still pending' }
           }
         }
