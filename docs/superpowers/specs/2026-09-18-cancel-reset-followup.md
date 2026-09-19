@@ -5,7 +5,7 @@ Status: implemented
 Shipped on `main` at `5eefdde`.  
 Reviewed against tree at `77a09f3` (`main` after rewind persist PR land + shipped-docs PR #13).  
 Successor to `2026-09-18-rewind-persist-and-todo-projection.md` (Status: implemented). Does not reopen that spec’s closed doors except the three holes named here.  
-Next horizon (implemented at `be5a4a7`): [`2026-09-18-no-job-todo-revert.md`](2026-09-18-no-job-todo-revert.md) (amends this spec’s OUT for no-job todo revert only). Then (this branch): [`2026-09-18-stream-version-token.md`](2026-09-18-stream-version-token.md), [`2026-09-18-keep-id-clear.md`](2026-09-18-keep-id-clear.md), and [`2026-09-18-parent-tree-stop.md`](2026-09-18-parent-tree-stop.md) (tree-stop, not leftover-only).
+Next horizon (implemented at `be5a4a7`): [`2026-09-18-no-job-todo-revert.md`](2026-09-18-no-job-todo-revert.md) (amends this spec’s OUT for no-job todo revert only). Then (implemented at `c9c4871`): [`2026-09-18-stream-version-token.md`](2026-09-18-stream-version-token.md). Then (implemented at `edeb611`): [`2026-09-18-keep-id-clear.md`](2026-09-18-keep-id-clear.md). Then (implemented at `9901d0e`): [`2026-09-18-parent-tree-stop.md`](2026-09-18-parent-tree-stop.md) (tree-stop, not leftover-only).
 
 Implementation plan: [2026-09-18-cancel-reset-followup.md](../plans/2026-09-18-cancel-reset-followup.md).
 

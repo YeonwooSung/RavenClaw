@@ -1,7 +1,8 @@
 # RavenClaw next-horizon roadmap (keep-id `/clear`)
 
 Date: 2026-09-18  
-Status: implemented on this branch  
+Status: implemented  
+Shipped on `main` at `edeb611`. Combined waist with stream version/token and parent tree-stop is on `main` at `9901d0e`.  
 Reviewed against tree at `be5a4a7` (`origin/main` after no-job todo revert).  
 Successor to `2026-09-18-no-job-todo-revert.md` (Status: implemented at `be5a4a7`). Amends prior OUT for keep-id `/clear` **only**. Does not reopen that spec’s closed doors.
 
@@ -153,7 +154,7 @@ These lock underspecification. The implementation plan may only add detail, not 
 
 ## Per-slice board
 
-Board as of this branch (`docs/keep-id-clear-spec`); not on `main`.
+Board as of `edeb611` on `main`. Combined waist `9901d0e`. Pre-ship “not on `main`” wording is historical.
 
 | ID | Status vs tree |
 |---|---|

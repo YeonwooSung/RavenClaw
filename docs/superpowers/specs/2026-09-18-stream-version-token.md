@@ -1,7 +1,8 @@
 # RavenClaw next-horizon roadmap (stream version / continuationToken)
 
 Date: 2026-09-18  
-Status: implemented on this branch  
+Status: implemented  
+Shipped on `main` at `c9c4871`. Combined waist with keep-id `/clear` and parent tree-stop is on `main` at `9901d0e`.  
 Reviewed against tree at `be5a4a7` (`origin/main` after no-job todo revert).  
 Successor to `2026-09-18-no-job-todo-revert.md` (Status: implemented at `be5a4a7`). Does not reopen that spec’s closed doors. Amends prior OUT for stream `version` / `continuationToken` **only**.
 
@@ -134,7 +135,7 @@ Not 400: omit `?version=`; omit both resume params (live tail); `after=0`; token
 
 ## Per-slice board
 
-Board as of this branch (`docs/stream-version-token-spec`); not on `main`. Nothing in this table is implemented at `be5a4a7`.
+Board as of `c9c4871` on `main`. Combined waist `9901d0e`. Pre-ship “not on `main`” wording is historical.
 
 | ID | Status vs tree |
 |---|---|

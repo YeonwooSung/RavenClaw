@@ -446,7 +446,10 @@ If `included.gatewayUrl` is a real URL and `GET /v1/entitlement` admits the sess
 - Job-host state (snapshot end-reason, one-slot follow-up, edit-resubmit, job diff; **implemented** at `6e56764`): [2026-09-17-job-host-state-roadmap.md](docs/superpowers/specs/2026-09-17-job-host-state-roadmap.md)
 - Rewind persist-before-reset / `todo.json` projection (**implemented** at `048deff`): [2026-09-18-rewind-persist-and-todo-projection.md](docs/superpowers/specs/2026-09-18-rewind-persist-and-todo-projection.md)
 - Cancel abort-pair / reset-on-resume / `writeFollowup` persist-first (**implemented** at `5eefdde`): [2026-09-18-cancel-reset-followup.md](docs/superpowers/specs/2026-09-18-cancel-reset-followup.md)
-- No-job todo revert (**this branch**): [2026-09-18-no-job-todo-revert.md](docs/superpowers/specs/2026-09-18-no-job-todo-revert.md)
+- No-job todo revert (**implemented** at `be5a4a7`): [2026-09-18-no-job-todo-revert.md](docs/superpowers/specs/2026-09-18-no-job-todo-revert.md)
+- Stream version / `continuationToken` (**implemented** at `c9c4871`): [2026-09-18-stream-version-token.md](docs/superpowers/specs/2026-09-18-stream-version-token.md)
+- Keep-id `/clear` (**implemented** at `edeb611`): [2026-09-18-keep-id-clear.md](docs/superpowers/specs/2026-09-18-keep-id-clear.md)
+- Parent tree-stop (**implemented** at `9901d0e`): [2026-09-18-parent-tree-stop.md](docs/superpowers/specs/2026-09-18-parent-tree-stop.md)
 - Previous horizon (durable HITL, sandbox port, session HTTP; implemented): [2026-09-15-eve-inspired-roadmap.md](docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md)
 
 ## Develop

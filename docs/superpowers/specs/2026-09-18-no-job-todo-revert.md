@@ -1,10 +1,11 @@
 # RavenClaw next-horizon roadmap (no-job todo revert)
 
 Date: 2026-09-18  
-Status: implemented on this branch  
+Status: implemented  
+Shipped on `main` at `be5a4a7`.  
 Reviewed against tree at `9fb6ccc` (`main` after cancel-reset-followup `5eefdde`, docs honesty `5431004`, Dependabot `6716d3a`, residual nits `9fb6ccc`).  
 Successor to `2026-09-18-cancel-reset-followup.md` (Status: implemented). Does not reopen that spec’s closed doors except the one hole named here.  
-Next horizon (this branch): [`2026-09-18-stream-version-token.md`](2026-09-18-stream-version-token.md) (amends this spec’s OUT for stream `version` / `continuationToken` only).
+Next horizon (implemented at `c9c4871`): [`2026-09-18-stream-version-token.md`](2026-09-18-stream-version-token.md) (amends this spec’s OUT for stream `version` / `continuationToken` only). Then (implemented at `edeb611`): [`2026-09-18-keep-id-clear.md`](2026-09-18-keep-id-clear.md). Then (implemented at `9901d0e`): [`2026-09-18-parent-tree-stop.md`](2026-09-18-parent-tree-stop.md).
 
 Implementation plan: [2026-09-18-no-job-todo-revert.md](../plans/2026-09-18-no-job-todo-revert.md).  
 Amendment: keep-id `/clear` is unparked **only** by [`2026-09-18-keep-id-clear.md`](2026-09-18-keep-id-clear.md). Historical OUT lines below stay.
@@ -94,7 +95,7 @@ These lock underspecification. The implementation plan may only add detail, not 
 
 ## Per-slice board
 
-Board as of this branch (`docs/no-job-todo-revert-spec`); not on `main`.
+Board as of `be5a4a7` on `main`. Pre-ship “not on `main`” wording is historical.
 
 | ID | Status vs tree |
 |---|---|

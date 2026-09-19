@@ -1,7 +1,8 @@
 # RavenClaw next-horizon roadmap (parent tree-stop)
 
 Date: 2026-09-18  
-Status: implemented on this branch  
+Status: implemented  
+Shipped on `main` at `9901d0e`.  
 Reviewed against tree at `be5a4a7` (`main` after no-job todo revert).  
 Successor to `2026-09-18-no-job-todo-revert.md` (Status: implemented at `be5a4a7`). Amends `2026-09-18-cancel-reset-followup.md` OUT for **parent-cancels-child-ask only**. Does not reopen that spec’s other closed doors.
 
@@ -178,7 +179,7 @@ These lock underspecification. The implementation plan may only add detail, not 
 
 ## Per-slice board
 
-Board as of this spec (`docs/parent-tree-stop-spec`); not on `main`.
+Board as of `9901d0e` on `main`. Pre-ship “not on `main`” wording is historical.
 
 | ID | Status vs tree |
 |---|---|
