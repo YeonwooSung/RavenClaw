@@ -3012,8 +3012,8 @@ describe('clearKeepId', () => {
 
     engine.abort('cancel')
     await pending
-    expect(await engine.applyAskAnswer('call_child', 'deny')).toBe('matched')
     expect(await store.listPendingAsks(child.id)).toHaveLength(0)
+    expect(await engine.applyAskAnswer('call_child', 'deny')).toBe('unmatched')
     expect(await engine.clearKeepId()).toEqual({ ok: true, notice: 'session cleared' })
     expect((await store.loadSession(child.id)).session.id).toBe(child.id)
     expect((await store.loadSession(child.id)).session.parentSessionId).toBe(parent.id)
