@@ -172,6 +172,35 @@ describe('listOwnedPendingAsks', () => {
     expect(await listOwnedPendingAsks(store, 'parent')).toEqual([{ callId: 'call_child' }])
     expect(await listOwnedPendingAsks(undefined, 'parent')).toEqual([])
   })
+
+  test('includes leftover-asks on grandchild sessions', async () => {
+    const store = {
+      async listPendingAsks(sessionId: string) {
+        if (sessionId === 'grandchild') return [{ callId: 'call_grand' }]
+        return []
+      },
+      async listSessions(filter: { parentSessionId: string }) {
+        if (filter.parentSessionId === 'parent') return [{ id: 'child' }]
+        if (filter.parentSessionId === 'child') return [{ id: 'grandchild' }]
+        return []
+      },
+    }
+    expect(await listOwnedPendingAsks(store, 'parent')).toEqual([{ callId: 'call_grand' }])
+  })
+
+  test('a parentSessionId cycle does not hang', async () => {
+    const store = {
+      async listPendingAsks() {
+        return []
+      },
+      async listSessions(filter: { parentSessionId: string }) {
+        if (filter.parentSessionId === 'a') return [{ id: 'b' }]
+        if (filter.parentSessionId === 'b') return [{ id: 'a' }]
+        return []
+      },
+    }
+    expect(await listOwnedPendingAsks(store, 'a')).toEqual([])
+  })
 })
 
 describe('runFollowupAfterSubmit', () => {

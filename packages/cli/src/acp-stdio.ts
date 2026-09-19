@@ -268,8 +268,8 @@ function wrapBoot(booted: Promise<AcpEngine>): AcpEngine {
       const engine = await ready
       return yield* engine.submitMessage(input)
     },
-    abort() {
-      void ready.then((engine) => engine.abort()).catch(() => {})
+    abort(kind?: 'cancel' | 'interrupt') {
+      void ready.then((engine) => engine.abort(kind ?? 'cancel')).catch(() => {})
     },
     async *replayPendingAsks() {
       const engine = await ready

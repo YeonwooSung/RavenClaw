@@ -6,4 +6,4 @@ test('pending-ask-persist fails if applyAskAnswer is missing', async () => {
   await expect(
     runEvalDir(join(import.meta.dir, 'fixtures')),
   ).resolves.toBeUndefined()
-})
+}, 60_000)

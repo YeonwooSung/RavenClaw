@@ -133,6 +133,7 @@ export type { JobDiff, JobDiffFile, JobDiffOp } from './session/job-diff'
 export {
   followupNotice,
   lastEndWrittenThisTurn,
+  listDescendantSessionIds,
   listOwnedPendingAsks,
   maybeRunFollowup,
   runFollowupAfterSubmit,

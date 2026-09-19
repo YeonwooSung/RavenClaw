@@ -34,7 +34,7 @@ import {
 
 export type AcpEngine = {
   submitMessage(input: UserSubmitInput): AsyncGenerator<unknown, unknown>
-  abort(): void
+  abort(kind?: 'cancel' | 'interrupt'): void
   replayPendingAsks?: () => AsyncGenerator<unknown, void>
 }
 
@@ -316,7 +316,7 @@ export function createAcpServer(opts: AcpServerOptions): AcpServer {
 
   function handleSessionCancel(id: JsonRpcId | null, params: unknown): JsonRpcResponse {
     const parsed = parseSessionParams(params)
-    if (parsed) sessions.get(parsed.sessionId)?.abort()
+    if (parsed) sessions.get(parsed.sessionId)?.abort('cancel')
     return jsonRpcResult(id, null)
   }
 

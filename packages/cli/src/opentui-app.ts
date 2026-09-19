@@ -325,15 +325,18 @@ export async function runOpenTuiApp(
       switch (parsed.name) {
         case 'quit':
           return 0
-        case 'stop':
+        case 'stop': {
+          const wasLive = current.engine.liveTurnId() !== null
           current.engine.abort('cancel')
           if (abortGate.press() === 'kill_all') {
             const killed = current.engine.tasks.killAll()
             write(`${formatKilledBackgroundNotice(killed.length)}\n`)
           } else {
-            write(turnBusy ? 'stopped\n' : 'nothing to stop\n')
+            const tree = await current.engine.whenTreeStop()
+            write(wasLive || tree.descendantWork ? 'stopped\n' : 'nothing to stop\n')
           }
           continue
+        }
         case 'clear': {
           try {
             const result = await current.engine.clearKeepId()

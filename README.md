@@ -273,7 +273,7 @@ Ink is the default. OpenTUI is `--tui opentui`.
 | `/context` | Compact generation and message count |
 | `/copy` | Copy the conversation as markdown |
 | `/bash <cmd>` | Local shell (also `!cmd`) |
-| `/stop` `/cancel` | Abort the current turn |
+| `/stop` `/cancel` | Abort the current turn (tree-stop of descendants; see [`2026-09-18-parent-tree-stop.md`](docs/superpowers/specs/2026-09-18-parent-tree-stop.md)) |
 | `/quit` | Exit |
 
 ## Tools

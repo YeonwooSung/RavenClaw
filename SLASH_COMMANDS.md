@@ -331,9 +331,9 @@ The first user prompt of a new session also auto-titles from that text when titl
 - **Kind:** host-only
 - **When:** always
 
-Both hosts: `engine.abort('cancel')` (cancels the live turn and any detached background review). Live cancel abort-pairs **this** session’s leftover-asks (drop-only when already transcript-paired; unpaired persist one `ABORTED_TEXT` then drop). No live turn, `abort('interrupt')`, and child leftover-asks are unchanged.
+Both hosts: `engine.abort('cancel')` (cancels the live turn and any detached background review). `abort('cancel')` is tree-stop: abort descendant live turns, then persist-before-drop descendant leftover-asks (I2 law). This session’s leftover-asks abort-pair only when this session had a live turn. Idle parent still walks descendants; this session’s parked asks stay. `abort('interrupt')` is not tree-stop. Spec: [`2026-09-18-parent-tree-stop.md`](docs/superpowers/specs/2026-09-18-parent-tree-stop.md).
 
-- Ink notice: `stopped` if `busyRef`, else `nothing to stop`
+- Ink notice: `stopped` if the parent was live or `whenTreeStop()` reports descendant work, else `nothing to stop`
 - OpenTUI: same, **unless** the second-abort gate returns `kill_all` (second `/stop` within 3 s) → `tasks.killAll()` and `killed N background task(s)` / `no background tasks to kill`
 
 Does not clear `/loop` or `/queue`.

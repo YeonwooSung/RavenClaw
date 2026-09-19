@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { INCOMPLETE_TEXT, unpairedToolUseIds } from '../loop/pairing'
+import { ABORTED_TEXT, INCOMPLETE_TEXT, unpairedToolUseIds } from '../loop/pairing'
 import { createSessionEngine } from '../loop/session-engine'
 import { maybeRunFollowup, writeFollowup } from '../session/followup'
 import { jobDiff } from '../session/job-diff'
@@ -52,6 +52,7 @@ type EvalExpect = {
   followupPersistOrder?: boolean
   rewindNoJobTodoRevert?: boolean
   keepIdClear?: boolean
+  parentTreeStop?: boolean
 }
 
 type EvalCase = {
@@ -134,6 +135,10 @@ export async function runEvalDir(dir: string): Promise<void> {
     }
     if (name === 'keep-id-clear') {
       await runKeepIdClear(spec)
+      continue
+    }
+    if (name === 'parent-tree-stop') {
+      await runParentTreeStop(spec)
       continue
     }
     throw new Error(`unknown eval fixture: ${name}`)
@@ -1229,6 +1234,213 @@ async function runCancelAbortPair(spec: EvalCase): Promise<void> {
   }
 
   await engine.close()
+}
+
+async function runParentTreeStop(spec: EvalCase): Promise<void> {
+  if (spec.expect.parentTreeStop !== true) return
+
+  const store = createMemoryStore()
+  const parent = makeSession({ id: 'sess_eval_tree_parent' })
+  const child = makeSession({ id: 'sess_eval_tree_child', parentSessionId: parent.id })
+  await store.createSession(parent)
+  await store.createSession(child)
+  await store.persistToolCalls(child.id, {
+    id: 'a_child',
+    role: 'assistant',
+    blocks: [{ type: 'tool_use', id: 'call_child', name: 'Bash', input: { command: 'ls' } }],
+    createdAt: 1,
+  })
+  let entered: () => void
+  const streamEntered = new Promise<void>((resolve) => {
+    entered = resolve
+  })
+  const engine = createSessionEngine({
+    session: parent,
+    provider: {
+      id: 'fake',
+      apiMode: 'openai_compat',
+      profile: (model: string) => defaultModel(model),
+      async *stream(_req, signal) {
+        entered()
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) {
+            resolve()
+            return
+          }
+          signal.addEventListener('abort', () => resolve(), { once: true })
+        })
+      },
+    },
+    store,
+    tools: [],
+    compact: defaultCompact(),
+    model: defaultModel(),
+    maxRounds: 8,
+    bare: true,
+    askUser: async () => 'deny',
+  })
+  const pending = drainEvents(engine.submitMessage(spec.prompt))
+  await streamEntered
+  await store.upsertPendingAsk({
+    callId: 'call_child',
+    sessionId: child.id,
+    kind: 'leftover',
+    tool: 'Bash',
+    message: 'Run ls?',
+    input: { command: 'ls' },
+    createdAt: 1,
+  })
+  engine.abort('cancel')
+  const { events } = await pending
+  if ((await store.listPendingAsks(child.id)).length !== 0) {
+    throw new Error('parent-tree-stop: live parent left child leftover-ask')
+  }
+  const childLoaded = await store.loadSession(child.id)
+  const childTools = childLoaded.messages.filter((m) => m.role === 'tool' && m.toolUseId === 'call_child')
+  if (childTools.length !== 1) {
+    throw new Error(`parent-tree-stop: child ABORTED_TEXT rows = ${childTools.length}`)
+  }
+  if ((childTools[0]?.blocks[0] as { text?: string })?.text !== ABORTED_TEXT) {
+    throw new Error('parent-tree-stop: child tool row is not ABORTED_TEXT')
+  }
+  if (events.some((e) => e.type === 'status' && e.message === 'cancelled, ask still pending')) {
+    throw new Error('parent-tree-stop: status line fired after successful walk')
+  }
+  await engine.close()
+
+  const idleStore = createMemoryStore()
+  const idleParent = makeSession({ id: 'sess_eval_tree_idle_parent' })
+  const idleChild = makeSession({ id: 'sess_eval_tree_idle_child', parentSessionId: idleParent.id })
+  await idleStore.createSession(idleParent)
+  await idleStore.createSession(idleChild)
+  await idleStore.persistToolCalls(idleChild.id, {
+    id: 'a_idle',
+    role: 'assistant',
+    blocks: [{ type: 'tool_use', id: 'call_idle_child', name: 'Bash', input: { command: 'ls' } }],
+    createdAt: 1,
+  })
+  await idleStore.upsertPendingAsk({
+    callId: 'call_idle_child',
+    sessionId: idleChild.id,
+    kind: 'leftover',
+    tool: 'Bash',
+    message: 'Run ls?',
+    input: { command: 'ls' },
+    createdAt: 1,
+  })
+  const idleEngine = createSessionEngine({
+    session: idleParent,
+    provider: createFakeProvider([]),
+    store: idleStore,
+    tools: [],
+    compact: defaultCompact(),
+    model: defaultModel(),
+    maxRounds: 8,
+    bare: true,
+    askUser: async () => 'deny',
+  })
+  idleEngine.abort('cancel')
+  const idleTree = await idleEngine.whenTreeStop()
+  if (!idleTree.descendantWork) {
+    throw new Error('parent-tree-stop: idle parent reported no descendant work')
+  }
+  if ((await idleStore.listPendingAsks(idleChild.id)).length !== 0) {
+    throw new Error('parent-tree-stop: idle parent left child leftover-ask')
+  }
+  if (idleEngine.session.lastEnd !== undefined) {
+    throw new Error('parent-tree-stop: idle parent invented lastEnd')
+  }
+  await idleEngine.close()
+
+  const parkedStore = createMemoryStore()
+  const parked = makeSession({ id: 'sess_eval_tree_parked' })
+  await parkedStore.createSession(parked)
+  await parkedStore.upsertPendingAsk({
+    callId: 'parked',
+    sessionId: parked.id,
+    kind: 'leftover',
+    tool: 'Bash',
+    message: 'Run ls?',
+    input: { command: 'ls' },
+    createdAt: 1,
+  })
+  const parkedEngine = createSessionEngine({
+    session: parked,
+    provider: createFakeProvider([]),
+    store: parkedStore,
+    tools: [],
+    compact: defaultCompact(),
+    model: defaultModel(),
+    maxRounds: 8,
+    bare: true,
+    askUser: async () => 'deny',
+  })
+  parkedEngine.abort('cancel')
+  const parkedTree = await parkedEngine.whenTreeStop()
+  if (parkedTree.descendantWork) {
+    throw new Error('parent-tree-stop: idle this-session cancel reported descendant work')
+  }
+  if ((await parkedStore.listPendingAsks(parked.id)).length !== 1) {
+    throw new Error('parent-tree-stop: idle this-session parked ask was dropped')
+  }
+  await parkedEngine.close()
+
+  const failStore = createMemoryStore()
+  const failParent = makeSession({ id: 'sess_eval_tree_fail_parent' })
+  const failA = makeSession({ id: 'sess_eval_tree_fail_a', parentSessionId: failParent.id })
+  const failB = makeSession({ id: 'sess_eval_tree_fail_b', parentSessionId: failParent.id })
+  await failStore.createSession(failParent)
+  await failStore.createSession(failA)
+  await failStore.createSession(failB)
+  for (const [sess, callId] of [
+    [failA, 'call_fail_a'],
+    [failB, 'call_fail_b'],
+  ] as const) {
+    await failStore.persistToolCalls(sess.id, {
+      id: `a_${callId}`,
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: callId, name: 'Bash', input: { command: 'ls' } }],
+      createdAt: 1,
+    })
+    await failStore.upsertPendingAsk({
+      callId,
+      sessionId: sess.id,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Run ls?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+  }
+  const failInner = failStore.persistToolResults.bind(failStore)
+  failStore.persistToolResults = async (sessionId, messages) => {
+    if (sessionId === failA.id) throw new Error('disk')
+    return failInner(sessionId, messages)
+  }
+  const failEngine = createSessionEngine({
+    session: failParent,
+    provider: createFakeProvider([]),
+    store: failStore,
+    tools: [],
+    compact: defaultCompact(),
+    model: defaultModel(),
+    maxRounds: 8,
+    bare: true,
+    askUser: async () => 'deny',
+  })
+  failEngine.abort('cancel')
+  await failEngine.whenTreeStop()
+  if ((await failStore.listPendingAsks(failA.id)).length !== 1) {
+    throw new Error('parent-tree-stop: persist-fail row was dropped')
+  }
+  if ((await failStore.listPendingAsks(failB.id)).length !== 0) {
+    throw new Error('parent-tree-stop: persist-ok sibling leftover-ask remained')
+  }
+  failStore.persistToolResults = failInner
+  if ((await failEngine.applyAskAnswer('call_fail_a', 'deny')) !== 'matched') {
+    throw new Error('parent-tree-stop: applyAskAnswer did not match persist-fail row')
+  }
+  await failEngine.close()
 }
 
 async function runRewindResetOnResume(spec: EvalCase): Promise<void> {

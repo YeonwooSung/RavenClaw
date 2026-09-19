@@ -48,6 +48,12 @@ function fakeEngine(session: SessionRecord): SessionEngine & { reloads: number }
     async maybeFinishRewindReset() {
       return { ran: false, ok: true }
     },
+    async whenTreeStop() {
+      return { descendantWork: false }
+    },
+    async clearKeepId() {
+      return { ok: true as const, notice: 'session cleared' }
+    },
     async *submitMessage() {
       return { reason: 'completed' as const }
     },

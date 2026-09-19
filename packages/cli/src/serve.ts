@@ -19,6 +19,8 @@ import {
   clearSessionJobError,
   setSessionJobError,
   runFollowupAfterSubmit,
+  listDescendantSessionIds,
+  listOwnedPendingAsks,
   jobDiff,
   type Message,
   type RoundEnd,
@@ -203,6 +205,7 @@ export type ServeEngine = {
   replayPendingAsks: () => AsyncGenerator<StreamEvent, void>
   abort: (kind?: 'cancel' | 'interrupt') => void
   liveTurnId?: () => string | null
+  whenTreeStop?: () => Promise<{ descendantWork: boolean }>
   compactNow: () => Promise<void>
   setFollowup?: (text: string) => Promise<{ ok: true } | { ok: false; notice: string }>
   clearFollowup?: () => Promise<void>
@@ -302,6 +305,7 @@ export type ServeRequestContext = {
   createSession?: (sessionId: string) => Promise<ServeRuntime>
   settleAsk?: (callId: string, answer: PendingAskAnswer) => boolean
   gh?: (args: string[], cwd: string) => { ok: boolean; stdout: string; stderr: string }
+  liveRuntimes?: () => Iterable<[string, { engine: ServeEngine }]>
 }
 
 export function createSessionEventHub(
@@ -439,15 +443,14 @@ async function publishParkedAsks(
 ): Promise<void> {
   const store = runtime.store
   if (!store?.listPendingAsks) return
-  const rows = [...(await store.listPendingAsks(sessionId))]
-  if (store.listSessions) {
-    const children = await store.listSessions({ parentSessionId: sessionId })
-    for (const child of children) {
-      for (const row of await store.listPendingAsks(child.id)) {
-        rows.push({ ...row, sessionId: child.id })
-      }
-    }
-  }
+  const rows = (await listOwnedPendingAsks(store, sessionId)) as Array<{
+    callId: string
+    sessionId: string
+    tool: string
+    message: string
+    input: unknown
+    saveAs?: string
+  }>
   for (const row of rows) {
     const event: Extract<StreamEvent, { type: 'permission_ask' }> = {
       type: 'permission_ask',
@@ -504,21 +507,62 @@ async function loadSessionRuntime(
   }
 }
 
+async function probeIdleCancel(
+  ctx: ServeRequestContext,
+  store: ServeRuntime['store'],
+  sessionId: string,
+): Promise<{ leftover: boolean; cacheLive: boolean; hasDescendants: boolean }> {
+  const ids = store?.listSessions ? await listDescendantSessionIds(store, sessionId) : []
+  let leftover = false
+  if (store?.listPendingAsks) {
+    for (const id of ids) {
+      if ((await store.listPendingAsks(id)).length > 0) {
+        leftover = true
+        break
+      }
+    }
+  }
+  return {
+    leftover,
+    cacheLive: cachedDescendantLive(ctx, new Set(ids)),
+    hasDescendants: ids.length > 0,
+  }
+}
+
+function cachedDescendantLive(ctx: ServeRequestContext, ids: Set<string>): boolean {
+  if (!ctx.liveRuntimes || ids.size === 0) return false
+  for (const [id, runtime] of ctx.liveRuntimes()) {
+    if (!ids.has(id)) continue
+    if ((runtime.engine.liveTurnId?.() ?? null) !== null) return true
+  }
+  return false
+}
+
+async function abortCachedDescendants(
+  ctx: ServeRequestContext,
+  store: ServeRuntime['store'],
+  sessionId: string,
+): Promise<void> {
+  if (!ctx.liveRuntimes || !store?.listSessions) return
+  const ids = new Set(await listDescendantSessionIds(store, sessionId))
+  for (const [id, runtime] of ctx.liveRuntimes()) {
+    if (!ids.has(id)) continue
+    runtime.engine.abort('cancel')
+  }
+}
+
 async function collectSnapshotPendingAsks(
   runtime: ServeRuntime,
   sessionId: string,
 ): Promise<Array<{ callId: string; tool: string; message: string; childSessionId?: string }>> {
   const store = runtime.store
   if (!store?.listPendingAsks) return []
-  const rows = [...(await store.listPendingAsks(sessionId))]
-  if (store.listSessions) {
-    const children = await store.listSessions({ parentSessionId: sessionId })
-    for (const child of children) {
-      for (const row of await store.listPendingAsks(child.id)) {
-        rows.push({ ...row, sessionId: child.id })
-      }
-    }
-  }
+  const rows = (await listOwnedPendingAsks(store, sessionId)) as Array<{
+    callId: string
+    sessionId: string
+    tool: string
+    message: string
+  }>
   return rows.map((row) => {
     const ask: { callId: string; tool: string; message: string; childSessionId?: string } = {
       callId: row.callId,
@@ -668,11 +712,25 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
       }
       if (!parsed.ok) return Response.json({ error: parsed.error }, { status: 400 })
       const live = loaded.runtime.engine.liveTurnId?.() ?? null
-      if (parsed.turnId !== undefined ? parsed.turnId !== live : live === null) {
+      if (parsed.turnId !== undefined && live !== null && parsed.turnId !== live) {
         return Response.json({ ok: true, status: 'no_active_turn' })
       }
+      if (live !== null) {
+        await abortCachedDescendants(ctx, loaded.runtime.store, sessionId)
+        loaded.runtime.engine.abort('cancel')
+        return Response.json({ ok: true })
+      }
+      const probe = await probeIdleCancel(ctx, loaded.runtime.store, sessionId)
+      if (!probe.leftover && !probe.cacheLive && !probe.hasDescendants) {
+        return Response.json({ ok: true, status: 'no_active_turn' })
+      }
+      await abortCachedDescendants(ctx, loaded.runtime.store, sessionId)
       loaded.runtime.engine.abort('cancel')
-      return Response.json({ ok: true })
+      const tree = await loaded.runtime.engine.whenTreeStop?.()
+      if (tree?.descendantWork || probe.leftover || probe.cacheLive) {
+        return Response.json({ ok: true })
+      }
+      return Response.json({ ok: true, status: 'no_active_turn' })
     }
     if (req.method === 'POST' && action === 'compact') {
       const loaded = await loadSessionRuntime(ctx, sessionId)
@@ -977,6 +1035,7 @@ export async function runServe(opts: { flags: ConfigFlags }): Promise<number> {
     runtimeForSession,
     createSession,
     settleAsk: (callId, answer) => asks.settle(callId, answer),
+    liveRuntimes: () => caches.liveEngines(),
   }
 
   const server = Bun.serve({
