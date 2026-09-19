@@ -5,7 +5,7 @@ Status: implemented
 Shipped on `main` at `048deff`.  
 Reviewed against tree at `ac2d184` (`main` after job-host PR #9 + shipped-docs PR #11).  
 Successor to `2026-09-17-job-host-state-roadmap.md` (Status: implemented). Does not reopen that spec’s closed doors.  
-Next horizon (implemented at `5eefdde`): [`2026-09-18-cancel-reset-followup.md`](2026-09-18-cancel-reset-followup.md) (amends this spec’s OUT for live cancel abort-pair and reset-on-resume only). After that (implemented at `be5a4a7`): [`2026-09-18-no-job-todo-revert.md`](2026-09-18-no-job-todo-revert.md) (amends ruling 8 / no-job todo revert). Then (this branch): [`2026-09-18-stream-version-token.md`](2026-09-18-stream-version-token.md) (amends this spec’s OUT for stream `version` / `continuationToken` only).
+Next horizon (implemented at `5eefdde`): [`2026-09-18-cancel-reset-followup.md`](2026-09-18-cancel-reset-followup.md) (amends this spec’s OUT for live cancel abort-pair and reset-on-resume only). After that (implemented at `be5a4a7`): [`2026-09-18-no-job-todo-revert.md`](2026-09-18-no-job-todo-revert.md) (amends ruling 8 / no-job todo revert). Then (this branch): [`2026-09-18-stream-version-token.md`](2026-09-18-stream-version-token.md) (amends this spec’s OUT for stream `version` / `continuationToken` only) and [`2026-09-18-keep-id-clear.md`](2026-09-18-keep-id-clear.md) (amends this spec’s OUT for keep-id `/clear` only).
 
 Sources: current tree, [y0 analysis](../../research/y0-analysis.md) (`/Users/yeonwoosung/Desktop/y0`, read-only), [eve analysis](../../research/eve-analysis.md) (`/Users/yeonwoosung/Desktop/eve`, Apache-2.0, read-only).
 
@@ -48,7 +48,7 @@ y0 edit-message restores `{ commitSha, todoSnapshot }` then the host resubmits. 
 ## Do not build
 
 - y0’s Next.js + Prisma `Task` + Socket.IO room
-- Web chat UI, keep-id `/clear`, stream `version` / `continuationToken` (amended by `2026-09-18-stream-version-token.md`)
+- Web chat UI, keep-id `/clear` (amended by `2026-09-18-keep-id-clear.md`), stream `version` / `continuationToken` (amended by `2026-09-18-stream-version-token.md`)
 - Reverting no-job `session.todos` on rewind (amended by `2026-09-18-no-job-todo-revert.md`)
 - Changing no-job order (already persist-then-undo)
 - Changing `TodoWrite` persist-then-file order (already correct)

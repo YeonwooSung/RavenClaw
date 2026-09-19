@@ -51,6 +51,7 @@ type EvalExpect = {
   rewindResetOnResume?: boolean
   followupPersistOrder?: boolean
   rewindNoJobTodoRevert?: boolean
+  keepIdClear?: boolean
 }
 
 type EvalCase = {
@@ -129,6 +130,10 @@ export async function runEvalDir(dir: string): Promise<void> {
     }
     if (name === 'rewind-no-job-todo-revert') {
       await runRewindNoJobTodoRevert(spec)
+      continue
+    }
+    if (name === 'keep-id-clear') {
+      await runKeepIdClear(spec)
       continue
     }
     throw new Error(`unknown eval fixture: ${name}`)
@@ -1296,6 +1301,198 @@ async function runRewindResetOnResume(spec: EvalCase): Promise<void> {
     }
   } finally {
     exitSessionWorktree(sessionId, 'remove', true)
+    rmSync(cwd, { recursive: true, force: true })
+  }
+}
+
+async function runKeepIdClear(spec: EvalCase): Promise<void> {
+  if (spec.expect.keepIdClear !== true) return
+
+  const store = createMemoryStore()
+  const session = makeSession({
+    id: 'sess_eval_keep_id_clear',
+    title: 'old',
+    followup: 'later',
+    lastEnd: { reason: 'completed' },
+    todos: [{ text: 'ship', status: 'pending' }],
+  })
+  await store.createSession(session)
+  await persistHistory(store, session.id, [
+    {
+      id: 'u1',
+      role: 'user',
+      blocks: [{ type: 'text', text: spec.prompt }],
+      createdAt: 1,
+    },
+    {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'text', text: 'ok' }],
+      createdAt: 2,
+    },
+  ])
+  await store.upsertPendingAsk({
+    callId: 'parked',
+    sessionId: session.id,
+    kind: 'leftover',
+    tool: 'Bash',
+    message: 'Bash?',
+    input: { command: 'ls' },
+    createdAt: 3,
+  })
+  await store.appendStreamEvent(session.id, { type: 'text_delta', text: 'x' })
+  const engine = createSessionEngine({
+    session,
+    provider: createFakeProvider([]),
+    store,
+    tools: [],
+    compact: defaultCompact(),
+    model: defaultModel(),
+    maxRounds: 8,
+    bare: true,
+    askUser: async () => 'deny',
+    messages: await store.loadMessages!(session.id),
+  })
+  const cleared = await engine.clearKeepId()
+  if (!cleared.ok || cleared.notice !== 'session cleared') {
+    throw new Error(`keep-id-clear: idle wipe failed: ${JSON.stringify(cleared)}`)
+  }
+  if (engine.session.id !== session.id) {
+    throw new Error(`keep-id-clear: id changed to ${engine.session.id}`)
+  }
+  const after = await store.loadMessages!(session.id)
+  if (after.length !== 0) {
+    throw new Error(`keep-id-clear: loadMessages not empty: ${after.length}`)
+  }
+  if ((await store.listPendingAsks(session.id)).length !== 0) {
+    throw new Error('keep-id-clear: this-session pending ask remained')
+  }
+  if ((await store.lastStreamSeq(session.id)) !== 0) {
+    throw new Error('keep-id-clear: lastStreamSeq not 0')
+  }
+  await engine.close()
+
+  const failStore = createMemoryStore()
+  const failSess = makeSession({ id: 'sess_eval_keep_id_clear_fail' })
+  await failStore.createSession(failSess)
+  await persistHistory(failStore, failSess.id, [
+    {
+      id: 'u-fail',
+      role: 'user',
+      blocks: [{ type: 'text', text: spec.prompt }],
+      createdAt: 1,
+    },
+  ])
+  const failEngine = createSessionEngine({
+    session: failSess,
+    provider: createFakeProvider([]),
+    store: failStore,
+    tools: [],
+    compact: defaultCompact(),
+    model: defaultModel(),
+    maxRounds: 8,
+    bare: true,
+    askUser: async () => 'deny',
+    messages: await failStore.loadMessages!(failSess.id),
+  })
+  failStore.clearConversation = async () => {
+    throw new Error('disk')
+  }
+  const failed = await failEngine.clearKeepId()
+  if (failed.ok || failed.notice !== 'clear persist failed') {
+    throw new Error(`keep-id-clear: persist-fail ${JSON.stringify(failed)}`)
+  }
+  const still = await failStore.loadMessages!(failSess.id)
+  if (!hasUserText(still, spec.prompt)) {
+    throw new Error('keep-id-clear: persist-fail dropped the last user')
+  }
+  await failEngine.close()
+
+  const parentStore = createMemoryStore()
+  const parent = makeSession({ id: 'sess_eval_keep_id_clear_parent' })
+  const child = makeSession({ id: 'sess_eval_keep_id_clear_child', parentSessionId: parent.id })
+  await parentStore.createSession(parent)
+  await parentStore.createSession(child)
+  await persistHistory(parentStore, parent.id, [
+    {
+      id: 'u-parent',
+      role: 'user',
+      blocks: [{ type: 'text', text: spec.prompt }],
+      createdAt: 1,
+    },
+  ])
+  await parentStore.upsertPendingAsk({
+    callId: 'call_child',
+    sessionId: child.id,
+    kind: 'leftover',
+    tool: 'Bash',
+    message: 'Child?',
+    input: { command: 'ls' },
+    createdAt: 1,
+  })
+  const parentEngine = createSessionEngine({
+    session: parent,
+    provider: createFakeProvider([]),
+    store: parentStore,
+    tools: [],
+    compact: defaultCompact(),
+    model: defaultModel(),
+    maxRounds: 8,
+    bare: true,
+    askUser: async () => 'deny',
+    messages: await parentStore.loadMessages!(parent.id),
+  })
+  const refused = await parentEngine.clearKeepId()
+  if (refused.ok || refused.notice !== 'pending permission ask') {
+    throw new Error(`keep-id-clear: child refuse ${JSON.stringify(refused)}`)
+  }
+  if (!hasUserText(await parentStore.loadMessages!(parent.id), spec.prompt)) {
+    throw new Error('keep-id-clear: child refuse wiped the parent transcript')
+  }
+  if ((await parentStore.listPendingAsks(child.id)).length !== 1) {
+    throw new Error('keep-id-clear: child ask was dropped')
+  }
+  await parentEngine.close()
+
+  const cwd = mkdtempSync(join(tmpdir(), 'raven-eval-keep-id-clear-job-'))
+  const jobId = `sess_eval_keep_id_clear_job_${crypto.randomUUID()}`
+  try {
+    initGitRepo(cwd)
+    const entered = enterSessionWorktree(jobId, cwd)
+    if (!entered.ok || entered.job === undefined) {
+      throw new Error(`keep-id-clear: enter failed: ${entered.error ?? 'no job'}`)
+    }
+    const jobStore = createMemoryStore()
+    const jobSess = makeSession({
+      id: jobId,
+      cwd: entered.job.worktreePath,
+      job: entered.job,
+    })
+    await jobStore.createSession(jobSess)
+    const jobEngine = createSessionEngine({
+      session: jobSess,
+      provider: createFakeProvider([]),
+      store: jobStore,
+      tools: [],
+      compact: defaultCompact(),
+      model: defaultModel(),
+      maxRounds: 8,
+      bare: true,
+      askUser: async () => 'deny',
+    })
+    const jobClear = await jobEngine.clearKeepId()
+    if (!jobClear.ok) {
+      throw new Error(`keep-id-clear: job wipe failed: ${jobClear.notice}`)
+    }
+    if (jobEngine.session.job === undefined) {
+      throw new Error('keep-id-clear: job session lost session.job')
+    }
+    if (jobEngine.session.id !== jobId) {
+      throw new Error('keep-id-clear: job session id changed')
+    }
+    await jobEngine.close()
+  } finally {
+    exitSessionWorktree(jobId, 'remove', true)
     rmSync(cwd, { recursive: true, force: true })
   }
 }

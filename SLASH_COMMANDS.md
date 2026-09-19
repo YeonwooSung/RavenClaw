@@ -136,7 +136,8 @@ Shared dispatch and host-only handlers run even while a turn is live. They do **
 | `/compact` mid-turn | sets a one-slot flag; runs after `liveTurn` is null |
 | `/mode` mid-turn | Writes `liveTurn.permissionMode` as well as the session |
 | `/model` mid-turn | Updates session + `config.profile` for the **next** `queryLoop`. Does not mutate the in-flight loop’s captured profile |
-| `/clear` / `/resume` mid-turn | Replace the runtime (`engine.close` / `resumeRuntime`). They do not call `abort()` first |
+| `/clear` mid-turn | `engine.clearKeepId()`: refuse unpaired child leftover-asks, then `abort('cancel')`, wait for idle, persist-first wipe. Same `session.id` |
+| `/resume` mid-turn | Replace the runtime (`resumeRuntime`). Does not call `abort()` first |
 
 ---
 
@@ -345,19 +346,17 @@ Does not clear `/loop` or `/queue`.
 - **Kind:** host-only
 - **When:** idle or mid-turn
 
-Both hosts:
+Both hosts call `engine.clearKeepId()`. Same `session.id`, same engine, lock, MCP, job, and worktree. Does not call `close()`, `mcpCloser`, or `openNewSession`. Does not consume an included-session cap.
 
-1. `engine.close()` (SessionEnd hook, release lock)
-2. `mcpCloser?.()`
-3. `openNewSession` (new session id, same cwd/config; may consume an included-session cap)
-4. Reset the transcript / OpenTUI view
-5. Notice: `new session <shortSessionId>`
+1. Refuse if an owned unpaired **child** leftover-ask exists (`pending permission ask`). No persist, no abort, no view reset.
+2. If a turn is live, `abort('cancel')` and wait until `liveTurn === null`, then wipe.
+3. Persist-first `store.clearConversation` (inactivate messages via `recordCompact` summary `'clear'`, delete this session’s pending asks and stream events). Persist fail leaves the old transcript and the view.
+4. On success, reset the transcript / OpenTUI view.
+5. Notice: `cleared session <shortSessionId>` of **this** id. Never `new session`.
 
-Ink also clears todos/tasks/selection/expanded rows and re-binds AskUser. OpenTUI rewrites included ads.
+Ink also clears todos/selection/expanded rows. OpenTUI may rewrite included ads (same runtime).
 
-Does not delete the previous session from the store.
-
-Related CLI: starting `raven` with no id.
+Related CLI: starting `raven` with no id still mints via `openNewSession`.
 
 ---
 
@@ -469,7 +468,7 @@ Does **not** drop conversation messages. That is `/rewind`.
    - messages only: `dropped 1 message` / `dropped N messages`
    - both: `undo: …; dropped N messages`
 
-Related: `/undo` (files only), `/retry` (rewind then composer or resubmit), `/job` (enters a job so rewind becomes checkpoint-based), `/clear` (new session).
+Related: `/undo` (files only), `/retry` (rewind then composer or resubmit), `/job` (enters a job so rewind becomes checkpoint-based), `/clear` (same id, empty conversation).
 
 ---
 
@@ -1117,10 +1116,10 @@ Discovery order (later wins on name): builtin → `~/.ravenclaw/skills` → `<cw
 | `/job` | Enter `raven/*` worktree + job record; `/job commit on\|off` flips auto-commit | Unchanged | Same (cwd → worktree) |
 | `/pr` | Draft PR from shadow (notice-only if no job / dirty) | May annotate last assistant | Same |
 | `/compact` | Unchanged | Prefix summarized; `compactGeneration++` | Same |
-| `/clear` / `/new` | Unchanged | Empty UI | **New** (`openNewSession`) |
+| `/clear` / `/new` | Unchanged (job/files stay) | Empty transcript (inactivated) | **Same** (`clearKeepId`) |
 | `/resume [id]` | Unchanged | Load stored messages | **Other** (or list) |
 
-`/rewind` and open-generation `/undo` are the commands that **refuse** a live turn. `/clear` and `/resume` replace the engine instead.
+`/rewind` and open-generation `/undo` are the commands that **refuse** a live turn. `/clear` abort-then-wipes the same id. `/resume` replaces the engine.
 
 ---
 

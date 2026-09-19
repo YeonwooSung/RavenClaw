@@ -23,7 +23,7 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
   { name: 'review', usage: '/review', summary: 'append a read-only review to .ravenclaw/MEMORY.md' },
   { name: 'title', usage: '/title <name>', summary: "set this session's title" },
   { name: 'stop', aliases: ['cancel'], usage: '/stop', summary: 'abort the current turn (alias /cancel)' },
-  { name: 'clear', aliases: ['new'], usage: '/clear', summary: 'start a new session (alias /new)' },
+  { name: 'clear', aliases: ['new'], usage: '/clear', summary: 'wipe this session conversation; keep the id (alias /new)' },
   {
     name: 'model',
     usage: '/model [id]',

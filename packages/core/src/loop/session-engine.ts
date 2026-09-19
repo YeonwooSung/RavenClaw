@@ -12,6 +12,7 @@ import {
   type RoundEnd,
   type SessionEngine,
   type SessionEngineOptions,
+  type SessionRecord,
   type SessionStore,
   type StreamEvent,
   type SystemPart,
@@ -45,6 +46,7 @@ import {
 } from '../session/job'
 import { writeFollowup } from '../session/followup'
 import { getSessionWorktree } from '../tools/session-worktree'
+import { projectSessionTodos } from '../tools/todo'
 import { applyPermissionMode } from '../prompt/builder'
 import { injectMidTurnHint } from '../prompt/cache'
 import { createMemoryStore } from '../session/memory-store'
@@ -127,6 +129,8 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
   const session = { ...opts.session }
   let messages: Message[] = opts.messages ? [...opts.messages] : []
   let liveTurn: Turn | null = null
+  const liveTurnIdleWaiters: Array<() => void> = []
+  let clearTail: Promise<void> = Promise.resolve()
   let compactQueued = false
   let system = opts.system
   let model = opts.model
@@ -149,6 +153,20 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
     if (claimedAsks.has(callId) || executedAsks.has(callId)) return false
     claimedAsks.add(callId)
     return true
+  }
+
+  function setLiveTurn(next: Turn | null): void {
+    liveTurn = next
+    if (next !== null) return
+    const waiters = liveTurnIdleWaiters.splice(0)
+    for (const waiter of waiters) waiter()
+  }
+
+  function waitForIdleTurn(): Promise<void> {
+    if (liveTurn === null) return Promise.resolve()
+    return new Promise((resolve) => {
+      liveTurnIdleWaiters.push(resolve)
+    })
   }
   const lifecycle = opts.bare
     ? { run: async () => undefined }
@@ -196,6 +214,49 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       nested.push(...(await opts.store.listPendingAsks(child.id)))
     }
     return [...own, ...nested]
+  }
+
+  async function hasUnpairedChildAsk(): Promise<boolean> {
+    const children = opts.store.listSessions
+      ? await opts.store.listSessions({ parentSessionId: session.id })
+      : []
+    for (const child of children) {
+      for (const row of await opts.store.listPendingAsks(child.id)) {
+        if (!(await isCallPaired(row.callId, child.id))) return true
+      }
+    }
+    return false
+  }
+
+  function wipedSessionRecord(generation: number): SessionRecord {
+    const next: SessionRecord = {
+      id: session.id,
+      createdAt: session.createdAt,
+      updatedAt: Date.now(),
+      cwd: session.cwd,
+      model: session.model,
+      permissionMode: session.permissionMode,
+      compactGeneration: generation,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      funding: session.funding,
+      todos: [],
+    }
+    if (session.prePlanMode !== undefined) next.prePlanMode = session.prePlanMode
+    if (session.parentSessionId !== undefined) next.parentSessionId = session.parentSessionId
+    if (session.job !== undefined) next.job = session.job
+    if (session.jobAutoCommit === true) next.jobAutoCommit = true
+    return next
+  }
+
+  function assignWipedSession(next: SessionRecord): void {
+    session.updatedAt = next.updatedAt
+    session.compactGeneration = next.compactGeneration
+    session.usage = next.usage
+    session.todos = next.todos
+    delete session.title
+    delete session.followup
+    delete session.lastEnd
+    delete session.jobError
   }
 
   async function resolveAskTarget(callId: string): Promise<
@@ -543,6 +604,63 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       return maybeFinishRewindReset({ session, store: opts.store, messages })
     },
 
+    async clearKeepId() {
+      const prev = clearTail
+      let release!: () => void
+      clearTail = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      try {
+        await prev
+        if (closed) return { ok: false as const, notice: 'session closed' }
+        if (await hasUnpairedChildAsk()) {
+          return { ok: false as const, notice: 'pending permission ask' }
+        }
+        if (liveTurn !== null) {
+          this.abort('cancel')
+          await waitForIdleTurn()
+        }
+        if (await hasUnpairedChildAsk()) {
+          return { ok: false as const, notice: 'pending permission ask' }
+        }
+        let rows: Message[]
+        try {
+          rows = opts.store.loadMessages
+            ? await opts.store.loadMessages(session.id)
+            : messages
+        } catch {
+          return { ok: false as const, notice: 'clear persist failed' }
+        }
+        const ids = rows.map((msg) => msg.id)
+        const generation = ids.length > 0 ? session.compactGeneration + 1 : session.compactGeneration
+        const next = wipedSessionRecord(generation)
+        try {
+          await opts.store.clearConversation({
+            session: next,
+            inactivatedIds: ids,
+            generation,
+          })
+        } catch {
+          return { ok: false as const, notice: 'clear persist failed' }
+        }
+        messages = []
+        assignWipedSession(next)
+        fileHistory.reset()
+        steering.splice(0)
+        userTurns = 0
+        const root = getSessionWorktree(session.id)?.originalCwd ?? session.cwd
+        try {
+          projectSessionTodos(root, [])
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error)
+          return { ok: true as const, notice: `session cleared; todo.json write failed: ${detail}` }
+        }
+        return { ok: true as const, notice: 'session cleared' }
+      } finally {
+        release()
+      }
+    },
+
     async *submitMessage(input: UserSubmitInput): AsyncGenerator<StreamEvent, RoundEnd> {
       cancelBackgroundReview?.()
       cancelBackgroundReview = undefined
@@ -619,7 +737,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       const worktree = getSessionWorktree(session.id)
       if (worktree) turn.projectCwd = worktree.originalCwd
       if (session.prePlanMode !== undefined) turn.prePlanMode = session.prePlanMode
-      liveTurn = turn
+      setLiveTurn(turn)
 
       const notices = await opts.store.drainAgentMail(session.id)
       if (notices.length > 0) {
@@ -640,7 +758,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
           }
         }
         messages = messages.slice(0, -1)
-        liveTurn = null
+        setLiveTurn(null)
         fileHistory.endTurn()
         if (compactQueued) {
           compactQueued = false
@@ -816,7 +934,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         return end
       } finally {
         if (ownsHistoryTurn) fileHistory.endTurn()
-        liveTurn = null
+        setLiveTurn(null)
         if (compactQueued) {
           compactQueued = false
           await runCompactNow()

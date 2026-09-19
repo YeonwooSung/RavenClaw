@@ -886,6 +886,23 @@ export function createSqliteStore(dbPath: string): SessionStore {
       })
     },
 
+    async clearConversation(opts) {
+      await withWrite(async () =>
+        beginImmediate(() => {
+          const sessionId = opts.session.id
+          if (opts.inactivatedIds.length > 0) {
+            recordCompactTx(sessionId, opts.generation, 'clear', opts.inactivatedIds)
+            unindexMessagesFts(db, opts.inactivatedIds)
+          }
+          deletePendingAsksBySession.run(sessionId)
+          deleteStreamEventsBySession(db, sessionId)
+          const mailRows = selectMail.all(sessionId) as Array<{ id: number; body: string }>
+          for (const row of mailRows) deleteMailByIds.run(row.id)
+          upsertSessionSql.run(sessionBind(opts.session))
+        }),
+      )
+    },
+
     async enqueueAgentMail(parentSessionId, text) {
       await withWrite(async () => {
         insertMail.run(parentSessionId, Date.now(), clipAgentMailBody(text))

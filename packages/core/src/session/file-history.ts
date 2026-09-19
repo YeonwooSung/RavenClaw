@@ -23,6 +23,8 @@ export interface FileHistory {
   peekLast?(): { open: boolean } | undefined
   /** Snapshots recorded on the current (this-turn) generation. */
   turnWriteCount(): number
+  /** Drop in-process generations. Does not undo files or delete backups. */
+  reset(): void
 }
 
 interface Generation {
@@ -119,6 +121,11 @@ export function createFileHistory(sessionId: string, home = ravenclawHome()): Fi
       const gen = generations[generations.length - 1]
       if (!gen) return undefined
       return { open: gen.open }
+    },
+
+    reset() {
+      generations.length = 0
+      current = undefined
     },
   }
 }

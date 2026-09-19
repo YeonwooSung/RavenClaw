@@ -406,6 +406,16 @@ export interface SessionStore {
     summary: string,
     inactivatedIds: string[],
   ): Promise<void>
+  /**
+   * One write: inactivate ids via recordCompact summary 'clear' when nonempty,
+   * delete this session's pending_asks and stream_events, drain this id's mail,
+   * upsert the already-wiped session row. Same id. Throw leaves the pre-call row.
+   */
+  clearConversation(opts: {
+    session: SessionRecord
+    inactivatedIds: string[]
+    generation: number
+  }): Promise<void>
   enqueueAgentMail(parentSessionId: string, text: string): Promise<void>
   peekAgentMail(parentSessionId: string): Promise<string[]>
   drainAgentMail(parentSessionId: string): Promise<string[]>
@@ -484,6 +494,7 @@ export interface SessionEngine {
   bindDrainQueued(fn: (() => string | undefined) | undefined): void
   rewindLast(): Promise<{ ok: boolean; notice: string; droppedText?: string }>
   maybeFinishRewindReset(): Promise<{ ran: boolean; ok: boolean; notice?: string }>
+  clearKeepId(): Promise<{ ok: true; notice: string } | { ok: false; notice: string }>
   compactNow(): Promise<void>
   setModel(profile: ModelProfile): Promise<void>
   setPermissionMode(mode: PermissionMode): Promise<void>

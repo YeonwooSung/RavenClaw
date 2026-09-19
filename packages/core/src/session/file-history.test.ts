@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { createFileHistory, formatUndoNotice } from './file-history'
@@ -98,5 +98,45 @@ describe('createFileHistory', () => {
     const retried = history.undo()
     expect(retried.restored).toEqual([path])
     expect(readFileSync(path, 'utf8')).toBe('old\n')
+  })
+
+  test('reset drops generations without touching files or backups', () => {
+    const home = mkdtempSync(join(tmpdir(), 'raven-fh-reset-'))
+    const cwd = mkdtempSync(join(tmpdir(), 'raven-fh-reset-cwd-'))
+    const path = join(cwd, 'keep.txt')
+    writeFileSync(path, 'old\n')
+    const history = createFileHistory('sess_reset', home)
+    history.beginTurn()
+    history.snapshot(path)
+    writeFileSync(path, 'new\n')
+    history.endTurn()
+    const backup = join(home, 'file-history', 'sess_reset', '0001')
+    expect(existsSync(backup)).toBe(true)
+
+    history.reset()
+    expect(history.peekLast()).toBeUndefined()
+    expect(history.pendingCount()).toBe(0)
+    const undone = history.undo()
+    expect(undone).toEqual({ restored: [], removed: [] })
+    expect(undone.blocked).toBeUndefined()
+    expect(readFileSync(path, 'utf8')).toBe('new\n')
+    expect(existsSync(backup)).toBe(true)
+  })
+
+  test('reset drops an open generation and undo is not blocked', () => {
+    const home = mkdtempSync(join(tmpdir(), 'raven-fh-reset-open-'))
+    const cwd = mkdtempSync(join(tmpdir(), 'raven-fh-reset-open-cwd-'))
+    const path = join(cwd, 'live.txt')
+    writeFileSync(path, 'old\n')
+    const history = createFileHistory('sess_reset_open', home)
+    history.beginTurn()
+    history.snapshot(path)
+    writeFileSync(path, 'new\n')
+
+    history.reset()
+    expect(history.peekLast()).toBeUndefined()
+    expect(history.pendingCount()).toBe(0)
+    expect(history.undo()).toEqual({ restored: [], removed: [] })
+    expect(readFileSync(path, 'utf8')).toBe('new\n')
   })
 })

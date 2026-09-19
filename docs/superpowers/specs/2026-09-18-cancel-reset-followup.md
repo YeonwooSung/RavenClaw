@@ -5,7 +5,7 @@ Status: implemented
 Shipped on `main` at `5eefdde`.  
 Reviewed against tree at `77a09f3` (`main` after rewind persist PR land + shipped-docs PR #13).  
 Successor to `2026-09-18-rewind-persist-and-todo-projection.md` (Status: implemented). Does not reopen that spec’s closed doors except the three holes named here.  
-Next horizon (implemented at `be5a4a7`): [`2026-09-18-no-job-todo-revert.md`](2026-09-18-no-job-todo-revert.md) (amends this spec’s OUT for no-job todo revert only). Then (this branch): [`2026-09-18-stream-version-token.md`](2026-09-18-stream-version-token.md) (amends this spec’s OUT for stream `version` / `continuationToken` only).
+Next horizon (implemented at `be5a4a7`): [`2026-09-18-no-job-todo-revert.md`](2026-09-18-no-job-todo-revert.md) (amends this spec’s OUT for no-job todo revert only). Then (this branch): [`2026-09-18-stream-version-token.md`](2026-09-18-stream-version-token.md) (amends this spec’s OUT for stream `version` / `continuationToken` only) and [`2026-09-18-keep-id-clear.md`](2026-09-18-keep-id-clear.md) (amends this spec’s OUT for keep-id `/clear` only).
 
 Implementation plan: [2026-09-18-cancel-reset-followup.md](../plans/2026-09-18-cancel-reset-followup.md).
 
@@ -48,7 +48,7 @@ Previous specs parked (1) and (2) on purpose. This horizon **unparks only those 
 ## Do not build
 
 - Web chat UI, Next.js BFF, Prisma Task, Socket.IO
-- keep-id `/clear`, stream `version` / `continuationToken` (amended by `2026-09-18-stream-version-token.md`)
+- keep-id `/clear` (amended by `2026-09-18-keep-id-clear.md`), stream `version` / `continuationToken` (amended by `2026-09-18-stream-version-token.md`)
 - `ignored` as a leftover-ask result
 - Cancel with no live turn abort-pairing parked asks (`no_active_turn` stays a no-op)
 - `abort('interrupt')` abort-pairing leftover-asks (steer is not cancel)
