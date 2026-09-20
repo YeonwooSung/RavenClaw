@@ -1,7 +1,8 @@
 # RavenClaw next-horizon roadmap (leftover-ask abort-pair completeness + cancel 202/200)
 
 Date: 2026-09-20  
-Status: spec (not implemented)  
+Status: implemented  
+Shipped sha: not yet on `main` (this worktree).  
 Reviewed against tree at `a707249` (`origin/main`, waist closed).  
 Successor to `2026-09-18-parent-tree-stop.md` (Status: implemented at `9901d0e`). Amends that spec’s OUT for **cancel-without-live of this session’s parked asks**, **interrupt abort-pair**, and **cancel HTTP 202/200** only. Does not reopen tree-stop of descendants, keep-id `/clear`, or stream `version` / `continuationToken`.
 
@@ -135,24 +136,24 @@ These lock underspecification. The implementation plan may only add detail, not 
 
 ## Per-slice board
 
-Board as of `a707249`. Status is **not on `main`**.
+Board as of this worktree. L0.1–L4.1 code is done. L4.2 is this docs pass. Not yet on `main`.
 
 | ID | Status vs tree |
 |---|---|
-| L0.1 docs point at this spec | **not on `main`** |
-| L1.1 `whenTreeStop` grows `thisSessionWork`; leftover flight flags | **not on `main`** |
-| L1.2 idle `abort('cancel')` I2s this session via leftover flight | **not on `main`** |
-| L1.3 cancelled epilogue uses `persistBeforeDropAsk`; live cancel does not start leftover flight | **not on `main`** |
-| L1.4 idle this-session I2 invents no `lastEnd` | **not on `main`** |
-| L2.1 `abort('interrupt')` I2s this session via leftover flight | **not on `main`** |
-| L2.2 aborted path `await whenTreeStop()`; no `cancelled, ask still pending` | **not on `main`** |
-| L2.3 parent interrupt still leaves a child leftover-ask | **not on `main`** (already true; must stay) |
-| L3.1 live serve cancel → 202 `{ ok: true }` without join | **not on `main`** |
-| L3.2 idle + work → 200 after join (`probeIdleCancel` counts this-session asks) | **not on `main`** |
-| L3.3 idle + nothing and stale live `turnId` stay 200 `no_active_turn` | **not on `main`** (already true; must stay) |
-| L3.4 TUI notice includes `thisSessionWork` | **not on `main`** |
-| L4.1 eval `cancel-abort-pair` + parent-tree-stop parked beat | **not on `main`** |
-| L4.2 shipped docs | **not on `main`** |
+| L0.1 docs point at this spec | **done** |
+| L1.1 `whenTreeStop` grows `thisSessionWork`; leftover flight flags | **done** |
+| L1.2 idle `abort('cancel')` I2s this session via leftover flight | **done** |
+| L1.3 cancelled epilogue uses `persistBeforeDropAsk`; live cancel does not start leftover flight | **done** |
+| L1.4 idle this-session I2 invents no `lastEnd` | **done** |
+| L2.1 `abort('interrupt')` I2s this session via leftover flight | **done** |
+| L2.2 aborted path `await whenTreeStop()`; no `cancelled, ask still pending` | **done** |
+| L2.3 parent interrupt still leaves a child leftover-ask | **done** |
+| L3.1 live serve cancel → 202 `{ ok: true }` without join | **done** |
+| L3.2 idle + work → 200 after join (`probeIdleCancel` counts this-session asks) | **done** |
+| L3.3 idle + nothing and stale live `turnId` stay 200 `no_active_turn` | **done** |
+| L3.4 TUI notice includes `thisSessionWork` | **done** |
+| L4.1 eval `cancel-abort-pair` + parent-tree-stop parked beat | **done** |
+| L4.2 shipped docs | **done** |
 
 ---
 
