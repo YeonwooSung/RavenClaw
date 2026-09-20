@@ -496,7 +496,7 @@ export interface SessionEngine {
   rewindLast(): Promise<{ ok: boolean; notice: string; droppedText?: string }>
   maybeFinishRewindReset(): Promise<{ ran: boolean; ok: boolean; notice?: string }>
   clearKeepId(): Promise<{ ok: true; notice: string } | { ok: false; notice: string }>
-  whenTreeStop(): Promise<{ descendantWork: boolean }>
+  whenTreeStop(): Promise<{ descendantWork: boolean; thisSessionWork: boolean }>
   compactNow(): Promise<void>
   setModel(profile: ModelProfile): Promise<void>
   setPermissionMode(mode: PermissionMode): Promise<void>

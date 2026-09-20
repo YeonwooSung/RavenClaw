@@ -149,7 +149,7 @@ function stubEngine(sessionId: string, end: RoundEnd, events: StreamEvent[] = []
       return { ok: true as const, notice: 'session cleared' }
     },
     async whenTreeStop() {
-      return { descendantWork: false }
+      return { descendantWork: false, thisSessionWork: false }
     },
     async compactNow() {},
     async setModel() {},

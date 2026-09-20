@@ -205,7 +205,7 @@ export type ServeEngine = {
   replayPendingAsks: () => AsyncGenerator<StreamEvent, void>
   abort: (kind?: 'cancel' | 'interrupt') => void
   liveTurnId?: () => string | null
-  whenTreeStop?: () => Promise<{ descendantWork: boolean }>
+  whenTreeStop?: () => Promise<{ descendantWork: boolean; thisSessionWork: boolean }>
   compactNow: () => Promise<void>
   setFollowup?: (text: string) => Promise<{ ok: true } | { ok: false; notice: string }>
   clearFollowup?: () => Promise<void>
@@ -515,10 +515,13 @@ async function probeIdleCancel(
   const ids = store?.listSessions ? await listDescendantSessionIds(store, sessionId) : []
   let leftover = false
   if (store?.listPendingAsks) {
-    for (const id of ids) {
-      if ((await store.listPendingAsks(id)).length > 0) {
-        leftover = true
-        break
+    if ((await store.listPendingAsks(sessionId)).length > 0) leftover = true
+    if (!leftover) {
+      for (const id of ids) {
+        if ((await store.listPendingAsks(id)).length > 0) {
+          leftover = true
+          break
+        }
       }
     }
   }
@@ -718,7 +721,7 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
       if (live !== null) {
         await abortCachedDescendants(ctx, loaded.runtime.store, sessionId)
         loaded.runtime.engine.abort('cancel')
-        return Response.json({ ok: true })
+        return Response.json({ ok: true }, { status: 202 })
       }
       const probe = await probeIdleCancel(ctx, loaded.runtime.store, sessionId)
       if (!probe.leftover && !probe.cacheLive && !probe.hasDescendants) {
@@ -727,7 +730,7 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
       await abortCachedDescendants(ctx, loaded.runtime.store, sessionId)
       loaded.runtime.engine.abort('cancel')
       const tree = await loaded.runtime.engine.whenTreeStop?.()
-      if (tree?.descendantWork || probe.leftover || probe.cacheLive) {
+      if (tree?.descendantWork || tree?.thisSessionWork || probe.leftover || probe.cacheLive) {
         return Response.json({ ok: true })
       }
       return Response.json({ ok: true, status: 'no_active_turn' })

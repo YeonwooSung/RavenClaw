@@ -270,7 +270,10 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
       state.abortKinds.push(kind)
     },
     async whenTreeStop() {
-      return { descendantWork: state.descendantWork }
+      if (state.liveTurnId !== null) {
+        throw new Error('live cancel must not join whenTreeStop')
+      }
+      return { descendantWork: state.descendantWork, thisSessionWork: false }
     },
     async compactNow() {
       state.compactCalls += 1
@@ -569,7 +572,7 @@ describe('handleServeRequest', () => {
       }),
       ctx,
     )
-    expect(cancel.status).toBe(200)
+    expect(cancel.status).toBe(202)
     expect(compact.status).toBe(200)
     expect(ctx.abortCalls).toBe(1)
     expect(ctx.compactCalls).toBe(1)
@@ -590,7 +593,7 @@ describe('handleServeRequest', () => {
     expect(ctx.abortCalls).toBe(0)
   })
 
-  test('POST cancel on a live parent returns ok without awaiting tree-stop', async () => {
+  test('POST cancel on a live parent returns 202 without awaiting tree-stop', async () => {
     const ctx = makeServeCtx('t')
     const res = await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/s1/cancel', {
@@ -599,7 +602,7 @@ describe('handleServeRequest', () => {
       }),
       ctx,
     )
-    expect(res.status).toBe(200)
+    expect(res.status).toBe(202)
     expect(await res.json()).toEqual({ ok: true })
     expect(ctx.abortCalls).toBe(1)
     expect(ctx.abortKinds).toEqual(['cancel'])
@@ -635,6 +638,30 @@ describe('handleServeRequest', () => {
         method: 'POST',
         headers: { authorization: 'Bearer t', 'content-type': 'application/json' },
         body: JSON.stringify({ turnId: 'ended-turn' }),
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true })
+    expect(ctx.abortCalls).toBe(1)
+  })
+
+  test('POST cancel idle parent with this-session leftover-ask returns 200 after join', async () => {
+    const ctx = makeServeCtx('t')
+    ctx.setLiveTurnId(null)
+    await ctx.store.upsertPendingAsk({
+      callId: 'parked_s1',
+      sessionId: 's1',
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Bash?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    } satisfies PendingAsk)
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/cancel', {
+        method: 'POST',
+        headers: { authorization: 'Bearer t' },
       }),
       ctx,
     )
@@ -731,7 +758,7 @@ describe('handleServeRequest', () => {
       }),
       ctx,
     )
-    expect(res.status).toBe(200)
+    expect(res.status).toBe(202)
     expect(await res.json()).toEqual({ ok: true })
     expect(childAborts).toEqual(['cancel'])
     expect(ctx.abortCalls).toBe(1)

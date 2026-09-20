@@ -5,7 +5,7 @@ Status: implemented
 Shipped on `main` at `5eefdde`.  
 Reviewed against tree at `77a09f3` (`main` after rewind persist PR land + shipped-docs PR #13).  
 Successor to `2026-09-18-rewind-persist-and-todo-projection.md` (Status: implemented). Does not reopen that spec’s closed doors except the three holes named here.  
-Next horizon (implemented at `be5a4a7`): [`2026-09-18-no-job-todo-revert.md`](2026-09-18-no-job-todo-revert.md) (amends this spec’s OUT for no-job todo revert only). Then (implemented at `c9c4871`): [`2026-09-18-stream-version-token.md`](2026-09-18-stream-version-token.md). Then (implemented at `edeb611`): [`2026-09-18-keep-id-clear.md`](2026-09-18-keep-id-clear.md). Then (implemented at `9901d0e`): [`2026-09-18-parent-tree-stop.md`](2026-09-18-parent-tree-stop.md) (tree-stop, not leftover-only).
+Next horizon (implemented at `be5a4a7`): [`2026-09-18-no-job-todo-revert.md`](2026-09-18-no-job-todo-revert.md) (amends this spec’s OUT for no-job todo revert only). Then (implemented at `c9c4871`): [`2026-09-18-stream-version-token.md`](2026-09-18-stream-version-token.md). Then (implemented at `edeb611`): [`2026-09-18-keep-id-clear.md`](2026-09-18-keep-id-clear.md). Then (implemented at `9901d0e`): [`2026-09-18-parent-tree-stop.md`](2026-09-18-parent-tree-stop.md) (tree-stop, not leftover-only). Then leftover-ask abort-pair completeness + cancel 202/200: [`2026-09-20-leftover-ask-abort-pair.md`](2026-09-20-leftover-ask-abort-pair.md) (amends this spec’s OUT for cancel-without-live / interrupt abort-pair).
 
 Implementation plan: [2026-09-18-cancel-reset-followup.md](../plans/2026-09-18-cancel-reset-followup.md).
 
@@ -212,7 +212,7 @@ I1 and I2 may run in parallel (disjoint files). I3 after I0. I4 last.
 
 ## Out of this horizon
 
-Web chat UI, Next.js BFF, Prisma Task, Socket.IO, y0 Shadow wiki / indexer, eve compiler, OpenAPI connections, memory slots, `defineState`, credential brokering, self-mod, any new chat network, sandbox network policy, Grep/Glob docker-exec, `ignored`, keep-id `/clear` (amended by `2026-09-18-keep-id-clear.md`), stream `version` / `continuationToken` (amended by `2026-09-18-stream-version-token.md`), no-job todo revert (amended by `2026-09-18-no-job-todo-revert.md`), schema v11, async `createSessionEngine`, cancel-without-live abort-pair, interrupt abort-pair, parent-cancels-child-ask (amended by `2026-09-18-parent-tree-stop.md`).
+Web chat UI, Next.js BFF, Prisma Task, Socket.IO, y0 Shadow wiki / indexer, eve compiler, OpenAPI connections, memory slots, `defineState`, credential brokering, self-mod, any new chat network, sandbox network policy, Grep/Glob docker-exec, `ignored`, keep-id `/clear` (amended by `2026-09-18-keep-id-clear.md`), stream `version` / `continuationToken` (amended by `2026-09-18-stream-version-token.md`), no-job todo revert (amended by `2026-09-18-no-job-todo-revert.md`), schema v11, async `createSessionEngine`, cancel-without-live abort-pair (amended by `2026-09-20-leftover-ask-abort-pair.md`), interrupt abort-pair (amended by `2026-09-20-leftover-ask-abort-pair.md`), parent-cancels-child-ask (amended by `2026-09-18-parent-tree-stop.md`).
 
 ---
 

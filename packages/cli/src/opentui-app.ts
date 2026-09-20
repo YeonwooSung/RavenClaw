@@ -333,7 +333,11 @@ export async function runOpenTuiApp(
             write(`${formatKilledBackgroundNotice(killed.length)}\n`)
           } else {
             const tree = await current.engine.whenTreeStop()
-            write(wasLive || tree.descendantWork ? 'stopped\n' : 'nothing to stop\n')
+            write(
+              wasLive || tree.descendantWork || tree.thisSessionWork
+                ? 'stopped\n'
+                : 'nothing to stop\n',
+            )
           }
           continue
         }

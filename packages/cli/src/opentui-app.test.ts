@@ -139,7 +139,7 @@ function fakeEngine(
       return { ok: true as const, notice: 'session cleared' }
     },
     async whenTreeStop() {
-      return { descendantWork: false }
+      return { descendantWork: false, thisSessionWork: false }
     },
     submitMessage(input: UserSubmitInput) {
       const text = typeof input === 'string' ? input : (input.text ?? '')
@@ -569,7 +569,22 @@ describe('runOpenTuiApp', () => {
 
   test('idle parent /stop with descendant work prints stopped', async () => {
     const engine = fakeEngine(makeSession(), emptyTurn)
-    engine.whenTreeStop = async () => ({ descendantWork: true })
+    engine.whenTreeStop = async () => ({ descendantWork: true, thisSessionWork: false })
+    const written: string[] = []
+    const code = await runOpenTuiApp(fakeRuntime(engine, { store: fakeStore() }), {
+      input: asyncLines('/stop', '/quit'),
+      write: (chunk) => {
+        written.push(chunk)
+      },
+    })
+    expect(code).toBe(0)
+    expect(written.join('')).toContain('stopped')
+    expect(written.join('')).not.toContain('nothing to stop')
+  })
+
+  test('idle parent /stop with this-session leftover work prints stopped', async () => {
+    const engine = fakeEngine(makeSession(), emptyTurn)
+    engine.whenTreeStop = async () => ({ descendantWork: false, thisSessionWork: true })
     const written: string[] = []
     const code = await runOpenTuiApp(fakeRuntime(engine, { store: fakeStore() }), {
       input: asyncLines('/stop', '/quit'),

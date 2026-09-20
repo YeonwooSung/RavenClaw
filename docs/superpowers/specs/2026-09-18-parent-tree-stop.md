@@ -4,7 +4,8 @@ Date: 2026-09-18
 Status: implemented  
 Shipped on `main` at `9901d0e`.  
 Reviewed against tree at `be5a4a7` (`main` after no-job todo revert).  
-Successor to `2026-09-18-no-job-todo-revert.md` (Status: implemented at `be5a4a7`). Amends `2026-09-18-cancel-reset-followup.md` OUT for **parent-cancels-child-ask only**. Does not reopen that spec’s other closed doors.
+Successor to `2026-09-18-no-job-todo-revert.md` (Status: implemented at `be5a4a7`). Amends `2026-09-18-cancel-reset-followup.md` OUT for **parent-cancels-child-ask only**. Does not reopen that spec’s other closed doors.  
+This spec’s OUT for idle this-session parked stays and always-200 cancel envelope is amended by [`2026-09-20-leftover-ask-abort-pair.md`](2026-09-20-leftover-ask-abort-pair.md).
 
 Sources: current tree. No new steal from eve/y0.
 
@@ -165,7 +166,7 @@ These lock underspecification. The implementation plan may only add detail, not 
 
 8. **`applyAskAnswer` remains the operator closer** for leftover-asks the walk failed to drop. Extend `resolveAskTarget`: a row matches if `row.sessionId === this.id` **or** `row.sessionId` is in `listDescendantSessionIds(this.id)`. Replace the one-hop `child.parentSessionId !== session.id` reject. Persist / execute still target `row.sessionId` (already true for one-hop children). Crash-resolve after process death is still pair-or-execute on the descendant session. Cancel does not start a model turn.
 
-9. **No schema bump. No web UI. No interrupt abort-pair. No cancel-without-live abort-pair of this session’s parked asks.**
+9. **No schema bump. No web UI. No interrupt abort-pair. No cancel-without-live abort-pair of this session’s parked asks.** Interrupt abort-pair of this session and cancel-without-live of this session’s parked asks are amended by [`2026-09-20-leftover-ask-abort-pair.md`](2026-09-20-leftover-ask-abort-pair.md).
 
 10. **Same routes.** TUI `/stop` `/cancel`, serve `POST …/cancel`, ACP `session/cancel`. No new host verb. `whenTreeStop` is an engine join point, like `maybeFinishRewindReset`.
 
@@ -387,7 +388,7 @@ Copy helpers locally in `run.ts`; do not import from test files. Unknown directo
 
 ## Out of this horizon
 
-Web chat UI, Next.js BFF, Prisma Task, Socket.IO, y0 Shadow wiki / indexer, eve compiler, OpenAPI connections, memory slots, `defineState`, credential brokering, self-mod, any new chat network, sandbox network policy, Grep/Glob docker-exec, `ignored`, **keep-id `/clear`**, **stream `version` / `continuationToken`**, schema v11, async `createSessionEngine`, cancel-without-live abort-pair of **this** session’s parked asks, interrupt abort-pair, using `killAll` as tree-stop, no-job git checkpoint, `fileHistory` todo frames.
+Web chat UI, Next.js BFF, Prisma Task, Socket.IO, y0 Shadow wiki / indexer, eve compiler, OpenAPI connections, memory slots, `defineState`, credential brokering, self-mod, any new chat network, sandbox network policy, Grep/Glob docker-exec, `ignored`, **keep-id `/clear`**, **stream `version` / `continuationToken`**, schema v11, async `createSessionEngine`, cancel-without-live abort-pair of **this** session’s parked asks (amended by `2026-09-20-leftover-ask-abort-pair.md`), interrupt abort-pair (amended by `2026-09-20-leftover-ask-abort-pair.md`), using `killAll` as tree-stop, no-job git checkpoint, `fileHistory` todo frames.
 
 If a later product wants nested `Agent` spawn, the walk already treats grandchildren as owned. This horizon does not lift `NESTING_DENIED`.
 

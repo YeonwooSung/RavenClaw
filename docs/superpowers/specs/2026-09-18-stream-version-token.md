@@ -33,7 +33,7 @@ A job host that drops TCP can already concatenate `?after=` without gaps. What i
 
 That was parked on the job-host horizon as eve leftover: unknown version fails; `continuationToken`. Job-host said “stream `version` / `continuationToken` 400”. Those two words are the only OUT this spec unparks.
 
-This horizon **unparks only stream `version` / `continuationToken`**. It does not unpark keep-id `/clear`, cancel `202`/`200` polish, parent-tree-stop, schema v11, or async `createSessionEngine`.
+This horizon **unparks only stream `version` / `continuationToken`**. It does not unpark keep-id `/clear`, cancel `202`/`200` polish (amended by [`2026-09-20-leftover-ask-abort-pair.md`](2026-09-20-leftover-ask-abort-pair.md)), parent-tree-stop, schema v11, or async `createSessionEngine`.
 
 ---
 
@@ -55,7 +55,7 @@ This horizon **unparks only stream `version` / `continuationToken`**. It does no
 
 - Web chat UI, Next.js BFF, Prisma Task, Socket.IO
 - keep-id `/clear`
-- Cancel `202` vs `200` envelope polish
+- Cancel `202` vs `200` envelope polish (amended by [`2026-09-20-leftover-ask-abort-pair.md`](2026-09-20-leftover-ask-abort-pair.md))
 - parent-tree-stop / parent-cancels-child-ask
 - Schema version bump (no new column; v11 stays parked). A constant protocol version is not a sqlite version.
 - A second event log, `stream_tokens` table, persisted resume rows, or a new seq space on reconnect
@@ -332,7 +332,7 @@ Existing after / detach / cancel / snapshot field tests stay green (with `versio
 
 ## Out of this horizon
 
-Web chat UI, Next.js BFF, Prisma Task, Socket.IO, y0 Shadow wiki / indexer, eve compiler, OpenAPI connections, memory slots, `defineState`, credential brokering, self-mod, any new chat network, sandbox network policy, Grep/Glob docker-exec, `ignored`, keep-id `/clear`, cancel `202`/`200` polish, parent-tree-stop, parent-cancels-child-ask, interrupt abort-pair, schema v11, async `createSessionEngine`, no-job git checkpoint, `fileHistory` todo frames, eve event-name aliases, HMAC tokens.
+Web chat UI, Next.js BFF, Prisma Task, Socket.IO, y0 Shadow wiki / indexer, eve compiler, OpenAPI connections, memory slots, `defineState`, credential brokering, self-mod, any new chat network, sandbox network policy, Grep/Glob docker-exec, `ignored`, keep-id `/clear`, cancel `202`/`200` polish (amended by `2026-09-20-leftover-ask-abort-pair.md`), parent-tree-stop, parent-cancels-child-ask, interrupt abort-pair (amended by `2026-09-20-leftover-ask-abort-pair.md`), schema v11, async `createSessionEngine`, no-job git checkpoint, `fileHistory` todo frames, eve event-name aliases, HMAC tokens.
 
 If a later product wants protocol 2, it is a new spec that may accept `?version=1` and `?version=2` or 400 the old one. It still must not invent a second event log. Schema v11 still needs a column this horizon does not have.
 

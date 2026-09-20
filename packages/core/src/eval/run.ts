@@ -1226,11 +1226,115 @@ async function runCancelAbortPair(spec: EvalCase): Promise<void> {
       askUser: async () => 'deny',
     })
     idleEngine.abort('cancel')
+    const idleTree = await idleEngine.whenTreeStop()
+    if (!idleTree.thisSessionWork) {
+      throw new Error('cancel-abort-pair: idle cancel reported no thisSessionWork')
+    }
+    if (idleTree.descendantWork) {
+      throw new Error('cancel-abort-pair: idle this-session cancel reported descendant work')
+    }
     const still = await idleStore.listPendingAsks(idle.id)
-    if (still.length !== 1) {
-      throw new Error(`cancel-abort-pair: idle cancel dropped leftover: ${still.length}`)
+    if (still.length !== 0) {
+      throw new Error(`cancel-abort-pair: idle cancel left leftover: ${still.length}`)
+    }
+    if (idleEngine.session.lastEnd !== undefined) {
+      throw new Error('cancel-abort-pair: idle cancel invented lastEnd')
     }
     await idleEngine.close()
+
+    const interruptStore = createMemoryStore()
+    const interruptSess = makeSession({ id: 'sess_eval_cancel_abort_interrupt' })
+    await interruptStore.createSession(interruptSess)
+    await interruptStore.persistToolCalls(interruptSess.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'parked_interrupt', name: 'Bash', input: { command: 'ls' } }],
+      createdAt: 1,
+    })
+    await interruptStore.upsertPendingAsk({
+      callId: 'parked_interrupt',
+      sessionId: interruptSess.id,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Run ls?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    const interruptEngine = createSessionEngine({
+      session: interruptSess,
+      provider: createFakeProvider([]),
+      store: interruptStore,
+      tools: [],
+      compact: defaultCompact(),
+      model: defaultModel(),
+      maxRounds: 8,
+      bare: true,
+      askUser: async () => 'deny',
+    })
+    interruptEngine.abort('interrupt')
+    const interruptTree = await interruptEngine.whenTreeStop()
+    if (!interruptTree.thisSessionWork) {
+      throw new Error('cancel-abort-pair: interrupt reported no thisSessionWork')
+    }
+    if ((await interruptStore.listPendingAsks(interruptSess.id)).length !== 0) {
+      throw new Error('cancel-abort-pair: interrupt left this-session leftover-ask')
+    }
+    await interruptEngine.close()
+
+    const parentStore = createMemoryStore()
+    const parent = makeSession({ id: 'sess_eval_cancel_abort_parent' })
+    const child = makeSession({ id: 'sess_eval_cancel_abort_child', parentSessionId: parent.id })
+    await parentStore.createSession(parent)
+    await parentStore.createSession(child)
+    let entered: () => void
+    const streamEntered = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const parentEngine = createSessionEngine({
+      session: parent,
+      provider: {
+        id: 'fake',
+        apiMode: 'openai_compat',
+        profile: (model: string) => defaultModel(model),
+        async *stream(_req, signal) {
+          entered()
+          await new Promise<void>((resolve) => {
+            if (signal.aborted) {
+              resolve()
+              return
+            }
+            signal.addEventListener('abort', () => resolve(), { once: true })
+          })
+        },
+      },
+      store: parentStore,
+      tools: [],
+      compact: defaultCompact(),
+      model: defaultModel(),
+      maxRounds: 8,
+      bare: true,
+      askUser: async () => 'deny',
+    })
+    const parentPending = drainEvents(parentEngine.submitMessage(spec.prompt))
+    await streamEntered
+    await parentStore.upsertPendingAsk({
+      callId: 'call_child',
+      sessionId: child.id,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Run ls?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    parentEngine.abort('interrupt')
+    const parentResult = await parentPending
+    if ((parentResult.result as { reason?: string }).reason !== 'aborted') {
+      throw new Error('cancel-abort-pair: parent interrupt did not abort')
+    }
+    if ((await parentStore.listPendingAsks(child.id)).length !== 1) {
+      throw new Error('cancel-abort-pair: parent interrupt dropped child leftover-ask')
+    }
+    await parentEngine.close()
   }
 
   await engine.close()
@@ -1380,8 +1484,11 @@ async function runParentTreeStop(spec: EvalCase): Promise<void> {
   if (parkedTree.descendantWork) {
     throw new Error('parent-tree-stop: idle this-session cancel reported descendant work')
   }
-  if ((await parkedStore.listPendingAsks(parked.id)).length !== 1) {
-    throw new Error('parent-tree-stop: idle this-session parked ask was dropped')
+  if (!parkedTree.thisSessionWork) {
+    throw new Error('parent-tree-stop: idle this-session cancel reported no thisSessionWork')
+  }
+  if ((await parkedStore.listPendingAsks(parked.id)).length !== 0) {
+    throw new Error('parent-tree-stop: idle this-session parked ask was not dropped')
   }
   await parkedEngine.close()
 
