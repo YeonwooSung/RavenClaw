@@ -8,6 +8,7 @@ import {
   INIT_SQL,
   PENDING_ASKS_SQL,
   READ_MTIME_SQL,
+  SESSION_HOST_STATE_SQL,
   SESSION_JOB_SQL,
   SESSION_TODOS_SQL,
   STREAM_EVENTS_SQL,
@@ -44,14 +45,18 @@ function expectHostStateColumns(db: Database): void {
   expect(sessionColumns(db)).toContain('followup_text')
 }
 
+function expectPendingResetColumn(db: Database): void {
+  expect(sessionColumns(db)).toContain('pending_reset_sha')
+}
+
 describe('applyMigrations', () => {
-  test('fresh db reaches schema_version 10 with mail and lock tables', () => {
+  test('fresh db reaches schema_version 11 with mail and lock tables', () => {
     const db = new Database(':memory:')
     applyMigrations(db)
     const version = db.query("SELECT value FROM meta WHERE key = 'schema_version'").get() as {
       value: string
     }
-    expect(version.value).toBe('10')
+    expect(version.value).toBe('11')
     const tables = db
       .query("SELECT name FROM sqlite_master WHERE type = 'table' ORDER BY name")
       .all() as Array<{ name: string }>
@@ -63,30 +68,32 @@ describe('applyMigrations', () => {
     expectJobColumns(db)
     expectStreamEvents(db)
     expectHostStateColumns(db)
+    expectPendingResetColumn(db)
     db.close()
   })
 
-  test('is idempotent when already at version 10', () => {
+  test('is idempotent when already at version 11', () => {
     const db = new Database(':memory:')
     applyMigrations(db)
     applyMigrations(db)
     const version = db.query("SELECT value FROM meta WHERE key = 'schema_version'").get() as {
       value: string
     }
-    expect(version.value).toBe('10')
+    expect(version.value).toBe('11')
     expectJobColumns(db)
     expectStreamEvents(db)
     expectHostStateColumns(db)
+    expectPendingResetColumn(db)
     db.close()
   })
 
-  test('fresh db reaches schema_version 10 with pending_asks', () => {
+  test('fresh db reaches schema_version 11 with pending_asks', () => {
     const db = new Database(':memory:')
     applyMigrations(db)
     const version = db.query("SELECT value FROM meta WHERE key = 'schema_version'").get() as {
       value: string
     }
-    expect(version.value).toBe('10')
+    expect(version.value).toBe('11')
     const names = (
       db.query("SELECT name FROM sqlite_master WHERE type = 'table'").all() as Array<{ name: string }>
     ).map((row) => row.name)
@@ -95,10 +102,11 @@ describe('applyMigrations', () => {
     expect(names).toContain('stream_events')
     expectJobColumns(db)
     expectHostStateColumns(db)
+    expectPendingResetColumn(db)
     db.close()
   })
 
-  test('v4 database upgrades to v10 without dropping deliveries', () => {
+  test('v4 database upgrades to v11 without dropping deliveries', () => {
     const db = new Database(':memory:')
     db.exec(INIT_SQL)
     db.exec(FTS5_SQL)
@@ -112,7 +120,7 @@ describe('applyMigrations', () => {
     const version = db.query("SELECT value FROM meta WHERE key = 'schema_version'").get() as {
       value: string
     }
-    expect(version.value).toBe('10')
+    expect(version.value).toBe('11')
     const kept = db.query("SELECT id FROM deliveries WHERE id = 'discord:abc'").get() as {
       id: string
     } | null
@@ -123,10 +131,11 @@ describe('applyMigrations', () => {
     expectJobColumns(db)
     expectStreamEvents(db)
     expectHostStateColumns(db)
+    expectPendingResetColumn(db)
     db.close()
   })
 
-  test('v5 database upgrades to v10 with read_mtime_ms', () => {
+  test('v5 database upgrades to v11 with read_mtime_ms', () => {
     const db = new Database(':memory:')
     db.exec(INIT_SQL)
     db.exec(FTS5_SQL)
@@ -140,15 +149,16 @@ describe('applyMigrations', () => {
     const version = db.query("SELECT value FROM meta WHERE key = 'schema_version'").get() as {
       value: string
     }
-    expect(version.value).toBe('10')
+    expect(version.value).toBe('11')
     expect(messageColumns(db)).toContain('read_mtime_ms')
     expectJobColumns(db)
     expectStreamEvents(db)
     expectHostStateColumns(db)
+    expectPendingResetColumn(db)
     db.close()
   })
 
-  test('v6 database upgrades to v10 with todos_json', () => {
+  test('v6 database upgrades to v11 with todos_json', () => {
     const db = new Database(':memory:')
     db.exec(INIT_SQL)
     db.exec(FTS5_SQL)
@@ -163,14 +173,15 @@ describe('applyMigrations', () => {
     const version = db.query("SELECT value FROM meta WHERE key = 'schema_version'").get() as {
       value: string
     }
-    expect(version.value).toBe('10')
+    expect(version.value).toBe('11')
     expectJobColumns(db)
     expectStreamEvents(db)
     expectHostStateColumns(db)
+    expectPendingResetColumn(db)
     db.close()
   })
 
-  test('v7 database upgrades to v10 with job_json', () => {
+  test('v7 database upgrades to v11 with job_json', () => {
     const db = new Database(':memory:')
     db.exec(INIT_SQL)
     db.exec(FTS5_SQL)
@@ -186,14 +197,15 @@ describe('applyMigrations', () => {
     const version = db.query("SELECT value FROM meta WHERE key = 'schema_version'").get() as {
       value: string
     }
-    expect(version.value).toBe('10')
+    expect(version.value).toBe('11')
     expectJobColumns(db)
     expectStreamEvents(db)
     expectHostStateColumns(db)
+    expectPendingResetColumn(db)
     db.close()
   })
 
-  test('v8 database upgrades to v10 with stream_events', () => {
+  test('v8 database upgrades to v11 with stream_events', () => {
     const db = new Database(':memory:')
     db.exec(INIT_SQL)
     db.exec(FTS5_SQL)
@@ -210,14 +222,15 @@ describe('applyMigrations', () => {
     const version = db.query("SELECT value FROM meta WHERE key = 'schema_version'").get() as {
       value: string
     }
-    expect(version.value).toBe('10')
+    expect(version.value).toBe('11')
     expectStreamEvents(db)
     expectJobColumns(db)
     expectHostStateColumns(db)
+    expectPendingResetColumn(db)
     db.close()
   })
 
-  test('v9 database upgrades to v10 with last_end_json', () => {
+  test('v9 database upgrades to v11 with last_end_json', () => {
     const db = new Database(':memory:')
     db.exec(INIT_SQL)
     db.exec(FTS5_SQL)
@@ -235,10 +248,66 @@ describe('applyMigrations', () => {
     const version = db.query("SELECT value FROM meta WHERE key = 'schema_version'").get() as {
       value: string
     }
-    expect(version.value).toBe('10')
+    expect(version.value).toBe('11')
     expect(sessionColumns(db)).toContain('last_end_json')
     expect(sessionColumns(db)).toContain('job_error')
     expect(sessionColumns(db)).toContain('followup_text')
+    expectPendingResetColumn(db)
+    db.close()
+  })
+
+  test('fresh db reaches schema_version 11 with pending_reset_sha', () => {
+    const db = new Database(':memory:')
+    applyMigrations(db)
+    const version = db.query("SELECT value FROM meta WHERE key = 'schema_version'").get() as {
+      value: string
+    }
+    expect(version.value).toBe('11')
+    expectPendingResetColumn(db)
+    expectHostStateColumns(db)
+    db.close()
+  })
+
+  test('v10 database upgrades to v11 and copies job_json pendingResetSha into the column', () => {
+    const db = new Database(':memory:')
+    db.exec(INIT_SQL)
+    db.exec(FTS5_SQL)
+    db.exec(AGENT_MAIL_SQL)
+    db.exec(DELIVERIES_SQL)
+    db.exec(PENDING_ASKS_SQL)
+    db.exec(READ_MTIME_SQL)
+    db.exec(SESSION_TODOS_SQL)
+    db.exec(SESSION_JOB_SQL)
+    db.exec(STREAM_EVENTS_SQL)
+    db.exec(SESSION_HOST_STATE_SQL)
+    db.query(
+      "INSERT INTO meta (key, value) VALUES ('schema_version', '10') ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    ).run()
+    db.query(
+      `INSERT INTO sessions (
+         id, created_at, updated_at, cwd, model, permission_mode, compact_generation,
+         usage_json, funding, job_json, job_auto_commit
+       ) VALUES (?, 1, 1, '/', 'dummy', 'default', 0, '{}', 'byok', ?, 0)`,
+    ).run(
+      's1',
+      JSON.stringify({
+        baseBranch: 'main',
+        shadowBranch: 'raven/s',
+        baseCommitSha: 'abc123',
+        worktreePath: '/tmp/wt',
+        pendingResetSha: 'def456',
+      }),
+    )
+    applyMigrations(db)
+    const version = db.query("SELECT value FROM meta WHERE key = 'schema_version'").get() as {
+      value: string
+    }
+    expect(version.value).toBe('11')
+    const row = db.query('SELECT pending_reset_sha FROM sessions WHERE id = ?').get('s1') as {
+      pending_reset_sha: string | null
+    }
+    expect(row.pending_reset_sha).toBe('def456')
+    expectHostStateColumns(db)
     db.close()
   })
 })

@@ -57,7 +57,7 @@ function session(over: Partial<SessionRecord> = {}): SessionRecord {
 }
 
 describe('createSqliteStore', () => {
-  test('fresh install uses WAL and schema_version 10', () => {
+  test('fresh install uses WAL and schema_version 11', () => {
     const path = tempDbPath()
     openStore(path)
     const db = new Database(path, { readonly: true })
@@ -67,7 +67,7 @@ describe('createSqliteStore', () => {
       const version = db
         .query("SELECT value FROM meta WHERE key = 'schema_version'")
         .get() as { value: string }
-      expect(version.value).toBe('10')
+      expect(version.value).toBe('11')
       expect(
         db
           .query("SELECT 1 AS ok FROM sqlite_master WHERE name = 'messages_fts'")
@@ -126,6 +126,53 @@ describe('createSqliteStore', () => {
     await store.upsertSession(loaded.session)
     const again = await store.loadSession('s1')
     expect(again.session.job?.pendingResetSha).toBe('ghi789')
+  })
+
+  test('loadSession prefers non-empty pending_reset_sha column over job_json', async () => {
+    const store = openStore()
+    await store.createSession(
+      session({
+        job: {
+          baseBranch: 'main',
+          shadowBranch: 'raven/s',
+          baseCommitSha: 'abc123',
+          worktreePath: '/tmp/wt',
+          pendingResetSha: 'from-json',
+        },
+      }),
+    )
+    const db = sqliteStoreDatabase(store)!
+    db.query(`UPDATE sessions SET pending_reset_sha = ?, job_json = ? WHERE id = ?`).run(
+      'from-column',
+      JSON.stringify({
+        baseBranch: 'main',
+        shadowBranch: 'raven/s',
+        baseCommitSha: 'abc123',
+        worktreePath: '/tmp/wt',
+      }),
+      's1',
+    )
+    const loaded = await store.loadSession('s1')
+    expect(loaded.session.job?.pendingResetSha).toBe('from-column')
+  })
+
+  test('loadSession falls back to job_json when pending_reset_sha is null', async () => {
+    const store = openStore()
+    await store.createSession(
+      session({
+        job: {
+          baseBranch: 'main',
+          shadowBranch: 'raven/s',
+          baseCommitSha: 'abc123',
+          worktreePath: '/tmp/wt',
+          pendingResetSha: 'from-json',
+        },
+      }),
+    )
+    const db = sqliteStoreDatabase(store)!
+    db.query(`UPDATE sessions SET pending_reset_sha = NULL WHERE id = ?`).run('s1')
+    const loaded = await store.loadSession('s1')
+    expect(loaded.session.job?.pendingResetSha).toBe('from-json')
   })
 
   test('updateSessionTodos writes todos without pairing messages', async () => {
