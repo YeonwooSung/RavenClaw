@@ -1101,7 +1101,7 @@ export async function runServe(opts: { flags: ConfigFlags }): Promise<number> {
   process.stdout.write('POST /v1/turn  Authorization: Bearer <GATEWAY_SECRET>\n')
   process.stdout.write('GET  /v1/session/:id  snapshot JSON\n')
   process.stdout.write('GET  /v1/session/:id/stream[?after=seq]  NDJSON\n')
-  process.stdout.write('POST /v1/session/:id/submit|/cancel|/compact|/resolve\n')
+  process.stdout.write('POST /v1/session/:id/submit|/cancel|/compact|/resolve|/clear\n')
   process.stdout.write('POST /webhooks/<route>  X-Raven-Signature: t=<unix>,v1=<hmac>\n')
   const stopMailbox = startMailboxPoller(caches.liveEngines(), turnFlights)
   const shutdown = async () => {

@@ -3,6 +3,7 @@
 Date: 2026-09-18  
 Status: implemented  
 Shipped on `main` at `edeb611`. Combined waist with stream version/token and parent tree-stop is on `main` at `9901d0e`.  
+`HTTP POST /v1/session/:id/clear` is unparked by [`2026-09-20-http-post-clear.md`](2026-09-20-http-post-clear.md) only. Wipe/keep table and engine method are unchanged.  
 Reviewed against tree at `be5a4a7` (`origin/main` after no-job todo revert).  
 Successor to `2026-09-18-no-job-todo-revert.md` (Status: implemented at `be5a4a7`). Amends prior OUT for keep-id `/clear` **only**. Does not reopen that spec’s closed doors.
 
@@ -52,7 +53,7 @@ This horizon **unparks only keep-id `/clear`**. Same `session.id`, empty convers
 ## Do not build
 
 - Web chat UI, Next.js BFF, Prisma Task, Socket.IO
-- `POST /v1/session/:id/clear` (and any other new serve route)
+- `POST /v1/session/:id/clear` (and any other new serve route) (amended by 2026-09-20-http-post-clear.md)
 - Changing `openNewSession` to reuse an id (boot, ACP `session/new`, serve missing-session create, cron child stay mint-new)
 - `deleteSession` + `createSession` of the same id (recursive child delete, drops job/rules/lock)
 - Silently deleting a `raven/*` worktree, `exitSessionWorktree`, `git reset --hard`, force-push, or detaching `session.job`
@@ -128,6 +129,7 @@ These lock underspecification. The implementation plan may only add detail, not 
 
 11. **Must not consume another included-session cap.** No `openNewSession`. No `resolveIncludedAccess({ consumeCap: true })`. `funding` and `remainingSessions` stay as they are.
 12. **No serve route this horizon.** There is no `POST /clear` today (`docs/headless.md`). Do not add `POST /v1/session/:id/clear`. The engine method is the host composition so serve can call it in a later door. ACP `session/new`, Slack, Discord, exec stay on their current mint/resume paths.
+    **Amended:** serve now has `POST /v1/session/:id/clear`; it must call `engine.clearKeepId()` and must not mint.
 
 ### Persist-first and schema
 
@@ -349,7 +351,7 @@ Goal: `/clear` / `/new` call the engine op. No new id. Honest notice.
 
 ## Out of this horizon
 
-Web chat UI, Next.js BFF, Prisma Task, Socket.IO, y0 Shadow wiki / indexer, eve compiler, OpenAPI connections, memory slots, `defineState`, credential brokering, self-mod, any new chat network, sandbox network policy, Grep/Glob docker-exec, `ignored`, stream `version` / `continuationToken`, schema v11, async `createSessionEngine`, cancel-without-live abort-pair, interrupt abort-pair, parent-cancels-child-ask / parent-tree-stop, `POST /v1/session/:id/clear`, changing `openNewSession` mint behavior, hard-delete of message rows, deleting `raven/*` worktrees from `/clear`.
+Web chat UI, Next.js BFF, Prisma Task, Socket.IO, y0 Shadow wiki / indexer, eve compiler, OpenAPI connections, memory slots, `defineState`, credential brokering, self-mod, any new chat network, sandbox network policy, Grep/Glob docker-exec, `ignored`, stream `version` / `continuationToken`, schema v11, async `createSessionEngine`, cancel-without-live abort-pair, interrupt abort-pair, parent-cancels-child-ask / parent-tree-stop, `POST /v1/session/:id/clear` (amended by 2026-09-20-http-post-clear.md), changing `openNewSession` mint behavior, hard-delete of message rows, deleting `raven/*` worktrees from `/clear`.
 
 If a later product wants HTTP clear, it calls `engine.clearKeepId()` and adds a route in a new spec. It does not mint a new id.
 

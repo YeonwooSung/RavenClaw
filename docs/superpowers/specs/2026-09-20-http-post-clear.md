@@ -1,7 +1,7 @@
 # RavenClaw next-horizon roadmap (HTTP `POST /v1/session/:id/clear`)
 
 Date: 2026-09-20  
-Status: spec  
+Status: implemented  
 Reviewed against tree at `a707249` (`origin/main`).  
 Successor to `2026-09-18-keep-id-clear.md` (Status: implemented at `edeb611`). Amends prior OUT for `POST /v1/session/:id/clear` **only**. Does not reopen that spec’s wipe/keep table, mid-turn abort-then-wipe, or child leftover refuse.
 
@@ -143,9 +143,9 @@ Board as of `a707249`. Not on `main` until this door lands.
 | ID | Status vs tree |
 |---|---|
 | C0.1 docs point at this spec | **this file** (spec commit). Other-file amendments are C2. |
-| C1.1 `SESSION_PATH` + `ServeEngine.clearKeepId` + POST handler | **not on `main`** |
-| C1.2 `serve.test.ts` wire lock | **not on `main`** |
-| C2.1 help printer + headless + ARCHITECTURE + keep-id OUT | **not on `main`** |
+| C1.1 `SESSION_PATH` + `ServeEngine.clearKeepId` + POST handler | **done** |
+| C1.2 `serve.test.ts` wire lock | **done** |
+| C2.1 help printer + headless + ARCHITECTURE + keep-id OUT | **done** |
 
 ---
 
