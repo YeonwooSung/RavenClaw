@@ -21,10 +21,18 @@ function tempDir(prefix: string): string {
   return dir
 }
 
+function gitSpawnEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' }
+  delete env.GIT_DIR
+  delete env.GIT_WORK_TREE
+  delete env.GIT_INDEX_FILE
+  return env
+}
+
 function initRepo(): string {
   const dir = tempDir('ravenclaw-job-diff-')
   const run = (args: string[]) => {
-    const result = spawnSync('git', args, { cwd: dir, encoding: 'utf8' })
+    const result = spawnSync('git', args, { cwd: dir, encoding: 'utf8', env: gitSpawnEnv() })
     expect(result.status).toBe(0)
   }
   run(['init'])
@@ -36,7 +44,7 @@ function initRepo(): string {
 }
 
 function git(cwd: string, args: string[]): string {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8' })
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8', env: gitSpawnEnv() })
   expect(result.status).toBe(0)
   return result.stdout.trim()
 }
@@ -116,5 +124,42 @@ describe('jobDiff', () => {
     // committed create +1, staged +1 → plus === 2 (double-count of staged would yield 3)
     expect(row?.plus).toBe(2)
     expect(row?.minus).toBe(0)
+  })
+
+  test('jobDiff ignores foreign GIT_DIR', () => {
+    const repo = initRepo()
+    const base = revParse(repo)
+    write(repo, 'new.ts', 'hello\n')
+    git(repo, ['add', 'new.ts'])
+    git(repo, ['commit', '-m', 'add'])
+    write(repo, 'dirty.txt', 'x\n')
+
+    const foreign = join(tempDir('ravenclaw-job-diff-foreign-'), 'not-a-git')
+    const prevDir = process.env.GIT_DIR
+    const prevWorkTree = process.env.GIT_WORK_TREE
+    const prevIndex = process.env.GIT_INDEX_FILE
+    process.env.GIT_DIR = foreign
+    process.env.GIT_WORK_TREE = tempDir('ravenclaw-job-diff-wt-')
+    process.env.GIT_INDEX_FILE = join(tempDir('ravenclaw-job-diff-index-'), 'index')
+    try {
+      const diff = jobDiff({
+        baseBranch: 'main',
+        shadowBranch: 'raven/t',
+        baseCommitSha: base,
+        worktreePath: repo,
+      })
+      expect(diff.ok).toBe(true)
+      if (!diff.ok) return
+      expect(diff.dirty).toBe(true)
+      expect(diff.files.some((f) => f.path === 'new.ts' && f.op === 'create')).toBe(true)
+      expect(diff.files.some((f) => f.path === 'dirty.txt' && f.op === 'create')).toBe(true)
+    } finally {
+      if (prevDir === undefined) delete process.env.GIT_DIR
+      else process.env.GIT_DIR = prevDir
+      if (prevWorkTree === undefined) delete process.env.GIT_WORK_TREE
+      else process.env.GIT_WORK_TREE = prevWorkTree
+      if (prevIndex === undefined) delete process.env.GIT_INDEX_FILE
+      else process.env.GIT_INDEX_FILE = prevIndex
+    }
   })
 })

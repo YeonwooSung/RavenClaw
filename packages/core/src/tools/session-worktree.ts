@@ -180,10 +180,15 @@ function removeSidecar(sessionId: string): void {
 
 export function runGit(cwd: string, args: string[]): { ok: boolean; stdout: string; stderr: string } {
   try {
+    const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' }
+    delete env.GIT_DIR
+    delete env.GIT_WORK_TREE
+    delete env.GIT_INDEX_FILE
     const result = spawnSync('git', args, {
       cwd,
       encoding: 'utf8',
       timeout: GIT_TIMEOUT_MS,
+      env,
     })
     return { ok: result.status === 0, stdout: result.stdout ?? '', stderr: result.stderr ?? '' }
   } catch {
