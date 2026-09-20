@@ -955,6 +955,9 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
             yield { type: 'status', message: 'cancelled, ask still pending' }
           }
         }
+        if (end.reason === 'aborted') {
+          await whenTreeStop()
+        }
         messages = turn.messages
         if (end.reason === 'completed' && shouldNudgeLearn(turn.round)) {
           messages = injectMidTurnHint(messages, LEARN_NUDGE)
@@ -1141,6 +1144,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         if (liveTurn.cancelKind === undefined) liveTurn.cancelKind = kind ?? 'interrupt'
         abortTurn(liveTurn.abort)
       }
+      startThisSessionLeftoverFlight()
     },
 
     async close(closeOpts) {

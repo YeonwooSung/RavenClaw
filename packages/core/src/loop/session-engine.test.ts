@@ -2203,7 +2203,7 @@ describe('cancel', () => {
     expect(await store.listPendingAsks(sess.id)).toHaveLength(1)
   })
 
-  test('interrupt leaves a leftover-ask', async () => {
+  test('interrupt abort-pairs this session leftover-asks', async () => {
     const store = createMemoryStore()
     const sess = makeSession({ id: 'sess_interrupt_ask' })
     await store.createSession(sess)
@@ -2235,6 +2235,12 @@ describe('cancel', () => {
     const gen = engine.submitMessage('hi')
     const pending = drain(gen)
     await firstStreamEntered
+    await store.persistToolCalls(sess.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'parked_1', name: 'Bash', input: { command: 'ls' } }],
+      createdAt: Date.now(),
+    })
     await store.upsertPendingAsk({
       callId: 'parked_1',
       sessionId: sess.id,
@@ -2245,9 +2251,48 @@ describe('cancel', () => {
       createdAt: 1,
     })
     engine.abort('interrupt')
-    const { result } = await pending
+    const { events, result } = await pending
     expect(result.reason).toBe('aborted')
-    expect(await store.listPendingAsks(sess.id)).toHaveLength(1)
+    expect(
+      events.some((e) => e.type === 'status' && e.message === 'cancelled, ask still pending'),
+    ).toBe(false)
+    expect(await store.listPendingAsks(sess.id)).toHaveLength(0)
+    const loaded = await store.loadSession(sess.id)
+    const tools = loaded.messages.filter((m) => m.role === 'tool' && m.toolUseId === 'parked_1')
+    expect(tools).toHaveLength(1)
+    expect((tools[0]?.blocks[0] as { text?: string })?.text).toBe(ABORTED_TEXT)
+    expect(engine.session.lastEnd).toEqual({ reason: 'aborted' })
+  })
+
+  test('idle interrupt abort-pairs this session leftover-asks and invents no lastEnd', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_idle_interrupt' })
+    await store.createSession(sess)
+    await store.persistToolCalls(sess.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'parked', name: 'Bash', input: { command: 'ls' } }],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'parked',
+      sessionId: sess.id,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Run ls?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    const engine = createSessionEngine({
+      ...engineOpts({ provider: createFakeProvider([]), store, session: sess }),
+    })
+    engine.abort('interrupt')
+    await expect(engine.whenTreeStop()).resolves.toEqual({
+      descendantWork: false,
+      thisSessionWork: true,
+    })
+    expect(await store.listPendingAsks(sess.id)).toHaveLength(0)
+    expect(engine.session.lastEnd).toBeUndefined()
   })
 
   test('parent cancel abort-pairs a child leftover-ask', async () => {
