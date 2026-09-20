@@ -441,4 +441,77 @@ describe('createMemoryStore', () => {
     expect(await store.listPendingAsks('s1')).toHaveLength(1)
     expect(await store.lastStreamSeq('s1')).toBe(1)
   })
+
+  test('recordCompactAndUpsertSession inactivates ids and sets pendingResetSha', async () => {
+    const store = createMemoryStore()
+    const job = {
+      baseBranch: 'main',
+      shadowBranch: 'raven/s',
+      baseCommitSha: 'abc123',
+      worktreePath: '/tmp/wt',
+      pendingResetSha: 'def456',
+    }
+    await store.createSession(session({ job: { ...job, pendingResetSha: undefined } }))
+    await store.persistUser('s1', {
+      id: 'u1',
+      role: 'user',
+      blocks: [{ type: 'text', text: 'drop' }],
+      createdAt: 1,
+    })
+    await store.recordCompactAndUpsertSession({
+      session: session({ job, compactGeneration: 1 }),
+      inactivatedIds: ['u1'],
+      generation: 1,
+      summary: 'rewind',
+    })
+    const loaded = await store.loadSession('s1')
+    expect(loaded.messages.map((msg) => msg.id)).toEqual([])
+    expect(loaded.session.job?.pendingResetSha).toBe('def456')
+  })
+
+  test('recordCompactAndUpsertSession throw restores messages and unflagged job', async () => {
+    const store = createMemoryStore()
+    await store.createSession(
+      session({
+        job: {
+          baseBranch: 'main',
+          shadowBranch: 'raven/s',
+          baseCommitSha: 'abc123',
+          worktreePath: '/tmp/wt',
+        },
+      }),
+    )
+    await store.persistUser('s1', {
+      id: 'u1',
+      role: 'user',
+      blocks: [{ type: 'text', text: 'keep' }],
+      createdAt: 1,
+    })
+    const exploding = session({
+      job: {
+        baseBranch: 'main',
+        shadowBranch: 'raven/s',
+        baseCommitSha: 'abc123',
+        worktreePath: '/tmp/wt',
+        pendingResetSha: 'def456',
+      },
+    })
+    Object.defineProperty(exploding, 'updatedAt', {
+      enumerable: true,
+      get() {
+        throw new Error('boom')
+      },
+    })
+    await expect(
+      store.recordCompactAndUpsertSession({
+        session: exploding,
+        inactivatedIds: ['u1'],
+        generation: 1,
+        summary: 'rewind',
+      }),
+    ).rejects.toBeInstanceOf(Error)
+    const loaded = await store.loadSession('s1')
+    expect(loaded.messages.map((msg) => msg.id)).toEqual(['u1'])
+    expect(loaded.session.job?.pendingResetSha).toBeUndefined()
+  })
 })

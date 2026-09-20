@@ -57,7 +57,7 @@ function session(over: Partial<SessionRecord> = {}): SessionRecord {
 }
 
 describe('createSqliteStore', () => {
-  test('fresh install uses WAL and schema_version 10', () => {
+  test('fresh install uses WAL and schema_version 11', () => {
     const path = tempDbPath()
     openStore(path)
     const db = new Database(path, { readonly: true })
@@ -67,7 +67,7 @@ describe('createSqliteStore', () => {
       const version = db
         .query("SELECT value FROM meta WHERE key = 'schema_version'")
         .get() as { value: string }
-      expect(version.value).toBe('10')
+      expect(version.value).toBe('11')
       expect(
         db
           .query("SELECT 1 AS ok FROM sqlite_master WHERE name = 'messages_fts'")
@@ -126,6 +126,53 @@ describe('createSqliteStore', () => {
     await store.upsertSession(loaded.session)
     const again = await store.loadSession('s1')
     expect(again.session.job?.pendingResetSha).toBe('ghi789')
+  })
+
+  test('loadSession prefers non-empty pending_reset_sha column over job_json', async () => {
+    const store = openStore()
+    await store.createSession(
+      session({
+        job: {
+          baseBranch: 'main',
+          shadowBranch: 'raven/s',
+          baseCommitSha: 'abc123',
+          worktreePath: '/tmp/wt',
+          pendingResetSha: 'from-json',
+        },
+      }),
+    )
+    const db = sqliteStoreDatabase(store)!
+    db.query(`UPDATE sessions SET pending_reset_sha = ?, job_json = ? WHERE id = ?`).run(
+      'from-column',
+      JSON.stringify({
+        baseBranch: 'main',
+        shadowBranch: 'raven/s',
+        baseCommitSha: 'abc123',
+        worktreePath: '/tmp/wt',
+      }),
+      's1',
+    )
+    const loaded = await store.loadSession('s1')
+    expect(loaded.session.job?.pendingResetSha).toBe('from-column')
+  })
+
+  test('loadSession falls back to job_json when pending_reset_sha is null', async () => {
+    const store = openStore()
+    await store.createSession(
+      session({
+        job: {
+          baseBranch: 'main',
+          shadowBranch: 'raven/s',
+          baseCommitSha: 'abc123',
+          worktreePath: '/tmp/wt',
+          pendingResetSha: 'from-json',
+        },
+      }),
+    )
+    const db = sqliteStoreDatabase(store)!
+    db.query(`UPDATE sessions SET pending_reset_sha = NULL WHERE id = ?`).run('s1')
+    const loaded = await store.loadSession('s1')
+    expect(loaded.session.job?.pendingResetSha).toBe('from-json')
   })
 
   test('updateSessionTodos writes todos without pairing messages', async () => {
@@ -781,5 +828,91 @@ describe('createSqliteStore', () => {
     expect(loaded.session.todos).toEqual([{ text: 'keep', status: 'pending' }])
     expect(await store.listPendingAsks('s1')).toHaveLength(1)
     expect(await store.lastStreamSeq('s1')).toBe(1)
+  })
+
+  test('recordCompactAndUpsertSession inactivates ids and dual-writes pending_reset_sha in one tx', async () => {
+    const store = openStore()
+    const job = {
+      baseBranch: 'main',
+      shadowBranch: 'raven/s',
+      baseCommitSha: 'abc123',
+      worktreePath: '/tmp/wt',
+      pendingResetSha: 'def456',
+    }
+    await store.createSession(session({ job: { ...job, pendingResetSha: undefined } }))
+    await store.persistUser('s1', {
+      id: 'u1',
+      role: 'user',
+      blocks: [{ type: 'text', text: 'drop' }],
+      createdAt: 1,
+    })
+    await store.recordCompactAndUpsertSession({
+      session: session({ job, compactGeneration: 1 }),
+      inactivatedIds: ['u1'],
+      generation: 1,
+      summary: 'rewind',
+    })
+    const loaded = await store.loadSession('s1')
+    expect(loaded.messages.map((msg) => msg.id)).toEqual([])
+    expect(loaded.session.job?.pendingResetSha).toBe('def456')
+    const db = sqliteStoreDatabase(store)!
+    const row = db.query('SELECT pending_reset_sha, job_json FROM sessions WHERE id = ?').get('s1') as {
+      pending_reset_sha: string | null
+      job_json: string
+    }
+    expect(row.pending_reset_sha).toBe('def456')
+    expect(JSON.parse(row.job_json).pendingResetSha).toBe('def456')
+  })
+
+  test('recordCompactAndUpsertSession throw rolls back inactivate and column', async () => {
+    const store = openStore()
+    await store.createSession(
+      session({
+        job: {
+          baseBranch: 'main',
+          shadowBranch: 'raven/s',
+          baseCommitSha: 'abc123',
+          worktreePath: '/tmp/wt',
+        },
+      }),
+    )
+    await store.persistUser('s1', {
+      id: 'u1',
+      role: 'user',
+      blocks: [{ type: 'text', text: 'keep' }],
+      createdAt: 1,
+    })
+    const db = sqliteStoreDatabase(store)!
+    db.exec(`
+      CREATE TRIGGER fail_pending_reset
+      BEFORE UPDATE OF pending_reset_sha ON sessions
+      WHEN NEW.pending_reset_sha IS NOT NULL
+      BEGIN
+        SELECT RAISE(ABORT, 'boom');
+      END
+    `)
+    await expect(
+      store.recordCompactAndUpsertSession({
+        session: session({
+          job: {
+            baseBranch: 'main',
+            shadowBranch: 'raven/s',
+            baseCommitSha: 'abc123',
+            worktreePath: '/tmp/wt',
+            pendingResetSha: 'def456',
+          },
+        }),
+        inactivatedIds: ['u1'],
+        generation: 1,
+        summary: 'rewind',
+      }),
+    ).rejects.toBeInstanceOf(Error)
+    const loaded = await store.loadSession('s1')
+    expect(loaded.messages.map((msg) => msg.id)).toEqual(['u1'])
+    expect(loaded.session.job?.pendingResetSha).toBeUndefined()
+    const col = db.query('SELECT pending_reset_sha FROM sessions WHERE id = ?').get('s1') as {
+      pending_reset_sha: string | null
+    }
+    expect(col.pending_reset_sha).toBeNull()
   })
 })

@@ -5,7 +5,7 @@ Status: implemented
 Shipped on `main` at `5eefdde`.  
 Reviewed against tree at `77a09f3` (`main` after rewind persist PR land + shipped-docs PR #13).  
 Successor to `2026-09-18-rewind-persist-and-todo-projection.md` (Status: implemented). Does not reopen that spec’s closed doors except the three holes named here.  
-Next horizon (implemented at `be5a4a7`): [`2026-09-18-no-job-todo-revert.md`](2026-09-18-no-job-todo-revert.md) (amends this spec’s OUT for no-job todo revert only). Then (implemented at `c9c4871`): [`2026-09-18-stream-version-token.md`](2026-09-18-stream-version-token.md). Then (implemented at `edeb611`): [`2026-09-18-keep-id-clear.md`](2026-09-18-keep-id-clear.md). Then (implemented at `9901d0e`): [`2026-09-18-parent-tree-stop.md`](2026-09-18-parent-tree-stop.md) (tree-stop, not leftover-only). Then leftover-ask abort-pair completeness + cancel 202/200: [`2026-09-20-leftover-ask-abort-pair.md`](2026-09-20-leftover-ask-abort-pair.md) (amends this spec’s OUT for cancel-without-live / interrupt abort-pair).
+Next horizon (implemented at `be5a4a7`): [`2026-09-18-no-job-todo-revert.md`](2026-09-18-no-job-todo-revert.md) (amends this spec’s OUT for no-job todo revert only). Then (implemented at `c9c4871`): [`2026-09-18-stream-version-token.md`](2026-09-18-stream-version-token.md). Then (implemented at `edeb611`): [`2026-09-18-keep-id-clear.md`](2026-09-18-keep-id-clear.md). Then (implemented at `9901d0e`): [`2026-09-18-parent-tree-stop.md`](2026-09-18-parent-tree-stop.md) (tree-stop, not leftover-only). Then leftover-ask abort-pair completeness + cancel 202/200: [`2026-09-20-leftover-ask-abort-pair.md`](2026-09-20-leftover-ask-abort-pair.md) (amends this spec’s OUT for cancel-without-live / interrupt abort-pair). Then: [`2026-09-20-rewind-recovery-v11.md`](2026-09-20-rewind-recovery-v11.md) amends rulings 9, 10, 14 and Do-not-build “Making `createSessionEngine` async” / schema v11 only.
 
 Implementation plan: [2026-09-18-cancel-reset-followup.md](../plans/2026-09-18-cancel-reset-followup.md).
 
@@ -53,10 +53,10 @@ Previous specs parked (1) and (2) on purpose. This horizon **unparks only those 
 - Cancel with no live turn abort-pairing parked asks (`no_active_turn` stays a no-op)
 - `abort('interrupt')` abort-pairing leftover-asks (steer is not cancel)
 - Parent cancel abort-pairing a **child** leftover-ask (child has its own cancel)
-- Schema version bump (no new column)
+- Schema version bump (no new column) (amended by `2026-09-20-rewind-recovery-v11.md`)
 - Reset-on-resume without `pendingResetSha` (do not infer from HEAD ≠ checkpoint)
 - Auto-reset on `loadSession` / GET snapshot (those stay read-only)
-- Making `createSessionEngine` async (it stays `function …: SessionEngine`)
+- Making `createSessionEngine` async (it stays `function …: SessionEngine`) (amended by `2026-09-20-rewind-recovery-v11.md`)
 - Changing `TodoWrite` persist-then-file, no-job rewind order, or making `todo.json` the source of truth
 - Default-on auto-commit / auto-PR
 
@@ -79,12 +79,12 @@ These lock underspecification. The implementation plan may only add detail, not 
 ### Reset-on-resume
 
 8. **Durable flag, no new column.** Add optional `pendingResetSha?: string` on `SessionJob` (already stored in `job_json`). No schema version bump.
-9. **Write the flag after compact, before reset.** `rewindToCheckpoint`: `recordCompact` (if dropped ids) → upsert `job.pendingResetSha = target sha` → `git reset --hard` → restore todos, **delete** `pendingResetSha`, upsert, project `todo.json`. Persist fail of compact still leaves HEAD and originals (current H1.2). If the pending-flag upsert fails after compact, still attempt the reset (do not leave a dropped transcript with no recovery flag and no reset).
-10. **Resume finishes only when the flag is set. `createSessionEngine` stays sync.** Do not change `createSessionEngine` to `async`. `maybeFinishRewindReset` is awaited at already-async points **before** they inspect or mutate the tree: `submitMessage`, `rewindLast`, and the host `/diff` wrappers (serve `GET …/diff`, TUI `/diff`). Do **not** add `store` to the pure `jobDiff(job)` helper. Not from `createSessionEngine`. Not from store `loadSession`. Not from GET snapshot (snapshot may show `job.pendingResetSha`; it must not reset).
+9. **Write the flag after compact, before reset.** `rewindToCheckpoint`: `recordCompact` (if dropped ids) → upsert `job.pendingResetSha = target sha` → `git reset --hard` → restore todos, **delete** `pendingResetSha`, upsert, project `todo.json`. Persist fail of compact still leaves HEAD and originals (current H1.2). If the pending-flag upsert fails after compact, still attempt the reset (do not leave a dropped transcript with no recovery flag and no reset). **Amended by `2026-09-20-rewind-recovery-v11.md`:** compact + flag are one write; a combined-write throw does not git reset.
+10. **Resume finishes only when the flag is set. `createSessionEngine` stays sync.** Do not change `createSessionEngine` to `async`. `maybeFinishRewindReset` is awaited at already-async points **before** they inspect or mutate the tree: `submitMessage`, `rewindLast`, and the host `/diff` wrappers (serve `GET …/diff`, TUI `/diff`). Do **not** add `store` to the pure `jobDiff(job)` helper. Not from `createSessionEngine`. Not from store `loadSession`. Not from GET snapshot (snapshot may show `job.pendingResetSha`; it must not reset). **Amended by `2026-09-20-rewind-recovery-v11.md`:** factory is async and recovers; GET snapshot still does not attach.
 11. **Success path equals a successful rewind epilogue.** `git reset --hard` to `pendingResetSha`. Restore `session.todos` from the last remaining assistant `todoSnapshot`, or `[]` at `baseCommitSha` with no earlier checkpoint. Clear `pendingResetSha` and `jobError`. Upsert. Re-project project `todo.json` (`originalCwd ?? cwd`). Projection fail is the existing notice suffix; `ok` stays true.
 12. **Reset fail keeps the flag.** `setSessionJobError`, keep `pendingResetSha`, do not apply the todo snapshot, do not un-compact. Next `submitMessage` / `rewindLast` / host `/diff` retries.
 13. **Do not infer.** `HEAD !== checkpoint` without `pendingResetSha` is operator work (or the remaining compact-then-die sliver). Do not reset it.
-14. **The remaining sliver is accepted.** Compact succeeded, pending-flag upsert did not, process died: same class as today’s persist-then-die, now smaller. Do not invent a second recover heuristic.
+14. **The remaining sliver is accepted.** Compact succeeded, pending-flag upsert did not, process died: same class as today’s persist-then-die, now smaller. Do not invent a second recover heuristic. **Amended by `2026-09-20-rewind-recovery-v11.md`:** the sliver is filled by one transactional write, still without HEAD inference.
 
 ### `writeFollowup` persist order
 
@@ -212,7 +212,7 @@ I1 and I2 may run in parallel (disjoint files). I3 after I0. I4 last.
 
 ## Out of this horizon
 
-Web chat UI, Next.js BFF, Prisma Task, Socket.IO, y0 Shadow wiki / indexer, eve compiler, OpenAPI connections, memory slots, `defineState`, credential brokering, self-mod, any new chat network, sandbox network policy, Grep/Glob docker-exec, `ignored`, keep-id `/clear` (amended by `2026-09-18-keep-id-clear.md`), stream `version` / `continuationToken` (amended by `2026-09-18-stream-version-token.md`), no-job todo revert (amended by `2026-09-18-no-job-todo-revert.md`), schema v11, async `createSessionEngine`, cancel-without-live abort-pair (amended by `2026-09-20-leftover-ask-abort-pair.md`), interrupt abort-pair (amended by `2026-09-20-leftover-ask-abort-pair.md`), parent-cancels-child-ask (amended by `2026-09-18-parent-tree-stop.md`).
+Web chat UI, Next.js BFF, Prisma Task, Socket.IO, y0 Shadow wiki / indexer, eve compiler, OpenAPI connections, memory slots, `defineState`, credential brokering, self-mod, any new chat network, sandbox network policy, Grep/Glob docker-exec, `ignored`, keep-id `/clear` (amended by `2026-09-18-keep-id-clear.md`), stream `version` / `continuationToken` (amended by `2026-09-18-stream-version-token.md`), no-job todo revert (amended by `2026-09-18-no-job-todo-revert.md`), schema v11, async `createSessionEngine` (amended by `2026-09-20-rewind-recovery-v11.md`), cancel-without-live abort-pair (amended by `2026-09-20-leftover-ask-abort-pair.md`), interrupt abort-pair (amended by `2026-09-20-leftover-ask-abort-pair.md`), parent-cancels-child-ask (amended by `2026-09-18-parent-tree-stop.md`).
 
 ---
 

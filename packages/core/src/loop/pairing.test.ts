@@ -147,7 +147,7 @@ describe('pairing invariant helpers', () => {
       toolThenStop('r2', 'Read', { path: 'note.txt' }),
       textThenStop('saw both'),
     ])
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session,
       provider,
       store,

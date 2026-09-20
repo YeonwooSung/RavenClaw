@@ -275,7 +275,7 @@ describe('quality gate', () => {
     const provider = createFakeProvider([
       toolThenStop('call_x', 'Echo', { text: 'nope' }),
     ])
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({ provider, store, session, tools: [echo] }),
     )
 
@@ -323,7 +323,7 @@ describe('quality gate', () => {
 
     const bash = spyBash()
     const provider = createFakeProvider([textThenStop('continuing')])
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({
         provider,
         store,
@@ -359,7 +359,7 @@ describe('quality gate', () => {
       toolThenStop('h2', 'Echo', { text: 'two' }),
       toolThenStop('h3', 'Echo', { text: 'should not run' }),
     ])
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({
         provider,
         store,

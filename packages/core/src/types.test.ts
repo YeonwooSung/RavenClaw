@@ -246,6 +246,7 @@ describe('port shapes', () => {
         return []
       },
       async recordCompact() {},
+      async recordCompactAndUpsertSession() {},
       async clearConversation() {},
       async enqueueAgentMail() {},
       async peekAgentMail() {

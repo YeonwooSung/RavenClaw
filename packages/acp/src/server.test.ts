@@ -867,27 +867,29 @@ describe('createAcpServer', () => {
       funding: 'byok' as const,
     }
     await store.createSession(session)
-    let engine: ReturnType<typeof createSessionEngine> | undefined
+    let requestPermission: AcpEngineFactoryOpts['requestPermission']
+    const built = await createSessionEngine({
+      session,
+      provider: createFakeProvider([
+        toolThenStop('call_eval', 'Echo', { text: 'hi' }),
+        textThenStop('done'),
+      ]),
+      store,
+      tools: [createAskEcho()],
+      compact: defaultCompact(),
+      model: defaultModel(),
+      maxRounds: 8,
+      bare: true,
+      askUser: (event, signal) => {
+        if (!requestPermission) return Promise.resolve('deny')
+        return requestPermission(event, signal)
+      },
+    })
+    const engine = built
     const server = createAcpServer({
       engineFactory: (_sessionId, opts) => {
-        engine = createSessionEngine({
-          session,
-          provider: createFakeProvider([
-            toolThenStop('call_eval', 'Echo', { text: 'hi' }),
-            textThenStop('done'),
-          ]),
-          store,
-          tools: [createAskEcho()],
-          compact: defaultCompact(),
-          model: defaultModel(),
-          maxRounds: 8,
-          bare: true,
-          askUser: (event, signal) => {
-            if (!opts?.requestPermission) return Promise.resolve('deny')
-            return opts.requestPermission(event, signal)
-          },
-        })
-        return engine
+        requestPermission = opts?.requestPermission
+        return built
       },
       request: () => new Promise(() => {}),
       permissionTimeoutMs: 120_000,
@@ -1029,29 +1031,31 @@ describe('createAcpServer', () => {
       funding: 'byok' as const,
     }
     await store.createSession(session)
-    let engine: ReturnType<typeof createSessionEngine> | undefined
+    let requestPermission: AcpEngineFactoryOpts['requestPermission']
+    const built = await createSessionEngine({
+      session,
+      provider: createFakeProvider([
+        toolThenStop('call_eval', 'Echo', { text: 'hi' }),
+        textThenStop('done'),
+      ]),
+      store,
+      tools: [createAskEcho()],
+      compact: defaultCompact(),
+      model: defaultModel(),
+      maxRounds: 8,
+      bare: true,
+      askUser: (event, signal) => {
+        if (!requestPermission) return Promise.resolve('deny')
+        return requestPermission(event, signal)
+      },
+    })
+    const engine = built
     const requests: JsonRpcRequest[] = []
     let expireNextWait = true
     const server = createAcpServer({
       engineFactory: (_sessionId, opts) => {
-        engine = createSessionEngine({
-          session,
-          provider: createFakeProvider([
-            toolThenStop('call_eval', 'Echo', { text: 'hi' }),
-            textThenStop('done'),
-          ]),
-          store,
-          tools: [createAskEcho()],
-          compact: defaultCompact(),
-          model: defaultModel(),
-          maxRounds: 8,
-          bare: true,
-          askUser: (event, signal) => {
-            if (!opts?.requestPermission) return Promise.resolve('deny')
-            return opts.requestPermission(event, signal)
-          },
-        })
-        return engine
+        requestPermission = opts?.requestPermission
+        return built
       },
       request: async (req) => {
         requests.push(req)
@@ -1111,40 +1115,41 @@ describe('createAcpServer', () => {
       funding: 'byok' as const,
     }
     await store.createSession(session)
-    let engine: ReturnType<typeof createSessionEngine> | undefined
+    let requestPermission: AcpEngineFactoryOpts['requestPermission']
+    const built = await createSessionEngine({
+      session,
+      provider: createFakeProvider([
+        toolThenStop('call_eval', 'Echo', { text: 'hi' }),
+        textThenStop('done'),
+      ]),
+      store,
+      tools: [createAskEcho()],
+      compact: defaultCompact(),
+      model: defaultModel(),
+      maxRounds: 8,
+      bare: true,
+      askUser: (event, signal) => {
+        if (!requestPermission) return Promise.resolve('deny')
+        return requestPermission(event, signal)
+      },
+    })
+    const engine = built
     const requests: JsonRpcRequest[] = []
     let expireNextWait = true
     const submitted: UserSubmitInput[] = []
     const server = createAcpServer({
       engineFactory: (_sessionId, opts) => {
-        engine = createSessionEngine({
-          session,
-          provider: createFakeProvider([
-            toolThenStop('call_eval', 'Echo', { text: 'hi' }),
-            textThenStop('done'),
-          ]),
-          store,
-          tools: [createAskEcho()],
-          compact: defaultCompact(),
-          model: defaultModel(),
-          maxRounds: 8,
-          bare: true,
-          askUser: (event, signal) => {
-            if (!opts?.requestPermission) return Promise.resolve('deny')
-            return opts.requestPermission(event, signal)
-          },
-        })
-        const inner = engine
+        requestPermission = opts?.requestPermission
         return {
           submitMessage(input: UserSubmitInput) {
             submitted.push(input)
-            return inner.submitMessage(input)
+            return built.submitMessage(input)
           },
           abort() {
-            inner.abort()
+            built.abort()
           },
           replayPendingAsks() {
-            return inner.replayPendingAsks()
+            return built.replayPendingAsks()
           },
         }
       },

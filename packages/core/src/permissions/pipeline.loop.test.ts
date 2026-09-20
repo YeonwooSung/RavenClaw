@@ -176,7 +176,7 @@ describe('permission pipeline in queryLoop', () => {
       toolThenStop('e1', 'Edit', { path: '../secret.txt', old_string: 'a', new_string: 'b' }),
       textThenStop('done'),
     ])
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({
         provider,
         store,
@@ -217,7 +217,7 @@ describe('permission pipeline in queryLoop', () => {
       toolThenStop('c1', 'Echo', { text: 'ping' }),
       textThenStop('done'),
     ])
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({
         provider,
         store,
@@ -278,7 +278,7 @@ describe('permission pipeline in queryLoop', () => {
       textThenStop('done'),
     ])
 
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({
         provider,
         store,
@@ -343,7 +343,7 @@ describe('permission pipeline in queryLoop', () => {
       toolThenStop('exit_1', 'ExitPlanMode', {}),
       textThenStop('done'),
     ])
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({
         provider,
         store,
@@ -392,7 +392,7 @@ describe('permission pipeline in queryLoop', () => {
       toolThenStop('h1', 'Bash', { command: 'ls' }),
       textThenStop('done'),
     ])
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({
         provider,
         store,
@@ -420,7 +420,7 @@ describe('permission pipeline in queryLoop', () => {
     const store = createMemoryStore()
     const session = makeSession({ id: 'sess_mode_set', permissionMode: 'default' })
     await store.createSession(session)
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({
         provider: createFakeProvider([]),
         store,

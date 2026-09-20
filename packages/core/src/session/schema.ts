@@ -52,6 +52,11 @@ export const SESSION_HOST_STATE_SQL = readFileSync(
   'utf8',
 )
 
+export const PENDING_RESET_SHA_SQL = readFileSync(
+  join(import.meta.dir, '../migrations/011_pending_reset_sha.sql'),
+  'utf8',
+)
+
 const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: 1, sql: INIT_SQL },
   { version: 2, sql: FTS5_SQL },
@@ -63,6 +68,7 @@ const MIGRATIONS: Array<{ version: number; sql: string }> = [
   { version: 8, sql: SESSION_JOB_SQL },
   { version: 9, sql: STREAM_EVENTS_SQL },
   { version: 10, sql: SESSION_HOST_STATE_SQL },
+  { version: 11, sql: PENDING_RESET_SHA_SQL },
 ]
 
 function currentSchemaVersion(db: Database): number {

@@ -5,7 +5,7 @@ Status: implemented
 Shipped on `main` at `be5a4a7`.  
 Reviewed against tree at `9fb6ccc` (`main` after cancel-reset-followup `5eefdde`, docs honesty `5431004`, Dependabot `6716d3a`, residual nits `9fb6ccc`).  
 Successor to `2026-09-18-cancel-reset-followup.md` (Status: implemented). Does not reopen that spec’s closed doors except the one hole named here.  
-Next horizon (implemented at `c9c4871`): [`2026-09-18-stream-version-token.md`](2026-09-18-stream-version-token.md) (amends this spec’s OUT for stream `version` / `continuationToken` only). Then (implemented at `edeb611`): [`2026-09-18-keep-id-clear.md`](2026-09-18-keep-id-clear.md). Then (implemented at `9901d0e`): [`2026-09-18-parent-tree-stop.md`](2026-09-18-parent-tree-stop.md).
+Next horizon (implemented at `c9c4871`): [`2026-09-18-stream-version-token.md`](2026-09-18-stream-version-token.md) (amends this spec’s OUT for stream `version` / `continuationToken` only). Then (implemented at `edeb611`): [`2026-09-18-keep-id-clear.md`](2026-09-18-keep-id-clear.md). Then (implemented at `9901d0e`): [`2026-09-18-parent-tree-stop.md`](2026-09-18-parent-tree-stop.md). Then: [`2026-09-20-rewind-recovery-v11.md`](2026-09-20-rewind-recovery-v11.md) amends Out “schema v11, async `createSessionEngine`”.
 
 Implementation plan: [2026-09-18-no-job-todo-revert.md](../plans/2026-09-18-no-job-todo-revert.md).  
 Amendment: keep-id `/clear` is unparked **only** by [`2026-09-18-keep-id-clear.md`](2026-09-18-keep-id-clear.md). Historical OUT lines below stay.
@@ -26,7 +26,7 @@ That was parked because no-job had no snapshot. It is now the remaining honesty 
 
 `stampCheckpoint` runs only inside `if (session.job)` after a success reason with no leftover-ask. `checkpointFromJson` requires `commitSha` to be a string, so a todo-only stamp would not survive load today. `fileHistory` generations live in process RAM (backups on disk, the generation list does not); they are not a durable todo store.
 
-This horizon **unparks only no-job todo revert**. It does not unpark schema v11, interrupt abort-pair, or cancel-without-live. Parent-cancels-child-ask is amended by [`2026-09-18-parent-tree-stop.md`](2026-09-18-parent-tree-stop.md).
+This horizon **unparks only no-job todo revert**. It does not unpark schema v11 (amended by `2026-09-20-rewind-recovery-v11.md`), interrupt abort-pair, or cancel-without-live. Parent-cancels-child-ask is amended by [`2026-09-18-parent-tree-stop.md`](2026-09-18-parent-tree-stop.md).
 
 ---
 
@@ -264,7 +264,7 @@ projectSessionTodos(session.cwd, session.todos ?? [])
 
 ## Out of this horizon
 
-Web chat UI, Next.js BFF, Prisma Task, Socket.IO, y0 Shadow wiki / indexer, eve compiler, OpenAPI connections, memory slots, `defineState`, credential brokering, self-mod, any new chat network, sandbox network policy, Grep/Glob docker-exec, `ignored`, keep-id `/clear` (amended by `2026-09-18-keep-id-clear.md`), stream `version` / `continuationToken` (amended by `2026-09-18-stream-version-token.md`), schema v11, async `createSessionEngine`, cancel-without-live abort-pair, interrupt abort-pair, parent-cancels-child-ask (amended by `2026-09-18-parent-tree-stop.md`), no-job git checkpoint, `fileHistory` todo frames.
+Web chat UI, Next.js BFF, Prisma Task, Socket.IO, y0 Shadow wiki / indexer, eve compiler, OpenAPI connections, memory slots, `defineState`, credential brokering, self-mod, any new chat network, sandbox network policy, Grep/Glob docker-exec, `ignored`, keep-id `/clear` (amended by `2026-09-18-keep-id-clear.md`), stream `version` / `continuationToken` (amended by `2026-09-18-stream-version-token.md`), schema v11, async `createSessionEngine` (amended by `2026-09-20-rewind-recovery-v11.md`), cancel-without-live abort-pair, interrupt abort-pair, parent-cancels-child-ask (amended by `2026-09-18-parent-tree-stop.md`), no-job git checkpoint, `fileHistory` todo frames.
 
 If a later product wants schema v11, it still needs a column this horizon does not have. Todo-only stamps fit in `checkpoint_json`.
 

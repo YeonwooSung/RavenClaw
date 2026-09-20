@@ -60,6 +60,7 @@ type SessionRow = {
   last_end_json: string | null
   job_error: string | null
   followup_text: string | null
+  pending_reset_sha: string | null
 }
 
 type MessageRow = {
@@ -163,7 +164,12 @@ function sessionFromRow(row: SessionRow): SessionRecord {
   const todos = todosFromJson(row.todos_json)
   if (todos !== undefined) session.todos = todos
   const job = jobFromJson(row.job_json)
-  if (job !== undefined) session.job = job
+  if (job !== undefined) {
+    if (row.pending_reset_sha != null && row.pending_reset_sha !== '') {
+      job.pendingResetSha = row.pending_reset_sha
+    }
+    session.job = job
+  }
   if (row.job_auto_commit === 1) session.jobAutoCommit = true
   const lastEnd = lastEndFromJson(row.last_end_json)
   if (lastEnd !== undefined) session.lastEnd = lastEnd
@@ -333,6 +339,7 @@ function sessionBind(session: SessionRecord) {
       session.jobError !== undefined && session.jobError !== '' ? session.jobError : null,
     $followup_text:
       session.followup !== undefined && session.followup !== '' ? session.followup : null,
+    $pending_reset_sha: session.job?.pendingResetSha ?? null,
   }
 }
 
@@ -397,22 +404,22 @@ export function createSqliteStore(dbPath: string): SessionStore {
     `INSERT INTO sessions (
        id, created_at, updated_at, cwd, model, permission_mode, pre_plan_mode,
        compact_generation, usage_json, title, parent_session_id, funding, todos_json,
-       job_json, job_auto_commit, last_end_json, job_error, followup_text
+       job_json, job_auto_commit, last_end_json, job_error, followup_text, pending_reset_sha
      ) VALUES (
        $id, $created_at, $updated_at, $cwd, $model, $permission_mode, $pre_plan_mode,
        $compact_generation, $usage_json, $title, $parent_session_id, $funding, $todos_json,
-       $job_json, $job_auto_commit, $last_end_json, $job_error, $followup_text
+       $job_json, $job_auto_commit, $last_end_json, $job_error, $followup_text, $pending_reset_sha
      )`,
   )
   const upsertSessionSql = db.query(
     `INSERT INTO sessions (
        id, created_at, updated_at, cwd, model, permission_mode, pre_plan_mode,
        compact_generation, usage_json, title, parent_session_id, funding, todos_json,
-       job_json, job_auto_commit, last_end_json, job_error, followup_text
+       job_json, job_auto_commit, last_end_json, job_error, followup_text, pending_reset_sha
      ) VALUES (
        $id, $created_at, $updated_at, $cwd, $model, $permission_mode, $pre_plan_mode,
        $compact_generation, $usage_json, $title, $parent_session_id, $funding, $todos_json,
-       $job_json, $job_auto_commit, $last_end_json, $job_error, $followup_text
+       $job_json, $job_auto_commit, $last_end_json, $job_error, $followup_text, $pending_reset_sha
      )
      ON CONFLICT(id) DO UPDATE SET
        created_at = excluded.created_at,
@@ -431,7 +438,8 @@ export function createSqliteStore(dbPath: string): SessionStore {
        job_auto_commit = excluded.job_auto_commit,
        last_end_json = excluded.last_end_json,
        job_error = excluded.job_error,
-       followup_text = excluded.followup_text`,
+       followup_text = excluded.followup_text,
+       pending_reset_sha = excluded.pending_reset_sha`,
   )
   const updateSessionTodosSql = db.query(
     `UPDATE sessions SET todos_json = ?, updated_at = ? WHERE id = ?`,
@@ -884,6 +892,24 @@ export function createSqliteStore(dbPath: string): SessionStore {
         recordCompactTx(sessionId, generation, summary, inactivatedIds)
         unindexMessagesFts(db, inactivatedIds)
       })
+    },
+
+    async recordCompactAndUpsertSession(opts) {
+      await withWrite(async () =>
+        beginImmediate(() => {
+          const sessionId = opts.session.id
+          if (opts.inactivatedIds.length > 0) {
+            recordCompactTx(
+              sessionId,
+              opts.generation,
+              opts.summary ?? 'rewind',
+              opts.inactivatedIds,
+            )
+            unindexMessagesFts(db, opts.inactivatedIds)
+          }
+          upsertSessionSql.run(sessionBind(opts.session))
+        }),
+      )
     },
 
     async clearConversation(opts) {

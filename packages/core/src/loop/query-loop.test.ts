@@ -289,7 +289,7 @@ describe('queryLoop via SessionEngine', () => {
     await store.createSession(session)
     const { order } = spyPersist(store)
     const provider = createFakeProvider([textThenStop('hello')])
-    const engine = createSessionEngine(engineOpts({ provider, store, session }))
+    const engine = await createSessionEngine(engineOpts({ provider, store, session }))
 
     const { result } = await collect(engine.submitMessage('hi'))
 
@@ -329,7 +329,7 @@ describe('queryLoop via SessionEngine', () => {
       toolThenStop('call_1', 'Echo', { text: 'ping' }),
       textThenStop('done'),
     ])
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({ provider, store, session, tools: [echo] }),
     )
 
@@ -360,7 +360,7 @@ describe('queryLoop via SessionEngine', () => {
         toolThenStop('td', 'TodoWrite', { items: [{ text: 'alpha', status: 'pending' }] }),
         textThenStop('ok'),
       ])
-      const engine = createSessionEngine(
+      const engine = await createSessionEngine(
         engineOpts({ provider, store, session, tools: [todoWriteTool] }),
       )
       const { result } = await collect(engine.submitMessage('todos'))
@@ -397,7 +397,7 @@ describe('queryLoop via SessionEngine', () => {
         })
       },
     ])
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({ provider, store, session, tools: [echo] }),
     )
 
@@ -476,7 +476,7 @@ describe('queryLoop via SessionEngine', () => {
         { type: 'stop', reason: 'tool_use' },
       ],
     ])
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({ provider, store, session, tools: [slow, second] }),
     )
 
@@ -543,7 +543,7 @@ describe('queryLoop via SessionEngine', () => {
       [{ type: 'tool_call', id: 'slow_r', name: 'Slow', input: {} }, { type: 'stop', reason: 'tool_use' }],
       textThenStop('continued'),
     ])
-    const engine = createSessionEngine(engineOpts({ provider, store, session, tools: [slow] }))
+    const engine = await createSessionEngine(engineOpts({ provider, store, session, tools: [slow] }))
     const first = collect(engine.submitMessage('run'))
     await executeGate
     engine.abort()
@@ -559,7 +559,7 @@ describe('queryLoop via SessionEngine', () => {
     expect(tool?.ok).toBe(false)
     expect(tool?.blocks[0]?.text.startsWith('aborted:')).toBe(true)
 
-    const again = createSessionEngine(
+    const again = await createSessionEngine(
       engineOpts({ provider, store, session: resumed.session, messages: resumed.messages, tools: [slow] }),
     )
     const second = await collect(again.submitMessage('keep going'))
@@ -579,7 +579,7 @@ describe('queryLoop via SessionEngine', () => {
     const provider = createFakeProvider([
       toolThenStop('call_x', 'Echo', { text: 'nope' }),
     ])
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({ provider, store, session, tools: [echo] }),
     )
 
@@ -603,7 +603,7 @@ describe('queryLoop via SessionEngine', () => {
       toolThenStop('call_y', 'Echo', { text: 'once' }),
       textThenStop('should not run'),
     ])
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({ provider, store, session, tools: [echo] }),
     )
 
@@ -631,7 +631,7 @@ describe('queryLoop via SessionEngine', () => {
       toolThenStop('call_z', 'Echo', { text: 'once' }),
       textThenStop('should not run'),
     ])
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({ provider, store, session, tools: [echo] }),
     )
 
@@ -680,7 +680,7 @@ describe('queryLoop via SessionEngine', () => {
 
     const echo = createEcho()
     const provider = createFakeProvider([textThenStop('continuing')])
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({
         provider,
         store,
@@ -708,7 +708,7 @@ describe('queryLoop via SessionEngine', () => {
       toolThenStop('call_park', 'Echo', { text: 'hi' }),
       textThenStop('done'),
     ])
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({ provider, store, session, tools: [echo] }),
       askUser: async () => held,
     })
@@ -751,7 +751,7 @@ describe('queryLoop via SessionEngine', () => {
       },
     })
     echo.checkPermissions = async () => ({ behavior: 'ask', message: 'Echo?' })
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({
         provider: createFakeProvider([
           toolThenStop('call_live', 'Echo', { text: 'hi' }),
@@ -830,7 +830,7 @@ describe('queryLoop via SessionEngine', () => {
       createdAt: 1,
     })
     const echo = createAskEcho()
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({
         provider: createFakeProvider([textThenStop('nope')]),
         store,
@@ -870,7 +870,7 @@ describe('queryLoop via SessionEngine', () => {
       createdAt: 1,
     })
     const echo = createAskEcho()
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({
         provider: createFakeProvider([textThenStop('nope')]),
         store,
@@ -910,7 +910,7 @@ describe('queryLoop via SessionEngine', () => {
       return inner(sessionId, messages)
     }
     const echo = createAskEcho()
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({
         provider: createFakeProvider([textThenStop('nope')]),
         store,
@@ -952,7 +952,7 @@ describe('queryLoop via SessionEngine', () => {
       throw new PersistError('busy', 'persist boom')
     }
     const echo = createAskEcho()
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({
         provider: createFakeProvider([textThenStop('nope')]),
         store,
@@ -989,7 +989,7 @@ describe('queryLoop via SessionEngine', () => {
       createdAt: 1,
     })
     const echo = createAskEcho()
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({
         provider: createFakeProvider([textThenStop('nope')]),
         store,
@@ -1052,7 +1052,7 @@ describe('queryLoop via SessionEngine', () => {
       createdAt: 3,
     })
     const loaded = await store.loadSession(session.id)
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({
         provider: createFakeProvider([textThenStop('nope')]),
         store,
@@ -1124,7 +1124,7 @@ describe('queryLoop via SessionEngine', () => {
       createdAt: 3,
     })
     const loaded = await store.loadSession(session.id)
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({
         provider: createFakeProvider([textThenStop('nope')]),
         store,
@@ -1154,7 +1154,7 @@ describe('queryLoop via SessionEngine', () => {
     const store = createMemoryStore()
     const session = makeSession({ id: 'sess_read_mtime', cwd: root })
     await store.createSession(session)
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({
         provider: createFakeProvider([
           toolThenStop('call_read', 'Read', { path: 'a.txt' }),
@@ -1206,7 +1206,7 @@ describe('queryLoop via SessionEngine', () => {
       },
     })
     echo.checkPermissions = async () => ({ behavior: 'ask', message: 'Echo?' })
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({
         provider: createFakeProvider([textThenStop('next')]),
         store,
@@ -1254,7 +1254,7 @@ describe('queryLoop via SessionEngine', () => {
       return inner(callId)
     }
     const echo = createAskEcho()
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({
         provider: createFakeProvider([textThenStop('next')]),
         store,
@@ -1300,7 +1300,7 @@ describe('queryLoop via SessionEngine', () => {
       return inner(callId)
     }
     const echo = createAskEcho()
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({
         provider: createFakeProvider([textThenStop('next')]),
         store,
@@ -1330,7 +1330,7 @@ describe('queryLoop via SessionEngine', () => {
       input: { text: 'hi' },
       createdAt: 1,
     })
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({
         provider: createFakeProvider([textThenStop('nope')]),
         store,
@@ -1354,7 +1354,7 @@ describe('queryLoop via SessionEngine', () => {
       toolThenStop('g2', 'Echo', { text: 'two' }),
       textThenStop('final answer'),
     ])
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({
         provider,
         store,
@@ -1402,7 +1402,7 @@ describe('queryLoop via SessionEngine', () => {
       ],
       textThenStop('done'),
     ])
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({ provider, store, session, tools: [echo] }),
     )
 
@@ -1428,7 +1428,7 @@ describe('queryLoop via SessionEngine', () => {
       toolThenStop('h2', 'Echo', { text: 'two' }),
       toolThenStop('h3', 'Echo', { text: 'should not run' }),
     ])
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({
         provider,
         store,
@@ -1463,7 +1463,7 @@ describe('queryLoop via SessionEngine', () => {
       toolThenStop('u1', 'NotATool', { foo: 1 }),
       textThenStop('recovered'),
     ])
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({ provider, store, session, tools: [echo] }),
     )
 
@@ -1497,7 +1497,7 @@ describe('queryLoop via SessionEngine', () => {
       toolThenStop('rf1', 'read_file', { path: 'a.ts' }),
       textThenStop('done'),
     ])
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({ provider, store, session, tools: [read] }),
     )
     const { result } = await collect(engine.submitMessage('read it'))
@@ -1522,7 +1522,7 @@ describe('queryLoop via SessionEngine', () => {
       toolThenStop('rf2', 'read_file', { path: 'a.ts' }),
       textThenStop('recovered'),
     ])
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({ provider, store, session, tools: [echo] }),
     )
     const { result } = await collect(engine.submitMessage('read it'))
@@ -1545,7 +1545,7 @@ describe('queryLoop via SessionEngine', () => {
       throw new PersistError('readonly', 'cannot write user')
     }
     const provider = createFakeProvider([textThenStop('nope')])
-    const engine = createSessionEngine(engineOpts({ provider, store, session }))
+    const engine = await createSessionEngine(engineOpts({ provider, store, session }))
 
     await expect(collect(engine.submitMessage('hi'))).rejects.toBeInstanceOf(
       PersistError,
@@ -1565,7 +1565,7 @@ describe('queryLoop via SessionEngine', () => {
       ],
       textThenStop('rest'),
     ])
-    const engine = createSessionEngine(engineOpts({ provider, store, session }))
+    const engine = await createSessionEngine(engineOpts({ provider, store, session }))
     const { result, events } = await collect(engine.submitMessage('hi'))
     expect(result).toEqual({ reason: 'completed' })
     expect(provider.streamCount).toBe(2)
@@ -1611,7 +1611,7 @@ describe('queryLoop via SessionEngine', () => {
       ],
       textThenStop('rest'),
     ])
-    const engine = createSessionEngine(engineOpts({ provider, store, session }))
+    const engine = await createSessionEngine(engineOpts({ provider, store, session }))
     const { result, events } = await collect(engine.submitMessage('hi'))
     expect(result).toEqual({ reason: 'completed' })
     expect(provider.streamCount).toBe(3)
@@ -1647,7 +1647,7 @@ describe('queryLoop via SessionEngine', () => {
       ],
       textThenStop('rest'),
     ])
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({
         provider,
         store,
@@ -1688,7 +1688,7 @@ describe('queryLoop via SessionEngine', () => {
     ])
     const opts = engineOpts({ provider, store, session })
     opts.fallbackModel = 'backup'
-    const engine = createSessionEngine(opts)
+    const engine = await createSessionEngine(opts)
     const { result, events } = await collect(engine.submitMessage('hi'))
     expect(result).toEqual({ reason: 'completed' })
     expect(provider.requests[0]?.model).toBe('primary')
@@ -1738,7 +1738,7 @@ describe('queryLoop via SessionEngine', () => {
         stubNamedTool('EnterPlanMode'),
         stubNamedTool('ExitPlanMode'),
       ]
-      const engine = createSessionEngine(engineOpts({ provider, store, session, tools }))
+      const engine = await createSessionEngine(engineOpts({ provider, store, session, tools }))
 
       const { result } = await collect(engine.submitMessage('use narrow'))
 
@@ -1834,7 +1834,7 @@ describe('queryLoop via SessionEngine', () => {
         stubNamedTool('EnterPlanMode'),
         stubNamedTool('ExitPlanMode'),
       ]
-      const engine = createSessionEngine(engineOpts({ provider, store, session, tools }))
+      const engine = await createSessionEngine(engineOpts({ provider, store, session, tools }))
 
       const { result } = await collect(engine.submitMessage('use readonly then edit'))
 
@@ -1892,7 +1892,7 @@ describe('queryLoop via SessionEngine', () => {
       toolThenStop('d1', 'Dump', { text: 'preview' }),
       textThenStop('done'),
     ])
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({ provider, store, session, tools: [dump] }),
     )
 
@@ -1964,7 +1964,7 @@ describe('queryLoop via SessionEngine', () => {
       recorded.push(summary)
       return orig(sessionId, generation, summary, inactivatedIds)
     }
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({ provider, store, session, messages: prior }),
       compact: { ...defaultCompact(), protectLastMessages: 2 },
     })
@@ -1995,7 +1995,7 @@ describe('queryLoop via SessionEngine', () => {
         })
       },
     ])
-    const engine2 = createSessionEngine({
+    const engine2 = await createSessionEngine({
       ...engineOpts({ provider: twice, store, session: again, messages: prior }),
       compact: { ...defaultCompact(), protectLastMessages: 2 },
     })
@@ -2038,7 +2038,7 @@ describe('queryLoop via SessionEngine', () => {
       compactCalls += 1
       return orig(sessionId, generation, summary, inactivatedIds)
     }
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({ provider, store, session, messages: prior }),
       compact: { ...defaultCompact(), protectLastMessages: 1 },
     })
@@ -2064,7 +2064,7 @@ describe('queryLoop via SessionEngine', () => {
       retryCompacts += 1
       return orig(sessionId, generation, summary, inactivatedIds)
     }
-    const retryEngine = createSessionEngine(
+    const retryEngine = await createSessionEngine(
       engineOpts({ provider: retryProvider, store, session: retrySession }),
     )
     const retried = await collect(retryEngine.submitMessage('hi'))
@@ -2138,7 +2138,7 @@ describe('queryLoop via SessionEngine', () => {
         { type: 'stop', reason: 'tool_use' },
       ],
     ])
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({ provider, store, session, tools: [block, second] }),
     )
 
@@ -2177,7 +2177,7 @@ describe('queryLoop via SessionEngine', () => {
       [{ type: 'text_delta', text: '   \n' }, { type: 'stop', reason: 'end' }],
       textThenStop('hello'),
     ])
-    const engine = createSessionEngine(engineOpts({ provider, store, session }))
+    const engine = await createSessionEngine(engineOpts({ provider, store, session }))
     const { result, events } = await collect(engine.submitMessage('hi'))
     expect(result).toEqual({ reason: 'completed' })
     expect(provider.streamCount).toBe(3)
@@ -2208,7 +2208,7 @@ describe('queryLoop via SessionEngine', () => {
       [{ type: 'stop', reason: 'done' }],
       textThenStop('should not run'),
     ])
-    const engine = createSessionEngine(engineOpts({ provider, store, session }))
+    const engine = await createSessionEngine(engineOpts({ provider, store, session }))
     const { result, events } = await collect(engine.submitMessage('hi'))
     expect(result).toEqual({ reason: 'completed' })
     expect(provider.streamCount).toBe(4)
@@ -2227,7 +2227,7 @@ describe('queryLoop via SessionEngine', () => {
       [{ type: 'stop', reason: 'end' }],
       textThenStop('should not run'),
     ])
-    const engine = createSessionEngine(engineOpts({ provider, store, session }))
+    const engine = await createSessionEngine(engineOpts({ provider, store, session }))
     const { result, events } = await collect(engine.submitMessage('hi'))
     expect(result).toEqual({ reason: 'completed' })
     expect(provider.streamCount).toBe(2)
@@ -2251,7 +2251,7 @@ describe('queryLoop via SessionEngine', () => {
       [{ type: 'stop', reason: 'end' }],
       textThenStop('should not run'),
     ])
-    const engine = createSessionEngine(engineOpts({ provider, store, session }))
+    const engine = await createSessionEngine(engineOpts({ provider, store, session }))
     const { result } = await collect(engine.submitMessage('hi'))
     expect(result).toEqual({ reason: 'completed' })
     expect(provider.streamCount).toBe(2)
@@ -2270,7 +2270,7 @@ describe('queryLoop via SessionEngine', () => {
       [{ type: 'stop', reason: 'other' }],
       textThenStop('should not run'),
     ])
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({
         provider,
         store,
@@ -2296,7 +2296,7 @@ describe('queryLoop via SessionEngine', () => {
       [{ type: 'stop', reason: 'end' }],
       textThenStop('hello'),
     ])
-    const engine = createSessionEngine(engineOpts({ provider, store, session, tools: [echo] }))
+    const engine = await createSessionEngine(engineOpts({ provider, store, session, tools: [echo] }))
     const { result, events } = await collect(engine.submitMessage('echo'))
     expect(result).toEqual({ reason: 'completed' })
     expect(provider.streamCount).toBe(3)
@@ -2331,7 +2331,7 @@ describe('queryLoop via SessionEngine', () => {
       [{ type: 'thinking_delta', text: 'plan b' }, { type: 'stop', reason: 'end' }],
       textThenStop('hello'),
     ])
-    const engine = createSessionEngine(engineOpts({ provider, store, session }))
+    const engine = await createSessionEngine(engineOpts({ provider, store, session }))
     const { result, events } = await collect(engine.submitMessage('hi'))
     expect(result).toEqual({ reason: 'completed' })
     expect(provider.streamCount).toBe(3)
@@ -2364,7 +2364,7 @@ describe('queryLoop via SessionEngine', () => {
       [{ type: 'thinking_delta', text: 'plan c' }, { type: 'stop', reason: 'end' }],
       textThenStop('hello'),
     ])
-    const engine = createSessionEngine(engineOpts({ provider, store, session }))
+    const engine = await createSessionEngine(engineOpts({ provider, store, session }))
     const { result, events } = await collect(engine.submitMessage('hi'))
     expect(result).toEqual({ reason: 'completed' })
     expect(provider.streamCount).toBe(4)
@@ -2388,7 +2388,7 @@ describe('queryLoop via SessionEngine', () => {
       ],
       textThenStop('visible'),
     ])
-    const engine = createSessionEngine(engineOpts({ provider, store, session }))
+    const engine = await createSessionEngine(engineOpts({ provider, store, session }))
     const { result, events } = await collect(engine.submitMessage('hi'))
     expect(result).toEqual({ reason: 'completed' })
     expect(provider.streamCount).toBe(2)
@@ -2408,7 +2408,7 @@ describe('queryLoop via SessionEngine', () => {
       textThenStop('skipping verification'),
       textThenStop('ok'),
     ])
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({ provider, store, session, tools: [edit], verifyOnStop: true }),
     )
     const { result, events } = await collect(engine.submitMessage('edit it'))
@@ -2446,7 +2446,7 @@ describe('queryLoop via SessionEngine', () => {
       toolThenStop('b1', 'Bash', { command: 'bun test' }),
       textThenStop('all good'),
     ])
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({ provider, store, session, tools: [edit, bash], verifyOnStop: true }),
     )
     const { result, events } = await collect(engine.submitMessage('edit and test'))
@@ -2466,7 +2466,7 @@ describe('queryLoop via SessionEngine', () => {
       toolThenStop('e1', 'Edit', { path: 'a.ts', old_string: 'a', new_string: 'b' }),
       textThenStop('done'),
     ])
-    const engine = createSessionEngine(engineOpts({ provider, store, session, tools: [edit] }))
+    const engine = await createSessionEngine(engineOpts({ provider, store, session, tools: [edit] }))
     const { result, events } = await collect(engine.submitMessage('edit it'))
     expect(result).toEqual({ reason: 'completed' })
     expect(provider.streamCount).toBe(2)
@@ -2491,7 +2491,7 @@ describe('queryLoop via SessionEngine', () => {
         toolThenStop('r2', 'Read', { path: 'pkg/foo/a.ts' }),
         textThenStop('done'),
       ])
-      const engine = createSessionEngine(engineOpts({ provider, store, session, tools: [read] }))
+      const engine = await createSessionEngine(engineOpts({ provider, store, session, tools: [read] }))
       const { result } = await collect(engine.submitMessage('read it'))
       expect(result).toEqual({ reason: 'completed' })
       const loaded = await store.loadSession(session.id)
@@ -2540,7 +2540,7 @@ describe('queryLoop via SessionEngine', () => {
       textThenStop('done'),
     ])
     const tools = [echo, toolCallTool]
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({
         provider,
         store,
@@ -2570,7 +2570,7 @@ describe('queryLoop via SessionEngine', () => {
       toolThenStop('e1', 'Echo', { text: 'hi' }),
       textThenStop('done'),
     ])
-    const engine = createSessionEngine(
+    const engine = await createSessionEngine(
       engineOpts({
         provider,
         store,
@@ -2626,7 +2626,7 @@ describe('queryLoop via SessionEngine', () => {
       asked.push(event.tool)
       return 'allow'
     }
-    const engine = createSessionEngine(opts)
+    const engine = await createSessionEngine(opts)
     const { result, events } = await collect(engine.submitMessage('call mcp'))
     expect(result).toEqual({ reason: 'completed' })
     expect(pingCount).toBe(1)
@@ -2690,7 +2690,7 @@ describe('queryLoop via SessionEngine', () => {
       textThenStop('done'),
     ])
     try {
-      const engine = createSessionEngine(
+      const engine = await createSessionEngine(
         engineOpts({
           provider,
           store,
@@ -2756,7 +2756,7 @@ describe('queryLoop via SessionEngine', () => {
       textThenStop('done'),
     ])
     try {
-      const engine = createSessionEngine(
+      const engine = await createSessionEngine(
         engineOpts({
           provider,
           store,
@@ -2786,7 +2786,7 @@ describe('queryLoop via SessionEngine', () => {
       toolThenStop('s4', 'Echo', { text: 'loop' }),
       textThenStop('done'),
     ])
-    const engine = createSessionEngine(engineOpts({ provider, store, session, tools: [echo] }))
+    const engine = await createSessionEngine(engineOpts({ provider, store, session, tools: [echo] }))
     const { result } = await collect(engine.submitMessage('loop'))
     expect(result).toEqual({ reason: 'completed' })
     expect(echo.executeCount).toBe(3)

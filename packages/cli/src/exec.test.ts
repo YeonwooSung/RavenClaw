@@ -386,7 +386,7 @@ describe('runExec', () => {
         { type: 'stop', reason: 'end' },
       ],
     ])
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session,
       provider,
       store,
@@ -427,7 +427,7 @@ describe('runExec', () => {
         { type: 'stop', reason: 'end' },
       ],
     ])
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session,
       provider,
       store,
@@ -471,7 +471,7 @@ describe('runExec', () => {
         { type: 'stop', reason: 'end' },
       ],
     ])
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session,
       provider,
       store,

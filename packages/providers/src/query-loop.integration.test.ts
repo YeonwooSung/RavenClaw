@@ -95,7 +95,7 @@ describe('env-gated live providers', () => {
       const store = createMemoryStore()
       const rec = session(modelId)
       await store.createSession(rec)
-      const engine = createSessionEngine({
+      const engine = await createSessionEngine({
         session: rec,
         provider,
         store,

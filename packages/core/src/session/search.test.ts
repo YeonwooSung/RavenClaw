@@ -45,7 +45,7 @@ function insertMessage(
 }
 
 describe('messages FTS5', () => {
-  test('migrates schema 1 to 10 and is replayable', () => {
+  test('migrates schema 1 to 11 and is replayable', () => {
     const db = new Database(':memory:')
     db.exec(INIT_SQL)
     db.query(`INSERT INTO meta (key, value) VALUES ('schema_version', '1')`).run()
@@ -70,7 +70,7 @@ describe('messages FTS5', () => {
     const version = db
       .query("SELECT value FROM meta WHERE key = 'schema_version'")
       .get() as { value: string }
-    expect(version.value).toBe('10')
+    expect(version.value).toBe('11')
     expect(
       db
         .query("SELECT 1 AS ok FROM sqlite_master WHERE name = 'messages_fts'")
@@ -88,7 +88,7 @@ describe('messages FTS5', () => {
     const again = db
       .query("SELECT value FROM meta WHERE key = 'schema_version'")
       .get() as { value: string }
-    expect(again.value).toBe('10')
+    expect(again.value).toBe('11')
     expect(searchMessages(db, 'uniquezebra').map((h) => h.messageId)).toEqual(['u1'])
     db.close()
   })

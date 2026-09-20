@@ -299,6 +299,7 @@ export function createServeAskHost(): ServeAskHost {
 
 export type ServeRequestContext = {
   secret: string
+  store: SessionStore
   turnFlights: Map<string, Promise<unknown>>
   hub: SessionEventHub
   runtimeForTurn: (sessionKey: string | undefined, webhook: boolean) => Promise<ServeRuntime>
@@ -556,11 +557,10 @@ async function abortCachedDescendants(
   }
 }
 
-async function collectSnapshotPendingAsks(
-  runtime: ServeRuntime,
+async function collectSnapshotPendingAsksFromStore(
+  store: SessionStore | undefined,
   sessionId: string,
 ): Promise<Array<{ callId: string; tool: string; message: string; childSessionId?: string }>> {
-  const store = runtime.store
   if (!store?.listPendingAsks) return []
   const rows = (await listOwnedPendingAsks(store, sessionId)) as Array<{
     callId: string
@@ -577,6 +577,13 @@ async function collectSnapshotPendingAsks(
     if (row.sessionId !== sessionId) ask.childSessionId = row.sessionId
     return ask
   })
+}
+
+async function collectSnapshotPendingAsks(
+  runtime: ServeRuntime,
+  sessionId: string,
+): Promise<Array<{ callId: string; tool: string; message: string; childSessionId?: string }>> {
+  return collectSnapshotPendingAsksFromStore(runtime.store, sessionId)
 }
 
 export async function handleServeRequest(req: Request, ctx: ServeRequestContext): Promise<Response> {
@@ -954,12 +961,25 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
     const parsedVersion = parseVersionParam(url.searchParams.get('version'))
     if (!parsedVersion.ok) return Response.json({ error: parsedVersion.error }, { status: 400 })
     const sessionId = sessionIdRoute[1] ?? ''
-    const loaded = await loadSessionRuntime(ctx, sessionId)
-    if (!loaded.ok) return loaded.res
-    const { engine, store } = loaded.runtime
-    const pendingAsks = await collectSnapshotPendingAsks(loaded.runtime, sessionId)
-    const lastSeq = store?.lastStreamSeq ? await store.lastStreamSeq(sessionId) : 0
-    const session = engine.session
+    let session: SessionRecord
+    try {
+      session = (await ctx.store.loadSession(sessionId)).session
+    } catch (error) {
+      if (error instanceof PersistError && error.code === 'unknown') {
+        return Response.json({ error: 'not found' }, { status: 404 })
+      }
+      return sessionOpenErrorResponse(error)
+    }
+    const pendingAsks = await collectSnapshotPendingAsksFromStore(ctx.store, sessionId)
+    const lastSeq = ctx.store.lastStreamSeq ? await ctx.store.lastStreamSeq(sessionId) : 0
+    let live = false
+    if (ctx.liveRuntimes) {
+      for (const [id, runtime] of ctx.liveRuntimes()) {
+        if (id !== sessionId) continue
+        live = (runtime.engine.liveTurnId?.() ?? null) !== null
+        break
+      }
+    }
     const body: {
       id: string
       jobAutoCommit: boolean
@@ -980,7 +1000,7 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
       pendingAsks,
       lastSeq,
       permissionMode: session.permissionMode,
-      live: (engine.liveTurnId?.() ?? null) !== null,
+      live,
       queued: session.followup ?? null,
       version: STREAM_PROTOCOL_VERSION,
       continuationToken: encodeContinuationToken({ sessionId, lastSeq }),
@@ -1048,6 +1068,7 @@ export async function runServe(opts: { flags: ConfigFlags }): Promise<number> {
 
   const serveCtx: ServeRequestContext = {
     secret,
+    store: shared.store,
     turnFlights,
     hub,
     runtimeForTurn,

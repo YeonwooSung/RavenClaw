@@ -362,6 +362,38 @@ export function createMemoryStore(): SessionStore {
       })
     },
 
+    async recordCompactAndUpsertSession(opts) {
+      await withWrite(async () => {
+        const sessionId = opts.session.id
+        const prevSession = sessions.get(sessionId)
+        const prevMessages = bucket(sessionId).map((row) => ({
+          message: row.message,
+          active: row.active,
+        }))
+        try {
+          if (opts.inactivatedIds.length > 0) {
+            const sess = sessions.get(sessionId)
+            if (sess) {
+              sess.compactGeneration = opts.generation
+              sess.updatedAt = Date.now()
+            }
+            const ids = new Set(opts.inactivatedIds)
+            for (const row of bucket(sessionId)) {
+              if (ids.has(row.message.id)) row.active = false
+            }
+          }
+          sessions.set(sessionId, { ...opts.session })
+        } catch (error) {
+          if (prevSession) sessions.set(sessionId, prevSession)
+          else sessions.delete(sessionId)
+          const rows = bucket(sessionId)
+          rows.length = 0
+          rows.push(...prevMessages)
+          throw error
+        }
+      })
+    },
+
     async clearConversation(opts) {
       await withWrite(async () => {
         const sessionId = opts.session.id

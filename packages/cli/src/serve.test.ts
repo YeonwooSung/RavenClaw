@@ -9,6 +9,7 @@ import {
   SessionLockError,
   type PendingAsk,
   type SessionJob,
+  type SessionRecord,
   type StreamEvent,
   type UserSubmitInput,
 } from '@ravenclaw/core'
@@ -212,7 +213,22 @@ describe('startMailboxPoller', () => {
   })
 })
 
-function makeServeCtx(secret = ''): ServeRequestContext & {
+function snapshotSession(over: Partial<SessionRecord> = {}): SessionRecord {
+  return {
+    id: 's1',
+    createdAt: 1,
+    updatedAt: 1,
+    cwd: '/tmp',
+    model: 'dummy',
+    permissionMode: 'default',
+    compactGeneration: 0,
+    usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+    funding: 'byok',
+    ...over,
+  }
+}
+
+async function makeServeCtx(secret = ''): Promise<ServeRequestContext & {
   store: ReturnType<typeof createMemoryStore>
   abortCalls: number
   abortKinds: Array<'cancel' | 'interrupt' | undefined>
@@ -228,8 +244,9 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
   clearResult: { ok: true; notice: string } | { ok: false; notice: string }
   clearHold?: Promise<void>
   clearWipe: boolean
-} {
+}> {
   const store = createMemoryStore()
+  await store.createSession(snapshotSession())
   const submitEvents: StreamEvent[] = []
   const replayEvents: StreamEvent[] = []
   const submitted: UserSubmitInput[] = []
@@ -353,6 +370,7 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
     hub,
     runtimeForTurn: async () => runtime,
     runtimeForSession: async (sessionId) => (sessionId === engine.session.id ? runtime : undefined),
+    liveRuntimes: () => [['s1', runtime] as [string, { engine: typeof engine }]],
     get abortCalls() {
       return state.abortCalls
     },
@@ -437,7 +455,7 @@ async function readFirstJsonLine(res: Response): Promise<unknown> {
 
 describe('handleServeRequest', () => {
   test('POST /v1/session/:id/resolve without Bearer is 401', async () => {
-    const ctx = makeServeCtx()
+    const ctx = await makeServeCtx()
     const res = await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/s1/resolve', {
         method: 'POST',
@@ -449,7 +467,7 @@ describe('handleServeRequest', () => {
   })
 
   test('POST /v1/turn without Bearer is 401', async () => {
-    const ctx = makeServeCtx()
+    const ctx = await makeServeCtx()
     const res = await handleServeRequest(
       new Request('http://127.0.0.1/v1/turn', { method: 'POST', body: JSON.stringify({ text: 'hi' }) }),
       ctx,
@@ -458,7 +476,7 @@ describe('handleServeRequest', () => {
   })
 
   test('resolve allow deletes the pending row', async () => {
-    const ctx = makeServeCtx()
+    const ctx = await makeServeCtx()
     const ctxWithSecret = { ...ctx, secret: gatewaySecret({ GATEWAY_SECRET: 'secret' }) }
     await ctx.store.upsertPendingAsk({
       callId: 'c1',
@@ -482,7 +500,7 @@ describe('handleServeRequest', () => {
   })
 
   test('resolve unmatched pending ask is 404', async () => {
-    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
     const res = await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/s1/resolve', {
         method: 'POST',
@@ -496,13 +514,13 @@ describe('handleServeRequest', () => {
   })
 
   test('GET /v1/session/:id/stream without Bearer is 401', async () => {
-    const ctx = makeServeCtx()
+    const ctx = await makeServeCtx()
     const res = await handleServeRequest(new Request('http://127.0.0.1/v1/session/s1/stream'), ctx)
     expect(res.status).toBe(401)
   })
 
   test('GET /v1/session/:id/stream tails live submitMessage events as NDJSON', async () => {
-    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
     ctx.submitEvents.push({ type: 'text_delta', text: 'hi' })
     const streamRes = await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/s1/stream', {
@@ -525,18 +543,7 @@ describe('handleServeRequest', () => {
   })
 
   test('GET /v1/session/:id/stream emits parked permission_ask rows on subscribe', async () => {
-    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
-    await ctx.store.createSession({
-      id: 's1',
-      createdAt: 1,
-      updatedAt: 1,
-      cwd: '/tmp',
-      model: 'dummy',
-      permissionMode: 'default',
-      compactGeneration: 0,
-      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      funding: 'byok',
-    })
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
     await ctx.store.upsertPendingAsk({
       callId: 'parked_1',
       sessionId: 's1',
@@ -565,7 +572,7 @@ describe('handleServeRequest', () => {
   })
 
   test('GET /v1/session/:id/stream tails replayPendingAsks events as NDJSON', async () => {
-    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
     ctx.replayEvents.push({
       type: 'permission_ask',
       id: 'c1',
@@ -597,7 +604,7 @@ describe('handleServeRequest', () => {
   })
 
   test('POST /v1/session/:id/cancel and compact require Bearer and call the engine', async () => {
-    const unauthorized = makeServeCtx()
+    const unauthorized = await makeServeCtx()
     const cancel401 = await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/s1/cancel', { method: 'POST' }),
       unauthorized,
@@ -609,7 +616,7 @@ describe('handleServeRequest', () => {
     expect(cancel401.status).toBe(401)
     expect(compact401.status).toBe(401)
 
-    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
     const cancel = await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/s1/cancel', {
         method: 'POST',
@@ -631,7 +638,7 @@ describe('handleServeRequest', () => {
   })
 
   test('POST /v1/session/:id/clear without Bearer is 401', async () => {
-    const ctx = makeServeCtx()
+    const ctx = await makeServeCtx()
     const res = await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/s1/clear', { method: 'POST' }),
       ctx,
@@ -643,19 +650,13 @@ describe('handleServeRequest', () => {
 
   test('POST /v1/session/:id/clear wipes transcript, keeps id, 200 session cleared', async () => {
     const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
-    const ctx = makeServeCtx(secret)
+    const ctx = await makeServeCtx(secret)
     const createCalls: string[] = []
-    await ctx.store.createSession({
-      id: 's1',
-      createdAt: 1,
-      updatedAt: 1,
-      cwd: '/tmp',
-      model: 'dummy',
-      permissionMode: 'default',
-      compactGeneration: 0,
-      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
-      funding: 'byok',
+    const existing = (await ctx.store.loadSession('s1')).session
+    await ctx.store.upsertSession({
+      ...existing,
       title: 'old',
+      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
     })
     await ctx.store.appendStreamEvent('s1', { type: 'text_delta', text: 'keep?' })
     await ctx.store.upsertPendingAsk({
@@ -694,7 +695,7 @@ describe('handleServeRequest', () => {
   })
 
   test('POST /v1/session/:id/clear persist fail is 200 ok false', async () => {
-    const ctx = makeServeCtx('t')
+    const ctx = await makeServeCtx('t')
     ctx.clearResult = { ok: false, notice: 'clear persist failed' }
     ctx.clearWipe = false
     const res = await handleServeRequest(
@@ -710,7 +711,7 @@ describe('handleServeRequest', () => {
   })
 
   test('POST /v1/session/:id/clear child leftover is 200 pending permission ask', async () => {
-    const ctx = makeServeCtx('t')
+    const ctx = await makeServeCtx('t')
     ctx.clearResult = { ok: false, notice: 'pending permission ask' }
     ctx.clearWipe = false
     const childAborts: Array<'cancel' | 'interrupt' | undefined> = []
@@ -742,7 +743,7 @@ describe('handleServeRequest', () => {
   })
 
   test('POST /v1/session/:id/clear invalid JSON is 400; empty and extra keys are ok', async () => {
-    const ctx = makeServeCtx('t')
+    const ctx = await makeServeCtx('t')
     const bad = await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/s1/clear', {
         method: 'POST',
@@ -781,7 +782,7 @@ describe('handleServeRequest', () => {
   test('POST /v1/session/:id/clear missing session is 404 and does not mint', async () => {
     const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
     const createCalls: string[] = []
-    const ctx = makeServeCtx(secret)
+    const ctx = await makeServeCtx(secret)
     const res = await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/missing/clear', {
         method: 'POST',
@@ -803,7 +804,7 @@ describe('handleServeRequest', () => {
   })
 
   test('POST /v1/session/:id/clear awaits clearKeepId and is not 202', async () => {
-    const ctx = makeServeCtx('t')
+    const ctx = await makeServeCtx('t')
     let release!: () => void
     const held = new Promise<void>((resolve) => {
       release = resolve
@@ -833,7 +834,7 @@ describe('handleServeRequest', () => {
   })
 
   test('GET /v1/session/:id/clear is 404', async () => {
-    const ctx = makeServeCtx('t')
+    const ctx = await makeServeCtx('t')
     const res = await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/s1/clear', {
         headers: { authorization: 'Bearer t' },
@@ -846,7 +847,7 @@ describe('handleServeRequest', () => {
   })
 
   test('POST cancel with stale turnId is a no-op', async () => {
-    const ctx = makeServeCtx('t')
+    const ctx = await makeServeCtx('t')
     const res = await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/s1/cancel', {
         method: 'POST',
@@ -861,7 +862,7 @@ describe('handleServeRequest', () => {
   })
 
   test('POST cancel on a live parent returns 202 without awaiting tree-stop', async () => {
-    const ctx = makeServeCtx('t')
+    const ctx = await makeServeCtx('t')
     const res = await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/s1/cancel', {
         method: 'POST',
@@ -876,7 +877,7 @@ describe('handleServeRequest', () => {
   })
 
   test('POST cancel idle parent with descendant leftover-ask returns ok and walks', async () => {
-    const ctx = makeServeCtx('t')
+    const ctx = await makeServeCtx('t')
     ctx.setLiveTurnId(null)
     ctx.descendantWork = true
     await ctx.store.createSession({
@@ -914,7 +915,7 @@ describe('handleServeRequest', () => {
   })
 
   test('POST cancel idle parent with this-session leftover-ask returns 200 after join', async () => {
-    const ctx = makeServeCtx('t')
+    const ctx = await makeServeCtx('t')
     ctx.setLiveTurnId(null)
     await ctx.store.upsertPendingAsk({
       callId: 'parked_s1',
@@ -938,7 +939,7 @@ describe('handleServeRequest', () => {
   })
 
   test('POST cancel idle parent with no descendant work is no_active_turn', async () => {
-    const ctx = makeServeCtx('t')
+    const ctx = await makeServeCtx('t')
     ctx.setLiveTurnId(null)
     const res = await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/s1/cancel', {
@@ -953,7 +954,7 @@ describe('handleServeRequest', () => {
   })
 
   test('POST cancel idle parent with stale turnId still tree-stops descendants', async () => {
-    const ctx = makeServeCtx('t')
+    const ctx = await makeServeCtx('t')
     ctx.setLiveTurnId(null)
     ctx.descendantWork = true
     await ctx.store.createSession({
@@ -991,7 +992,7 @@ describe('handleServeRequest', () => {
   })
 
   test('POST cancel on a live parent aborts a cached child runtime', async () => {
-    const ctx = makeServeCtx('t')
+    const ctx = await makeServeCtx('t')
     await ctx.store.createSession({
       id: 'child_cached',
       createdAt: 1,
@@ -1040,7 +1041,7 @@ describe('handleServeRequest', () => {
       })
 
     const missing = await handleServeRequest(req('s1'), {
-      ...makeServeCtx(secret),
+      ...(await makeServeCtx(secret)),
       runtimeForSession: async () => {
         throw new PersistError('unknown', 'session not found: s1')
       },
@@ -1049,7 +1050,7 @@ describe('handleServeRequest', () => {
     expect(await missing.json()).toEqual({ error: 'not found' })
 
     const locked = await handleServeRequest(req('s1'), {
-      ...makeServeCtx(secret),
+      ...(await makeServeCtx(secret)),
       runtimeForSession: async () => {
         throw new SessionLockError('session locked by serve until 2099-01-01T00:00:00.000Z', {
           holderName: 'serve',
@@ -1063,7 +1064,7 @@ describe('handleServeRequest', () => {
     })
 
     const failed = await handleServeRequest(req('s1'), {
-      ...makeServeCtx(secret),
+      ...(await makeServeCtx(secret)),
       runtimeForSession: async () => {
         throw new IncludedResumeError()
       },
@@ -1073,7 +1074,7 @@ describe('handleServeRequest', () => {
   })
 
   test('POST /v1/session/:id/submit without Bearer is 401', async () => {
-    const ctx = makeServeCtx()
+    const ctx = await makeServeCtx()
     const res = await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/s1/submit', {
         method: 'POST',
@@ -1086,7 +1087,7 @@ describe('handleServeRequest', () => {
   })
 
   test('POST /v1/session/:id/submit rejects empty text', async () => {
-    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
     const res = await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/s1/submit', {
         method: 'POST',
@@ -1101,7 +1102,7 @@ describe('handleServeRequest', () => {
   })
 
   test('POST /v1/session/:id/submit missing session is 404', async () => {
-    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
     const res = await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/missing/submit', {
         method: 'POST',
@@ -1115,7 +1116,7 @@ describe('handleServeRequest', () => {
   })
 
   test('POST /v1/session/:id/submit creates a missing session when createSession is set', async () => {
-    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
     const created: string[] = []
     const res = await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/new1/submit', {
@@ -1140,7 +1141,7 @@ describe('handleServeRequest', () => {
   })
 
   test('POST /v1/session/:id/submit accepts and submits with turnPolicy queue', async () => {
-    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
     const res = await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/s1/submit', {
         method: 'POST',
@@ -1155,7 +1156,7 @@ describe('handleServeRequest', () => {
   })
 
   test('POST /v1/session/:id/submit mints leftover-ask onto the live stream', async () => {
-    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
     let release!: () => void
     ctx.submitHold = new Promise<void>((resolve) => {
       release = resolve
@@ -1200,18 +1201,7 @@ describe('handleServeRequest', () => {
 
   test('second stream with after= concatenates without gaps or dupes', async () => {
     const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
-    const ctx = makeServeCtx(secret)
-    await ctx.store.createSession({
-      id: 's1',
-      createdAt: 1,
-      updatedAt: 1,
-      cwd: '/tmp',
-      model: 'dummy',
-      permissionMode: 'default',
-      compactGeneration: 0,
-      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      funding: 'byok',
-    })
+    const ctx = await makeServeCtx(secret)
     const auth = { authorization: 'Bearer secret' }
     const firstRes = await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/s1/stream', { headers: auth }),
@@ -1263,18 +1253,7 @@ describe('handleServeRequest', () => {
 
   test('stream after omitted is live tail only; after=0 replays', async () => {
     const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
-    const ctx = makeServeCtx(secret)
-    await ctx.store.createSession({
-      id: 's1',
-      createdAt: 1,
-      updatedAt: 1,
-      cwd: '/tmp',
-      model: 'dummy',
-      permissionMode: 'default',
-      compactGeneration: 0,
-      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      funding: 'byok',
-    })
+    const ctx = await makeServeCtx(secret)
     const auth = { authorization: 'Bearer secret' }
     await ctx.hub.publish('s1', { type: 'text_delta', text: 'old' })
     const liveRes = await handleServeRequest(
@@ -1301,18 +1280,7 @@ describe('handleServeRequest', () => {
 
   test('stream after= does not drop events published during replay', async () => {
     const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
-    const ctx = makeServeCtx(secret)
-    await ctx.store.createSession({
-      id: 's1',
-      createdAt: 1,
-      updatedAt: 1,
-      cwd: '/tmp',
-      model: 'dummy',
-      permissionMode: 'default',
-      compactGeneration: 0,
-      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      funding: 'byok',
-    })
+    const ctx = await makeServeCtx(secret)
     const auth = { authorization: 'Bearer secret' }
     let releaseReplay!: () => void
     const holdReplay = new Promise<void>((resolve) => {
@@ -1347,7 +1315,7 @@ describe('handleServeRequest', () => {
 
   test('stream after must be a non-negative integer', async () => {
     const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
-    const ctx = makeServeCtx(secret)
+    const ctx = await makeServeCtx(secret)
     const auth = { authorization: 'Bearer secret' }
     for (const after of ['-1', 'foo', '1.5', '']) {
       const res = await handleServeRequest(
@@ -1360,7 +1328,7 @@ describe('handleServeRequest', () => {
 
   test('POST /v1/turn ignores ?after=', async () => {
     const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
-    const ctx = makeServeCtx(secret)
+    const ctx = await makeServeCtx(secret)
     ctx.submitEvents.push({ type: 'text_delta', text: 'hi' })
     const res = await handleServeRequest(
       new Request('http://127.0.0.1/v1/turn?after=0', {
@@ -1379,7 +1347,7 @@ describe('handleServeRequest', () => {
 
   test('GET snapshot includes version 1; ?version=2 is 400 before 404', async () => {
     const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
-    const ctx = makeServeCtx(secret)
+    const ctx = await makeServeCtx(secret)
     const auth = { authorization: 'Bearer secret' }
     const ok = await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/s1', { headers: auth }),
@@ -1404,7 +1372,7 @@ describe('handleServeRequest', () => {
 
   test('stream ?version= matrix is 400 before 404; frames stamp version 1', async () => {
     const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
-    const ctx = makeServeCtx(secret)
+    const ctx = await makeServeCtx(secret)
     const auth = { authorization: 'Bearer secret' }
     for (const raw of ['', 'foo', '1.5', '-1']) {
       const res = await handleServeRequest(
@@ -1442,7 +1410,7 @@ describe('handleServeRequest', () => {
 
   test('POST /v1/turn ignores ?version=', async () => {
     const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
-    const ctx = makeServeCtx(secret)
+    const ctx = await makeServeCtx(secret)
     const res = await handleServeRequest(
       new Request('http://127.0.0.1/v1/turn?after=0&version=2', {
         method: 'POST',
@@ -1459,7 +1427,7 @@ describe('handleServeRequest', () => {
 
   test('GET snapshot always includes a tip continuationToken', async () => {
     const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
-    const ctx = makeServeCtx(secret)
+    const ctx = await makeServeCtx(secret)
     const auth = { authorization: 'Bearer secret' }
     const empty = await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/s1', { headers: auth }),
@@ -1497,19 +1465,8 @@ describe('handleServeRequest', () => {
 
   test('stream continuationToken concatenates like after=', async () => {
     const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
-    const ctx = makeServeCtx(secret)
+    const ctx = await makeServeCtx(secret)
     const auth = { authorization: 'Bearer secret' }
-    await ctx.store.createSession({
-      id: 's1',
-      createdAt: 1,
-      updatedAt: 1,
-      cwd: '/tmp',
-      model: 'dummy',
-      permissionMode: 'default',
-      compactGeneration: 0,
-      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      funding: 'byok',
-    })
     for (const text of ['a', 'b', 'c']) {
       await ctx.hub.publish('s1', { type: 'text_delta', text })
     }
@@ -1561,7 +1518,7 @@ describe('handleServeRequest', () => {
 
   test('stream continuationToken 400 matrix and resume conflict', async () => {
     const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
-    const ctx = makeServeCtx(secret)
+    const ctx = await makeServeCtx(secret)
     const auth = { authorization: 'Bearer secret' }
     const other = encodeContinuationToken({ sessionId: 'other', lastSeq: 1 })
     const v2 = Buffer.from(JSON.stringify({ v: 2, s: 's1', q: 1 }), 'utf8').toString('base64url')
@@ -1626,19 +1583,8 @@ describe('handleServeRequest', () => {
 
   test('token reconnect does not allocate a new seq until publish', async () => {
     const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
-    const ctx = makeServeCtx(secret)
+    const ctx = await makeServeCtx(secret)
     const auth = { authorization: 'Bearer secret' }
-    await ctx.store.createSession({
-      id: 's1',
-      createdAt: 1,
-      updatedAt: 1,
-      cwd: '/tmp',
-      model: 'dummy',
-      permissionMode: 'default',
-      compactGeneration: 0,
-      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      funding: 'byok',
-    })
     await ctx.hub.publish('s1', { type: 'text_delta', text: 'a' })
     await ctx.hub.publish('s1', { type: 'text_delta', text: 'b' })
     const before = await ctx.store.lastStreamSeq('s1')
@@ -1663,19 +1609,8 @@ describe('handleServeRequest', () => {
 
   test('token reconnect reuses permission_ask seq', async () => {
     const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
-    const ctx = makeServeCtx(secret)
+    const ctx = await makeServeCtx(secret)
     const auth = { authorization: 'Bearer secret' }
-    await ctx.store.createSession({
-      id: 's1',
-      createdAt: 1,
-      updatedAt: 1,
-      cwd: '/tmp',
-      model: 'dummy',
-      permissionMode: 'default',
-      compactGeneration: 0,
-      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-      funding: 'byok',
-    })
     await ctx.store.upsertPendingAsk({
       callId: 'parked_1',
       sessionId: 's1',
@@ -1720,7 +1655,7 @@ describe('handleServeRequest', () => {
 
   test('POST /v1/turn ignores continuationToken query and body', async () => {
     const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
-    const ctx = makeServeCtx(secret)
+    const ctx = await makeServeCtx(secret)
     const res = await handleServeRequest(
       new Request('http://127.0.0.1/v1/turn?continuationToken=garbage&version=2', {
         method: 'POST',
@@ -1735,7 +1670,7 @@ describe('handleServeRequest', () => {
   })
 
   test('POST resolve settles a live leftover-ask without applyAskAnswer', async () => {
-    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
     const host = createServeAskHost()
     const pending = host.askUser(
       { type: 'permission_ask', id: 'c1', tool: 'Write', input: {}, message: 'Write?' },
@@ -1756,7 +1691,7 @@ describe('handleServeRequest', () => {
   })
 
   test('GET /v1/session/:id returns job and parked callIds', async () => {
-    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
     const runtime = await ctx.runtimeForSession('s1')
     if (!runtime) throw new Error('expected runtime')
     runtime.engine.session = {
@@ -1769,6 +1704,16 @@ describe('handleServeRequest', () => {
         worktreePath: '/tmp/wt',
       },
     }
+    await ctx.store.upsertSession(
+      snapshotSession({
+        job: {
+          baseBranch: 'main',
+          shadowBranch: 'raven/s1',
+          baseCommitSha: 'abc',
+          worktreePath: '/tmp/wt',
+        },
+      }),
+    )
     await ctx.store.upsertPendingAsk({
       callId: 'parked_snap',
       sessionId: 's1',
@@ -1811,7 +1756,7 @@ describe('handleServeRequest', () => {
   })
 
   test('GET snapshot pending list includes a grandchild leftover-ask', async () => {
-    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
     const parent = await ctx.runtimeForSession('s1')
     if (!parent) throw new Error('expected runtime')
     await ctx.store.createSession({
@@ -1863,7 +1808,7 @@ describe('handleServeRequest', () => {
   })
 
   test('GET /v1/session/:id includes title, jobAutoCommit, lastEnd, jobError, queued', async () => {
-    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
     const runtime = await ctx.runtimeForSession('s1')
     if (!runtime) throw new Error('expected runtime')
     runtime.engine.session = {
@@ -1881,6 +1826,21 @@ describe('handleServeRequest', () => {
         worktreePath: '/tmp/wt',
       },
     }
+    await ctx.store.upsertSession(
+      snapshotSession({
+        title: 'fix login',
+        jobAutoCommit: true,
+        lastEnd: { reason: 'cancelled' },
+        jobError: 'gh missing',
+        followup: 'run tests',
+        job: {
+          baseBranch: 'main',
+          shadowBranch: 'raven/s1',
+          baseCommitSha: 'abc',
+          worktreePath: '/tmp/wt',
+        },
+      }),
+    )
     const res = await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/s1', {
         headers: { authorization: 'Bearer secret' },
@@ -1898,7 +1858,7 @@ describe('handleServeRequest', () => {
   })
 
   test('GET /v1/session/:id queued is null when followup is unset', async () => {
-    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
     const res = await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/s1', {
         headers: { authorization: 'Bearer secret' },
@@ -1912,7 +1872,7 @@ describe('handleServeRequest', () => {
 
   test('POST submit runs follow-up after completed; cancelled clears without submit', async () => {
     const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
-    const ctx = makeServeCtx(secret)
+    const ctx = await makeServeCtx(secret)
     const auth = { authorization: 'Bearer secret', 'content-type': 'application/json' }
 
     const setRes = await handleServeRequest(
@@ -1942,7 +1902,7 @@ describe('handleServeRequest', () => {
     const runtime = await ctx.runtimeForSession('s1')
     expect(runtime?.engine.session.followup).toBeUndefined()
 
-    const ctx2 = makeServeCtx(secret)
+    const ctx2 = await makeServeCtx(secret)
     ctx2.submitEnd = { reason: 'cancelled' }
     await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/s1/followup', {
@@ -1968,7 +1928,7 @@ describe('handleServeRequest', () => {
 
   test('POST submit does not run follow-up when lastEnd was not persisted', async () => {
     const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
-    const ctx = makeServeCtx(secret)
+    const ctx = await makeServeCtx(secret)
     ctx.writeLastEnd = false
     const auth = { authorization: 'Bearer secret', 'content-type': 'application/json' }
     await handleServeRequest(
@@ -1995,7 +1955,7 @@ describe('handleServeRequest', () => {
 
   test('POST submit leaves follow-up when a child leftover-ask is parked', async () => {
     const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
-    const ctx = makeServeCtx(secret)
+    const ctx = await makeServeCtx(secret)
     const auth = { authorization: 'Bearer secret', 'content-type': 'application/json' }
     await ctx.store.upsertSession({
       id: 'child',
@@ -2041,7 +2001,7 @@ describe('handleServeRequest', () => {
   })
 
   test('POST /v1/session/:id/followup overwrites; DELETE clears; empty is 400', async () => {
-    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
     const runtime = await ctx.runtimeForSession('s1')
     if (!runtime) throw new Error('expected runtime')
 
@@ -2087,9 +2047,69 @@ describe('handleServeRequest', () => {
     expect(await del.json()).toEqual({ ok: true, queued: null })
   })
 
+  test('GET /v1/session/:id does not call runtimeForSession', async () => {
+    let attach = 0
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1', {
+        headers: { authorization: 'Bearer secret' },
+      }),
+      {
+        ...ctx,
+        runtimeForSession: async (sessionId) => {
+          attach += 1
+          return ctx.runtimeForSession(sessionId)
+        },
+      },
+    )
+    expect(res.status).toBe(200)
+    expect(attach).toBe(0)
+  })
+
+  test('GET snapshot with pendingResetSha does not reset HEAD', async () => {
+    const cwd = tempGitRepo(false)
+    const base = spawnSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).stdout.trim()
+    writeFileSync(join(cwd, 'later.txt'), 'later\n')
+    spawnSync('git', ['add', 'later.txt'], { cwd, encoding: 'utf8' })
+    spawnSync('git', ['commit', '-m', 'later'], { cwd, encoding: 'utf8' })
+    const later = spawnSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).stdout.trim()
+    expect(later).not.toBe(base)
+
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const job = {
+      baseBranch: 'main',
+      shadowBranch: 'raven/s',
+      baseCommitSha: base,
+      worktreePath: cwd,
+      pendingResetSha: base,
+    }
+    const loaded = await ctx.store.loadSession('s1')
+    loaded.session.job = job
+    await ctx.store.upsertSession(loaded.session)
+
+    let attach = 0
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1', {
+        headers: { authorization: 'Bearer secret' },
+      }),
+      {
+        ...ctx,
+        runtimeForSession: async (sessionId) => {
+          attach += 1
+          return ctx.runtimeForSession(sessionId)
+        },
+      },
+    )
+    expect(res.status).toBe(200)
+    const body = (await res.json()) as { job?: { pendingResetSha?: string } }
+    expect(body.job?.pendingResetSha).toBe(base)
+    expect(attach).toBe(0)
+    expect(spawnSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).stdout.trim()).toBe(later)
+  })
+
   test('GET /v1/session/:id does not create', async () => {
     let createCalls = 0
-    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
     const res = await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/unknown', {
         headers: { authorization: 'Bearer secret' },
@@ -2107,13 +2127,13 @@ describe('handleServeRequest', () => {
   })
 
   test('GET /v1/session/:id without Bearer is 401', async () => {
-    const ctx = makeServeCtx()
+    const ctx = await makeServeCtx()
     const res = await handleServeRequest(new Request('http://127.0.0.1/v1/session/s1'), ctx)
     expect(res.status).toBe(401)
   })
 
   test('POST /v1/session/:id/pr without Bearer is 401', async () => {
-    const ctx = makeServeCtx()
+    const ctx = await makeServeCtx()
     const res = await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/s1/pr', { method: 'POST' }),
       ctx,
@@ -2123,7 +2143,7 @@ describe('handleServeRequest', () => {
 
   test('POST /v1/session/:id/pr without a job record notices and does not submit', async () => {
     const ghCalls: string[][] = []
-    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
     const res = await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/s1/pr', {
         method: 'POST',
@@ -2147,7 +2167,7 @@ describe('handleServeRequest', () => {
   test('POST /v1/session/:id/pr on a dirty worktree notices and does not submit', async () => {
     const cwd = tempGitRepo(true)
     const ghCalls: string[][] = []
-    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
     const runtime = await ctx.runtimeForSession('s1')
     if (!runtime) throw new Error('expected runtime')
     runtime.engine.session = { id: 's1', permissionMode: 'default', job: jobAt(cwd) }
@@ -2173,7 +2193,7 @@ describe('handleServeRequest', () => {
   test('POST /v1/session/:id/pr on a clean shadow records a url', async () => {
     const cwd = tempGitRepo(false)
     const ghCalls: string[][] = []
-    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
     const runtime = await ctx.runtimeForSession('s1')
     if (!runtime) throw new Error('expected runtime')
     runtime.engine.session = { id: 's1', permissionMode: 'default', job: jobAt(cwd) }
@@ -2206,7 +2226,7 @@ describe('handleServeRequest', () => {
   })
 
   test('POST /v1/session/:id/edit rewinds then submits; empty is 400; pending refuses', async () => {
-    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
     const runtime = await ctx.runtimeForSession('s1')
     if (!runtime) throw new Error('expected runtime')
     let rewindCalls = 0
@@ -2259,7 +2279,7 @@ describe('handleServeRequest', () => {
   })
 
   test('GET /v1/session/:id/diff without a job is a notice', async () => {
-    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
     const res = await handleServeRequest(
       new Request('http://127.0.0.1/v1/session/s1/diff', {
         headers: { authorization: 'Bearer secret' },
@@ -2278,7 +2298,7 @@ describe('handleServeRequest', () => {
     gitRun(cwd, ['commit', '-m', 'add new'])
     writeFileSync(join(cwd, 'dirty.txt'), 'x\n')
 
-    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
     const runtime = await ctx.runtimeForSession('s1')
     if (!runtime) throw new Error('expected runtime')
     runtime.engine.session = {
@@ -2324,7 +2344,7 @@ describe('handleServeRequest', () => {
     const later = gitRun(cwd, ['rev-parse', 'HEAD']).stdout.trim()
     expect(later).not.toBe(base)
 
-    const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
     const runtime = await ctx.runtimeForSession('s1')
     if (!runtime) throw new Error('expected runtime')
     runtime.engine.session = {
