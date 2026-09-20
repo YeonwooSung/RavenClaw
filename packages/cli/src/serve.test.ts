@@ -217,6 +217,7 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
   abortCalls: number
   abortKinds: Array<'cancel' | 'interrupt' | undefined>
   compactCalls: number
+  clearCalls: number
   applyCalls: Array<{ callId: string; answer: 'allow' | 'deny' | 'allow_always' }>
   submitted: UserSubmitInput[]
   submitEvents: StreamEvent[]
@@ -224,6 +225,9 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
   submitHold?: Promise<void>
   submitEnd: { reason: string }
   setLiveTurnId: (id: string | null) => void
+  clearResult: { ok: true; notice: string } | { ok: false; notice: string }
+  clearHold?: Promise<void>
+  clearWipe: boolean
 } {
   const store = createMemoryStore()
   const submitEvents: StreamEvent[] = []
@@ -234,6 +238,10 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
     abortCalls: number
     abortKinds: Array<'cancel' | 'interrupt' | undefined>
     compactCalls: number
+    clearCalls: number
+    clearResult: { ok: true; notice: string } | { ok: false; notice: string }
+    clearHold?: Promise<void>
+    clearWipe: boolean
     liveTurnId: string | null
     submitHold?: Promise<void>
     submitEnd: { reason: string }
@@ -243,6 +251,9 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
     abortCalls: 0,
     abortKinds: [],
     compactCalls: 0,
+    clearCalls: 0,
+    clearResult: { ok: true, notice: 'session cleared' },
+    clearWipe: true,
     liveTurnId: 'live-1',
     submitEnd: { reason: 'completed' },
     writeLastEnd: true,
@@ -274,6 +285,35 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
     },
     async compactNow() {
       state.compactCalls += 1
+    },
+    async clearKeepId() {
+      state.clearCalls += 1
+      if (state.clearHold) await state.clearHold
+      if (state.clearWipe && state.clearResult.ok) {
+        const loaded = await store.loadSession(engine.session.id).catch(() => undefined)
+        const inactivatedIds = loaded?.messages.map((msg) => msg.id) ?? []
+        const session = loaded?.session ?? {
+          id: engine.session.id,
+          createdAt: 1,
+          updatedAt: 1,
+          cwd: '/tmp',
+          model: 'dummy',
+          permissionMode: 'default' as const,
+          compactGeneration: 0,
+          usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+          funding: 'byok' as const,
+        }
+        await store.clearConversation({
+          session: {
+            ...session,
+            usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+            todos: [],
+          },
+          inactivatedIds,
+          generation: inactivatedIds.length > 0 ? session.compactGeneration + 1 : session.compactGeneration,
+        })
+      }
+      return state.clearResult
     },
     async setFollowup(text: string) {
       if (text.trim() === '') return { ok: false as const, notice: 'follow-up text required' }
@@ -318,6 +358,18 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
     },
     get compactCalls() {
       return state.compactCalls
+    },
+    get clearCalls() {
+      return state.clearCalls
+    },
+    set clearResult(value: { ok: true; notice: string } | { ok: false; notice: string }) {
+      state.clearResult = value
+    },
+    set clearHold(value: Promise<void> | undefined) {
+      state.clearHold = value
+    },
+    set clearWipe(value: boolean) {
+      state.clearWipe = value
     },
     setLiveTurnId(id: string | null) {
       state.liveTurnId = id
@@ -573,6 +625,221 @@ describe('handleServeRequest', () => {
     expect(compact.status).toBe(200)
     expect(ctx.abortCalls).toBe(1)
     expect(ctx.compactCalls).toBe(1)
+  })
+
+  test('POST /v1/session/:id/clear without Bearer is 401', async () => {
+    const ctx = makeServeCtx()
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/clear', { method: 'POST' }),
+      ctx,
+    )
+    expect(res.status).toBe(401)
+    expect(await res.json()).toEqual({ error: 'unauthorized' })
+    expect(ctx.clearCalls).toBe(0)
+  })
+
+  test('POST /v1/session/:id/clear wipes transcript, keeps id, 200 session cleared', async () => {
+    const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
+    const ctx = makeServeCtx(secret)
+    const createCalls: string[] = []
+    await ctx.store.createSession({
+      id: 's1',
+      createdAt: 1,
+      updatedAt: 1,
+      cwd: '/tmp',
+      model: 'dummy',
+      permissionMode: 'default',
+      compactGeneration: 0,
+      usage: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0 },
+      funding: 'byok',
+      title: 'old',
+    })
+    await ctx.store.appendStreamEvent('s1', { type: 'text_delta', text: 'keep?' })
+    await ctx.store.upsertPendingAsk({
+      callId: 'parked_clear',
+      sessionId: 's1',
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    } satisfies PendingAsk)
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/clear', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+      }),
+      {
+        ...ctx,
+        createSession: async (id) => {
+          createCalls.push(id)
+          return (await ctx.runtimeForSession('s1'))!
+        },
+      },
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true, notice: 'session cleared' })
+    expect(ctx.clearCalls).toBe(1)
+    const runtime = await ctx.runtimeForSession('s1')
+    expect(runtime?.engine.session.id).toBe('s1')
+    expect(await ctx.store.lastStreamSeq('s1')).toBe(0)
+    expect(await ctx.store.listPendingAsks('s1')).toEqual([])
+    expect((await ctx.store.loadSession('s1')).session.id).toBe('s1')
+    expect(createCalls).toEqual([])
+    expect(ctx.abortCalls).toBe(0)
+    expect(ctx.turnFlights.size).toBe(0)
+  })
+
+  test('POST /v1/session/:id/clear persist fail is 200 ok false', async () => {
+    const ctx = makeServeCtx('t')
+    ctx.clearResult = { ok: false, notice: 'clear persist failed' }
+    ctx.clearWipe = false
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/clear', {
+        method: 'POST',
+        headers: { authorization: 'Bearer t' },
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: false, notice: 'clear persist failed' })
+    expect(ctx.clearCalls).toBe(1)
+  })
+
+  test('POST /v1/session/:id/clear child leftover is 200 pending permission ask', async () => {
+    const ctx = makeServeCtx('t')
+    ctx.clearResult = { ok: false, notice: 'pending permission ask' }
+    ctx.clearWipe = false
+    const childAborts: Array<'cancel' | 'interrupt' | undefined> = []
+    ctx.liveRuntimes = () => [
+      [
+        'child_clear',
+        {
+          engine: {
+            abort(kind?: 'cancel' | 'interrupt') {
+              childAborts.push(kind)
+            },
+            liveTurnId: () => 'child-live',
+          },
+        },
+      ],
+    ]
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/clear', {
+        method: 'POST',
+        headers: { authorization: 'Bearer t' },
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: false, notice: 'pending permission ask' })
+    expect(ctx.clearCalls).toBe(1)
+    expect(ctx.abortCalls).toBe(0)
+    expect(childAborts).toEqual([])
+  })
+
+  test('POST /v1/session/:id/clear invalid JSON is 400; empty and extra keys are ok', async () => {
+    const ctx = makeServeCtx('t')
+    const bad = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/clear', {
+        method: 'POST',
+        headers: { authorization: 'Bearer t', 'content-type': 'application/json' },
+        body: '{',
+      }),
+      ctx,
+    )
+    expect(bad.status).toBe(400)
+    expect(await bad.json()).toEqual({ error: 'invalid json' })
+    expect(ctx.clearCalls).toBe(0)
+
+    const empty = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/clear', {
+        method: 'POST',
+        headers: { authorization: 'Bearer t' },
+      }),
+      ctx,
+    )
+    expect(empty.status).toBe(200)
+    expect(await empty.json()).toEqual({ ok: true, notice: 'session cleared' })
+
+    const extra = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/clear', {
+        method: 'POST',
+        headers: { authorization: 'Bearer t', 'content-type': 'application/json' },
+        body: JSON.stringify({ turnId: 'x', text: 'nope' }),
+      }),
+      ctx,
+    )
+    expect(extra.status).toBe(200)
+    expect(await extra.json()).toEqual({ ok: true, notice: 'session cleared' })
+    expect(ctx.clearCalls).toBe(2)
+  })
+
+  test('POST /v1/session/:id/clear missing session is 404 and does not mint', async () => {
+    const secret = gatewaySecret({ GATEWAY_SECRET: 'secret' })
+    const createCalls: string[] = []
+    const ctx = makeServeCtx(secret)
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/missing/clear', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+        body: '{',
+      }),
+      {
+        ...ctx,
+        createSession: async (id) => {
+          createCalls.push(id)
+          throw new Error('must not mint')
+        },
+      },
+    )
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual({ error: 'not found' })
+    expect(createCalls).toEqual([])
+    expect(ctx.clearCalls).toBe(0)
+  })
+
+  test('POST /v1/session/:id/clear awaits clearKeepId and is not 202', async () => {
+    const ctx = makeServeCtx('t')
+    let release!: () => void
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    ctx.clearHold = held
+    const pending = handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/clear', {
+        method: 'POST',
+        headers: { authorization: 'Bearer t' },
+      }),
+      ctx,
+    )
+    let settled = false
+    void pending.then(() => {
+      settled = true
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(settled).toBe(false)
+    expect(ctx.turnFlights.size).toBe(0)
+    release()
+    const res = await pending
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ ok: true, notice: 'session cleared' })
+    expect(settled).toBe(true)
+    expect(ctx.clearCalls).toBe(1)
+  })
+
+  test('GET /v1/session/:id/clear is 404', async () => {
+    const ctx = makeServeCtx('t')
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/clear', {
+        headers: { authorization: 'Bearer t' },
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(404)
+    expect(await res.json()).toEqual({ error: 'not found' })
+    expect(ctx.clearCalls).toBe(0)
   })
 
   test('POST cancel with stale turnId is a no-op', async () => {
@@ -2127,6 +2394,9 @@ function stubRuntime(tag: string): { engine: ServeEngine; tag: string } {
     },
     abort() {},
     async compactNow() {},
+    async clearKeepId() {
+      return { ok: true as const, notice: 'session cleared' }
+    },
     async *submitMessage() {},
     async *replayPendingAsks() {},
   }

@@ -207,6 +207,7 @@ export type ServeEngine = {
   liveTurnId?: () => string | null
   whenTreeStop?: () => Promise<{ descendantWork: boolean }>
   compactNow: () => Promise<void>
+  clearKeepId: () => Promise<{ ok: true; notice: string } | { ok: false; notice: string }>
   setFollowup?: (text: string) => Promise<{ ok: true } | { ok: false; notice: string }>
   clearFollowup?: () => Promise<void>
   getFollowup?: () => string | null
@@ -491,7 +492,8 @@ async function readJsonBody(req: Request): Promise<{ ok: true; body: unknown } |
   }
 }
 
-const SESSION_PATH = /^\/v1\/session\/([^/]+)\/(stream|cancel|compact|resolve|submit|pr|followup|edit|diff)$/
+const SESSION_PATH =
+  /^\/v1\/session\/([^/]+)\/(stream|cancel|compact|resolve|submit|pr|followup|edit|diff|clear)$/
 const SESSION_ID_PATH = /^\/v1\/session\/([^/]+)$/
 
 async function loadSessionRuntime(
@@ -744,6 +746,20 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
           { status: 500 },
         )
       }
+    }
+    if (req.method === 'POST' && action === 'clear') {
+      const loaded = await loadSessionRuntime(ctx, sessionId)
+      if (!loaded.ok) return loaded.res
+      const raw = await req.text()
+      if (raw.trim() !== '') {
+        try {
+          JSON.parse(raw)
+        } catch {
+          return Response.json({ error: 'invalid json' }, { status: 400 })
+        }
+      }
+      const result = await loaded.runtime.engine.clearKeepId()
+      return Response.json({ ok: result.ok, notice: result.notice })
     }
     if (req.method === 'POST' && action === 'resolve') {
       const parsedBody = await readJsonBody(req)
