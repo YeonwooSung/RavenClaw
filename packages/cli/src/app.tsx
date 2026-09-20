@@ -453,7 +453,11 @@ export function App(props: AppProps) {
               const wasLive = runtimeRef.current.engine.liveTurnId() !== null
               runtimeRef.current.engine.abort('cancel')
               const tree = await runtimeRef.current.engine.whenTreeStop()
-              setNotice(wasLive || tree.descendantWork ? 'stopped' : 'nothing to stop')
+              setNotice(
+                wasLive || tree.descendantWork || tree.thisSessionWork
+                  ? 'stopped'
+                  : 'nothing to stop',
+              )
             })()
             return
           case 'clear':
