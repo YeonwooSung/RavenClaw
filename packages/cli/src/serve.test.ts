@@ -1978,10 +1978,10 @@ describe('handleServeRequest', () => {
 
   test('GET /v1/session/:id/diff with a job returns jobDiff', async () => {
     const cwd = tempGitRepo(false)
-    const base = spawnSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).stdout.trim()
+    const base = gitRun(cwd, ['rev-parse', 'HEAD']).stdout.trim()
     writeFileSync(join(cwd, 'new.ts'), 'hello\n')
-    spawnSync('git', ['add', 'new.ts'], { cwd, encoding: 'utf8' })
-    spawnSync('git', ['commit', '-m', 'add new'], { cwd, encoding: 'utf8' })
+    gitRun(cwd, ['add', 'new.ts'])
+    gitRun(cwd, ['commit', '-m', 'add new'])
     writeFileSync(join(cwd, 'dirty.txt'), 'x\n')
 
     const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
@@ -2023,11 +2023,11 @@ describe('handleServeRequest', () => {
 
   test('GET /v1/session/:id/diff finishes a pending rewind reset', async () => {
     const cwd = tempGitRepo(false)
-    const base = spawnSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).stdout.trim()
+    const base = gitRun(cwd, ['rev-parse', 'HEAD']).stdout.trim()
     writeFileSync(join(cwd, 'later.txt'), 'later\n')
-    spawnSync('git', ['add', 'later.txt'], { cwd, encoding: 'utf8' })
-    spawnSync('git', ['commit', '-m', 'later'], { cwd, encoding: 'utf8' })
-    const later = spawnSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).stdout.trim()
+    gitRun(cwd, ['add', 'later.txt'])
+    gitRun(cwd, ['commit', '-m', 'later'])
+    const later = gitRun(cwd, ['rev-parse', 'HEAD']).stdout.trim()
     expect(later).not.toBe(base)
 
     const ctx = makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
@@ -2048,10 +2048,7 @@ describe('handleServeRequest', () => {
       const job = runtime.engine.session.job
       const sha = job?.pendingResetSha
       if (!job || !sha) return { ran: false, ok: true }
-      const reset = spawnSync('git', ['reset', '--hard', sha], {
-        cwd: job.worktreePath,
-        encoding: 'utf8',
-      })
+      const reset = gitRun(job.worktreePath, ['reset', '--hard', sha])
       if (reset.status !== 0) return { ran: true, ok: false }
       delete job.pendingResetSha
       return { ran: true, ok: true }
@@ -2064,9 +2061,7 @@ describe('handleServeRequest', () => {
       ctx,
     )
     expect(res.status).toBe(200)
-    expect(
-      spawnSync('git', ['rev-parse', 'HEAD'], { cwd, encoding: 'utf8' }).stdout.trim(),
-    ).toBe(base)
+    expect(gitRun(cwd, ['rev-parse', 'HEAD']).stdout.trim()).toBe(base)
   })
 })
 
@@ -2079,11 +2074,23 @@ afterEach(() => {
   }
 })
 
+function gitSpawnEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' }
+  delete env.GIT_DIR
+  delete env.GIT_WORK_TREE
+  delete env.GIT_INDEX_FILE
+  return env
+}
+
+function gitRun(cwd: string, args: string[]) {
+  return spawnSync('git', args, { cwd, encoding: 'utf8', env: gitSpawnEnv() })
+}
+
 function tempGitRepo(dirty = false): string {
   const dir = mkdtempSync(join(tmpdir(), 'ravenclaw-serve-pr-'))
   serveTempDirs.push(dir)
   const run = (args: string[]) => {
-    const result = spawnSync('git', args, { cwd: dir, encoding: 'utf8' })
+    const result = gitRun(dir, args)
     expect(result.status).toBe(0)
   }
   run(['init'])
