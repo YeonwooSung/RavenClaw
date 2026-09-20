@@ -125,7 +125,7 @@ function persistableLastEnd(end: RoundEnd): RoundEnd {
   return { reason: end.reason }
 }
 
-export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
+export async function createSessionEngine(opts: SessionEngineOptions): Promise<SessionEngine> {
   const session = { ...opts.session }
   let messages: Message[] = opts.messages ? [...opts.messages] : []
   let liveTurn: Turn | null = null
@@ -604,7 +604,7 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
     }
   }
 
-  return {
+  const engine: SessionEngine = {
     get session() {
       return session
     },
@@ -1137,6 +1137,10 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
       }
     },
   }
+  if (session.job?.pendingResetSha) {
+    await maybeFinishRewindReset({ session, store: opts.store, messages })
+  }
+  return engine
 }
 
 function startDetachedReview(opts: {
@@ -1170,7 +1174,7 @@ function startDetachedReview(opts: {
         bare: true,
       }
       if (opts.system !== undefined) childOpts.system = opts.system
-      child = createSessionEngine(childOpts)
+      child = await createSessionEngine(childOpts)
       if (cancelled) {
         child.abort()
         return

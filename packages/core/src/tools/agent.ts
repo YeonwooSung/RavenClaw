@@ -266,7 +266,7 @@ async function spawnChild(
       if (ctx.turn.terminalBackend !== undefined) {
         engineOpts.terminalBackend = ctx.turn.terminalBackend
       }
-      engine = wrapSessionEngineLog(createSessionEngine(engineOpts), openRavenclawLog(), {
+      engine = wrapSessionEngineLog(await createSessionEngine(engineOpts), openRavenclawLog(), {
         closeLog: false,
       })
       const unregister = ctx.registerChildEngine?.(engine)

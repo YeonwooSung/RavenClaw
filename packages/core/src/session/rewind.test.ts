@@ -598,7 +598,7 @@ describe('rewindToCheckpoint', () => {
       todos: [{ text: 'a', status: 'pending' }],
     })
     await store.createSession(sess)
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session: sess,
       provider: createFakeProvider([
         [
@@ -664,7 +664,7 @@ describe('rewindToCheckpoint', () => {
       todos: [{ text: 'a', status: 'pending' }],
     })
     await store.createSession(sess)
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session: sess,
       provider: createFakeProvider([
         [

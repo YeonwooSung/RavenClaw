@@ -202,7 +202,7 @@ describe('setModel', () => {
       seen.push(req)
       yield* orig(req, signal)
     }
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session: sess,
       provider,
       store,
@@ -264,7 +264,7 @@ describe('compactNow', () => {
       return orig(sessionId, generation, summary, inactivatedIds)
     }
 
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session: sess,
       messages,
       provider,
@@ -309,7 +309,7 @@ describe('compactNow', () => {
       return orig(sessionId, generation, summary, inactivatedIds)
     }
 
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session: sess,
       messages,
       provider,
@@ -360,7 +360,7 @@ describe('compactNow', () => {
       return orig(sessionId, generation, summary, inactivatedIds)
     }
 
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session: sess,
       messages,
       provider,
@@ -404,7 +404,7 @@ describe('compactNow', () => {
         { type: 'stop', reason: 'end' },
       ],
     ])
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({ provider, store, session }),
       messages: history,
       compact: defaultCompact({ protectLastMessages: 2, llmSummarize: false }),
@@ -429,7 +429,7 @@ describe('steering and image submit', () => {
     const store = createMemoryStore()
     const sess = makeSession({ id: 'sess_steer' })
     await store.createSession(sess)
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session: sess,
       provider: createFakeProvider([
         [
@@ -496,7 +496,7 @@ describe('steering and image submit', () => {
     const sess = makeSession({ id: 'sess_queue' })
     await store.createSession(sess)
     const queued = ['first queued', 'second queued']
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session: sess,
       provider: createFakeProvider([
         [
@@ -565,7 +565,7 @@ describe('steering and image submit', () => {
     await store.createSession(sess)
     let drains = 0
     const queued = ['late']
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session: sess,
       provider: createFakeProvider([
         [
@@ -641,7 +641,7 @@ describe('steering and image submit', () => {
     const store = createMemoryStore()
     const sess = makeSession({ id: 'sess_img' })
     await store.createSession(sess)
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session: sess,
       provider: createFakeProvider([[{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: 'end' }]]),
       store,
@@ -675,7 +675,7 @@ describe('steering and image submit', () => {
     const store = createMemoryStore()
     const sess = makeSession({ id: 'sess_policy' })
     await store.createSession(sess)
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session: sess,
       provider: createFakeProvider([[{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: 'end' }]]),
       store,
@@ -723,7 +723,7 @@ describe('agent mailbox drain', () => {
     await store.createSession(sess)
     await enqueueAgentMail(store, sess.id, 'subagent finished (b_abc):\ndone-a')
     await enqueueAgentMail(store, sess.id, 'subagent finished (b_def):\ndone-b')
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session: sess,
       provider: createFakeProvider([
         [{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: 'end' }],
@@ -762,7 +762,7 @@ describe('agent mailbox drain', () => {
     store.persistUser = async () => {
       throw new Error('disk full')
     }
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session: sess,
       provider: createFakeProvider([]),
       store,
@@ -816,7 +816,7 @@ describe('lifecycle Stop / SessionEnd / PreToolUse', () => {
       const store = createMemoryStore()
       const sess = makeSession({ id: 'sess_stop', cwd })
       await store.createSession(sess)
-      const engine = createSessionEngine({
+      const engine = await createSessionEngine({
         session: sess,
         provider: createFakeProvider([
           [{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: 'end' }],
@@ -866,7 +866,7 @@ describe('lifecycle Stop / SessionEnd / PreToolUse', () => {
         [{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: 'end' }],
         [{ type: 'text_delta', text: 'should-not-run' }, { type: 'stop', reason: 'end' }],
       ])
-      const engine = createSessionEngine({
+      const engine = await createSessionEngine({
         session: sess,
         provider,
         store,
@@ -921,7 +921,7 @@ describe('lifecycle Stop / SessionEnd / PreToolUse', () => {
           })
         },
       }
-      const engine = createSessionEngine({
+      const engine = await createSessionEngine({
         session: sess,
         provider,
         store,
@@ -963,7 +963,7 @@ describe('lifecycle Stop / SessionEnd / PreToolUse', () => {
       const store = createMemoryStore()
       const sess = makeSession({ id: 'sess_end', cwd })
       await store.createSession(sess)
-      const engine = createSessionEngine({
+      const engine = await createSessionEngine({
         session: sess,
         provider: createFakeProvider([]),
         store,
@@ -993,7 +993,7 @@ describe('lifecycle Stop / SessionEnd / PreToolUse', () => {
     const sess = makeSession({ id: 'sess_keep_lock' })
     await store.createSession(sess)
     await store.acquireSessionLock(sess.id, { holderId: 'h1', holderName: 'tui' })
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session: sess,
       provider: createFakeProvider([]),
       store,
@@ -1044,7 +1044,7 @@ describe('lifecycle Stop / SessionEnd / PreToolUse', () => {
           return input.text
         },
       }
-      const engine = createSessionEngine({
+      const engine = await createSessionEngine({
         session: sess,
         provider: createFakeProvider([
           [
@@ -1112,7 +1112,7 @@ describe('lifecycle Stop / SessionEnd / PreToolUse', () => {
           return input.path
         },
       }
-      const engine = createSessionEngine({
+      const engine = await createSessionEngine({
         session: sess,
         provider: createFakeProvider([
           [
@@ -1162,7 +1162,7 @@ describe('lifecycle Stop / SessionEnd / PreToolUse', () => {
       const store = createMemoryStore()
       const sess = makeSession({ id: 'sess_start', cwd })
       await store.createSession(sess)
-      const engine = createSessionEngine({
+      const engine = await createSessionEngine({
         session: sess,
         provider: createFakeProvider([
           [{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: 'end' }],
@@ -1219,7 +1219,7 @@ describe('setPermissionMode volatile rewrite', () => {
       skills: [],
     })
     const stableBefore = system[0]?.text
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session: sess,
       provider,
       store,
@@ -1252,7 +1252,7 @@ describe('setPermissionMode volatile rewrite', () => {
   })
 })
 
-async function drain(engine: ReturnType<typeof createSessionEngine>, text: string): Promise<void> {
+async function drain(engine: Awaited<ReturnType<typeof createSessionEngine>>, text: string): Promise<void> {
   const gen = engine.submitMessage(text)
   while (true) {
     const next = await gen.next()
@@ -1299,7 +1299,7 @@ describe('background review and nudges', () => {
         yield { type: 'stop', reason: 'end' }
       },
     }
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session: sess,
       provider,
       store,
@@ -1339,7 +1339,7 @@ describe('background review and nudges', () => {
         yield { type: 'stop', reason: 'end' }
       },
     }
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session: sess,
       provider,
       store,
@@ -1381,7 +1381,7 @@ describe('background review and nudges', () => {
         yield { type: 'stop', reason: 'end' }
       },
     }
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session: sess,
       provider,
       store,
@@ -1436,7 +1436,7 @@ describe('background review and nudges', () => {
         childDone()
       },
     }
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session: sess,
       provider,
       store,
@@ -1475,7 +1475,7 @@ describe('replayPendingAsks', () => {
       input: { command: 'ls' },
       createdAt: 1,
     })
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({
         provider: createFakeProvider([]),
         store,
@@ -1507,7 +1507,7 @@ describe('replayPendingAsks', () => {
       input: { command: 'ls' },
       createdAt: 1,
     })
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({
         provider: createFakeProvider([]),
         store,
@@ -1537,7 +1537,7 @@ describe('replayPendingAsks', () => {
       createdAt: 1,
     })
     const seen: string[] = []
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({
         provider: createFakeProvider([]),
         store,
@@ -1650,7 +1650,7 @@ describe('job auto-commit', () => {
         })
       },
     }
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({ provider, store, session: sess }),
     })
     const gen = engine.submitMessage('hi')
@@ -1665,7 +1665,7 @@ describe('job auto-commit', () => {
 
   test('submitMessage with jobAutoCommit commits a dirty tree on completed', async () => {
     const { store, sess, job, head } = await startJobSession({ jobAutoCommit: true })
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({
         provider: createFakeProvider([[{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: 'end' }]]),
         store,
@@ -1682,7 +1682,7 @@ describe('job auto-commit', () => {
 
   test('submitMessage does not commit when jobAutoCommit is off', async () => {
     const { store, sess, job, head } = await startJobSession({})
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({
         provider: createFakeProvider([[{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: 'end' }]]),
         store,
@@ -1709,7 +1709,7 @@ describe('job auto-commit', () => {
       jobError: 'stale',
     })
     await store.createSession(bad)
-    const failEngine = createSessionEngine({
+    const failEngine = await createSessionEngine({
       ...engineOpts({
         provider: createFakeProvider([
           [{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: 'end' }],
@@ -1728,7 +1728,7 @@ describe('job auto-commit', () => {
     const { store: okStore, sess, job } = await startJobSession({ jobAutoCommit: true })
     sess.jobError = 'prior'
     await okStore.upsertSession(sess)
-    const okEngine = createSessionEngine({
+    const okEngine = await createSessionEngine({
       ...engineOpts({
         provider: createFakeProvider([
           [{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: 'end' }],
@@ -1745,8 +1745,8 @@ describe('job auto-commit', () => {
     expect(loadedOk.session.jobError).toBeUndefined()
   })
 
-  test('submitMessage finishes a pending rewind reset; construct does not', async () => {
-    const cwd = tempDir('ravenclaw-job-finish-submit-')
+  test('createSessionEngine finishes a pending rewind reset; submit is then a no-op on the flag', async () => {
+    const cwd = tempDir('ravenclaw-job-finish-construct-')
     initGitRepo(cwd)
     const id = nextSession()
     const entered = enterSessionWorktree(id, cwd)
@@ -1761,13 +1761,9 @@ describe('job auto-commit', () => {
     expect(later).not.toBe(job.baseCommitSha)
     job.pendingResetSha = job.baseCommitSha
     const store = createMemoryStore()
-    const sess = makeSession({
-      id,
-      cwd: job.worktreePath,
-      job,
-    })
+    const sess = makeSession({ id, cwd: job.worktreePath, job })
     await store.createSession(sess)
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({
         provider: createFakeProvider([
           [{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: 'end' }],
@@ -1776,11 +1772,35 @@ describe('job auto-commit', () => {
         session: sess,
       }),
     })
-    expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).toBe(later)
-    expect(engine.session.job?.pendingResetSha).toBe(job.baseCommitSha)
+    expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).toBe(job.baseCommitSha)
+    expect(engine.session.job?.pendingResetSha).toBeUndefined()
     await drain(engine.submitMessage('hi'))
     expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).toBe(job.baseCommitSha)
     expect(engine.session.job?.pendingResetSha).toBeUndefined()
+  })
+
+  test('createSessionEngine reset-fail does not throw and keeps the flag', async () => {
+    const cwd = tempDir('ravenclaw-job-construct-reset-fail-')
+    initGitRepo(cwd)
+    const id = nextSession()
+    const entered = enterSessionWorktree(id, cwd)
+    expect(entered.ok).toBe(true)
+    const job = entered.job!
+    job.pendingResetSha = 'not-a-real-commit-sha'
+    const store = createMemoryStore()
+    const sess = makeSession({ id, cwd: job.worktreePath, job })
+    await store.createSession(sess)
+    const engine = await createSessionEngine({
+      ...engineOpts({
+        provider: createFakeProvider([
+          [{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: 'end' }],
+        ]),
+        store,
+        session: sess,
+      }),
+    })
+    expect(engine.session.job?.pendingResetSha).toBe('not-a-real-commit-sha')
+    expect(engine.session.jobError?.startsWith('rewind reset failed:')).toBe(true)
   })
 
   test('rewindLast finishes a pending reset and does not drop another turn', async () => {
@@ -1797,7 +1817,6 @@ describe('job auto-commit', () => {
     ).toBe(0)
     const later = git(job.worktreePath, ['rev-parse', 'HEAD'])
     expect(later).not.toBe(job.baseCommitSha)
-    job.pendingResetSha = job.baseCommitSha
     const store = createMemoryStore()
     const sess = makeSession({
       id,
@@ -1807,7 +1826,7 @@ describe('job auto-commit', () => {
     await store.createSession(sess)
     const messages: Message[] = [user('u0', 'first', 1), asst('a0', 'ok', 2)]
     await persistAll(store, id, messages)
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({
         provider: createFakeProvider([
           [{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: 'end' }],
@@ -1818,6 +1837,8 @@ describe('job auto-commit', () => {
       messages,
     })
     expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).toBe(later)
+    engine.session.job = { ...engine.session.job!, pendingResetSha: job.baseCommitSha }
+    await store.upsertSession(engine.session)
     const result = await engine.rewindLast()
     expect(result.ok).toBe(true)
     expect(git(job.worktreePath, ['rev-parse', 'HEAD'])).toBe(job.baseCommitSha)
@@ -1843,7 +1864,7 @@ describe('job auto-commit', () => {
     await store.createSession(sess)
     const messages: Message[] = [user('u1', 'keep this prompt', 1), asst('a1', 'ok', 2)]
     await persistAll(store, id, messages)
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({
         provider: createFakeProvider([
           [{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: 'end' }],
@@ -1901,7 +1922,7 @@ describe('job auto-commit', () => {
         })
       },
     }
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({ provider, store, session: sess }),
     })
     const gen = engine.submitMessage('hi')
@@ -1946,7 +1967,7 @@ describe('applyAskAnswer descendants', () => {
       createdAt: 1,
     })
     const echo = createAskEcho()
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({
         provider: createFakeProvider([]),
         store,
@@ -1979,7 +2000,7 @@ describe('applyAskAnswer descendants', () => {
       input: { text: 'hi' },
       createdAt: 1,
     })
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({
         provider: createFakeProvider([]),
         store,
@@ -2034,7 +2055,7 @@ describe('cancel', () => {
         yield { type: 'stop', reason: 'end' }
       },
     }
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({ provider, store, session: sess }),
     })
     const gen = engine.submitMessage('hi')
@@ -2054,7 +2075,7 @@ describe('cancel', () => {
     const sess = makeSession({ id: 'sess_cancel_ask' })
     await store.createSession(sess)
     const held = new Promise<'allow' | 'deny' | 'allow_always'>(() => {})
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({
         provider: createFakeProvider([toolThenStop('call_park', 'Echo', { text: 'hi' })]),
         store,
@@ -2089,7 +2110,7 @@ describe('cancel', () => {
     const firstStreamEntered = new Promise<void>((resolve) => {
       enteredFirst = resolve
     })
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({
         provider: {
           id: 'fake',
@@ -2158,7 +2179,7 @@ describe('cancel', () => {
     const firstStreamEntered = new Promise<void>((resolve) => {
       enteredFirst = resolve
     })
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({
         provider: {
           id: 'fake',
@@ -2211,7 +2232,7 @@ describe('cancel', () => {
     const firstStreamEntered = new Promise<void>((resolve) => {
       enteredFirst = resolve
     })
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({
         provider: {
           id: 'fake',
@@ -2266,7 +2287,7 @@ describe('cancel', () => {
     const firstStreamEntered = new Promise<void>((resolve) => {
       enteredFirst = resolve
     })
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({
         provider: {
           id: 'fake',
@@ -2328,7 +2349,7 @@ describe('cancel', () => {
     const childStreamEntered = new Promise<void>((resolve) => {
       childEntered = resolve
     })
-    const childEngine = createSessionEngine({
+    const childEngine = await createSessionEngine({
       ...engineOpts({
         provider: {
           id: 'fake',
@@ -2371,7 +2392,7 @@ describe('cancel', () => {
       parentEntered = resolve
     })
     let parentStreams = 0
-    const parentEngine = createSessionEngine({
+    const parentEngine = await createSessionEngine({
       ...engineOpts({
         provider: {
           id: 'fake',
@@ -2420,7 +2441,7 @@ describe('cancel', () => {
     const firstStreamEntered = new Promise<void>((resolve) => {
       enteredFirst = resolve
     })
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({
         provider: {
           id: 'fake',
@@ -2489,7 +2510,7 @@ describe('cancel', () => {
       input: { command: 'pwd' },
       createdAt: 2,
     })
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({ provider: createFakeProvider([]), store, session: parent }),
     })
     expect(engine.session.lastEnd).toBeUndefined()
@@ -2520,7 +2541,7 @@ describe('cancel', () => {
       input: { command: 'ls' },
       createdAt: 1,
     })
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({ provider: createFakeProvider([]), store, session: sess }),
     })
     engine.abort('cancel')
@@ -2564,7 +2585,7 @@ describe('cancel', () => {
       if (sessionId === childA.id) throw new Error('disk')
       return innerPersist(sessionId, messages)
     }
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({
         provider: createFakeProvider([]),
         store,
@@ -2593,7 +2614,7 @@ describe('cancel', () => {
       input: { command: 'ls' },
       createdAt: 1,
     })
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({ provider: createFakeProvider([]), store, session: sess }),
     })
     engine.abort('cancel')
@@ -2625,7 +2646,7 @@ describe('cancel', () => {
         })
       },
     }
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({ provider, store, session }),
     })
     const gen = engine.submitMessage('go')
@@ -2669,7 +2690,7 @@ describe('no-job todo stamp', () => {
       todos: [{ text: 'b', status: 'pending' }],
     })
     await store.createSession(sess)
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({
         provider: createFakeProvider([
           [{ type: 'text_delta', text: 'ok' }, { type: 'stop', reason: null }],
@@ -2696,7 +2717,7 @@ describe('no-job todo stamp', () => {
     const firstStreamEntered = new Promise<void>((resolve) => {
       enteredFirst = resolve
     })
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({
         provider: {
           id: 'fake',
@@ -2733,7 +2754,7 @@ describe('followup slot', () => {
     const store = createMemoryStore()
     const sess = makeSession({ id: 'sess_followup' })
     await store.createSession(sess)
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session: sess,
       provider: createFakeProvider([]),
       store,
@@ -2840,7 +2861,7 @@ describe('clearKeepId', () => {
       createdAt: 3,
     })
     await store.appendStreamEvent(sess.id, { type: 'text_delta', text: 'x' })
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({ provider: createFakeProvider([]), store, session: sess }),
       messages,
     })
@@ -2873,7 +2894,7 @@ describe('clearKeepId', () => {
     await store.createSession(sess)
     const messages: Message[] = [user('u1', 'keep me', 1)]
     await persistAll(store, sess.id, messages)
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({ provider: createFakeProvider([]), store, session: sess }),
       messages,
     })
@@ -2890,7 +2911,7 @@ describe('clearKeepId', () => {
     const store = createMemoryStore()
     const sess = makeSession({ id: 'sess_clear_closed' })
     await store.createSession(sess)
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({ provider: createFakeProvider([]), store, session: sess }),
     })
     let called = false
@@ -2906,7 +2927,7 @@ describe('clearKeepId', () => {
     const store = createMemoryStore()
     const sess = makeSession({ id: 'sess_clear_empty', followup: 'x', lastEnd: { reason: 'completed' } })
     await store.createSession(sess)
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({ provider: createFakeProvider([]), store, session: sess }),
     })
     expect(await engine.clearKeepId()).toEqual({ ok: true, notice: 'session cleared' })
@@ -2920,7 +2941,7 @@ describe('clearKeepId', () => {
     const store = createMemoryStore()
     const sess = makeSession({ id: 'sess_clear_live' })
     await store.createSession(sess)
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({
         provider: createFakeProvider([toolThenStop('call_park', 'Echo', { text: 'hi' })]),
         store,
@@ -2963,7 +2984,7 @@ describe('clearKeepId', () => {
     const firstStreamEntered = new Promise<void>((resolve) => {
       enteredFirst = resolve
     })
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({
         provider: {
           id: 'fake',
@@ -3026,7 +3047,6 @@ describe('clearKeepId', () => {
     const entered = enterSessionWorktree(id, cwd)
     expect(entered.ok).toBe(true)
     const job = entered.job!
-    job.pendingResetSha = job.baseCommitSha
     const dirty = join(job.worktreePath, 'dirty.txt')
     writeFileSync(dirty, 'dirty\n')
     const head = git(job.worktreePath, ['rev-parse', 'HEAD'])
@@ -3045,13 +3065,15 @@ describe('clearKeepId', () => {
     await store.createSession(sess)
     const messages: Message[] = [user('u1', 'job hello', 1), asst('a1', 'ok', 2)]
     await persistAll(store, id, messages)
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       ...engineOpts({ provider: createFakeProvider([]), store, session: sess }),
       messages,
     })
+    engine.session.job = { ...engine.session.job!, pendingResetSha: job.baseCommitSha }
+    await store.upsertSession(engine.session)
     expect(await engine.clearKeepId()).toEqual({ ok: true, notice: 'session cleared' })
     expect(engine.session.id).toBe(id)
-    expect(engine.session.job).toEqual(job)
+    expect(engine.session.job).toEqual({ ...job, pendingResetSha: job.baseCommitSha })
     expect(engine.session.job?.pendingResetSha).toBe(job.baseCommitSha)
     expect(engine.session.cwd).toBe(job.worktreePath)
     expect(engine.session.todos).toEqual([])

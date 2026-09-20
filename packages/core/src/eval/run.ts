@@ -183,7 +183,7 @@ async function runPendingAskPersist(spec: EvalCase): Promise<void> {
     toolThenStop('call_eval', 'Echo', { text: 'hi' }),
     textThenStop('done'),
   ])
-  const engine = createSessionEngine({
+  const engine = await createSessionEngine({
     session,
     provider,
     store,
@@ -218,7 +218,7 @@ async function runPendingAskPersist(spec: EvalCase): Promise<void> {
     throw new Error('pending-ask-persist: loadSession inserted an incomplete tool row')
   }
 
-  const resumed = createSessionEngine({
+  const resumed = await createSessionEngine({
     session: loaded.session,
     messages: loaded.messages,
     provider: createFakeProvider([textThenStop('resumed')]),
@@ -265,7 +265,7 @@ async function runSandboxCwd(spec: EvalCase): Promise<void> {
       toolThenStop('call_eval', 'Write', { path: outside, content: 'x' }),
       textThenStop('done'),
     ])
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session,
       provider,
       store,
@@ -330,7 +330,7 @@ async function runCompactMemoryPrefix(spec: EvalCase): Promise<void> {
     yield* orig(req, signal)
   }
 
-  const engine = createSessionEngine({
+  const engine = await createSessionEngine({
     session,
     messages: history,
     provider,
@@ -426,7 +426,7 @@ async function runTodoRestore(spec: EvalCase): Promise<void> {
       yield* orig(req, signal)
     }
 
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session,
       messages: history,
       provider,
@@ -496,7 +496,7 @@ async function runCancelNotFail(spec: EvalCase): Promise<void> {
     },
   }
 
-  const engine = createSessionEngine({
+  const engine = await createSessionEngine({
     session,
     provider,
     store,
@@ -624,7 +624,7 @@ async function runSnapshotEndReason(spec: EvalCase): Promise<void> {
     },
   }
 
-  const engine = createSessionEngine({
+  const engine = await createSessionEngine({
     session,
     provider,
     store,
@@ -680,7 +680,7 @@ async function runFollowupSlot(spec: EvalCase): Promise<void> {
     textThenStop('from followup'),
     textThenStop('after cancel path'),
   ])
-  const engine = createSessionEngine({
+  const engine = await createSessionEngine({
     session,
     provider,
     store,
@@ -747,7 +747,7 @@ async function runEditResubmit(spec: EvalCase): Promise<void> {
     textThenStop('two'),
     textThenStop('three'),
   ])
-  const engine = createSessionEngine({
+  const engine = await createSessionEngine({
     session,
     provider,
     store,
@@ -876,7 +876,7 @@ async function runRewindPersistBeforeReset(spec: EvalCase): Promise<void> {
       ]
       await store.persistUser(sessionId, messages[0] as Extract<Message, { role: 'user' }>)
       await store.persistAssistant(sessionId, messages[1] as Extract<Message, { role: 'assistant' }>)
-      store.recordCompact = async () => {
+      store.recordCompactAndUpsertSession = async () => {
         throw new Error('disk full')
       }
       const failed = await rewindToCheckpoint({ session, messages, store })
@@ -915,13 +915,13 @@ async function runRewindPersistBeforeReset(spec: EvalCase): Promise<void> {
       await store2.persistUser(session2.id, messages2[0] as Extract<Message, { role: 'user' }>)
       await store2.persistAssistant(session2.id, messages2[1] as Extract<Message, { role: 'assistant' }>)
       const heads: string[] = []
-      const orig = store2.recordCompact.bind(store2)
-      store2.recordCompact = async (sid, generation, summary, ids) => {
+      const orig = store2.recordCompactAndUpsertSession.bind(store2)
+      store2.recordCompactAndUpsertSession = async (opts) => {
         const now = spawnSync('git', ['-C', job.worktreePath, 'rev-parse', 'HEAD'], {
           encoding: 'utf8',
         })
         heads.push(now.stdout.trim())
-        return orig(sid, generation, summary, ids)
+        return orig(opts)
       }
       const ok = await rewindToCheckpoint({ session: session2, messages: messages2, store: store2 })
       if (!ok.ok) throw new Error(`rewind-persist-before-reset: success path failed: ${ok.notice}`)
@@ -930,7 +930,7 @@ async function runRewindPersistBeforeReset(spec: EvalCase): Promise<void> {
       }
       if (heads[0] !== laterSha) {
         throw new Error(
-          `rewind-persist-before-reset: recordCompact ran after reset: ${JSON.stringify(heads)}`,
+          `rewind-persist-before-reset: recordCompactAndUpsertSession ran after reset: ${JSON.stringify(heads)}`,
         )
       }
       const headAfterOk = spawnSync('git', ['-C', job.worktreePath, 'rev-parse', 'HEAD'], {
@@ -1169,7 +1169,7 @@ async function runCancelAbortPair(spec: EvalCase): Promise<void> {
   const session = makeSession({ id: 'sess_eval_cancel_abort_pair' })
   await store.createSession(session)
   const held = new Promise<'allow' | 'deny' | 'allow_always'>(() => {})
-  const engine = createSessionEngine({
+  const engine = await createSessionEngine({
     session,
     provider: createFakeProvider([toolThenStop('call_park', 'Echo', { text: 'hi' })]),
     store,
@@ -1214,7 +1214,7 @@ async function runCancelAbortPair(spec: EvalCase): Promise<void> {
       input: { command: 'ls' },
       createdAt: 1,
     })
-    const idleEngine = createSessionEngine({
+    const idleEngine = await createSessionEngine({
       session: idle,
       provider: createFakeProvider([]),
       store: idleStore,
@@ -1254,7 +1254,7 @@ async function runParentTreeStop(spec: EvalCase): Promise<void> {
   const streamEntered = new Promise<void>((resolve) => {
     entered = resolve
   })
-  const engine = createSessionEngine({
+  const engine = await createSessionEngine({
     session: parent,
     provider: {
       id: 'fake',
@@ -1328,7 +1328,7 @@ async function runParentTreeStop(spec: EvalCase): Promise<void> {
     input: { command: 'ls' },
     createdAt: 1,
   })
-  const idleEngine = createSessionEngine({
+  const idleEngine = await createSessionEngine({
     session: idleParent,
     provider: createFakeProvider([]),
     store: idleStore,
@@ -1364,7 +1364,7 @@ async function runParentTreeStop(spec: EvalCase): Promise<void> {
     input: { command: 'ls' },
     createdAt: 1,
   })
-  const parkedEngine = createSessionEngine({
+  const parkedEngine = await createSessionEngine({
     session: parked,
     provider: createFakeProvider([]),
     store: parkedStore,
@@ -1417,7 +1417,7 @@ async function runParentTreeStop(spec: EvalCase): Promise<void> {
     if (sessionId === failA.id) throw new Error('disk')
     return failInner(sessionId, messages)
   }
-  const failEngine = createSessionEngine({
+  const failEngine = await createSessionEngine({
     session: failParent,
     provider: createFakeProvider([]),
     store: failStore,
@@ -1477,7 +1477,7 @@ async function runRewindResetOnResume(spec: EvalCase): Promise<void> {
         job,
       })
       await store.createSession(session)
-      const engine = createSessionEngine({
+      const engine = await createSessionEngine({
         session,
         provider: createFakeProvider([textThenStop('ok')]),
         store,
@@ -1491,23 +1491,20 @@ async function runRewindResetOnResume(spec: EvalCase): Promise<void> {
       const headAfterConstruct = spawnSync('git', ['-C', job.worktreePath, 'rev-parse', 'HEAD'], {
         encoding: 'utf8',
       })
-      if (headAfterConstruct.stdout.trim() !== laterSha) {
-        throw new Error('rewind-reset-on-resume: createSessionEngine reset HEAD')
+      if (headAfterConstruct.stdout.trim() !== job.baseCommitSha) {
+        throw new Error(
+          `rewind-reset-on-resume: createSessionEngine did not reset HEAD ${JSON.stringify(headAfterConstruct.stdout.trim())}`,
+        )
       }
-      if (engine.session.job?.pendingResetSha !== job.baseCommitSha) {
-        throw new Error('rewind-reset-on-resume: flag cleared on construct')
+      if (engine.session.job?.pendingResetSha !== undefined) {
+        throw new Error('rewind-reset-on-resume: flag still set after construct')
       }
       await drain(engine.submitMessage(spec.prompt))
       const headAfterSubmit = spawnSync('git', ['-C', job.worktreePath, 'rev-parse', 'HEAD'], {
         encoding: 'utf8',
       })
       if (headAfterSubmit.stdout.trim() !== job.baseCommitSha) {
-        throw new Error(
-          `rewind-reset-on-resume: submit HEAD ${JSON.stringify(headAfterSubmit.stdout.trim())} !== base`,
-        )
-      }
-      if (engine.session.job?.pendingResetSha !== undefined) {
-        throw new Error('rewind-reset-on-resume: flag still set after submit')
+        throw new Error('rewind-reset-on-resume: submit moved HEAD after construct recover')
       }
       await engine.close()
     }
@@ -1553,7 +1550,7 @@ async function runKeepIdClear(spec: EvalCase): Promise<void> {
     createdAt: 3,
   })
   await store.appendStreamEvent(session.id, { type: 'text_delta', text: 'x' })
-  const engine = createSessionEngine({
+  const engine = await createSessionEngine({
     session,
     provider: createFakeProvider([]),
     store,
@@ -1595,7 +1592,7 @@ async function runKeepIdClear(spec: EvalCase): Promise<void> {
       createdAt: 1,
     },
   ])
-  const failEngine = createSessionEngine({
+  const failEngine = await createSessionEngine({
     session: failSess,
     provider: createFakeProvider([]),
     store: failStore,
@@ -1642,7 +1639,7 @@ async function runKeepIdClear(spec: EvalCase): Promise<void> {
     input: { command: 'ls' },
     createdAt: 1,
   })
-  const parentEngine = createSessionEngine({
+  const parentEngine = await createSessionEngine({
     session: parent,
     provider: createFakeProvider([]),
     store: parentStore,
@@ -1681,7 +1678,7 @@ async function runKeepIdClear(spec: EvalCase): Promise<void> {
       job: entered.job,
     })
     await jobStore.createSession(jobSess)
-    const jobEngine = createSessionEngine({
+    const jobEngine = await createSessionEngine({
       session: jobSess,
       provider: createFakeProvider([]),
       store: jobStore,

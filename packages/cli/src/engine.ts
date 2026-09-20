@@ -591,7 +591,7 @@ async function finishOpenEngine(
     })
   }
   return {
-    engine: attachRavenclawLog(createSessionEngine(engineOpts), log),
+    engine: attachRavenclawLog(await createSessionEngine(engineOpts), log),
     mcpCloser,
     askQuestions,
     mcpErrors,

@@ -236,7 +236,7 @@ export async function createRavenSession(
   if (opts.messages !== undefined) engineOpts.messages = opts.messages
   engineOpts.sessionLock = { holderId: lockHolderId }
 
-  const engine = createSessionEngine(engineOpts)
+  const engine = await createSessionEngine(engineOpts)
   return {
     engine,
     store,

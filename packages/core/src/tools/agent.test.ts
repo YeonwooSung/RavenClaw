@@ -609,7 +609,7 @@ describe('createAgentTool', () => {
       return orig(input, ctx)
     }
 
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session,
       provider,
       store,
@@ -641,7 +641,7 @@ describe('createAgentTool', () => {
     expect(children.length).toBeGreaterThanOrEqual(1)
 
     const resumeProvider = createFakeProvider([textThenStop('resumed parent')])
-    const resumeEngine = createSessionEngine({
+    const resumeEngine = await createSessionEngine({
       session: loaded.session,
       messages: loaded.messages,
       provider: resumeProvider,
@@ -741,7 +741,7 @@ describe('createAgentTool', () => {
       return orig(input, ctx)
     }
 
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session: loaded.session,
       messages: loaded.messages,
       provider,

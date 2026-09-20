@@ -168,7 +168,7 @@ describe('/compact', () => {
       return orig(sessionId, generation, summary, inactivatedIds)
     }
 
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session: sess,
       messages,
       provider: dummyProvider(),
@@ -196,7 +196,7 @@ describe('/compact', () => {
     const store = createMemoryStore()
     const sess = session()
     await store.createSession(sess)
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session: sess,
       messages: [user('u1', 'hi', 1)],
       provider: dummyProvider(),
@@ -219,7 +219,7 @@ describe('session title', () => {
     const store = createMemoryStore()
     const sess = session()
     await store.createSession(sess)
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session: sess,
       provider: dummyProvider(),
       store,
@@ -256,7 +256,7 @@ describe('session title', () => {
     const store = createMemoryStore()
     const sess = session({ title: 'Existing' })
     await store.createSession(sess)
-    const engine = createSessionEngine({
+    const engine = await createSessionEngine({
       session: sess,
       provider: dummyProvider(),
       store,
