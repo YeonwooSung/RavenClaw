@@ -4,7 +4,7 @@ Date: 2026-09-18
 Status: implemented  
 Shipped on `main` at `9901d0e`.  
 Reviewed against tree at `be5a4a7` (`main` after no-job todo revert).  
-Successor to `2026-09-18-no-job-todo-revert.md` (Status: implemented at `be5a4a7`). Amends `2026-09-18-cancel-reset-followup.md` OUT for **parent-cancels-child-ask only**. Does not reopen that spec’s other closed doors.
+Successor to `2026-09-18-no-job-todo-revert.md` (Status: implemented at `be5a4a7`). Amends `2026-09-18-cancel-reset-followup.md` OUT for **parent-cancels-child-ask only**. Does not reopen that spec’s other closed doors. Amendment: factory async is unparked **only** by [`2026-09-20-rewind-recovery-v11.md`](2026-09-20-rewind-recovery-v11.md); tree-stop behavior is unchanged.
 
 Sources: current tree. No new steal from eve/y0.
 
@@ -279,7 +279,7 @@ Goal: parent `abort('cancel')` cancels child engines that exist in this process.
 - `ToolContext.registerChildEngine` + parent map (ruling 3).
 - `spawnChild` registers foreground and background children; unregisters after close.
 - Parent `abort('cancel')` calls `child.abort('cancel')` **before** `abortTurn(parent)`.
-- Test: parent live + child live (hang `askUser` or hang stream) → parent `abort('cancel')` → child `round_end.reason === 'cancelled'` (not `aborted`). `createSessionEngine` stays a sync function.
+- Test: parent live + child live (hang `askUser` or hang stream) → parent `abort('cancel')` → child `round_end.reason === 'cancelled'` (not `aborted`). `createSessionEngine` stays a sync function. **Amended for the factory only by `2026-09-20-rewind-recovery-v11.md`**; tree-stop behavior unchanged.
 
 **Files.** `packages/core/src/types.ts`, `packages/core/src/loop/session-engine.ts`, `packages/core/src/tools/agent.ts`, `session-engine.test.ts`, `packages/core/src/tools/agent.ts` tests if present.
 
@@ -387,7 +387,7 @@ Copy helpers locally in `run.ts`; do not import from test files. Unknown directo
 
 ## Out of this horizon
 
-Web chat UI, Next.js BFF, Prisma Task, Socket.IO, y0 Shadow wiki / indexer, eve compiler, OpenAPI connections, memory slots, `defineState`, credential brokering, self-mod, any new chat network, sandbox network policy, Grep/Glob docker-exec, `ignored`, **keep-id `/clear`**, **stream `version` / `continuationToken`**, schema v11, async `createSessionEngine`, cancel-without-live abort-pair of **this** session’s parked asks, interrupt abort-pair, using `killAll` as tree-stop, no-job git checkpoint, `fileHistory` todo frames.
+Web chat UI, Next.js BFF, Prisma Task, Socket.IO, y0 Shadow wiki / indexer, eve compiler, OpenAPI connections, memory slots, `defineState`, credential brokering, self-mod, any new chat network, sandbox network policy, Grep/Glob docker-exec, `ignored`, **keep-id `/clear`**, **stream `version` / `continuationToken`**, schema v11, async `createSessionEngine` (amended by `2026-09-20-rewind-recovery-v11.md`), cancel-without-live abort-pair of **this** session’s parked asks, interrupt abort-pair, using `killAll` as tree-stop, no-job git checkpoint, `fileHistory` todo frames.
 
 If a later product wants nested `Agent` spawn, the walk already treats grandchildren as owned. This horizon does not lift `NESTING_DENIED`.
 

@@ -1,7 +1,7 @@
 # RavenClaw next-horizon roadmap (rewind recovery, schema v11, async createSessionEngine)
 
 Date: 2026-09-20  
-Status: spec+plan only (not implemented)  
+Status: implemented (SHA blank until land)  
 Reviewed against tree at `a707249` (`origin/main` after parent tree-stop `9901d0e`).  
 Successor to `2026-09-18-parent-tree-stop.md` (Status: implemented at `9901d0e`). Amends prior OUT **only** for: compact-then-die sliver, schema v11, async `createSessionEngine`. Does not reopen abort / I2 / cancel 202 / tree-stop.
 
@@ -139,23 +139,23 @@ export async function createSessionEngine(opts: SessionEngineOptions): Promise<S
 
 ## Per-slice board
 
-Board as of `a707249` on `origin/main`. All rows are **not on `main`**.
+Board as of this land. All rows **done** on this branch (SHA blank until land).
 
 | ID | Status vs tree |
 |---|---|
-| R0.1 docs point at this spec | **not on `main`** |
-| R1.1 migration `011_pending_reset_sha.sql` | **not on `main`** |
-| R1.2 `applyMigrations` version 11; tests that asserted 10 | **not on `main`** |
-| R1.3 dual-write upsert; load prefers column | **not on `main`** |
-| R2.1 `recordCompactAndUpsertSession` | **not on `main`** |
-| R2.2 `rewindToCheckpoint` one transaction then git reset | **not on `main`** |
-| R2.3 combined-write throw does not git reset | **not on `main`** |
-| R3.1 async factory; construct recovers; reset-fail does not throw | **not on `main`** |
-| R3.2 every `createSessionEngine(` is `await` (176 sites) | **not on `main`** |
-| R4.1 GET snapshot `loadSession` only; `live` from `liveRuntimes` | **not on `main`** |
-| R4.2 mutating routes + stream + `/diff` still attach / recover | **not on `main`** |
-| R5.1 eval `rewind-reset-on-resume` construct finishes reset | **not on `main`** |
-| R5.2 ARCHITECTURE / CHANGELOG / prior OUT amendments | **not on `main`** |
+| R0.1 docs point at this spec | **done** |
+| R1.1 migration `011_pending_reset_sha.sql` | **done** |
+| R1.2 `applyMigrations` version 11; tests that asserted 10 | **done** |
+| R1.3 dual-write upsert; load prefers column | **done** |
+| R2.1 `recordCompactAndUpsertSession` | **done** |
+| R2.2 `rewindToCheckpoint` one transaction then git reset | **done** |
+| R2.3 combined-write throw does not git reset | **done** |
+| R3.1 async factory; construct recovers; reset-fail does not throw | **done** |
+| R3.2 every `createSessionEngine(` is `await` (176 sites) | **done** |
+| R4.1 GET snapshot `loadSession` only; `live` from `liveRuntimes` | **done** |
+| R4.2 mutating routes + stream + `/diff` still attach / recover | **done** |
+| R5.1 eval `rewind-reset-on-resume` construct finishes reset | **done** |
+| R5.2 ARCHITECTURE / CHANGELOG / prior OUT amendments | **done** |
 
 ---
 
