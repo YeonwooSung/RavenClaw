@@ -1578,7 +1578,8 @@ describe('queryLoop via SessionEngine', () => {
     expect(
       events.filter((event) => event.type === 'status' && event.message === 'output truncated; continuing'),
     ).toHaveLength(0)
-    expect(order.filter((step) => step === 'persistAssistant').length).toBe(1)
+    // completed assistant + no-job sha-less todo snapshot
+    expect(order.filter((step) => step === 'persistAssistant').length).toBe(2)
     expect(order.filter((step) => step === 'persistUser')).toEqual(['persistUser'])
     expect(order).not.toContain('persistToolCalls')
     const loaded = await store.loadSession(session.id)
@@ -1624,7 +1625,8 @@ describe('queryLoop via SessionEngine', () => {
     expect(
       events.filter((event) => event.type === 'status' && event.message === 'output truncated; continuing'),
     ).toHaveLength(1)
-    expect(order.filter((step) => step === 'persistAssistant').length).toBe(2)
+    // nudge persist + completed assistant + no-job sha-less todo snapshot
+    expect(order.filter((step) => step === 'persistAssistant').length).toBe(3)
     expect(order.filter((step) => step === 'persistUser')).toEqual(['persistUser'])
     const loaded = await store.loadSession(session.id)
     expect(loaded.messages.filter((msg) => msg.role === 'user')).toHaveLength(1)
