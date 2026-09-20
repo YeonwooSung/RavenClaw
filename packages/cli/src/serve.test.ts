@@ -270,7 +270,7 @@ function makeServeCtx(secret = ''): ServeRequestContext & {
       state.abortKinds.push(kind)
     },
     async whenTreeStop() {
-      return { descendantWork: state.descendantWork }
+      return { descendantWork: state.descendantWork, thisSessionWork: false }
     },
     async compactNow() {
       state.compactCalls += 1

@@ -93,7 +93,7 @@ export async function maybeRunFollowup(opts: {
     getFollowup: () => string | null
     clearFollowup: () => Promise<void>
     liveTurnId: () => string | null
-    whenTreeStop?: () => Promise<{ descendantWork: boolean }>
+    whenTreeStop?: () => Promise<{ descendantWork: boolean; thisSessionWork: boolean }>
   }
   listPendingAsks: () => Promise<unknown[]>
   lastEnd: RoundEnd
@@ -129,7 +129,7 @@ export async function runFollowupAfterSubmit(opts: {
     getFollowup: () => string | null
     clearFollowup: () => Promise<void>
     liveTurnId: () => string | null
-    whenTreeStop?: () => Promise<{ descendantWork: boolean }>
+    whenTreeStop?: () => Promise<{ descendantWork: boolean; thisSessionWork: boolean }>
   }
   store?: {
     listPendingAsks?: (sessionId: string) => Promise<unknown[]>

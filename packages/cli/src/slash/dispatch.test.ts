@@ -49,7 +49,7 @@ function fakeEngine(session: SessionRecord): SessionEngine & { reloads: number }
       return { ran: false, ok: true }
     },
     async whenTreeStop() {
-      return { descendantWork: false }
+      return { descendantWork: false, thisSessionWork: false }
     },
     async clearKeepId() {
       return { ok: true as const, notice: 'session cleared' }

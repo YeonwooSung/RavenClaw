@@ -2302,7 +2302,10 @@ describe('cancel', () => {
     engine.abort('cancel')
     const { events, result } = await pending
     expect(result).toEqual({ reason: 'cancelled' })
-    await expect(engine.whenTreeStop()).resolves.toEqual({ descendantWork: true })
+    await expect(engine.whenTreeStop()).resolves.toEqual({
+      descendantWork: true,
+      thisSessionWork: false,
+    })
     expect(await store.listPendingAsks(child.id)).toHaveLength(0)
     expect(await store.listPendingAsks(parent.id)).toHaveLength(0)
     expect(
@@ -2459,7 +2462,7 @@ describe('cancel', () => {
     expect(await store.listPendingAsks(child.id)).toHaveLength(1)
   })
 
-  test('idle parent tree-stop drops descendant leftover-asks and keeps this session parked', async () => {
+  test('idle parent tree-stop drops descendant leftover-asks and this session parked', async () => {
     const store = createMemoryStore()
     const parent = makeSession({ id: 'sess_idle_parent_tree' })
     const child = makeSession({ id: 'sess_idle_child_tree', parentSessionId: parent.id })
@@ -2494,9 +2497,12 @@ describe('cancel', () => {
     })
     expect(engine.session.lastEnd).toBeUndefined()
     engine.abort('cancel')
-    await expect(engine.whenTreeStop()).resolves.toEqual({ descendantWork: true })
+    await expect(engine.whenTreeStop()).resolves.toEqual({
+      descendantWork: true,
+      thisSessionWork: true,
+    })
     expect(await store.listPendingAsks(child.id)).toHaveLength(0)
-    expect(await store.listPendingAsks(parent.id)).toHaveLength(1)
+    expect(await store.listPendingAsks(parent.id)).toHaveLength(0)
     expect(engine.session.lastEnd).toBeUndefined()
     const reloaded = await store.loadSession(parent.id)
     expect(reloaded.session.lastEnd).toBeUndefined()
@@ -2524,8 +2530,11 @@ describe('cancel', () => {
       ...engineOpts({ provider: createFakeProvider([]), store, session: sess }),
     })
     engine.abort('cancel')
-    await expect(engine.whenTreeStop()).resolves.toEqual({ descendantWork: false })
-    expect(await store.listPendingAsks(sess.id)).toHaveLength(1)
+    await expect(engine.whenTreeStop()).resolves.toEqual({
+      descendantWork: false,
+      thisSessionWork: true,
+    })
+    expect(await store.listPendingAsks(sess.id)).toHaveLength(0)
   })
 
   test('persist-fail on one descendant leftover-ask continues the others', async () => {
@@ -2572,7 +2581,10 @@ describe('cancel', () => {
       }),
     })
     engine.abort('cancel')
-    await expect(engine.whenTreeStop()).resolves.toEqual({ descendantWork: true })
+    await expect(engine.whenTreeStop()).resolves.toEqual({
+      descendantWork: true,
+      thisSessionWork: false,
+    })
     expect(await store.listPendingAsks(childA.id)).toHaveLength(1)
     expect(await store.listPendingAsks(childB.id)).toHaveLength(0)
     expect(await store.listPendingAsks(childC.id)).toHaveLength(0)
@@ -2580,10 +2592,16 @@ describe('cancel', () => {
     expect(await engine.applyAskAnswer('call_a', 'deny')).toBe('matched')
   })
 
-  test('cancel with no live turn does not drop leftover-asks', async () => {
+  test('idle cancel abort-pairs this session leftover-asks', async () => {
     const store = createMemoryStore()
     const sess = makeSession({ id: 'sess_idle_cancel' })
     await store.createSession(sess)
+    await store.persistToolCalls(sess.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'parked', name: 'Bash', input: { command: 'ls' } }],
+      createdAt: 1,
+    })
     await store.upsertPendingAsk({
       callId: 'parked',
       sessionId: sess.id,
@@ -2596,8 +2614,54 @@ describe('cancel', () => {
     const engine = createSessionEngine({
       ...engineOpts({ provider: createFakeProvider([]), store, session: sess }),
     })
+    expect(engine.session.lastEnd).toBeUndefined()
     engine.abort('cancel')
     expect(await store.listPendingAsks(sess.id)).toHaveLength(1)
+    await expect(engine.whenTreeStop()).resolves.toEqual({
+      descendantWork: false,
+      thisSessionWork: true,
+    })
+    expect(await store.listPendingAsks(sess.id)).toHaveLength(0)
+    expect(engine.session.lastEnd).toBeUndefined()
+    const reloaded = await store.loadSession(sess.id)
+    expect(reloaded.session.lastEnd).toBeUndefined()
+    const tools = reloaded.messages.filter((m) => m.role === 'tool' && m.toolUseId === 'parked')
+    expect(tools).toHaveLength(1)
+    expect((tools[0]?.blocks[0] as { text?: string })?.text).toBe(ABORTED_TEXT)
+  })
+
+  test('idle cancel persist-fail leaves this session leftover-ask', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_idle_persist_fail' })
+    await store.createSession(sess)
+    await store.persistToolCalls(sess.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'parked', name: 'Bash', input: { command: 'ls' } }],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'parked',
+      sessionId: sess.id,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Run ls?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    store.persistToolResults = async () => {
+      throw new Error('disk')
+    }
+    const engine = createSessionEngine({
+      ...engineOpts({ provider: createFakeProvider([]), store, session: sess }),
+    })
+    engine.abort('cancel')
+    await expect(engine.whenTreeStop()).resolves.toEqual({
+      descendantWork: false,
+      thisSessionWork: true,
+    })
+    expect(await store.listPendingAsks(sess.id)).toHaveLength(1)
+    expect(engine.session.lastEnd).toBeUndefined()
   })
 
   test('cancelled turn persists lastEnd; pending-gate submit does not overwrite it', async () => {

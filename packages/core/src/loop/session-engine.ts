@@ -149,9 +149,11 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
   const executedAsks = new Set<string>()
   const claimedAsks = new Set<string>()
   const childEngines = new Map<string, SessionEngine>()
-  let treeStopFlight: Promise<{ descendantWork: boolean }> | undefined
+  type TreeStopResult = { descendantWork: boolean; thisSessionWork: boolean }
+  let treeStopFlight: Promise<TreeStopResult> | undefined
   let treeStopRequested = false
   let treeStopAbortedLiveChild = false
+  let leftoverFlightRequested = false
 
   function registerChildEngine(engine: SessionEngine): () => void {
     const id = engine.session.id
@@ -275,29 +277,58 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
     treeStopAbortedLiveChild = treeStopAbortedLiveChild || abortedLiveChild
   }
 
-  function enqueueTreeStopPass(abortedLiveChild: boolean): Promise<{ descendantWork: boolean }> {
+  function startThisSessionLeftoverFlight(): void {
+    leftoverFlightRequested = true
+  }
+
+  async function runThisSessionLeftoverPass(): Promise<{ thisSessionWork: boolean }> {
+    let attempted = false
+    const rows = await opts.store.listPendingAsks(session.id)
+    for (const row of rows) {
+      attempted = true
+      try {
+        await persistBeforeDropAsk(row)
+      } catch {
+        // continue other this-session rows
+      }
+    }
+    return { thisSessionWork: attempted }
+  }
+
+  function whenTreeStop(): Promise<TreeStopResult> {
+    const needTree = treeStopRequested
+    const abortedLiveChild = treeStopAbortedLiveChild
+    const needLeftover = leftoverFlightRequested
+    if (needTree) {
+      treeStopRequested = false
+      treeStopAbortedLiveChild = false
+    }
+    if (needLeftover) leftoverFlightRequested = false
+    if (!needTree && !needLeftover) {
+      return treeStopFlight ?? Promise.resolve({ descendantWork: false, thisSessionWork: false })
+    }
     const prev = treeStopFlight
     const pass = (async () => {
-      const prior = prev ? await prev : { descendantWork: false }
+      const prior = prev ? await prev : { descendantWork: false, thisSessionWork: false }
+      let descendantWork = prior.descendantWork
+      let thisSessionWork = prior.thisSessionWork
       try {
-        const next = await runTreeStopPass(abortedLiveChild)
-        return { descendantWork: prior.descendantWork || next.descendantWork }
+        if (needTree) {
+          const next = await runTreeStopPass(abortedLiveChild)
+          descendantWork = descendantWork || next.descendantWork
+        }
+        if (needLeftover) {
+          const next = await runThisSessionLeftoverPass()
+          thisSessionWork = thisSessionWork || next.thisSessionWork
+        }
       } catch {
-        return { descendantWork: prior.descendantWork || abortedLiveChild }
+        descendantWork = descendantWork || (needTree && abortedLiveChild)
+        thisSessionWork = thisSessionWork || needLeftover
       }
+      return { descendantWork, thisSessionWork }
     })()
     treeStopFlight = pass
     return pass
-  }
-
-  function whenTreeStop(): Promise<{ descendantWork: boolean }> {
-    if (treeStopRequested) {
-      const abortedLiveChild = treeStopAbortedLiveChild
-      treeStopAbortedLiveChild = false
-      treeStopRequested = false
-      return enqueueTreeStopPass(abortedLiveChild)
-    }
-    return treeStopFlight ?? Promise.resolve({ descendantWork: false })
   }
 
   async function hasUnpairedChildAsk(): Promise<boolean> {
@@ -908,19 +939,10 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
           const leftover = await opts.store.listPendingAsks(session.id)
           let remaining = false
           for (const row of leftover) {
-            if (!(await isCallPaired(row.callId, session.id))) {
-              try {
-                await persistSettledTool(makeToolMessage(row.callId, false, ABORTED_TEXT), session.id)
-              } catch {
-                remaining = true
-                continue
-              }
-            }
             try {
-              await opts.store.deletePendingAsk(row.callId)
+              if (await persistBeforeDropAsk(row)) remaining = true
             } catch {
               remaining = true
-              continue
             }
           }
           await whenTreeStop()
@@ -1108,8 +1130,11 @@ export function createSessionEngine(opts: SessionEngineOptions): SessionEngine {
         if (liveTurn) {
           if (liveTurn.cancelKind === undefined) liveTurn.cancelKind = 'cancel'
           abortTurn(liveTurn.abort)
+          startTreeStopFlight(abortedLiveChild)
+          return
         }
         startTreeStopFlight(abortedLiveChild)
+        startThisSessionLeftoverFlight()
         return
       }
       if (liveTurn) {
