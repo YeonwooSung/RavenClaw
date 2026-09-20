@@ -894,6 +894,24 @@ export function createSqliteStore(dbPath: string): SessionStore {
       })
     },
 
+    async recordCompactAndUpsertSession(opts) {
+      await withWrite(async () =>
+        beginImmediate(() => {
+          const sessionId = opts.session.id
+          if (opts.inactivatedIds.length > 0) {
+            recordCompactTx(
+              sessionId,
+              opts.generation,
+              opts.summary ?? 'rewind',
+              opts.inactivatedIds,
+            )
+            unindexMessagesFts(db, opts.inactivatedIds)
+          }
+          upsertSessionSql.run(sessionBind(opts.session))
+        }),
+      )
+    },
+
     async clearConversation(opts) {
       await withWrite(async () =>
         beginImmediate(() => {

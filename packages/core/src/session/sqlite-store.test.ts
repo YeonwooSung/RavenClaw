@@ -829,4 +829,90 @@ describe('createSqliteStore', () => {
     expect(await store.listPendingAsks('s1')).toHaveLength(1)
     expect(await store.lastStreamSeq('s1')).toBe(1)
   })
+
+  test('recordCompactAndUpsertSession inactivates ids and dual-writes pending_reset_sha in one tx', async () => {
+    const store = openStore()
+    const job = {
+      baseBranch: 'main',
+      shadowBranch: 'raven/s',
+      baseCommitSha: 'abc123',
+      worktreePath: '/tmp/wt',
+      pendingResetSha: 'def456',
+    }
+    await store.createSession(session({ job: { ...job, pendingResetSha: undefined } }))
+    await store.persistUser('s1', {
+      id: 'u1',
+      role: 'user',
+      blocks: [{ type: 'text', text: 'drop' }],
+      createdAt: 1,
+    })
+    await store.recordCompactAndUpsertSession({
+      session: session({ job, compactGeneration: 1 }),
+      inactivatedIds: ['u1'],
+      generation: 1,
+      summary: 'rewind',
+    })
+    const loaded = await store.loadSession('s1')
+    expect(loaded.messages.map((msg) => msg.id)).toEqual([])
+    expect(loaded.session.job?.pendingResetSha).toBe('def456')
+    const db = sqliteStoreDatabase(store)!
+    const row = db.query('SELECT pending_reset_sha, job_json FROM sessions WHERE id = ?').get('s1') as {
+      pending_reset_sha: string | null
+      job_json: string
+    }
+    expect(row.pending_reset_sha).toBe('def456')
+    expect(JSON.parse(row.job_json).pendingResetSha).toBe('def456')
+  })
+
+  test('recordCompactAndUpsertSession throw rolls back inactivate and column', async () => {
+    const store = openStore()
+    await store.createSession(
+      session({
+        job: {
+          baseBranch: 'main',
+          shadowBranch: 'raven/s',
+          baseCommitSha: 'abc123',
+          worktreePath: '/tmp/wt',
+        },
+      }),
+    )
+    await store.persistUser('s1', {
+      id: 'u1',
+      role: 'user',
+      blocks: [{ type: 'text', text: 'keep' }],
+      createdAt: 1,
+    })
+    const db = sqliteStoreDatabase(store)!
+    db.exec(`
+      CREATE TRIGGER fail_pending_reset
+      BEFORE UPDATE OF pending_reset_sha ON sessions
+      WHEN NEW.pending_reset_sha IS NOT NULL
+      BEGIN
+        SELECT RAISE(ABORT, 'boom');
+      END
+    `)
+    await expect(
+      store.recordCompactAndUpsertSession({
+        session: session({
+          job: {
+            baseBranch: 'main',
+            shadowBranch: 'raven/s',
+            baseCommitSha: 'abc123',
+            worktreePath: '/tmp/wt',
+            pendingResetSha: 'def456',
+          },
+        }),
+        inactivatedIds: ['u1'],
+        generation: 1,
+        summary: 'rewind',
+      }),
+    ).rejects.toBeInstanceOf(Error)
+    const loaded = await store.loadSession('s1')
+    expect(loaded.messages.map((msg) => msg.id)).toEqual(['u1'])
+    expect(loaded.session.job?.pendingResetSha).toBeUndefined()
+    const col = db.query('SELECT pending_reset_sha FROM sessions WHERE id = ?').get('s1') as {
+      pending_reset_sha: string | null
+    }
+    expect(col.pending_reset_sha).toBeNull()
+  })
 })

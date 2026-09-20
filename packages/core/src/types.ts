@@ -408,6 +408,16 @@ export interface SessionStore {
     inactivatedIds: string[],
   ): Promise<void>
   /**
+   * One write: inactivate ids (summary default 'rewind') when nonempty, then
+   * upsert the session row. Throw leaves the pre-call row.
+   */
+  recordCompactAndUpsertSession(opts: {
+    session: SessionRecord
+    inactivatedIds: string[]
+    generation: number
+    summary?: string
+  }): Promise<void>
+  /**
    * One write: inactivate ids via recordCompact summary 'clear' when nonempty,
    * delete this session's pending_asks and stream_events, drain this id's mail,
    * upsert the already-wiped session row. Same id. Throw leaves the pre-call row.

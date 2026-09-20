@@ -133,26 +133,23 @@ export async function rewindToCheckpoint(opts: {
   const checkpoint = lastGitCheckpoint(next)
   const sha = checkpoint?.commitSha ?? job.baseCommitSha
 
-  if (droppedIds.length > 0) {
-    try {
-      await opts.store.recordCompact(
-        opts.session.id,
-        opts.session.compactGeneration,
-        'rewind',
-        droppedIds,
-      )
-    } catch {
-      return { ok: false, notice: 'rewind persist failed', messages: opts.messages }
-    }
+  const nextSession: SessionRecord = {
+    ...opts.session,
+    job: { ...job, pendingResetSha: sha },
+    updatedAt: Date.now(),
   }
-
-  opts.session.job = { ...job, pendingResetSha: sha }
-  opts.session.updatedAt = Date.now()
   try {
-    await opts.store.upsertSession(opts.session)
+    await opts.store.recordCompactAndUpsertSession({
+      session: nextSession,
+      inactivatedIds: droppedIds,
+      generation: opts.session.compactGeneration,
+      summary: 'rewind',
+    })
   } catch {
-    // still attempt the reset
+    return { ok: false, notice: 'rewind persist failed', messages: opts.messages }
   }
+  opts.session.job = nextSession.job
+  opts.session.updatedAt = nextSession.updatedAt
 
   const reset = runGit(job.worktreePath, ['reset', '--hard', sha])
   if (!reset.ok) {
