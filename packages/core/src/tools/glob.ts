@@ -2,6 +2,7 @@ import { readdirSync, statSync } from 'node:fs'
 import { join, relative, resolve, sep } from 'node:path'
 import type { Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
+import type { TerminalBackend } from './terminal-backend'
 import { workspaceFsFor } from './workspace-fs'
 
 export const DEFAULT_IGNORE_DIR_NAMES = [
@@ -126,41 +127,46 @@ export function walkFiles(searchRoot: string, cwd: string): WalkFile[] {
   return out
 }
 
-export const globTool: Tool<GlobInput, string> = {
-  name: 'Glob',
-  description:
-    'Find files matching a glob pattern. Supports *, **, and ?. Optional path is the search root (defaults to the turn cwd). Results are cwd-relative. Ignores node_modules, .git, dist, build, .next, coverage, vendor, and target. Bounded to 200 files, depth 20, and 20000 characters.',
-  inputSchema,
-  parse(input: unknown) {
-    return parseWithSchema<GlobInput>(inputSchema, input)
-  },
-  isConcurrencySafe() {
-    return true
-  },
-  isReadOnly() {
-    return true
-  },
-  async checkPermissions() {
-    return { behavior: 'allow', reason: 'mode' }
-  },
-  async execute(input: GlobInput, ctx: ToolContext) {
-    if (ctx.signal.aborted) throw abortError()
-    const cwd = ctx.turn.cwd
-    const searchRoot = resolve(cwd, input.path ?? '.')
-    try {
-      workspaceFsFor(ctx.turn).stat(searchRoot)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      return `Glob failed: ${message}`
-    }
-    const matches: string[] = []
-    for (const file of walkFiles(searchRoot, cwd)) {
-      if (matchGlob(input.pattern, file.relToRoot)) matches.push(file.relToCwd)
-    }
-    matches.sort()
-    return capInMessage(matches.join('\n'))
-  },
+export function createGlobTool(backend?: TerminalBackend): Tool<GlobInput, string> {
+  return {
+    name: 'Glob',
+    description:
+      'Find files matching a glob pattern. Supports *, **, and ?. Optional path is the search root (defaults to the turn cwd). Results are cwd-relative. Ignores node_modules, .git, dist, build, .next, coverage, vendor, and target. Bounded to 200 files, depth 20, and 20000 characters.',
+    inputSchema,
+    parse(input: unknown) {
+      return parseWithSchema<GlobInput>(inputSchema, input)
+    },
+    isConcurrencySafe() {
+      return true
+    },
+    isReadOnly() {
+      return true
+    },
+    async checkPermissions() {
+      return { behavior: 'allow', reason: 'mode' }
+    },
+    async execute(input: GlobInput, ctx: ToolContext) {
+      if (ctx.signal.aborted) throw abortError()
+      const cwd = ctx.turn.cwd
+      const searchRoot = resolve(cwd, input.path ?? '.')
+      try {
+        workspaceFsFor(ctx.turn).stat(searchRoot)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return `Glob failed: ${message}`
+      }
+      void backend
+      const matches: string[] = []
+      for (const file of walkFiles(searchRoot, cwd)) {
+        if (matchGlob(input.pattern, file.relToRoot)) matches.push(file.relToCwd)
+      }
+      matches.sort()
+      return capInMessage(matches.join('\n'))
+    },
+  }
 }
+
+export const globTool: Tool<GlobInput, string> = createGlobTool()
 
 function globToRegExp(pattern: string): RegExp {
   let out = '^'

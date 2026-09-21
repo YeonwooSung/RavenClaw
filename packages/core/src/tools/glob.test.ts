@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ToolContext, Turn } from '../types'
-import { globTool } from './glob'
+import { createGlobTool, globTool } from './glob'
 
 const tempDirs: string[] = []
 
@@ -100,5 +100,14 @@ describe('Glob', () => {
     ctx.turn.terminalBackend = 'docker'
     const out = await globTool.execute({ pattern: '*', path: '/etc' }, ctx)
     expect(String(out).toLowerCase()).toMatch(/outside workspace|denied|protected/)
+  })
+
+  test('createGlobTool without backend still matches **/*.ts', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'a.ts'), 'x\n')
+    const tool = createGlobTool()
+    expect(tool.name).toBe('Glob')
+    const out = await tool.execute({ pattern: '**/*.ts' }, makeCtx(root))
+    expect(resultLines(out)).toContain('a.ts')
   })
 })

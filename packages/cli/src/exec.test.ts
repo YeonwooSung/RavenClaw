@@ -3,13 +3,18 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  askUserTool,
+  bashTool,
   createAskUserTool,
+  createLocalTerminalBackend,
   createMemoryStore,
   createMcpToolBridge,
   createSessionEngine,
   defaultCompactPolicy,
   defaultConfig,
   filterToolsForTurn,
+  globTool,
+  grepTool,
   loadMcpTools,
   type ModelProfile,
   type Provider,
@@ -115,6 +120,23 @@ describe('createRootTools', () => {
     expect(names).not.toContain('ThinkDeeply')
     expect(names).not.toContain('SuggestFollowups')
     expect(names).not.toContain('TaskCreate')
+  })
+
+  test('createRootTools with a backend does not reuse the Grep/Glob singletons', () => {
+    const backend = createLocalTerminalBackend()
+    const tools = createRootTools(createMemoryStore(), bashTool, askUserTool, false, backend)
+    const grep = tools.find((tool) => tool.name === 'Grep')
+    const glob = tools.find((tool) => tool.name === 'Glob')
+    expect(grep).toBeDefined()
+    expect(glob).toBeDefined()
+    expect(grep).not.toBe(grepTool)
+    expect(glob).not.toBe(globTool)
+  })
+
+  test('createRootTools without a backend keeps the Grep/Glob singletons', () => {
+    const tools = createRootTools(createMemoryStore())
+    expect(tools.find((tool) => tool.name === 'Grep')).toBe(grepTool)
+    expect(tools.find((tool) => tool.name === 'Glob')).toBe(globTool)
   })
 
   test('filterToolsForTurn hides gated builtins without lsp.json, git, or cron jobs', () => {

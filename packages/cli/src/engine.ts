@@ -16,6 +16,8 @@ import {
   fetchTool,
   globTool,
   grepTool,
+  createGlobTool,
+  createGrepTool,
   loadConfig,
   loadFileHooks,
   loadLocalPlugins,
@@ -74,6 +76,7 @@ import {
   type SessionStore,
   type StreamEvent,
   type SystemPart,
+  type TerminalBackend,
   type Tool,
 } from '@ravenclaw/core'
 import { createProvider } from '@ravenclaw/providers'
@@ -215,12 +218,13 @@ export function createRootTools(
   bash: Tool = bashTool,
   ask: Tool = askUserTool,
   network = false,
+  backend?: TerminalBackend,
 ): Tool[] {
   const plan = createPlanModeTools(store)
   const list = [
     readTool,
-    grepTool,
-    globTool,
+    backend !== undefined ? createGrepTool(backend) : grepTool,
+    backend !== undefined ? createGlobTool(backend) : globTool,
     listDirTool,
     readSubtreeTool,
     editTool,
@@ -258,6 +262,7 @@ export function createSessionTools(opts: {
   childMaxRounds: number
   system?: SystemPart[]
   bash?: Tool
+  backend?: TerminalBackend
   mcpTools?: Tool[]
   hooks?: PermissionHook[]
   askTool?: Tool
@@ -265,7 +270,7 @@ export function createSessionTools(opts: {
   deferredCatalog?: Tool[]
 }): Tool[] {
   const networkOn = opts.network === true
-  const root = createRootTools(opts.store, opts.bash ?? bashTool, opts.askTool, networkOn)
+  const root = createRootTools(opts.store, opts.bash ?? bashTool, opts.askTool, networkOn, opts.backend)
   const deferredNetwork = networkOn ? [] : [fetchTool, webSearchTool].map(hideDeferredFromWire)
   const deferredMcp = (opts.mcpTools ?? []).map(hideDeferredFromWire)
   const deferred = opts.deferredCatalog ?? []
@@ -469,11 +474,10 @@ async function finishOpenEngine(
     ...(opts.config.effort !== undefined ? { effort: opts.config.effort } : {}),
   })
   const terminal = opts.config.terminal
-  const bash = createBashTool(
-    createTerminalBackend(terminal?.backend ?? 'local', {
-      ...(terminal?.image !== undefined ? { image: terminal.image } : {}),
-    }),
-  )
+  const backend = createTerminalBackend(terminal?.backend ?? 'local', {
+    ...(terminal?.image !== undefined ? { image: terminal.image } : {}),
+  })
+  const bash = createBashTool(backend)
   const servers = opts.tools !== undefined ? [] : (opts.config.mcp?.servers ?? [])
   let mcpTools: Tool[] = []
   let mcpCloser: (() => Promise<void>) | undefined
@@ -511,6 +515,7 @@ async function finishOpenEngine(
       childMaxRounds: opts.config.childMaxRounds,
       system,
       bash,
+      backend,
       mcpTools,
       deferredCatalog,
       hooks,

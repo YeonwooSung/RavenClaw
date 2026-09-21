@@ -21,6 +21,7 @@ export interface TerminalJob {
 }
 
 export interface TerminalBackend {
+  readonly kind?: TerminalBackendKind
   exec(opts: TerminalExecOpts): Promise<TerminalExecResult>
   start?(opts: TerminalExecOpts): TerminalJob
 }
@@ -60,6 +61,7 @@ const DOCKER_ENV_FALLBACKS: Record<(typeof DOCKER_ENV_KEYS)[number], string> = {
 
 export function createLocalTerminalBackend(): TerminalBackend {
   return {
+    kind: 'local',
     exec(opts: TerminalExecOpts) {
       return execLocal(opts)
     },
@@ -71,6 +73,7 @@ export function createLocalTerminalBackend(): TerminalBackend {
 
 export function createDockerTerminalBackend(opts: DockerTerminalBackendOpts): TerminalBackend {
   return {
+    kind: 'docker',
     exec(execOpts: TerminalExecOpts) {
       return execDocker(execOpts, opts)
     },

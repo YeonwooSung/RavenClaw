@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ToolContext, Turn } from '../types'
-import { grepTool } from './grep'
+import { createGrepTool, grepTool, isolatedSpawnEnv } from './grep'
 
 const tempDirs: string[] = []
 
@@ -81,5 +81,68 @@ describe('Grep', () => {
     ctx.turn.terminalBackend = 'docker'
     const out = await grepTool.execute({ pattern: 'root', path: '/etc' }, ctx)
     expect(String(out).toLowerCase()).toMatch(/outside workspace|denied|protected/)
+  })
+
+  test('isolatedSpawnEnv drops foreign git vars and keeps PATH', () => {
+    const prevDir = process.env.GIT_DIR
+    const prevWorkTree = process.env.GIT_WORK_TREE
+    const prevIndex = process.env.GIT_INDEX_FILE
+    const prevPrompt = process.env.GIT_TERMINAL_PROMPT
+    process.env.GIT_DIR = '/foreign-git-dir'
+    process.env.GIT_WORK_TREE = '/foreign-work-tree'
+    process.env.GIT_INDEX_FILE = '/foreign-index'
+    delete process.env.GIT_TERMINAL_PROMPT
+    try {
+      const env = isolatedSpawnEnv()
+      expect(env.GIT_DIR).toBeUndefined()
+      expect(env.GIT_WORK_TREE).toBeUndefined()
+      expect(env.GIT_INDEX_FILE).toBeUndefined()
+      expect(env.GIT_TERMINAL_PROMPT).toBe('0')
+      expect(env.PATH).toBe(process.env.PATH)
+    } finally {
+      if (prevDir === undefined) delete process.env.GIT_DIR
+      else process.env.GIT_DIR = prevDir
+      if (prevWorkTree === undefined) delete process.env.GIT_WORK_TREE
+      else process.env.GIT_WORK_TREE = prevWorkTree
+      if (prevIndex === undefined) delete process.env.GIT_INDEX_FILE
+      else process.env.GIT_INDEX_FILE = prevIndex
+      if (prevPrompt === undefined) delete process.env.GIT_TERMINAL_PROMPT
+      else process.env.GIT_TERMINAL_PROMPT = prevPrompt
+    }
+  })
+
+  test('createGrepTool without backend still finds a unique string', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'hit.ts'), 'const UNIQUE_RAVEN_FACTORY = 1\n')
+    const tool = createGrepTool()
+    expect(tool.name).toBe('Grep')
+    expect(tool.isConcurrencySafe({ pattern: 'x' })).toBe(true)
+    expect(tool.isReadOnly({ pattern: 'x' })).toBe(true)
+    const out = await tool.execute({ pattern: 'UNIQUE_RAVEN_FACTORY' }, makeCtx(root))
+    expect(out).toContain('hit.ts')
+    expect(out).toMatch(/UNIQUE_RAVEN_FACTORY/)
+  })
+
+  test('local grep still finds a unique string under foreign GIT_DIR', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'hit.ts'), 'const UNIQUE_RAVEN_GITENV = 1\n')
+    const prevDir = process.env.GIT_DIR
+    const prevWorkTree = process.env.GIT_WORK_TREE
+    const prevIndex = process.env.GIT_INDEX_FILE
+    process.env.GIT_DIR = join(root, 'not-a-git')
+    process.env.GIT_WORK_TREE = join(root, 'not-a-worktree')
+    process.env.GIT_INDEX_FILE = join(root, 'not-an-index')
+    try {
+      const out = await grepTool.execute({ pattern: 'UNIQUE_RAVEN_GITENV' }, makeCtx(root))
+      expect(out).toContain('hit.ts')
+      expect(out).toMatch(/UNIQUE_RAVEN_GITENV/)
+    } finally {
+      if (prevDir === undefined) delete process.env.GIT_DIR
+      else process.env.GIT_DIR = prevDir
+      if (prevWorkTree === undefined) delete process.env.GIT_WORK_TREE
+      else process.env.GIT_WORK_TREE = prevWorkTree
+      if (prevIndex === undefined) delete process.env.GIT_INDEX_FILE
+      else process.env.GIT_INDEX_FILE = prevIndex
+    }
   })
 })

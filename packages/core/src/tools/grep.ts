@@ -12,6 +12,7 @@ import {
   walkFiles,
 } from './glob'
 import { parseWithSchema } from './parse'
+import type { TerminalBackend } from './terminal-backend'
 import { workspaceFsFor } from './workspace-fs'
 
 export interface GrepInput {
@@ -35,40 +36,52 @@ const inputSchema = {
 
 let ripgrepCached: boolean | undefined
 
-export const grepTool: Tool<GrepInput, string> = {
-  name: 'Grep',
-  description:
-    'Search file contents for a regular expression. Optional path is a file or directory (defaults to the turn cwd). Optional glob or include filters file names. Uses ripgrep when available, otherwise a bounded walk (200 files, depth 20, 10 MB). Ignores node_modules, .git, dist, build, .next, coverage, vendor, and target. In-message output is capped at 20000 characters and is never disk-persisted.',
-  inputSchema,
-  parse(input: unknown) {
-    return parseWithSchema<GrepInput>(inputSchema, input)
-  },
-  isConcurrencySafe() {
-    return true
-  },
-  isReadOnly() {
-    return true
-  },
-  async checkPermissions() {
-    return { behavior: 'allow', reason: 'mode' }
-  },
-  async execute(input: GrepInput, ctx: ToolContext) {
-    if (ctx.signal.aborted) throw abortError()
-    const cwd = ctx.turn.cwd
-    const searchRoot = resolve(cwd, input.path ?? '.')
-    try {
-      workspaceFsFor(ctx.turn).stat(searchRoot)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      return `Grep failed: ${message}`
-    }
-    const fileFilter = input.glob ?? input.include
-
-    const rg = tryRipgrep(input.pattern, searchRoot, cwd, fileFilter)
-    if (rg !== undefined) return rg
-    return grepByWalk(input.pattern, searchRoot, cwd, fileFilter)
-  },
+export function isolatedSpawnEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' }
+  delete env.GIT_DIR
+  delete env.GIT_WORK_TREE
+  delete env.GIT_INDEX_FILE
+  return env
 }
+
+export function createGrepTool(backend?: TerminalBackend): Tool<GrepInput, string> {
+  return {
+    name: 'Grep',
+    description:
+      'Search file contents for a regular expression. Optional path is a file or directory (defaults to the turn cwd). Optional glob or include filters file names. Uses ripgrep when available, otherwise a bounded walk (200 files, depth 20, 10 MB). Ignores node_modules, .git, dist, build, .next, coverage, vendor, and target. In-message output is capped at 20000 characters and is never disk-persisted.',
+    inputSchema,
+    parse(input: unknown) {
+      return parseWithSchema<GrepInput>(inputSchema, input)
+    },
+    isConcurrencySafe() {
+      return true
+    },
+    isReadOnly() {
+      return true
+    },
+    async checkPermissions() {
+      return { behavior: 'allow', reason: 'mode' }
+    },
+    async execute(input: GrepInput, ctx: ToolContext) {
+      if (ctx.signal.aborted) throw abortError()
+      const cwd = ctx.turn.cwd
+      const searchRoot = resolve(cwd, input.path ?? '.')
+      try {
+        workspaceFsFor(ctx.turn).stat(searchRoot)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return `Grep failed: ${message}`
+      }
+      const fileFilter = input.glob ?? input.include
+      void backend
+      const rg = tryRipgrep(input.pattern, searchRoot, cwd, fileFilter)
+      if (rg !== undefined) return rg
+      return grepByWalk(input.pattern, searchRoot, cwd, fileFilter)
+    },
+  }
+}
+
+export const grepTool: Tool<GrepInput, string> = createGrepTool()
 
 function tryRipgrep(
   pattern: string,
@@ -95,6 +108,7 @@ function tryRipgrep(
     timeout: 30_000,
     maxBuffer: 2 * 1024 * 1024,
     cwd,
+    env: isolatedSpawnEnv(),
   })
   if (result.error) return undefined
   if (result.status === 2) {
@@ -195,6 +209,7 @@ function hasRipgrep(): boolean {
     const result = spawnSync('rg', ['--version'], {
       encoding: 'utf8',
       timeout: 3000,
+      env: isolatedSpawnEnv(),
     })
     ripgrepCached = result.status === 0
   } catch {
