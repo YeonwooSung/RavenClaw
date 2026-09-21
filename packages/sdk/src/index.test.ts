@@ -178,6 +178,18 @@ describe('createRootTools', () => {
     expect(tools.find((tool) => tool.name === 'Grep')).toBe(grepTool)
     expect(tools.find((tool) => tool.name === 'Glob')).toBe(globTool)
   })
+
+  test('omits NotebookEdit with and without a backend', () => {
+    const unnamed = createRootTools(createMemoryStore()).map((tool) => tool.name)
+    expect(unnamed).not.toContain('NotebookEdit')
+    const named = createRootTools(
+      createMemoryStore(),
+      bashTool,
+      false,
+      createLocalTerminalBackend(),
+    ).map((tool) => tool.name)
+    expect(named).not.toContain('NotebookEdit')
+  })
 })
 
 describe('sdk isolation', () => {

@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path'
 import type { FileHistory } from '../session/file-history'
 import type { ToolContext, Turn } from '../types'
 import { decidePermission } from '../permissions/pipeline'
-import { notebookEditTool } from './notebook-edit'
+import { createNotebookEditTool, notebookEditTool } from './notebook-edit'
 import { parseNotebook } from './notebook-format'
 
 const emptyRules = { session: [], user: [], project: [] }
@@ -262,5 +262,23 @@ describe('NotebookEdit', () => {
     await expect(
       notebookEditTool.execute({ path: 'nb.ipynb', new_source: 'x' }, ctx),
     ).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  test('createNotebookEditTool without backend still replaces after Read', async () => {
+    const root = fixtureRoot()
+    writeNotebook(root, 'nb.ipynb', [{ id: 'abc', cell_type: 'code', source: ['old'] }])
+    const tool = createNotebookEditTool()
+    expect(tool.name).toBe('NotebookEdit')
+    expect(tool.isConcurrencySafe({ path: 'nb.ipynb', new_source: 'x' })).toBe(false)
+    expect(tool.isReadOnly({ path: 'nb.ipynb', new_source: 'x' })).toBe(false)
+    expect(tool.interruptBehavior?.()).toBe('block')
+    const ctx = makeCtx(root)
+    ctx.turn.readFiles.add(resolvedOf(root, 'nb.ipynb'))
+    const out = await tool.execute({ path: 'nb.ipynb', new_source: 'print(9)' }, ctx)
+    expect(out).toContain('nb.ipynb')
+    const parsed = parseNotebook(readFileSync(join(root, 'nb.ipynb'), 'utf8'))
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) throw new Error('expected notebook')
+    expect(parsed.value.cells[0]?.source).toEqual(['print(9)'])
   })
 })

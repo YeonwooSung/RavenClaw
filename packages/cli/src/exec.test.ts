@@ -15,6 +15,7 @@ import {
   filterToolsForTurn,
   globTool,
   grepTool,
+  notebookEditTool,
   loadMcpTools,
   type ModelProfile,
   type Provider,
@@ -137,6 +138,19 @@ describe('createRootTools', () => {
     const tools = createRootTools(createMemoryStore())
     expect(tools.find((tool) => tool.name === 'Grep')).toBe(grepTool)
     expect(tools.find((tool) => tool.name === 'Glob')).toBe(globTool)
+  })
+
+  test('createRootTools with a backend does not reuse the NotebookEdit singleton', () => {
+    const backend = createLocalTerminalBackend()
+    const tools = createRootTools(createMemoryStore(), bashTool, askUserTool, false, backend)
+    const notebook = tools.find((tool) => tool.name === 'NotebookEdit')
+    expect(notebook).toBeDefined()
+    expect(notebook).not.toBe(notebookEditTool)
+  })
+
+  test('createRootTools without a backend keeps the NotebookEdit singleton', () => {
+    const tools = createRootTools(createMemoryStore())
+    expect(tools.find((tool) => tool.name === 'NotebookEdit')).toBe(notebookEditTool)
   })
 
   test('filterToolsForTurn hides gated builtins without lsp.json, git, or cron jobs', () => {

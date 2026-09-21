@@ -100,7 +100,7 @@ export { memoryTool, memoryFilePath } from './tools/memory'
 export { listDirTool } from './tools/list-dir'
 export { readSubtreeTool } from './tools/read-subtree'
 export { applyPatchTool } from './tools/apply-patch'
-export { notebookEditTool } from './tools/notebook-edit'
+export { notebookEditTool, createNotebookEditTool } from './tools/notebook-edit'
 export { enterWorktreeTool } from './tools/enter-worktree'
 export { exitWorktreeTool } from './tools/exit-worktree'
 export {
