@@ -1,15 +1,23 @@
 import { existsSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { dirname, isAbsolute, relative, resolve, sep } from 'node:path'
+import type { InstructionFilesMode } from '../config'
 
 export const SUBDIR_AGENTS_CHAR_CAP = 32_000
 
 const SUBDIR_AGENT_NAMES = ['AGENTS.md', 'RAVEN.md', 'CLAUDE.md'] as const
+
+function namesFor(mode: InstructionFilesMode): readonly string[] {
+  if (mode === 'claude') return ['CLAUDE.md', 'RAVEN.md']
+  if (mode === 'agents-fallback') return ['CLAUDE.md', 'AGENTS.md', 'RAVEN.md']
+  return SUBDIR_AGENT_NAMES
+}
 
 /** First AGENTS.md / RAVEN.md / CLAUDE.md below `cwd`, walking from the file toward the project root. */
 export function loadNearestSubdirAgents(
   cwd: string,
   filePath: string,
   seen: Set<string>,
+  mode: InstructionFilesMode = 'both',
 ): string | undefined {
   const root = resolve(cwd)
   const abs = isAbsolute(filePath) ? resolve(filePath) : resolve(root, filePath)
@@ -17,7 +25,7 @@ export function loadNearestSubdirAgents(
 
   let dir = isDirectory(abs) ? abs : dirname(abs)
   while (isStrictlyInside(dir, root)) {
-    for (const name of SUBDIR_AGENT_NAMES) {
+    for (const name of namesFor(mode)) {
       const candidate = resolve(dir, name)
       if (!isFile(candidate)) continue
       const key = fileKey(candidate)

@@ -85,6 +85,56 @@ describe('loadProjectFiles', () => {
   })
 })
 
+describe('loadProjectFiles instructionFiles mode', () => {
+  test('claude skips AGENTS.md and AGENTS.local.md and keeps RAVEN slots', () => {
+    const dir = tempDir()
+    mkdirSync(join(dir, '.ravenclaw', 'rules'), { recursive: true })
+    writeFileSync(join(dir, 'AGENTS.md'), 'AGENTS_ONLY\n')
+    writeFileSync(join(dir, 'AGENTS.local.md'), 'AGENTS_LOCAL\n')
+    writeFileSync(join(dir, 'CLAUDE.md'), 'CLAUDE_ONLY\n')
+    writeFileSync(join(dir, 'RAVEN.local.md'), 'LOCAL_OVERLAY_MARKER\n')
+    writeFileSync(join(dir, '.ravenclaw', 'rules', 'style.md'), 'RULE_STYLE_MARKER\n')
+    const loaded = loadProjectFiles(dir, 'claude')
+    expect(loaded).toContain('CLAUDE_ONLY')
+    expect(loaded).toContain('LOCAL_OVERLAY_MARKER')
+    expect(loaded).toContain('RULE_STYLE_MARKER')
+    expect(loaded).not.toContain('AGENTS_ONLY')
+    expect(loaded).not.toContain('AGENTS_LOCAL')
+  })
+
+  test('agents-fallback is per directory, not walk-global', () => {
+    const parent = tempDir()
+    const child = join(parent, 'nested')
+    mkdirSync(child)
+    writeFileSync(join(parent, 'AGENTS.md'), 'PARENT_AGENTS\n')
+    writeFileSync(join(child, 'CLAUDE.md'), 'CHILD_CLAUDE\n')
+    const loaded = loadProjectFiles(child, 'agents-fallback')
+    expect(loaded).toContain('CHILD_CLAUDE')
+    expect(loaded).toContain('PARENT_AGENTS')
+  })
+
+  test('agents-fallback in one dir with both files skips AGENTS and AGENTS.local', () => {
+    const dir = tempDir()
+    writeFileSync(join(dir, 'AGENTS.md'), 'AGENTS_ONLY\n')
+    writeFileSync(join(dir, 'AGENTS.local.md'), 'AGENTS_LOCAL\n')
+    writeFileSync(join(dir, 'CLAUDE.md'), 'CLAUDE_ONLY\n')
+    const loaded = loadProjectFiles(dir, 'agents-fallback')
+    expect(loaded).toContain('CLAUDE_ONLY')
+    expect(loaded).not.toContain('AGENTS_ONLY')
+    expect(loaded).not.toContain('AGENTS_LOCAL')
+  })
+
+  test('both and omitted mode load AGENTS and CLAUDE', () => {
+    const dir = tempDir()
+    writeFileSync(join(dir, 'AGENTS.md'), 'AGENTS_ONLY\n')
+    writeFileSync(join(dir, 'CLAUDE.md'), 'CLAUDE_ONLY\n')
+    expect(loadProjectFiles(dir, 'both')).toContain('AGENTS_ONLY')
+    expect(loadProjectFiles(dir, 'both')).toContain('CLAUDE_ONLY')
+    expect(loadProjectFiles(dir)).toContain('AGENTS_ONLY')
+    expect(loadProjectFiles(dir)).toContain('CLAUDE_ONLY')
+  })
+})
+
 describe('expandAtIncludes', () => {
   test('ignores missing includes and does not execute files', () => {
     const dir = tempDir()

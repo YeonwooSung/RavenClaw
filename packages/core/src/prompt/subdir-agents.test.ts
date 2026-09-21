@@ -89,6 +89,28 @@ describe('loadNearestSubdirAgents', () => {
     expect(hit).toContain('DIR_TOUCH')
   })
 
+  test('claude mode skips AGENTS.md and injects CLAUDE.md', () => {
+    const cwd = tempDir()
+    mkdirSync(join(cwd, 'pkg'), { recursive: true })
+    writeFileSync(join(cwd, 'pkg', 'AGENTS.md'), 'AGENTS_ONLY\n')
+    expect(loadNearestSubdirAgents(cwd, join(cwd, 'pkg', 'a.ts'), new Set(), 'claude')).toBeUndefined()
+    writeFileSync(join(cwd, 'pkg', 'CLAUDE.md'), 'CLAUDE_ONLY\n')
+    const hit = loadNearestSubdirAgents(cwd, join(cwd, 'pkg', 'a.ts'), new Set(), 'claude')
+    expect(hit).toContain('[AGENTS.md: pkg]')
+    expect(hit).toContain('CLAUDE_ONLY')
+    expect(hit).not.toContain('AGENTS_ONLY')
+  })
+
+  test('agents-fallback prefers CLAUDE.md over AGENTS.md in that directory', () => {
+    const cwd = tempDir()
+    mkdirSync(join(cwd, 'lib'), { recursive: true })
+    writeFileSync(join(cwd, 'lib', 'AGENTS.md'), 'AGENTS_WINS\n')
+    writeFileSync(join(cwd, 'lib', 'CLAUDE.md'), 'CLAUDE_ONLY\n')
+    const hit = loadNearestSubdirAgents(cwd, join(cwd, 'lib', 'x.ts'), new Set(), 'agents-fallback')
+    expect(hit).toContain('CLAUDE_ONLY')
+    expect(hit).not.toContain('AGENTS_WINS')
+  })
+
   test('ignores paths outside cwd', () => {
     const cwd = tempDir()
     const other = tempDir()
