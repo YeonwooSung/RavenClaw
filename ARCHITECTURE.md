@@ -126,7 +126,7 @@ Entry is `packages/cli/src/index.ts`. When `import.meta.main`, `main()` runs and
    - Creates or reuses a `SessionRecord`.
    - `acquireSessionLock(session.id, { holderId, holderName })` unless `skipLock`.
    - `buildSystemParts({ cwd, permissionMode, bare, effort })`.
-   - Builds Bash via `createTerminalBackend(local|docker)`.
+   - Builds one `TerminalBackend` (`local|docker`) and passes that same object to `createBashTool` and to Grep/Glob (`createGrepTool` / `createGlobTool` via `createSessionTools`). Docker kind needs an image; without image, search stays host `rg`/walk.
    - Loads MCP (`loadConfiguredMcpTools`) — a failed spawn is skipped, not fatal.
    - Merges local plugins (`loadLocalPlugins`) when the host did not pass an explicit tool list.
    - Loads file hooks unless `--bare`.
@@ -488,8 +488,8 @@ Registry: `createToolRegistry` (`packages/core/src/tools/registry.ts`) — last 
 | Name | In `root.ts` | On the wire by default | Notes |
 |---|---|---|---|
 | `Read` | yes | yes | Streams after 256 KiB (`STREAM_AFTER = 256_000`) |
-| `Grep` | yes | yes | |
-| `Glob` | yes | yes | |
+| `Grep` | yes | yes | Shares Bash’s `TerminalBackend`. Docker kind: one `backend.exec` (POSIX walker in the container); fail-closed (`Grep failed:`; no host `rg`/walk fallback). Turn abort throws `AbortError` / `ABORTED_TEXT`. Local omit/`kind !== 'docker'`: host `rg` / `walkFiles`. |
+| `Glob` | yes | yes | Same port as Grep. Docker: one exec; fail-closed (`Glob failed:`); abort → `AbortError` / `ABORTED_TEXT`. Local: host `walkFiles`. |
 | `ListDir` | yes | yes | |
 | `ReadSubtree` | yes | yes | |
 | `Edit` | yes | yes | Snapshots via FileHistory |

@@ -26,6 +26,10 @@ function fixtureRoot(): string {
 }
 
 describe('createLocalTerminalBackend', () => {
+  test('stamps kind local', () => {
+    expect(createLocalTerminalBackend().kind).toBe('local')
+  })
+
   test('strips the cwd marker from stdout and reports the ending cwd', async () => {
     const root = fixtureRoot()
     const backend = createLocalTerminalBackend()
@@ -133,6 +137,11 @@ describe('createDockerTerminalBackend', () => {
     const backend = createDockerTerminalBackend({ image: 'bash:5' })
     expect(typeof backend.exec).toBe('function')
     expect(typeof backend.start).toBe('function')
+  })
+
+  test('stamps kind docker', () => {
+    const backend = createDockerTerminalBackend({ image: 'bash:5' })
+    expect(backend.kind).toBe('docker')
   })
 
   test('start() uses docker run --name and kill() kills that job', async () => {
@@ -395,5 +404,13 @@ describe('createTerminalBackend', () => {
     })
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toContain('local-fallback')
+  })
+
+  test('docker kind without image is local kind', () => {
+    expect(createTerminalBackend('docker').kind).toBe('local')
+  })
+
+  test('docker kind with image is docker kind', () => {
+    expect(createTerminalBackend('docker', { image: 'bash:5' }).kind).toBe('docker')
   })
 })
