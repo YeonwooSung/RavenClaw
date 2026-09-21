@@ -406,7 +406,7 @@ CLI `createRootTools` (`packages/cli/src/engine.ts`)가 실제로 조립하는 �
 | `AddDir` | 세션 permission root 추가 |
 | `SessionSearch` | FTS5 |
 | `Memory` | `USER.md` / `MEMORY.md` 읽기·쓰기 |
-| `LSP` | `.ravenclaw/lsp.json`이 있을 때만 `isEnabled` |
+| `LSP` | hover/definition/references/implementation/typeDefinition/diagnostic. `.ravenclaw/lsp.json`이 있을 때만 `isEnabled` |
 | `EnterWorktree` `ExitWorktree` | 세션 git worktree. cwd는 persist. dirty worktree는 **report-only**. `remove`는 dirty면 `discard_changes` 없이는 실패하고, 강제 삭제하지 않는다 |
 | `CronCreate` `CronList` `CronDelete` `CronSetEnabled` | 루트만. 자식에게는 nesting deny |
 | `EnterPlanMode` `ExitPlanMode` | `.ravenclaw/plan.md` |
