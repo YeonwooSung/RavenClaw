@@ -50,7 +50,7 @@ Three parked items share `SessionEngine.abort`, `persistBeforeDropAsk`, `whenTre
 ## Do not build
 
 - Web chat UI, Next.js BFF, Prisma Task, Socket.IO
-- wiki / isolation-trust / Workflow loop / agent compiler / `ignored` / Grep/Glob docker-exec
+- wiki / isolation-trust / Workflow loop / agent compiler / `ignored` (leftover-ask / live `askUser` result amended by `2026-09-21-ignored-dismiss.md`; dismiss-on-message stays OUT) / Grep/Glob docker-exec
 - Schema v11 / async `createSessionEngine` / compact-then-die sliver fill
 - HTTP `POST /clear` (keep-id `/clear` already shipped as an engine method; no new route)
 - Making `abort` async
@@ -63,6 +63,8 @@ Three parked items share `SessionEngine.abort`, `persistBeforeDropAsk`, `whenTre
 - Emitting `cancelled, ask still pending` on `queryLoop` reason `aborted`
 
 Amend prior OUT **only** for: cancel-without-live of this session’s parked asks, interrupt abort-pair, cancel 202/200.
+
+`ignored` as a leftover-ask / live `askUser` result is amended by `2026-09-21-ignored-dismiss.md`. Dismiss-on-message stays OUT.
 
 ---
 
@@ -322,7 +324,7 @@ Flip the parent-tree-stop eval parked beat (today: idle this-session parked stay
 
 ## Out of this horizon
 
-Web chat UI, Next.js BFF, Prisma Task, Socket.IO, y0 Shadow wiki / indexer, eve compiler, OpenAPI connections, memory slots, `defineState`, credential brokering, self-mod, any new chat network, sandbox network policy, Grep/Glob docker-exec, `ignored`, schema v11, async `createSessionEngine`, compact-then-die sliver fill, HTTP `POST /clear`, making `abort` async, using `killAll` as tree-stop, changing tree-stop of descendants, changing keep-id `/clear`, switching live-cancel JSON to `{ accepted: true }`, changing POST submit 202.
+Web chat UI, Next.js BFF, Prisma Task, Socket.IO, y0 Shadow wiki / indexer, eve compiler, OpenAPI connections, memory slots, `defineState`, credential brokering, self-mod, any new chat network, sandbox network policy, Grep/Glob docker-exec, `ignored` (leftover-ask / live `askUser` result amended by `2026-09-21-ignored-dismiss.md`; dismiss-on-message stays OUT), schema v11, async `createSessionEngine`, compact-then-die sliver fill, HTTP `POST /clear`, making `abort` async, using `killAll` as tree-stop, changing tree-stop of descendants, changing keep-id `/clear`, switching live-cancel JSON to `{ accepted: true }`, changing POST submit 202.
 
 ---
 

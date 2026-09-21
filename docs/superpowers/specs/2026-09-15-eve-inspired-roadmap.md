@@ -10,7 +10,7 @@ Sources: current tree, [eve analysis](../../research/eve-analysis.md) (`/Users/y
 
 Steal contracts. Do not copy eve, y0, Claude, Hermes, or Freebuff source. Do not become an agent framework.
 
-Implementation plan: [2026-09-15-eve-inspired-implementation.md](../plans/2026-09-15-eve-inspired-implementation.md) (15 TDD tasks; source-reviewed 2026-09-15). Binding plan rulings live at the top of that file (one row per `call_id`, `applyAskAnswer` is the only non-`submitMessage` entry, `/v1/turn` stays dontAsk, docker v1 = cwd bind jail, no `ignored`, no stream `?after=`). Stream `?after=` was deferred there; [session-as-job](2026-09-16-session-as-job-roadmap.md) adds seq and amends that ruling.
+Implementation plan: [2026-09-15-eve-inspired-implementation.md](../plans/2026-09-15-eve-inspired-implementation.md) (15 TDD tasks; source-reviewed 2026-09-15). Binding plan rulings live at the top of that file (one row per `call_id`, `applyAskAnswer` is the only non-`submitMessage` entry, `/v1/turn` stays dontAsk, docker v1 = cwd bind jail, no `ignored`, no stream `?after=`). Stream `?after=` was deferred there; [session-as-job](2026-09-16-session-as-job-roadmap.md) adds seq and amends that ruling. `ignored` as a leftover-ask / live `askUser` result is implemented by [`2026-09-21-ignored-dismiss.md`](2026-09-21-ignored-dismiss.md); dismiss-on-message stays parked. Do not rewrite E1.1.
 
 ---
 
