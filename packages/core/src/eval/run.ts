@@ -9,7 +9,10 @@ import { jobDiff } from '../session/job-diff'
 import { createMemoryStore } from '../session/memory-store'
 import { createFileHistory } from '../session/file-history'
 import { rewindLastTurn, rewindToCheckpoint } from '../session/rewind'
+import { createGlobTool } from '../tools/glob'
+import { createGrepTool } from '../tools/grep'
 import { enterSessionWorktree, exitSessionWorktree, getSessionWorktree } from '../tools/session-worktree'
+import { createDockerTerminalBackend } from '../tools/terminal-backend'
 import { todoJsonPath } from '../tools/todo'
 import { writeTool } from '../tools/write'
 import type {
@@ -53,6 +56,7 @@ type EvalExpect = {
   rewindNoJobTodoRevert?: boolean
   keepIdClear?: boolean
   parentTreeStop?: boolean
+  sandboxSearchUsesBackend?: boolean
 }
 
 type EvalCase = {
@@ -139,6 +143,10 @@ export async function runEvalDir(dir: string): Promise<void> {
     }
     if (name === 'parent-tree-stop') {
       await runParentTreeStop(spec)
+      continue
+    }
+    if (name === 'sandbox-search') {
+      await runSandboxSearch(spec)
       continue
     }
     throw new Error(`unknown eval fixture: ${name}`)
@@ -294,6 +302,68 @@ async function runSandboxCwd(spec: EvalCase): Promise<void> {
   } finally {
     rmSync(cwd, { recursive: true, force: true })
     rmSync(outside, { force: true })
+  }
+}
+
+async function runSandboxSearch(spec: EvalCase): Promise<void> {
+  if (spec.expect.sandboxSearchUsesBackend !== true) {
+    throw new Error('sandbox-search: expect.sandboxSearchUsesBackend must be true')
+  }
+  const cwd = mkdtempSync(join(tmpdir(), 'raven-eval-sandbox-search-'))
+  const uniqueName = `unique-sandbox-search-${crypto.randomUUID()}.txt`
+  const uniquePath = join(cwd, uniqueName)
+  const hostToken = `SANDBOX_SEARCH_HOST_TOKEN_${crypto.randomUUID().slice(0, 8)}`
+  writeFileSync(uniquePath, `${hostToken}\n`)
+  const calls: Array<{ command: string; args: string[] }> = []
+  try {
+    const fakeBackend = createDockerTerminalBackend({
+      image: 'bash:5',
+      runCommand: async (req) => {
+        calls.push({ command: req.command, args: req.args })
+        return { stdout: 'FAKE_DOCKER_GREP:1:from-container\n', stderr: '', exitCode: 0 }
+      },
+    })
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_eval_sandbox_search', cwd })
+    await store.createSession(session)
+    const engine = await createSessionEngine({
+      session,
+      provider: createFakeProvider([
+        toolThenStop('call_eval_grep', 'Grep', {
+          pattern: hostToken,
+          path: uniqueName,
+        }),
+        textThenStop('done'),
+      ]),
+      store,
+      tools: [createGrepTool(fakeBackend), createGlobTool(fakeBackend)],
+      compact: defaultCompact(),
+      model: defaultModel(),
+      maxRounds: 8,
+      bare: true,
+      askUser: async () => 'allow',
+    })
+    await drain(engine.submitMessage(spec.prompt))
+    const loaded = await store.loadSession(session.id)
+    const text = toolResultText(loaded.messages)
+    if (calls.length !== 1) {
+      throw new Error(`sandbox-search: expected one backend exec, got ${calls.length}`)
+    }
+    if (calls[0]?.command !== 'docker') {
+      throw new Error(`sandbox-search: expected docker exec, got ${calls[0]?.command}`)
+    }
+    if (!calls[0]?.args.includes(`${cwd}:${cwd}`) || !calls[0]?.args.includes('-w')) {
+      throw new Error('sandbox-search: docker argv missing cwd bind')
+    }
+    if (!text.includes('FAKE_DOCKER_GREP')) {
+      throw new Error(`sandbox-search: expected fake stdout, got ${JSON.stringify(text)}`)
+    }
+    if (text.includes(hostToken)) {
+      throw new Error('sandbox-search: host rg/walk ran')
+    }
+    await engine.close()
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
   }
 }
 
