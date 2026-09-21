@@ -298,7 +298,7 @@ The root session can call:
 | `Sleep` | Abortable wait (≤60s) |
 | `ThinkDeeply` | Log a thought, no files |
 | `AddDir` | Extra permission root for this session |
-| `LSP` | Hover/definition/references if `.ravenclaw/lsp.json` exists |
+| `LSP` | hover/definition/references/implementation/typeDefinition/diagnostic if `.ravenclaw/lsp.json` exists |
 | `EnterWorktree` `ExitWorktree` | Session git worktree (cwd persists) |
 | `CronCreate` `CronList` `CronDelete` `CronSetEnabled` | Local cron (root only) |
 | `Agent` | Nested agent. `agents[]` parallel; `run_in_background`; `isolation: worktree` |

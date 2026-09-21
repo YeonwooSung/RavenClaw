@@ -508,7 +508,7 @@ Registry: `createToolRegistry` (`packages/core/src/tools/registry.ts`) — last 
 | `SetOutput` | yes | yes | Child structured result |
 | `AddDir` | yes | yes (CLI) | Not in SDK |
 | `ToolSearch` / `ToolCall` | yes | when anything is deferred | Frozen prefix; Call targets must be off-prefix |
-| `LSP` | yes | CLI pool; **off the wire** until `.ravenclaw/lsp.json` | Not in SDK |
+| `LSP` | yes | CLI pool; hover/definition/references/implementation/typeDefinition/diagnostic; **off the wire** until `.ravenclaw/lsp.json` | Not in SDK |
 | `EnterWorktree` / `ExitWorktree` | yes | CLI pool; **off the wire** until git worktree / session worktree | Session-level worktree |
 | `CronCreate` / `CronList` / `CronDelete` / `CronSetEnabled` | yes | CLI pool; **off the wire** until `~/.ravenclaw/cron/jobs.json` | |
 | `Agent` | yes | yes | Nested `createSessionEngine` |
