@@ -26,7 +26,7 @@ import {
 } from '../types'
 import { createSessionEngine } from './session-engine'
 import { resumeSession } from '../session/resume'
-import { unpairedToolUseIds } from './pairing'
+import { ABORTED_TEXT, IGNORED_TEXT, unpairedToolUseIds } from './pairing'
 import { createMemoryStore } from '../session/memory-store'
 import { writeTool } from '../tools/write'
 import { readTool } from '../tools/read'
@@ -780,6 +780,112 @@ describe('queryLoop via SessionEngine', () => {
     expect(echo.executeCount).toBe(1)
   })
 
+  test('live ignored pairs IGNORED_TEXT, continues, and does not execute', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_live_ignored' })
+    await store.createSession(session)
+    const echo = createAskEcho()
+    const engine = await createSessionEngine({
+      ...engineOpts({
+        provider: createFakeProvider([
+          toolThenStop('call_live', 'Echo', { text: 'hi' }),
+          textThenStop('done'),
+        ]),
+        store,
+        session,
+        tools: [echo],
+      }),
+      askUser: async () => 'ignored',
+    })
+    const { events, result } = await collect(engine.submitMessage('go'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(echo.executeCount).toBe(0)
+    expect(await store.listPendingAsks(session.id)).toHaveLength(0)
+    const loaded = await store.loadSession(session.id)
+    const toolRow = loaded.messages.find((m) => m.role === 'tool' && m.toolUseId === 'call_live')
+    expect(toolRow?.ok).toBe(false)
+    expect(toolRow && toolRow.role === 'tool' ? toolRow.blocks[0]?.text : '').toBe(IGNORED_TEXT)
+    expect(
+      loaded.messages.some(
+        (m) =>
+          m.role === 'tool' &&
+          m.blocks.some((b) => b.type === 'text' && b.text === ABORTED_TEXT),
+      ),
+    ).toBe(false)
+    expect(events.some((e) => e.type === 'permission_ask')).toBe(true)
+  })
+
+  test('live ignored skips only that call; sibling still executes', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_live_ignored_sib' })
+    await store.createSession(session)
+    const echo = createAskEcho()
+    const engine = await createSessionEngine({
+      ...engineOpts({
+        provider: createFakeProvider([
+          [
+            { type: 'tool_call', id: 'p1', name: 'Echo', input: { text: 'first' } },
+            { type: 'tool_call', id: 'p2', name: 'Echo', input: { text: 'second' } },
+            { type: 'stop', reason: 'tool_use' },
+          ],
+          textThenStop('done'),
+        ]),
+        store,
+        session,
+        tools: [echo],
+      }),
+      askUser: async (event) => (event.id === 'p1' ? 'ignored' : 'allow'),
+    })
+    const { result } = await collect(engine.submitMessage('both'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(echo.executeCount).toBe(1)
+    const loaded = await store.loadSession(session.id)
+    const toolRows = loaded.messages.filter(
+      (m): m is Extract<Message, { role: 'tool' }> => m.role === 'tool',
+    )
+    expect(toolRows.map((row) => row.toolUseId)).toEqual(['p1', 'p2'])
+    expect(toolRows.map((row) => row.blocks[0]?.text)).toEqual([IGNORED_TEXT, 'second'])
+  })
+
+  test('live ignored then applyAskAnswer does not double-pair', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_live_ignored_double' })
+    await store.createSession(session)
+    let releaseAsk!: (answer: 'allow' | 'deny' | 'allow_always' | 'ignored') => void
+    const held = new Promise<'allow' | 'deny' | 'allow_always' | 'ignored'>((resolve) => {
+      releaseAsk = resolve
+    })
+    const echo = createAskEcho()
+    const engine = await createSessionEngine({
+      ...engineOpts({
+        provider: createFakeProvider([
+          toolThenStop('call_live', 'Echo', { text: 'hi' }),
+          textThenStop('done'),
+        ]),
+        store,
+        session,
+        tools: [echo],
+      }),
+      askUser: async () => held,
+    })
+    const gen = engine.submitMessage('go')
+    const events: StreamEvent[] = []
+    while (events.every((e) => e.type !== 'permission_ask')) {
+      const next = await gen.next()
+      if (next.done) break
+      events.push(next.value)
+    }
+    expect(await store.listPendingAsks(session.id)).toHaveLength(1)
+    releaseAsk('ignored')
+    await collect(gen)
+    expect(await engine.applyAskAnswer('call_live', 'ignored')).toBe('matched')
+    expect(echo.executeCount).toBe(0)
+    const loaded = await store.loadSession(session.id)
+    const tools = loaded.messages.filter((m) => m.role === 'tool' && m.toolUseId === 'call_live')
+    expect(tools).toHaveLength(1)
+    expect(tools[0] && tools[0].role === 'tool' ? tools[0].blocks[0]?.text : '').toBe(IGNORED_TEXT)
+  })
+
   test('loadSession after pending row does not insert incomplete', async () => {
     const store = createMemoryStore()
     const session = makeSession({ id: 'sess_crash' })
@@ -847,6 +953,253 @@ describe('queryLoop via SessionEngine', () => {
     expect(toolRow && toolRow.role === 'tool' ? toolRow.blocks[0]?.text : '').toContain(
       'permission_denied',
     )
+    expect(echo.executeCount).toBe(0)
+  })
+
+  test('applyAskAnswer ignored persists IGNORED_TEXT and does not execute', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_ignored' })
+    await store.createSession(session)
+    await store.persistToolCalls(session.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_1', name: 'Echo', input: { text: 'hi' } }],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    const echo = createAskEcho()
+    const engine = await createSessionEngine(
+      engineOpts({
+        provider: createFakeProvider([textThenStop('nope')]),
+        store,
+        session,
+        tools: [echo],
+      }),
+    )
+    expect(await engine.applyAskAnswer('call_1', 'ignored')).toBe('matched')
+    expect(await store.listPendingAsks(session.id)).toHaveLength(0)
+    const loaded = await store.loadSession(session.id)
+    const toolRow = loaded.messages.find((m) => m.role === 'tool')
+    expect(toolRow?.ok).toBe(false)
+    expect(toolRow && toolRow.role === 'tool' ? toolRow.blocks[0]?.text : '').toBe(IGNORED_TEXT)
+    expect(echo.executeCount).toBe(0)
+    expect(await store.listPermissionRules(session.id)).toHaveLength(0)
+  })
+
+  test('applyAskAnswer ignored of kind ask_user shares the persist path', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_ignored_ask_user' })
+    await store.createSession(session)
+    await store.persistToolCalls(session.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_ask', name: 'Echo', input: { text: 'hi' } }],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_ask',
+      sessionId: session.id,
+      kind: 'ask_user',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    const echo = createAskEcho()
+    const engine = await createSessionEngine(
+      engineOpts({
+        provider: createFakeProvider([]),
+        store,
+        session,
+        tools: [echo],
+      }),
+    )
+    expect(await engine.applyAskAnswer('call_ask', 'ignored')).toBe('matched')
+    expect(echo.executeCount).toBe(0)
+    const loaded = await store.loadSession(session.id)
+    const toolRow = loaded.messages.find((m) => m.role === 'tool' && m.toolUseId === 'call_ask')
+    expect(toolRow && toolRow.role === 'tool' ? toolRow.blocks[0]?.text : '').toBe(IGNORED_TEXT)
+  })
+
+  test('applyAskAnswer unknown string is unmatched and does not execute', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_unknown_answer' })
+    await store.createSession(session)
+    await store.persistToolCalls(session.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_1', name: 'Echo', input: { text: 'hi' } }],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    const echo = createAskEcho()
+    const engine = await createSessionEngine(
+      engineOpts({
+        provider: createFakeProvider([]),
+        store,
+        session,
+        tools: [echo],
+      }),
+    )
+    expect(await engine.applyAskAnswer('call_1', 'bogus' as 'deny')).toBe('unmatched')
+    expect(await store.listPendingAsks(session.id)).toHaveLength(1)
+    expect(echo.executeCount).toBe(0)
+    expect(await engine.applyAskAnswer('call_1', 'deny')).toBe('matched')
+    expect(await store.listPendingAsks(session.id)).toHaveLength(0)
+    const loaded = await store.loadSession(session.id)
+    const toolRow = loaded.messages.find((m) => m.role === 'tool')
+    expect(toolRow && toolRow.role === 'tool' ? toolRow.blocks[0]?.text : '').toContain(
+      'permission_denied',
+    )
+    expect(echo.executeCount).toBe(0)
+  })
+
+  test('applyAskAnswer ignored persist-fail leaves the row', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_ignored_persist_fail' })
+    await store.createSession(session)
+    await store.persistToolCalls(session.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_1', name: 'Echo', input: { text: 'hi' } }],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    const echo = createAskEcho()
+    store.persistToolResults = async () => {
+      throw new Error('disk')
+    }
+    const engine = await createSessionEngine(
+      engineOpts({
+        provider: createFakeProvider([]),
+        store,
+        session,
+        tools: [echo],
+      }),
+    )
+    await expect(engine.applyAskAnswer('call_1', 'ignored')).rejects.toBeInstanceOf(Error)
+    expect(await store.listPendingAsks(session.id)).toHaveLength(1)
+    expect(echo.executeCount).toBe(0)
+  })
+
+  test('applyAskAnswer ignored of one parked ask still blocks submitMessage on the other', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_ignored_other_parked' })
+    await store.createSession(session)
+    await store.persistToolCalls(session.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [
+        { type: 'tool_use', id: 'call_a', name: 'Echo', input: { text: 'a' } },
+        { type: 'tool_use', id: 'call_b', name: 'Echo', input: { text: 'b' } },
+      ],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_a',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo a?',
+      input: { text: 'a' },
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_b',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo b?',
+      input: { text: 'b' },
+      createdAt: 2,
+    })
+    const echo = createAskEcho()
+    const engine = await createSessionEngine(
+      engineOpts({
+        provider: createFakeProvider([textThenStop('nope')]),
+        store,
+        session,
+        tools: [echo],
+      }),
+    )
+    expect(await engine.applyAskAnswer('call_a', 'ignored')).toBe('matched')
+    expect(await store.listPendingAsks(session.id)).toHaveLength(1)
+    const { events, result } = await collect(engine.submitMessage('hello anyway'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(events.some((e) => e.type === 'status' && e.message.includes('pending'))).toBe(true)
+    const loaded = await store.loadSession(session.id)
+    expect(loaded.messages.filter((m) => m.role === 'user')).toHaveLength(0)
+    expect(echo.executeCount).toBe(0)
+  })
+
+  test('applyAskAnswer ignored does not rewrite an existing ABORTED_TEXT pair', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_ignored_after_abort' })
+    await store.createSession(session)
+    await store.persistToolCalls(session.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_1', name: 'Echo', input: { text: 'hi' } }],
+      createdAt: 1,
+    })
+    await store.persistToolResults(session.id, [
+      {
+        id: 't1',
+        role: 'tool',
+        toolUseId: 'call_1',
+        ok: false,
+        blocks: [{ type: 'text', text: ABORTED_TEXT }],
+        createdAt: 2,
+      },
+    ])
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    const echo = createAskEcho()
+    const engine = await createSessionEngine(
+      engineOpts({
+        provider: createFakeProvider([]),
+        store,
+        session,
+        tools: [echo],
+      }),
+    )
+    expect(await engine.applyAskAnswer('call_1', 'ignored')).toBe('matched')
+    expect(await store.listPendingAsks(session.id)).toHaveLength(0)
+    const loaded = await store.loadSession(session.id)
+    const tools = loaded.messages.filter((m) => m.role === 'tool' && m.toolUseId === 'call_1')
+    expect(tools).toHaveLength(1)
+    expect(tools[0] && tools[0].role === 'tool' ? tools[0].blocks[0]?.text : '').toBe(ABORTED_TEXT)
     expect(echo.executeCount).toBe(0)
   })
 

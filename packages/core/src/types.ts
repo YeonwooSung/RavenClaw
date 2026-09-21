@@ -486,7 +486,7 @@ export interface SessionEngineOptions {
   askUser: (
     e: Extract<StreamEvent, { type: 'permission_ask' }>,
     signal: AbortSignal,
-  ) => Promise<'allow' | 'deny' | 'allow_always'>
+  ) => Promise<PendingAskAnswer>
 }
 
 export interface SessionEngine {

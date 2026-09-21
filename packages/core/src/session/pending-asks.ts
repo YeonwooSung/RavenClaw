@@ -15,7 +15,18 @@ export type PendingAsk = {
   createdAt: number
 }
 
-export type PendingAskAnswer = 'allow' | 'deny' | 'allow_always'
+export type PendingAskAnswer = 'allow' | 'deny' | 'allow_always' | 'ignored'
+
+const PENDING_ASK_ANSWERS: readonly PendingAskAnswer[] = [
+  'allow',
+  'deny',
+  'allow_always',
+  'ignored',
+]
+
+export function isPendingAskAnswer(value: unknown): value is PendingAskAnswer {
+  return typeof value === 'string' && (PENDING_ASK_ANSWERS as readonly string[]).includes(value)
+}
 
 type PendingAskSqlRow = {
   call_id: string

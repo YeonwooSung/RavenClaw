@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { permissionAskChildLabel, type PermissionAsk } from './permission-dialog'
+import { keyToPermission, permissionAskChildLabel, type PermissionAsk } from './permission-dialog'
 
 function ask(over: Partial<PermissionAsk> = {}): PermissionAsk {
   return {
@@ -22,4 +22,14 @@ describe('permissionAskChildLabel', () => {
   test('omits the child label for a parent leftover-ask', () => {
     expect(permissionAskChildLabel(ask())).toBeUndefined()
   })
+})
+
+test('keyToPermission maps i to ignored and keeps y/n/a', () => {
+  expect(keyToPermission('i')).toBe('ignored')
+  expect(keyToPermission('I')).toBe('ignored')
+  expect(keyToPermission('y')).toBe('allow')
+  expect(keyToPermission('n')).toBe('deny')
+  expect(keyToPermission('a')).toBe('allow_always')
+  expect(keyToPermission('skip')).toBeUndefined()
+  expect(keyToPermission('escape')).toBeUndefined()
 })

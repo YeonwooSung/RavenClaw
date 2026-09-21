@@ -29,6 +29,7 @@ import {
   ABORTED_TEXT,
   denyText,
   executeFailedText,
+  IGNORED_TEXT,
   INCOMPLETE_TEXT,
   makeToolMessage,
   parseFailedText,
@@ -51,7 +52,7 @@ import { applyPermissionMode } from '../prompt/builder'
 import { injectMidTurnHint } from '../prompt/cache'
 import { createMemoryStore } from '../session/memory-store'
 import { commandOrPath, persistAllowAlways } from '../permissions/rules'
-import type { PendingAsk, PendingAskAnswer } from '../session/pending-asks'
+import { isPendingAskAnswer, type PendingAsk, type PendingAskAnswer } from '../session/pending-asks'
 import {
   BACKGROUND_REVIEW_PROMPT,
   backgroundReviewSession,
@@ -451,10 +452,18 @@ export async function createSessionEngine(opts: SessionEngineOptions): Promise<S
       return 'matched'
     }
 
+    if (!isPendingAskAnswer(answer as string)) return 'unmatched'
+
     if (!claimAsk(callId)) return 'matched'
 
     if (answer === 'deny') {
       await persistSettledTool(makeToolMessage(callId, false, denyText(row.message)), target.sessionId)
+      await dropPendingAsk(callId)
+      return 'matched'
+    }
+
+    if (answer === 'ignored') {
+      await persistSettledTool(makeToolMessage(callId, false, IGNORED_TEXT), target.sessionId)
       await dropPendingAsk(callId)
       return 'matched'
     }
@@ -909,7 +918,7 @@ export async function createSessionEngine(opts: SessionEngineOptions): Promise<S
           model,
           askUser: async (event, signal) => {
             const answer = await opts.askUser(event, signal)
-            if (answer !== 'deny') claimAsk(event.id)
+            if (answer === 'allow' || answer === 'allow_always') claimAsk(event.id)
             return answer
           },
         }

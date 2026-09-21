@@ -134,8 +134,8 @@ busy 중 `runTurn`이 다시 호출되면(frozen prompt, leftover, mailbox) 둘 
 | `/stop` | Ink | `engine.abort()`만. 두 번째 `/stop`이 백그라운드를 죽이지 않음 |
 | `/stop` | OpenTUI | abort + `createSecondAbortGate` (3s). 두 번째가 `killAll` |
 | `Shift+Tab` | Ink | `cyclePermissionMode`: `default` → `acceptEdits` → `plan` → `default`. `dontAsk`는 그대로. notice `mode ${next}` |
-| `y` / `n` / `a` | Ink permission | allow / deny / allow_always |
-| `y` / `n` / `a` 한 줄 | OpenTUI permission | 그 외는 deny |
+| `y` / `n` / `a` / `i` | Ink permission | allow / deny / allow_always / ignored (skip). Esc는 abort (`ABORTED_TEXT`) |
+| `y` / `n` / `a` / `i` / `skip` / `ignored` 한 줄 | OpenTUI permission | 그 외는 deny. Slack/Discord/ACP는 3-way. 스펙: [`2026-09-21-ignored-dismiss.md`](docs/superpowers/specs/2026-09-21-ignored-dismiss.md) |
 | `Ctrl+O` | Ink | 선택(또는 마지막) 툴 행 expand 토글 |
 | `Shift+Up` / `Shift+Down` | Ink | transcript 행 선택 |
 | Up / Down | Ink composer | `~/.ravenclaw` prompt history |

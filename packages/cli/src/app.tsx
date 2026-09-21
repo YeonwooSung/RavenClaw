@@ -15,6 +15,7 @@ import {
   maybePruneSkillsOnIdle,
   runFollowupAfterSubmit,
   type Funding,
+  type PendingAskAnswer,
   type PermissionMode,
   type SessionRecord,
   type StreamEvent,
@@ -71,7 +72,7 @@ export interface AppProps {
 
 type PendingAsk = {
   event: PermissionAsk
-  resolve: (value: 'allow' | 'deny' | 'allow_always') => void
+  resolve: (value: PendingAskAnswer) => void
   reject: (error: unknown) => void
 }
 
@@ -216,7 +217,7 @@ export function App(props: AppProps) {
 
   const bindAsk = useCallback(() => {
     runtimeRef.current.ask.bind(async (event, signal) => {
-      return await new Promise<'allow' | 'deny' | 'allow_always'>((resolve, reject) => {
+      return await new Promise<PendingAskAnswer>((resolve, reject) => {
         const pending: PendingAsk = {
           event,
           resolve: (value) => {
