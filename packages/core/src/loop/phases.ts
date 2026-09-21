@@ -38,6 +38,7 @@ import { estimateTokens, shouldEnterGrace, suffixGraceNotice } from './budget'
 import {
   denyText,
   executeFailedText,
+  IGNORED_TEXT,
   makeToolMessage,
   pairMissing,
   parseFailedText,
@@ -1309,6 +1310,13 @@ async function executeOneCall(
         if (answer === 'deny') {
           return {
             messages: [makeToolMessage(call.id, false, denyText(decision.message))],
+            events,
+            abortRest: false,
+          }
+        }
+        if (answer === 'ignored') {
+          return {
+            messages: [makeToolMessage(call.id, false, IGNORED_TEXT)],
             events,
             abortRest: false,
           }
