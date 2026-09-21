@@ -16,6 +16,9 @@ import type {
 } from '../types'
 import { createSessionEngine } from './session-engine'
 import {
+  ABORTED_TEXT,
+  denyText,
+  IGNORED_TEXT,
   INCOMPLETE_TEXT,
   TOOL_NAME_ALIASES,
   TOOLS_OMITTED_TEXT,
@@ -78,6 +81,17 @@ describe('pairing invariant helpers', () => {
     const [failed] = pairMissing(['p'], 'persist_failed')
     expect(failed?.ok).toBe(false)
     expect(failed?.blocks[0]?.text.startsWith('persist_failed:')).toBe(true)
+  })
+
+  test('IGNORED_TEXT is distinct from abort and deny', () => {
+    expect(IGNORED_TEXT).toBe(
+      'ignored: the operator skipped this ask. The tool was not executed.',
+    )
+    expect(IGNORED_TEXT.startsWith('permission_denied:')).toBe(false)
+    expect(IGNORED_TEXT.startsWith('aborted:')).toBe(false)
+    expect(IGNORED_TEXT).not.toBe(ABORTED_TEXT)
+    expect(IGNORED_TEXT).not.toBe(denyText('Echo?'))
+    expect(IGNORED_TEXT.includes('permission_denied')).toBe(false)
   })
 
   test('unpairedToolUseIds finds tool_use without a matching tool row', () => {

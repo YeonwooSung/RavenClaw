@@ -9,6 +9,9 @@ export const TOOLS_OMITTED_TEXT =
 export const ABORTED_TEXT =
   'aborted: the turn was interrupted before this tool finished.'
 
+export const IGNORED_TEXT =
+  'ignored: the operator skipped this ask. The tool was not executed.'
+
 export const PERSIST_FAILED_TEXT =
   'persist_failed: the tool call could not be saved; it was not executed.'
 

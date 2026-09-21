@@ -20,7 +20,7 @@ import { memoryTool } from '../tools/memory'
 import { enterSessionWorktree, exitSessionWorktree } from '../tools/session-worktree'
 import { todoJsonPath } from '../tools/todo'
 import { createSessionEngine } from './session-engine'
-import { ABORTED_TEXT } from './pairing'
+import { ABORTED_TEXT, IGNORED_TEXT } from './pairing'
 import { drainAgentMail, enqueueAgentMail } from '../tasks/mailbox'
 import { applyPermissionMode, buildSystemParts } from '../prompt/builder'
 
@@ -100,11 +100,12 @@ function createFakeProvider(scripts: ProviderChunk[][]): Provider & {
   return provider
 }
 
-function createAskEcho(): Tool<{ text: string }, string> {
-  return {
+function createAskEcho(): Tool<{ text: string }, string> & { executeCount: number } {
+  const tool: Tool<{ text: string }, string> & { executeCount: number } = {
     name: 'Echo',
     description: 'echo',
     inputSchema: { type: 'object', properties: { text: { type: 'string' } } },
+    executeCount: 0,
     parse(input: unknown) {
       if (!input || typeof input !== 'object' || typeof (input as { text?: unknown }).text !== 'string') {
         return { ok: false as const, message: 'expected { text: string }' }
@@ -117,9 +118,11 @@ function createAskEcho(): Tool<{ text: string }, string> {
       return { behavior: 'ask' as const, message: 'Echo?' }
     },
     async execute(input: { text: string }) {
+      tool.executeCount += 1
       return input.text
     },
   }
+  return tool
 }
 
 function toolThenStop(id: string, name: string, input: unknown): ProviderChunk[] {
@@ -1983,6 +1986,50 @@ describe('applyAskAnswer descendants', () => {
     expect(tools[0]?.ok).toBe(true)
     const parentLoaded = await store.loadSession(parent.id)
     expect(parentLoaded.messages.some((m) => m.role === 'tool')).toBe(false)
+  })
+
+  test('parent applyAskAnswer ignored pairs the grandchild session with IGNORED_TEXT', async () => {
+    const store = createMemoryStore()
+    const parent = makeSession({ id: 'sess_ignored_grand_parent' })
+    const child = makeSession({ id: 'sess_ignored_grand_child', parentSessionId: parent.id })
+    const grand = makeSession({ id: 'sess_ignored_grand', parentSessionId: child.id })
+    await store.createSession(parent)
+    await store.createSession(child)
+    await store.createSession(grand)
+    await store.persistToolCalls(grand.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_grand', name: 'Echo', input: { text: 'hi' } }],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_grand',
+      sessionId: grand.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    const echo = createAskEcho()
+    const engine = await createSessionEngine({
+      ...engineOpts({
+        provider: createFakeProvider([]),
+        store,
+        session: parent,
+        tools: [echo],
+      }),
+    })
+    expect(await engine.applyAskAnswer('call_grand', 'ignored')).toBe('matched')
+    expect(await store.listPendingAsks(grand.id)).toHaveLength(0)
+    const grandLoaded = await store.loadSession(grand.id)
+    const tools = grandLoaded.messages.filter((m) => m.role === 'tool' && m.toolUseId === 'call_grand')
+    expect(tools).toHaveLength(1)
+    expect(tools[0]?.ok).toBe(false)
+    expect((tools[0]?.blocks[0] as { text?: string })?.text).toBe(IGNORED_TEXT)
+    const parentLoaded = await store.loadSession(parent.id)
+    expect(parentLoaded.messages.some((m) => m.role === 'tool')).toBe(false)
+    expect(echo.executeCount).toBe(0)
   })
 
   test('applyAskAnswer stays unmatched for a non-descendant leftover-ask', async () => {
