@@ -395,7 +395,7 @@ CLI `createRootTools` (`packages/cli/src/engine.ts`)가 실제로 조립하는 �
 |---|---|
 | `Read` `Grep` `Glob` `ListDir` `ReadSubtree` | 읽기. `.ipynb`는 셀로 보여 준다. Grep/Glob는 Bash와 같은 `TerminalBackend`를 공유한다. docker(+image)면 컨테이너에서 `backend.exec` 한 번(POSIX walker); 실패는 `Grep failed:` / `Glob failed:`(호스트 `rg`/walk fallback 없음). 턴 abort는 `AbortError` / `ABORTED_TEXT`. omit/local/이미지 없는 docker는 호스트 `rg`/walk. Read/ListDir/ReadSubtree는 호스트 WorkspaceFs jail |
 | `Edit` `Write` `ApplyPatch` | 쓰기. `Edit`는 CRLF/indent를 견딘다. 트리 안 `ApplyPatch`는 `acceptEdits`/`dontAsk`에서 승격 |
-| `NotebookEdit` | leftover-ask. `acceptEdits`/`dontAsk`가 승격하지 않는다 |
+| `NotebookEdit` | leftover-ask. `acceptEdits`/`dontAsk`가 승격하지 않는다. 모든 백엔드에서 cwd jail (`NotebookEdit failed: outside workspace`). docker(+image)면 `cat` 다음 `tee`+stdin 두 번 `backend.exec`; 실패는 `NotebookEdit failed:`(호스트 `writeFileSync` 없음). 턴 abort는 `AbortError` / `ABORTED_TEXT`. omit/local/이미지 없는 docker는 호스트 I/O(jail 후). SDK `createRootTools`에는 없다. Read/Write는 호스트 WorkspaceFs jail |
 | `Bash` | `bash -c`. 읽기 전용으로 보이는 `ls`/`echo`/`pwd`/`git status` 등은 allow. 그 외 leftover-ask. `run_in_background`면 `TaskOutput`/`TaskStop` |
 | `Skill` | 스킬 본문 또는 스킬 디렉터리 파일을 로드. `allowed-tools`는 턴 풀을 줄인다 |
 | `TodoWrite` | 세션 체크리스트 |
@@ -711,7 +711,7 @@ fire는 새 `dontAsk` 세션을 연다. `lockHolder`는 `cron`이다. surface는
 | `<cwd>/.ravenclaw/` | 프로젝트 스킬, 에이전트, 플러그인, hooks, permissions, `plan.md`, `tasks.json`, `lsp.json`, `MEMORY.md`/`USER.md`, worktrees |
 | `<cwd>/AGENTS.md` 등 | 프로젝트 지시. `raven init`이 없으면 작성 |
 
-이 프로세스는 사용자와 같은 OS 유저다. 네트워크 샌드박스는 없다. Docker terminal backend(kind+image)는 허용된 Bash와 Grep/Glob가 어디서 도는지 바꿀 뿐, 권한 결정을 바꾸지 않는다. omit/local/이미지 없는 docker는 Grep/Glob가 호스트 `rg`/walk. Read/Write/Edit/ApplyPatch/ListDir/ReadSubtree는 호스트 WorkspaceFs jail이다. `dontAsk` 대체가 아니다.
+이 프로세스는 사용자와 같은 OS 유저다. 네트워크 샌드박스는 없다. Docker terminal backend(kind+image)는 허용된 Bash·Grep/Glob·NotebookEdit가 어디서 도는지 바꿀 뿐, 권한 결정을 바꾸지 않는다. omit/local/이미지 없는 docker는 Grep/Glob가 호스트 `rg`/walk, NotebookEdit는 호스트 I/O(jail 후). Read/Write/Edit/ApplyPatch/ListDir/ReadSubtree는 호스트 WorkspaceFs jail이다. `dontAsk` 대체가 아니다.
 
 ---
 
@@ -727,7 +727,7 @@ fire는 새 `dontAsk` 세션을 연다. `lockHolder`는 `cron`이다. surface는
 - **스킬** — agentskills.io frontmatter. builtin 8개를 키친싱크로 키우지 않는다.
 - **훅** — `hooks.json` 라이프사이클 / `pre_tool`.
 - **권한 규칙** — session / user / project JSON.
-- **terminal backend** — `local` | `docker`. Bash와 Grep/Glob가 같은 객체를 쓴다.
+- **terminal backend** — `local` | `docker`. Bash·Grep/Glob·NotebookEdit가 같은 객체를 쓴다. Read/Write/Edit/ApplyPatch/ListDir/ReadSubtree는 호스트 WorkspaceFs jail. `dontAsk` 대체가 아니다.
 - **TUI 표면** — Ink 또는 OpenTUI. 루프는 공유.
 - **SDK** — `createRavenSession`.
 - **chat host** — Slack/Discord처럼 `createChatSessionHost` + admit 함수.

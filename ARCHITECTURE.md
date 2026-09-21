@@ -126,7 +126,7 @@ Entry is `packages/cli/src/index.ts`. When `import.meta.main`, `main()` runs and
    - Creates or reuses a `SessionRecord`.
    - `acquireSessionLock(session.id, { holderId, holderName })` unless `skipLock`.
    - `buildSystemParts({ cwd, permissionMode, bare, effort })`.
-   - Builds one `TerminalBackend` (`local|docker`) and passes that same object to `createBashTool` and to Grep/Glob (`createGrepTool` / `createGlobTool` via `createSessionTools`). Docker kind needs an image; without image, search stays host `rg`/walk.
+   - Builds one `TerminalBackend` (`local|docker`) and passes that same object to `createBashTool`, Grep/Glob (`createGrepTool` / `createGlobTool` via `createSessionTools`), and NotebookEdit (`createNotebookEditTool` via `createRootTools`). Docker kind needs an image; without image, search stays host `rg`/walk and NotebookEdit stays host I/O after the cwd jail.
    - Loads MCP (`loadConfiguredMcpTools`) — a failed spawn is skipped, not fatal.
    - Merges local plugins (`loadLocalPlugins`) when the host did not pass an explicit tool list.
    - Loads file hooks unless `--bare`.
@@ -495,7 +495,7 @@ Registry: `createToolRegistry` (`packages/core/src/tools/registry.ts`) — last 
 | `Edit` | yes | yes | Snapshots via FileHistory |
 | `Write` | yes | yes | |
 | `ApplyPatch` | yes | yes | |
-| `NotebookEdit` | yes | yes (CLI) | Not in SDK `createRootTools` |
+| `NotebookEdit` | yes | yes (CLI) | Leftover-ask; CLI-root-only (not SDK). `acceptEdits`/`dontAsk` do not promote. Cwd jail on every backend (`NotebookEdit failed: outside workspace`). Docker kind: two `backend.exec` (`cat` then `tee`+stdin); fail-closed (`NotebookEdit failed:`; no host write). Abort → `AbortError` / `ABORTED_TEXT`. Omit/local/image-less docker: host `readFileSync`/`writeFileSync` after the jail. Read/Write stay host WorkspaceFs. |
 | `Bash` | yes | yes | `run_in_background` → TaskRegistry |
 | `Skill` | yes | yes | |
 | `Fetch` | yes | only if `tools.network` | else deferred |

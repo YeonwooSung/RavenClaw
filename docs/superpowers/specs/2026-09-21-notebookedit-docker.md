@@ -1,7 +1,8 @@
 # RavenClaw next-horizon roadmap (NotebookEdit docker)
 
 Date: 2026-09-21  
-Status: draft  
+Status: implemented  
+Shipped sha: worktree `docs/notebookedit-docker` (code `f67c49f`; not yet on `main`).  
 Reviewed against tree at `0a1176f` (`origin/main`, instructionFiles + three doors landed).  
 Successor to `2026-09-21-grep-glob-docker-exec.md` (Status: implemented). Amends prior OUT for **NotebookEdit docker** only. Does not reopen WorkspaceFs docker I/O, sandbox network policy, dismiss-on-message, or the LSP museum.
 
@@ -99,14 +100,14 @@ A docker session edits notebooks in the same container Bash uses. Outside-cwd is
 
 ## Per-slice board
 
-Board as of this draft (not implemented).
+Board as of this worktree (`docs/notebookedit-docker`). N0.1–N2.1 done.
 
 | ID | Status vs tree |
 |---|---|
-| N0.1 Cwd jail on local + docker (no exec yet) | **not implemented** |
-| N0.2 `createNotebookEditTool` + CLI wiring | **not implemented** |
-| N1.1 Docker cat/tee + stdin + fail-closed | **not implemented** |
-| N2.1 Tests + docs | **not implemented** |
+| N0.1 Cwd jail on local + docker (no exec yet) | **done** |
+| N0.2 `createNotebookEditTool` + CLI wiring | **done** |
+| N1.1 Docker cat/tee + stdin + fail-closed | **done** |
+| N2.1 Tests + docs | **done** |
 
 ---
 

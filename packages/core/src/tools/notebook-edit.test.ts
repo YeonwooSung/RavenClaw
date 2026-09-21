@@ -143,6 +143,35 @@ describe('NotebookEdit', () => {
     expect(decision.behavior).toBe('ask')
   })
 
+  test('acceptEdits does not promote NotebookEdit', async () => {
+    const root = fixtureRoot()
+    const decision = await decidePermission({
+      name: 'NotebookEdit',
+      input: { path: 'a.ipynb', new_source: 'x' },
+      tool: notebookEditTool,
+      ctx: makeCtx(root),
+      mode: 'acceptEdits',
+      rules: emptyRules,
+    })
+    expect(decision.behavior).toBe('ask')
+  })
+
+  test('dontAsk leftover of NotebookEdit is deny', async () => {
+    const root = fixtureRoot()
+    const decision = await decidePermission({
+      name: 'NotebookEdit',
+      input: { path: 'a.ipynb', new_source: 'x' },
+      tool: notebookEditTool,
+      ctx: makeCtx(root),
+      mode: 'dontAsk',
+      rules: emptyRules,
+    })
+    expect(decision.behavior).toBe('deny')
+    if (decision.behavior === 'deny') {
+      expect(decision.reason).toBe('mode')
+    }
+  })
+
   test('parse requires path and new_source', () => {
     expect(notebookEditTool.parse({ path: 'a.ipynb', new_source: 'x' }).ok).toBe(true)
     expect(
