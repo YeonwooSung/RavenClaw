@@ -69,7 +69,7 @@ export const applyPatchTool: Tool<ApplyPatchInput, string> = {
     const actions: string[] = []
     const lintPaths: string[] = []
     for (const op of input.operations) {
-      const result = applyOne(op, ctx)
+      const result = await applyOne(op, ctx)
       if (result.ok === false) return `ApplyPatch failed: ${result.message}`
       actions.push(result.action)
       if (op.type !== 'delete_file') {
@@ -83,10 +83,10 @@ export const applyPatchTool: Tool<ApplyPatchInput, string> = {
   },
 }
 
-function applyOne(
+async function applyOne(
   op: ApplyPatchOp,
   ctx: ToolContext,
-): { ok: true; action: string } | { ok: false; message: string } {
+): Promise<{ ok: true; action: string } | { ok: false; message: string }> {
   const resolved = resolveWritePath(ctx.turn.cwd, op.path)
   if (isHardDeniedWritePath(resolved)) {
     return { ok: false, message: `write denied to protected path: ${op.path}` }
@@ -102,37 +102,39 @@ function applyOne(
   return deleteFile(op.path, resolved, ctx, fs)
 }
 
-function createFile(
+async function createFile(
   inputPath: string,
   resolved: string,
   diff: string,
   ctx: ToolContext,
   fs: WorkspaceFs,
-): { ok: true; action: string } | { ok: false; message: string } {
+): Promise<{ ok: true; action: string } | { ok: false; message: string }> {
   try {
-    fs.readFile(resolved)
+    await fs.readFile(resolved)
     return { ok: false, message: `file already exists: ${inputPath}` }
-  } catch {
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') throw error
     // create only when missing or unreadable
   }
   const content = contentFromCreateDiff(diff)
   try {
-    fs.mkdir(dirname(resolved))
+    await fs.mkdir(dirname(resolved))
     ctx.fileHistory?.snapshot(resolved)
-    fs.writeFile(resolved, content)
+    await fs.writeFile(resolved, content)
   } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') throw error
     return { ok: false, message: errorMessage(error) }
   }
   return { ok: true, action: `created ${inputPath}` }
 }
 
-function updateFile(
+async function updateFile(
   inputPath: string,
   resolved: string,
   diff: string,
   ctx: ToolContext,
   fs: WorkspaceFs,
-): { ok: true; action: string } | { ok: false; message: string } {
+): Promise<{ ok: true; action: string } | { ok: false; message: string }> {
   const candidate = resolve(ctx.turn.cwd, inputPath)
   if (!wasRead(ctx.turn.readFiles, resolved, candidate)) {
     return { ok: false, message: `path must be Read first: ${inputPath}` }
@@ -142,40 +144,44 @@ function updateFile(
   }
   let text: string
   try {
-    text = fs.readFile(resolved)
+    text = await fs.readFile(resolved)
   } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') throw error
     return { ok: false, message: errorMessage(error) }
   }
   const patched = applyUnifiedDiff(text, diff)
   if (patched.ok === false) return patched
   try {
     ctx.fileHistory?.snapshot(resolved)
-    fs.writeFile(resolved, patched.text)
+    await fs.writeFile(resolved, patched.text)
   } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') throw error
     return { ok: false, message: errorMessage(error) }
   }
   markReadPath(ctx.turn, resolved)
   return { ok: true, action: `updated ${inputPath}` }
 }
 
-function deleteFile(
+async function deleteFile(
   inputPath: string,
   resolved: string,
   ctx: ToolContext,
   fs: WorkspaceFs,
-): { ok: true; action: string } | { ok: false; message: string } {
+): Promise<{ ok: true; action: string } | { ok: false; message: string }> {
   if (!wasRead(ctx.turn.readFiles, resolved, resolve(ctx.turn.cwd, inputPath))) {
     return { ok: false, message: `path must be Read first: ${inputPath}` }
   }
   try {
-    fs.readFile(resolved)
+    await fs.readFile(resolved)
   } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') throw error
     return { ok: false, message: errorMessage(error) }
   }
   try {
     ctx.fileHistory?.snapshot(resolved)
-    fs.unlink(resolved)
+    await fs.unlink(resolved)
   } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') throw error
     return { ok: false, message: errorMessage(error) }
   }
   return { ok: true, action: `deleted ${inputPath}` }

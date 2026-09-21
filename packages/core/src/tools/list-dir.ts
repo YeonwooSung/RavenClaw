@@ -43,8 +43,9 @@ export const listDirTool: Tool<ListDirInput, string> = {
     const resolved = resolve(ctx.turn.cwd, input.path ?? '.')
     let entries
     try {
-      entries = workspaceFsFor(ctx.turn).readdir(resolved)
+      entries = await workspaceFsFor(ctx.turn).readdir(resolved)
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') throw error
       const message = error instanceof Error ? error.message : String(error)
       return `ListDir failed: ${message}`
     }

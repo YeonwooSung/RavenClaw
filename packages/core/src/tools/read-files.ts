@@ -1,7 +1,7 @@
-import { realpathSync } from 'node:fs'
+import { realpathSync, statSync } from 'node:fs'
 import { resolve } from 'node:path'
 import type { Message, Turn } from '../types'
-import { createWorkspaceFs } from './workspace-fs'
+import { assertInsideWorkspace } from './workspace-fs'
 
 export function recordReadFile(turn: Turn, path: string, mtimeMs: number): void {
   turn.readFiles.add(path)
@@ -23,11 +23,10 @@ export function stampReadMtime(
 }
 
 export function markReadPath(turn: Turn, path: string): void {
-  const fs = createWorkspaceFs({ cwd: turn.cwd, backend: turn.terminalBackend ?? 'local' })
   let mtimeMs = 0
   try {
-    const st = fs.stat(path)
-    mtimeMs = st.exists ? st.mtimeMs : Date.now()
+    const st = statSync(assertInsideWorkspace(turn.cwd, path))
+    mtimeMs = st.mtimeMs
   } catch {
     mtimeMs = Date.now()
   }
@@ -51,9 +50,7 @@ export function isStaleSinceRead(turn: Turn, resolved: string, candidate: string
   const recorded = lookupReadMtime(turn, resolved, candidate)
   if (recorded === undefined) return false
   try {
-    const fs = createWorkspaceFs({ cwd: turn.cwd, backend: turn.terminalBackend ?? 'local' })
-    const st = fs.stat(resolved)
-    if (!st.exists) return false
+    const st = statSync(assertInsideWorkspace(turn.cwd, resolved))
     return st.mtimeMs !== recorded
   } catch {
     return false

@@ -15,7 +15,7 @@ import {
 import { parseWithSchema } from './parse'
 import { execSandboxSearch, isAbortError } from './sandbox-search'
 import type { TerminalBackend } from './terminal-backend'
-import { workspaceFsFor } from './workspace-fs'
+import { assertInsideWorkspace } from './workspace-fs'
 
 export interface GrepInput {
   pattern: string
@@ -69,7 +69,7 @@ export function createGrepTool(backend?: TerminalBackend): Tool<GrepInput, strin
       const cwd = ctx.turn.cwd
       const searchRoot = resolve(cwd, input.path ?? '.')
       try {
-        workspaceFsFor(ctx.turn).stat(searchRoot)
+        assertInsideWorkspace(cwd, searchRoot)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         return `Grep failed: ${message}`

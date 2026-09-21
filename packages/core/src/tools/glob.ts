@@ -4,7 +4,7 @@ import type { Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
 import { execSandboxSearch, isAbortError } from './sandbox-search'
 import type { TerminalBackend } from './terminal-backend'
-import { workspaceFsFor } from './workspace-fs'
+import { assertInsideWorkspace } from './workspace-fs'
 
 export const DEFAULT_IGNORE_DIR_NAMES = [
   'node_modules',
@@ -151,7 +151,7 @@ export function createGlobTool(backend?: TerminalBackend): Tool<GlobInput, strin
       const cwd = ctx.turn.cwd
       const searchRoot = resolve(cwd, input.path ?? '.')
       try {
-        workspaceFsFor(ctx.turn).stat(searchRoot)
+        assertInsideWorkspace(cwd, searchRoot)
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         return `Glob failed: ${message}`

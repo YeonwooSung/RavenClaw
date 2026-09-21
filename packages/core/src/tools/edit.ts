@@ -51,8 +51,9 @@ export const editTool: Tool<EditInput, string> = {
     }
     const fs = workspaceFsFor(ctx.turn)
     try {
-      fs.stat(resolved)
+      await fs.stat(resolved)
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') throw error
       const message = error instanceof Error ? error.message : String(error)
       return `Edit failed: ${message}`
     }
@@ -69,8 +70,9 @@ export const editTool: Tool<EditInput, string> = {
 
     let raw: string
     try {
-      raw = fs.readFile(resolved)
+      raw = await fs.readFile(resolved)
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') throw error
       const message = error instanceof Error ? error.message : String(error)
       return `Edit failed: ${message}`
     }
@@ -91,8 +93,9 @@ export const editTool: Tool<EditInput, string> = {
     try {
       ctx.fileHistory?.snapshot(resolved)
       const updated = text.replace(replacement.oldString, replacement.newString)
-      fs.writeFile(resolved, crlf ? restoreCrlf(updated) : updated)
+      await fs.writeFile(resolved, crlf ? restoreCrlf(updated) : updated)
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') throw error
       const message = error instanceof Error ? error.message : String(error)
       return `Edit failed: ${message}`
     }

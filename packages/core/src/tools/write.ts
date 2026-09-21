@@ -53,8 +53,9 @@ export const writeTool: Tool<WriteInput, string> = {
     const candidate = resolve(ctx.turn.cwd, input.path)
     let exists = false
     try {
-      exists = fs.stat(resolved).isFile
+      exists = (await fs.stat(resolved)).isFile
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') throw error
       const message = error instanceof Error ? error.message : String(error)
       return `Write failed: ${message}`
     }
@@ -68,10 +69,11 @@ export const writeTool: Tool<WriteInput, string> = {
     }
 
     try {
-      fs.mkdir(dirname(resolved))
+      await fs.mkdir(dirname(resolved))
       ctx.fileHistory?.snapshot(resolved)
-      fs.writeFile(resolved, input.content)
+      await fs.writeFile(resolved, input.content)
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') throw error
       const message = error instanceof Error ? error.message : String(error)
       return `Write failed: ${message}`
     }

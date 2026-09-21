@@ -63,8 +63,9 @@ export const readTool: Tool<ReadInput, string> = {
 
     let stat
     try {
-      stat = fs.stat(resolved)
+      stat = await fs.stat(resolved)
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') throw error
       const message = error instanceof Error ? error.message : String(error)
       return `Read failed: ${message}`
     }
@@ -87,6 +88,7 @@ export const readTool: Tool<ReadInput, string> = {
       try {
         jailed = fs.realpath(resolved)
       } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') throw error
         const message = error instanceof Error ? error.message : String(error)
         return `Read failed: ${message}`
       }
@@ -102,6 +104,7 @@ export const readTool: Tool<ReadInput, string> = {
       try {
         buf = readFileSync(fs.realpath(resolved))
       } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') throw error
         const message = error instanceof Error ? error.message : String(error)
         return `Read failed: ${message}`
       }
@@ -122,8 +125,9 @@ export const readTool: Tool<ReadInput, string> = {
 
     let text: string
     try {
-      text = fs.readFile(resolved)
+      text = await fs.readFile(resolved)
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') throw error
       const message = error instanceof Error ? error.message : String(error)
       return `Read failed: ${message}`
     }

@@ -58,15 +58,16 @@ export const readSubtreeTool: Tool<ReadSubtreeInput, string> = {
     const searchRoot = resolve(cwd, input.path ?? '.')
     const fs = workspaceFsFor(ctx.turn)
     try {
-      const rootStat = fs.stat(searchRoot)
+      const rootStat = await fs.stat(searchRoot)
       if (!rootStat.exists) return `ReadSubtree failed: file not found`
     } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') throw error
       const message = error instanceof Error ? error.message : String(error)
       return `ReadSubtree failed: ${message}`
     }
 
     const limit = Math.min(input.maxFiles ?? DEFAULT_MAX_FILES, MAX_FILES_CAP)
-    const files = walkWorkspace(fs, searchRoot, cwd)
+    const files = (await walkWorkspace(fs, searchRoot, cwd))
       .slice()
       .sort((a, b) => a.relToCwd.localeCompare(b.relToCwd))
       .slice(0, limit)
@@ -81,8 +82,9 @@ export const readSubtreeTool: Tool<ReadSubtreeInput, string> = {
       }
       let text: string
       try {
-        text = fs.readFile(file.absPath)
-      } catch {
+        text = await fs.readFile(file.absPath)
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') throw error
         blocks.push(header)
         continue
       }
@@ -101,9 +103,9 @@ export const readSubtreeTool: Tool<ReadSubtreeInput, string> = {
   },
 }
 
-function walkWorkspace(fs: WorkspaceFs, searchRoot: string, cwd: string): WalkFile[] {
+async function walkWorkspace(fs: WorkspaceFs, searchRoot: string, cwd: string): Promise<WalkFile[]> {
   const out: WalkFile[] = []
-  const rootStat = fs.stat(searchRoot)
+  const rootStat = await fs.stat(searchRoot)
   if (!rootStat.exists) return out
 
   if (rootStat.isFile) {
@@ -119,13 +121,14 @@ function walkWorkspace(fs: WorkspaceFs, searchRoot: string, cwd: string): WalkFi
 
   if (!rootStat.isDir) return out
 
-  function visit(dir: string, depth: number): void {
+  async function visit(dir: string, depth: number): Promise<void> {
     if (out.length >= WALK_MAX_FILES) return
     if (depth > WALK_MAX_DEPTH) return
     let entries
     try {
-      entries = fs.readdir(dir)
-    } catch {
+      entries = await fs.readdir(dir)
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') throw error
       return
     }
     for (const ent of entries) {
@@ -133,16 +136,17 @@ function walkWorkspace(fs: WorkspaceFs, searchRoot: string, cwd: string): WalkFi
       const abs = join(dir, ent.name)
       if (ent.isDir) {
         if (isIgnoredDirName(ent.name)) continue
-        visit(abs, depth + 1)
+        await visit(abs, depth + 1)
         continue
       }
       if (!ent.isFile) continue
       let size = 0
       try {
-        const st = fs.stat(abs)
+        const st = await fs.stat(abs)
         if (!st.exists || !st.isFile) continue
         size = st.size
-      } catch {
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') throw error
         continue
       }
       out.push({
@@ -154,7 +158,7 @@ function walkWorkspace(fs: WorkspaceFs, searchRoot: string, cwd: string): WalkFi
     }
   }
 
-  visit(searchRoot, 0)
+  await visit(searchRoot, 0)
   return out
 }
 
