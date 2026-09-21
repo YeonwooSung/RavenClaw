@@ -6,6 +6,7 @@ export interface TerminalExecOpts {
   timeoutMs: number
   signal: AbortSignal
   onOutput?: (text: string) => void
+  stdin?: string | Uint8Array
 }
 
 export interface TerminalExecResult {
@@ -34,6 +35,7 @@ export interface TerminalRunRequest {
   timeoutMs: number
   signal: AbortSignal
   onOutput?: (text: string) => void
+  stdin?: string | Uint8Array
 }
 
 export type TerminalRunCommand = (
@@ -109,6 +111,7 @@ function execLocal(opts: TerminalExecOpts): Promise<TerminalExecResult> {
       timeoutMs,
       signal: opts.signal,
       onOutput: opts.onOutput,
+      ...(opts.stdin !== undefined ? { stdin: opts.stdin } : {}),
     },
     { spawnError: 'reject', marker, fallbackCwd: opts.cwd },
   )
@@ -128,6 +131,7 @@ function startLocal(opts: TerminalExecOpts): TerminalJob {
       timeoutMs,
       signal: controller.signal,
       onOutput: opts.onOutput,
+      ...(opts.stdin !== undefined ? { stdin: opts.stdin } : {}),
     },
     { spawnError: 'result', marker, fallbackCwd: opts.cwd },
   )
@@ -161,6 +165,7 @@ function dockerRunRequest(
     timeoutMs,
     signal: opts.signal,
     onOutput: opts.onOutput,
+    ...(opts.stdin !== undefined ? { stdin: opts.stdin } : {}),
   }
 }
 
@@ -288,8 +293,12 @@ function runSpawned(
     const child = spawn(req.command, req.args, {
       cwd: req.cwd,
       env: req.env,
-      stdio: ['ignore', 'pipe', 'pipe'],
+      stdio: [req.stdin !== undefined ? 'pipe' : 'ignore', 'pipe', 'pipe'],
     })
+    if (req.stdin !== undefined) {
+      child.stdin?.on('error', () => {})
+      child.stdin?.end(typeof req.stdin === 'string' ? req.stdin : Buffer.from(req.stdin))
+    }
 
     const timeoutTimer =
       req.timeoutMs > 0

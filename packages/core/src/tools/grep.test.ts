@@ -194,6 +194,19 @@ describe('Grep docker backend', () => {
     expect(out).not.toContain('HOST_ONLY_GREP_TOKEN')
   })
 
+  test('does not pass stdin on the docker run request', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'hit.ts'), 'const STDIN_GREP_TOKEN = 1\n')
+    const calls: TerminalRunRequest[] = []
+    const backend = fakeDocker(async (req) => {
+      calls.push(req)
+      return { stdout: 'FAKE_DOCKER_GREP:1:from-container\n', stderr: '', exitCode: 0 }
+    })
+    await createGrepTool(backend).execute({ pattern: 'STDIN_GREP_TOKEN' }, makeCtx(root))
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.stdin).toBeUndefined()
+  })
+
   test('glob filter matches searchRoot-relative paths when path is a subdirectory', async () => {
     const root = fixtureRoot()
     mkdirSync(join(root, 'src'))

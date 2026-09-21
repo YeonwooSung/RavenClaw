@@ -74,6 +74,33 @@ describe('createLocalTerminalBackend', () => {
       }),
     ).rejects.toMatchObject({ name: 'AbortError' })
   })
+
+  test('pipes stdin when present', async () => {
+    const root = fixtureRoot()
+    const backend = createLocalTerminalBackend()
+    const result = await backend.exec({
+      command: 'cat',
+      cwd: root,
+      timeoutMs: 5_000,
+      signal: new AbortController().signal,
+      stdin: 'hello-stdin\n',
+    })
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('hello-stdin')
+  })
+
+  test('omitting stdin leaves cat hanging-free empty', async () => {
+    const root = fixtureRoot()
+    const backend = createLocalTerminalBackend()
+    const result = await backend.exec({
+      command: 'echo ok',
+      cwd: root,
+      timeoutMs: 5_000,
+      signal: new AbortController().signal,
+    })
+    expect(result.exitCode).toBe(0)
+    expect(result.stdout).toContain('ok')
+  })
 })
 
 const LIVE_DOCKER_IMAGE = 'bash:5'
@@ -244,6 +271,48 @@ describe('createDockerTerminalBackend', () => {
     expect(script).toContain('echo ok')
     expect(script).toMatch(/RAVENCLAW_CWD/)
     expect(seen.cwd).toBe(cwd)
+  })
+
+  test('forwards stdin on the run request and keeps -i', async () => {
+    const root = fixtureRoot()
+    let seen: TerminalRunRequest | undefined
+    const backend = createDockerTerminalBackend({
+      image: 'bash:5',
+      runCommand: async (req) => {
+        seen = req
+        return { stdout: '', stderr: '', exitCode: 0 }
+      },
+    })
+    await backend.exec({
+      command: 'tee /dev/null',
+      cwd: root,
+      timeoutMs: 5_000,
+      signal: new AbortController().signal,
+      stdin: 'payload-bytes',
+    })
+    expect(seen?.stdin).toBe('payload-bytes')
+    expect(seen?.args).toContain('-i')
+    expect(seen?.command).toBe('docker')
+  })
+
+  test('omits stdin on the run request when not provided', async () => {
+    const root = fixtureRoot()
+    let seen: TerminalRunRequest | undefined
+    const backend = createDockerTerminalBackend({
+      image: 'bash:5',
+      runCommand: async (req) => {
+        seen = req
+        return { stdout: '', stderr: '', exitCode: 0 }
+      },
+    })
+    await backend.exec({
+      command: 'echo hi',
+      cwd: root,
+      timeoutMs: 5_000,
+      signal: new AbortController().signal,
+    })
+    expect(seen?.stdin).toBeUndefined()
+    expect(seen?.args).toContain('-i')
   })
 
   test('passes only PATH/HOME/TERM/LANG and never the host process.env', async () => {
