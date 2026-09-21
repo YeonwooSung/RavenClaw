@@ -1,9 +1,9 @@
-import { existsSync, readFileSync } from 'node:fs'
+import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { defaultModelId, getModelProfile } from './cost/models'
 import { ravenclawHome } from './home'
 import type { ModelProfile, PermissionMode } from './types'
-import { parseYamlMap, stripWrappingQuotes } from './config/yaml'
+import { parseYamlMap, stripWrappingQuotes, upsertYamlTopLevelScalar } from './config/yaml'
 
 export type ProviderKind = 'anthropic' | 'openai_compat' | 'ollama' | 'vllm'
 
@@ -104,6 +104,7 @@ export interface RavenClawConfig {
   discord?: DiscordConfig
   review?: ReviewConfig
   job?: JobConfig
+  instructionFiles: InstructionFilesMode
 }
 
 export interface ModelPriceFields {
@@ -169,6 +170,13 @@ const PERMISSION_MODES = new Set<PermissionMode>([
 ])
 const TERMINAL_BACKENDS = new Set<TerminalBackendKind>(['local', 'docker'])
 
+export const INSTRUCTION_FILES_MODES = ['claude', 'agents-fallback', 'both'] as const
+export type InstructionFilesMode = (typeof INSTRUCTION_FILES_MODES)[number]
+
+export function isInstructionFilesMode(value: string): value is InstructionFilesMode {
+  return (INSTRUCTION_FILES_MODES as readonly string[]).includes(value)
+}
+
 const ENV_KEYS = [
   'OPENAI_API_KEY',
   'ANTHROPIC_API_KEY',
@@ -191,6 +199,7 @@ export function defaultConfig(): RavenClawConfig {
     ads: { feedUrl: '' },
     included: { gatewayUrl: '', enabled: false, sessionCapPerDay: 4 },
     mcp: { servers: [] },
+    instructionFiles: 'both',
   }
 }
 
@@ -207,6 +216,11 @@ export function parseConfigYaml(text: string): Partial<RavenClawConfig> {
   const permissionMode = asString(raw.permissionMode)
   if (permissionMode !== undefined && isPermissionMode(permissionMode)) {
     out.permissionMode = permissionMode
+  }
+
+  const instructionFiles = asString(raw.instructionFiles)
+  if (instructionFiles !== undefined && isInstructionFilesMode(instructionFiles)) {
+    out.instructionFiles = instructionFiles
   }
 
   const maxRounds = asNumber(raw.maxRounds)
@@ -408,6 +422,7 @@ export function loadConfig(opts?: { home?: string; flags?: ConfigFlags }): Resol
     ads: { feedUrl: parsed.ads?.feedUrl ?? base.ads.feedUrl },
     included: resolveIncluded(parsed.included, base.included),
     mcp: { servers: parsed.mcp?.servers ?? base.mcp.servers },
+    instructionFiles: parsed.instructionFiles ?? base.instructionFiles,
     home,
     env,
     profile: getModelProfile(model, profileOverrides(model, parsed)),
@@ -496,6 +511,15 @@ function firstNonEmpty(...values: Array<string | undefined>): string | undefined
     if (value !== undefined && value !== '') return value
   }
   return undefined
+}
+
+export function writeHomeInstructionFiles(home: string, mode: InstructionFilesMode): void {
+  const path = join(home, 'config.yaml')
+  const tmp = join(home, 'config.yaml.tmp')
+  const current = existsSync(path) ? readFileSync(path, 'utf8') : ''
+  const next = upsertYamlTopLevelScalar(current, 'instructionFiles', mode)
+  writeFileSync(tmp, next)
+  renameSync(tmp, path)
 }
 
 function readIfExists(path: string): string | undefined {

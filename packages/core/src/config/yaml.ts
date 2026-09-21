@@ -299,3 +299,31 @@ function nextMeaningful(lines: string[], start: number): number | undefined {
   }
   return undefined
 }
+
+export function upsertYamlTopLevelScalar(text: string, key: string, value: string): string {
+  if (text === '') return `${key}: ${value}\n`
+  const newline = text.includes('\r\n') ? '\r\n' : '\n'
+  const lines = text.split(/\r?\n/)
+  if (lines.length > 0 && lines[lines.length - 1] === '') lines.pop()
+  let found = -1
+  for (let i = 0; i < lines.length; i++) {
+    const raw = lines[i] ?? ''
+    if (isBlankOrComment(raw)) continue
+    if (leadingSpaces(raw) !== 0) continue
+    const parsed = parseKeyedLine(raw)
+    if (!parsed || parsed.key !== key) continue
+    found = i
+    if (parsed.value === undefined) {
+      const next = nextMeaningful(lines, i + 1)
+      const nextIndent = next === undefined ? -1 : leadingSpaces(lines[next] ?? '')
+      if (next !== undefined && nextIndent > 0) throw new Error(`${key} is not a scalar`)
+    } else if (parsed.value !== null && typeof parsed.value === 'object') {
+      throw new Error(`${key} is not a scalar`)
+    }
+    break
+  }
+  const replacement = `${key}: ${value}`
+  if (found >= 0) lines[found] = replacement
+  else lines.push(replacement)
+  return `${lines.join(newline)}${newline}`
+}

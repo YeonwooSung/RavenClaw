@@ -53,6 +53,9 @@ export {
   normalizeOpenAiBaseUrl,
   parseConfigYaml,
   resolveProviderModel,
+  writeHomeInstructionFiles,
+  isInstructionFilesMode,
+  INSTRUCTION_FILES_MODES,
   OLLAMA_DEFAULT_HOST,
   OLLAMA_DEFAULT_MODEL,
   VLLM_DEFAULT_BASE_URL,
@@ -60,6 +63,7 @@ export {
 } from './config'
 export type {
   ConfigFlags,
+  InstructionFilesMode,
   McpConfig,
   McpOAuthConfig,
   McpServerConfig,
@@ -68,6 +72,7 @@ export type {
   ResolvedConfig,
   ReviewConfig,
 } from './config'
+export { upsertYamlTopLevelScalar } from './config/yaml'
 export {
   conservativeProfile,
   defaultModelId,

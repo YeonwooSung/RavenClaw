@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -9,6 +9,7 @@ import {
   normalizeOpenAiBaseUrl,
   parseConfigYaml,
   resolveProviderModel,
+  writeHomeInstructionFiles,
 } from './config'
 import { defaultModelId } from './cost/models'
 
@@ -69,6 +70,7 @@ describe('defaultConfig', () => {
     expect(cfg.specialistModel).toBeUndefined()
     expect(cfg.tools).toBeUndefined()
     expect(cfg.slack).toBeUndefined()
+    expect(cfg.instructionFiles).toBe('both')
   })
 })
 
@@ -86,6 +88,42 @@ describe('loadConfig', () => {
     expect(cfg.included).toEqual({ gatewayUrl: '', enabled: false, sessionCapPerDay: 4 })
     expect(cfg.mcp).toEqual({ servers: [] })
     expect(cfg.home).toBe(home)
+    expect(cfg.instructionFiles).toBe('both')
+  })
+
+  test('parseConfigYaml accepts instructionFiles tokens and ignores unknown', () => {
+    expect(parseConfigYaml('instructionFiles: claude\n').instructionFiles).toBe('claude')
+    expect(parseConfigYaml('instructionFiles: agents-fallback\n').instructionFiles).toBe(
+      'agents-fallback',
+    )
+    expect(parseConfigYaml('instructionFiles: both\n').instructionFiles).toBe('both')
+    expect(parseConfigYaml('instructionFiles: nope\n').instructionFiles).toBeUndefined()
+    expect(parseConfigYaml('model: x\n').instructionFiles).toBeUndefined()
+  })
+
+  test('loadConfig defaults instructionFiles to both', () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test'
+    const home = tempHome()
+    expect(loadConfig({ home }).instructionFiles).toBe('both')
+    writeFileSync(join(home, 'config.yaml'), 'provider: anthropic\ninstructionFiles: claude\n')
+    expect(loadConfig({ home }).instructionFiles).toBe('claude')
+    writeFileSync(join(home, 'config.yaml'), 'provider: anthropic\ninstructionFiles: nope\n')
+    expect(loadConfig({ home }).instructionFiles).toBe('both')
+  })
+
+  test('writeHomeInstructionFiles upserts without dropping comments', () => {
+    const home = tempHome()
+    writeFileSync(join(home, 'config.yaml'), '# keep\nprovider: anthropic\n')
+    writeHomeInstructionFiles(home, 'claude')
+    const text = readFileSync(join(home, 'config.yaml'), 'utf8')
+    expect(text).toContain('# keep\n')
+    expect(text).toContain('provider: anthropic\n')
+    expect(text).toContain('instructionFiles: claude\n')
+    writeHomeInstructionFiles(home, 'both')
+    expect(readFileSync(join(home, 'config.yaml'), 'utf8')).toContain('instructionFiles: both\n')
+    expect(
+      (readFileSync(join(home, 'config.yaml'), 'utf8').match(/^instructionFiles:/m) ?? []).length,
+    ).toBe(1)
   })
 
   test('empty or absent included.gatewayUrl stays BYOK and does not change inference', () => {
