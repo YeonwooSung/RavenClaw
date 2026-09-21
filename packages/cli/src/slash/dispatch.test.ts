@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
@@ -62,6 +62,7 @@ function fakeEngine(session: SessionRecord): SessionEngine & { reloads: number }
       session.model = profile.id
     },
     async setPermissionMode() {},
+    setInstructionFiles() {},
     reloadSystem() {
       reloads.n += 1
     },
@@ -386,6 +387,65 @@ describe('dispatchSharedSlash', () => {
     expect(okSession.jobError).toBeUndefined()
     expect(okUpserted.some((row) => row.jobError === undefined)).toBe(true)
     expect(okHost.ghCalls.length).toBeGreaterThan(0)
+  })
+
+  test('/config dump includes instructionFiles', async () => {
+    const host = fakeHost(fakeRuntime(fakeEngine(makeSession())))
+    expect(await dispatchSharedSlash(cmd('config'), host)).toBe('handled')
+    expect(host.notices[0]).toContain('instructionFiles:')
+  })
+
+  test('/config instructions prints chooser and does not write', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'ravenclaw-cfg-chooser-'))
+    tempDirs.push(home)
+    const runtime = fakeRuntime(fakeEngine(makeSession()))
+    runtime.config = { ...runtime.config, home, instructionFiles: 'both' }
+    const host = fakeHost(runtime)
+    expect(await dispatchSharedSlash(cmd('config', 'instructions'), host)).toBe('handled')
+    expect(host.notices[0]).toBe(
+      [
+        'instructionFiles: both',
+        '  claude           CLAUDE.md only',
+        '  agents-fallback  CLAUDE.md, else AGENTS.md in that directory',
+        '  both             CLAUDE.md and AGENTS.md',
+      ].join('\n'),
+    )
+    expect(existsSync(join(home, 'config.yaml'))).toBe(false)
+  })
+
+  test('/config instructions claude persists, applies, and reloads', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'ravenclaw-cfg-set-'))
+    tempDirs.push(home)
+    const engine = fakeEngine(makeSession())
+    const runtime = fakeRuntime(engine)
+    runtime.config = { ...runtime.config, home, instructionFiles: 'both' }
+    const host = fakeHost(runtime)
+    expect(await dispatchSharedSlash(cmd('config', 'instructions claude'), host)).toBe('handled')
+    expect(host.notices).toEqual(['instructionFiles: claude'])
+    expect(readFileSync(join(home, 'config.yaml'), 'utf8')).toContain('instructionFiles: claude\n')
+    expect(runtime.config.instructionFiles).toBe('claude')
+    expect(engine.reloads).toBe(1)
+  })
+
+  test('/config instructions maybe prints usage and does not write', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'ravenclaw-cfg-bad-'))
+    tempDirs.push(home)
+    const runtime = fakeRuntime(fakeEngine(makeSession()))
+    runtime.config = { ...runtime.config, home, instructionFiles: 'both' }
+    const host = fakeHost(runtime)
+    expect(await dispatchSharedSlash(cmd('config', 'instructions maybe'), host)).toBe('handled')
+    expect(host.notices).toEqual(['usage: /config instructions claude|agents-fallback|both'])
+    expect(existsSync(join(home, 'config.yaml'))).toBe(false)
+    expect(runtime.config.instructionFiles).toBe('both')
+  })
+
+  test('/config instructions claude without home notices no home directory', async () => {
+    const runtime = fakeRuntime(fakeEngine(makeSession()))
+    runtime.config = { ...runtime.config, instructionFiles: 'both' }
+    delete (runtime.config as { home?: string }).home
+    const host = fakeHost(runtime)
+    expect(await dispatchSharedSlash(cmd('config', 'instructions claude'), host)).toBe('handled')
+    expect(host.notices).toEqual(['no home directory'])
   })
 })
 

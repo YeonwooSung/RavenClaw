@@ -14,6 +14,7 @@ describe('formatPublicConfig', () => {
     expect(text).toContain('provider: (unset)')
     expect(text).toContain(`model: ${defaultModelId('anthropic')}`)
     expect(text).toContain('ANTHROPIC_API_KEY: unset')
+    expect(text).toContain('instructionFiles: both')
     expect(text).not.toContain('sk-')
   })
 
@@ -23,12 +24,13 @@ describe('formatPublicConfig', () => {
     writeFileSync(join(home, '.env'), 'ANTHROPIC_API_KEY=sk-ant-secret-value\n')
     writeFileSync(
       join(home, 'config.yaml'),
-      'provider: anthropic\nmodel: anthropic/claude-sonnet-4\nmcp:\n  servers:\n    - name: fs\n      command: bun\n',
+      'provider: anthropic\nmodel: anthropic/claude-sonnet-4\ninstructionFiles: claude\nmcp:\n  servers:\n    - name: fs\n      command: bun\n',
     )
     const text = formatPublicConfig({ home })
     expect(text).toContain('provider: anthropic')
     expect(text).toContain('ANTHROPIC_API_KEY: set (19 chars)')
     expect(text).toContain('mcp.servers: fs')
+    expect(text).toContain('instructionFiles: claude')
     expect(text).not.toContain('sk-ant-secret-value')
   })
 })

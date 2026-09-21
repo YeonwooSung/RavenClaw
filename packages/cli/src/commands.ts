@@ -79,7 +79,7 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
   },
   { name: 'bash', usage: '/bash <cmd>', summary: 'run a local shell command (also !cmd)' },
   { name: 'skill', usage: '/skill:<name>', summary: 'invoke a skill by name' },
-  { name: 'config', usage: '/config', summary: 'show resolved config' },
+  { name: 'config', usage: '/config [instructions [claude|agents-fallback|both]]', summary: 'show resolved config; set instruction file mode' },
   { name: 'context', usage: '/context', summary: 'show compact generation and message count' },
   { name: 'help', aliases: ['?'], usage: '/help', summary: 'this list' },
   { name: 'quit', usage: '/quit', summary: 'exit' },

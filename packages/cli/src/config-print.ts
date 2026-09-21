@@ -44,6 +44,7 @@ export function formatPublicConfig(opts?: { home?: string; flags?: ConfigFlags }
     `provider: ${provider}`,
     `model: ${model}`,
     `permissionMode: ${permissionMode}`,
+    `instructionFiles: ${parsed.instructionFiles ?? 'both'}`,
     `maxRounds: ${parsed.maxRounds ?? base.maxRounds}`,
     `childMaxRounds: ${parsed.childMaxRounds ?? base.childMaxRounds}`,
     `compact.enabled: ${parsed.compact?.enabled ?? base.compact.enabled}`,

@@ -2,6 +2,8 @@ import {
   agentCatalog,
   buildSystemParts,
   discoverSkills,
+  isInstructionFilesMode,
+  writeHomeInstructionFiles,
   formatTasksNotice,
   formatUndoNotice,
   followupNotice,
@@ -17,6 +19,7 @@ import {
   getSessionWorktree,
   setJobAutoCommit,
   setSessionJobError,
+  type InstructionFilesMode,
 } from '@ravenclaw/core'
 import {
   INTERVIEW_PROMPT,
@@ -308,11 +311,7 @@ export async function dispatchSharedSlash(
       await host.runTurn(`Use the Skill tool to load "${parsed.arg.trim()}" and follow its instructions.`)
       return 'handled'
     case 'config':
-      host.notice(
-        runtime.config.home !== undefined
-          ? formatPublicConfig({ home: runtime.config.home })
-          : 'see raven config',
-      )
+      dispatchConfig(parsed.arg, host, runtime)
       return 'handled'
     case 'search':
       host.notice(
@@ -358,11 +357,70 @@ export async function dispatchSharedSlash(
   }
 }
 
+const CONFIG_INSTRUCTIONS_USAGE = 'usage: /config instructions claude|agents-fallback|both'
+
+function formatInstructionFilesChooser(mode: InstructionFilesMode): string {
+  return [
+    `instructionFiles: ${mode}`,
+    '  claude           CLAUDE.md only',
+    '  agents-fallback  CLAUDE.md, else AGENTS.md in that directory',
+    '  both             CLAUDE.md and AGENTS.md',
+  ].join('\n')
+}
+
+function dispatchConfig(arg: string | undefined, host: SlashHost, runtime: CliRuntime): void {
+  const trimmed = arg?.trim() ?? ''
+  if (trimmed === '') {
+    host.notice(
+      runtime.config.home !== undefined
+        ? formatPublicConfig({ home: runtime.config.home })
+        : 'see raven config',
+    )
+    return
+  }
+  const parts = trimmed.split(/\s+/)
+  if (parts[0] !== 'instructions') {
+    host.notice(CONFIG_INSTRUCTIONS_USAGE)
+    return
+  }
+  if (parts.length === 1) {
+    host.notice(formatInstructionFilesChooser(runtime.config.instructionFiles ?? 'both'))
+    return
+  }
+  if (parts.length !== 2 || !isInstructionFilesMode(parts[1] ?? '')) {
+    host.notice(CONFIG_INSTRUCTIONS_USAGE)
+    return
+  }
+  const mode = parts[1] as InstructionFilesMode
+  const home = runtime.config.home
+  if (home === undefined) {
+    host.notice('no home directory')
+    return
+  }
+  try {
+    writeHomeInstructionFiles(home, mode)
+  } catch {
+    host.notice('failed to write config.yaml')
+    return
+  }
+  runtime.config.instructionFiles = mode
+  runtime.engine.setInstructionFiles(mode)
+  runtime.engine.reloadSystem(
+    buildSystemParts({
+      cwd: runtime.cwd,
+      permissionMode: runtime.engine.session.permissionMode,
+      instructionFiles: mode,
+    }),
+  )
+  host.notice(`instructionFiles: ${mode}`)
+}
+
 function reloadSystem(runtime: CliRuntime): void {
   runtime.engine.reloadSystem(
     buildSystemParts({
       cwd: runtime.cwd,
       permissionMode: runtime.engine.session.permissionMode,
+      instructionFiles: runtime.config.instructionFiles ?? 'both',
     }),
   )
 }
