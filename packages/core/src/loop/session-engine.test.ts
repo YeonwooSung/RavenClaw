@@ -3442,4 +3442,92 @@ describe('dismiss-on-message', () => {
     expect(toolRow && toolRow.role === 'tool' ? toolRow.blocks[0]?.text : '').toBe(IGNORED_TEXT)
     expect(loaded.messages.some((m) => m.role === 'user')).toBe(true)
   })
+
+  test('persist-fail on the second parked ask stops before the user row', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_dismiss_persist_fail' })
+    await store.createSession(session)
+    await store.persistToolCalls(session.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [
+        { type: 'tool_use', id: 'call_a', name: 'Echo', input: { text: 'a' } },
+        { type: 'tool_use', id: 'call_b', name: 'Echo', input: { text: 'b' } },
+      ],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_a',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo a?',
+      input: { text: 'a' },
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_b',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo b?',
+      input: { text: 'b' },
+      createdAt: 2,
+    })
+    const echo = createAskEcho()
+    const provider = createFakeProvider([textThenStop('done')])
+    let persistCount = 0
+    const origPersist = store.persistToolResults.bind(store)
+    store.persistToolResults = async (sessionId, rows) => {
+      persistCount += 1
+      if (persistCount >= 2) throw new Error('disk')
+      return origPersist(sessionId, rows)
+    }
+    const engine = await createSessionEngine(
+      engineOpts({
+        provider,
+        store,
+        session,
+        tools: [echo],
+      }),
+    )
+    const { events, result } = await drain(engine.submitMessage('go on'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(events.some((e) => e.type === 'status' && e.message === 'pending permission ask')).toBe(
+      true,
+    )
+    expect(echo.executeCount).toBe(0)
+    expect(provider.streamCount).toBe(0)
+    expect(await store.listPendingAsks(session.id)).toHaveLength(1)
+    expect((await store.listPendingAsks(session.id))[0]?.callId).toBe('call_b')
+    const loaded = await store.loadSession(session.id)
+    expect(loaded.messages.filter((m) => m.role === 'user')).toHaveLength(0)
+    const tools = loaded.messages.filter(
+      (m): m is Extract<Message, { role: 'tool' }> => m.role === 'tool',
+    )
+    expect(tools).toHaveLength(1)
+    expect(tools[0]?.toolUseId).toBe('call_a')
+    expect(tools[0]?.blocks[0]?.text).toBe(IGNORED_TEXT)
+
+    store.persistToolResults = origPersist
+    const retry = await drain(engine.submitMessage('go on'))
+    expect(retry.result).toEqual({ reason: 'completed' })
+    expect(
+      retry.events.some((e) => e.type === 'status' && e.message === 'pending permission ask'),
+    ).toBe(false)
+    expect(echo.executeCount).toBe(0)
+    expect(provider.streamCount).toBe(1)
+    expect(await store.listPendingAsks(session.id)).toHaveLength(0)
+    const after = await store.loadSession(session.id)
+    const afterTools = after.messages.filter(
+      (m): m is Extract<Message, { role: 'tool' }> => m.role === 'tool',
+    )
+    expect(afterTools.map((row) => row.toolUseId).sort()).toEqual(['call_a', 'call_b'])
+    expect(afterTools.map((row) => row.blocks[0]?.text)).toEqual([IGNORED_TEXT, IGNORED_TEXT])
+    expect(
+      after.messages.some(
+        (m) => m.role === 'user' && m.blocks.some((b) => b.type === 'text' && b.text === 'go on'),
+      ),
+    ).toBe(true)
+  })
 })

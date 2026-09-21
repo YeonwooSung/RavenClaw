@@ -464,7 +464,12 @@ export async function createSessionEngine(opts: SessionEngineOptions): Promise<S
     }
 
     if (answer === 'ignored') {
-      await persistSettledTool(makeToolMessage(callId, false, IGNORED_TEXT), target.sessionId)
+      try {
+        await persistSettledTool(makeToolMessage(callId, false, IGNORED_TEXT), target.sessionId)
+      } catch (error) {
+        claimedAsks.delete(callId)
+        throw error
+      }
       await dropPendingAsk(callId)
       return 'matched'
     }
