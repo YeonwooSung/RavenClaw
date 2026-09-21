@@ -2,6 +2,7 @@
 
 Date: 2026-09-20  
 Status: implemented  
+Shipped sha: `a53be93` on `main`.  
 Reviewed against tree at `a707249` (`origin/main`).  
 Successor to `2026-09-18-keep-id-clear.md` (Status: implemented at `edeb611`). Amends prior OUT for `POST /v1/session/:id/clear` **only**. Does not reopen that spec’s wipe/keep table, mid-turn abort-then-wipe, or child leftover refuse.
 
@@ -138,7 +139,7 @@ Do not call `store.clearConversation`. Do not call `openNewSession`, `close`, `m
 
 ## Per-slice board
 
-Board as of `a707249`. Not on `main` until this door lands.
+Board as of `a53be93` on `main`. C0–C2 done.
 
 | ID | Status vs tree |
 |---|---|
@@ -259,7 +260,7 @@ Existing cancel / compact / submit / resolve / stream tests stay green. Mid-turn
 - Remaining-roadmap: successor pointer to this spec. Do not rewrite shipped waves.
 - `CHANGELOG.md` Unreleased: this-branch HTTP `POST …/clear`. Schema stays **v10**.
 
-**Files.** `packages/cli/src/serve.ts` (~1088), `docs/headless.md`, `ARCHITECTURE.md`, `ARCHITECTURE.ko.md`, `docs/superpowers/specs/2026-09-18-keep-id-clear.md`, `docs/superpowers/specs/2026-09-12-ravenclaw-remaining-roadmap.md`, `CHANGELOG.md`, this spec Status → implemented (SHA blank until land).
+**Files.** `packages/cli/src/serve.ts` (~1088), `docs/headless.md`, `ARCHITECTURE.md`, `ARCHITECTURE.ko.md`, `docs/superpowers/specs/2026-09-18-keep-id-clear.md`, `docs/superpowers/specs/2026-09-12-ravenclaw-remaining-roadmap.md`, `CHANGELOG.md`, this spec Status → implemented at `a53be93`.
 
 **Done when.** Those files link here. Help and headless no longer omit `/clear`. Keep-id no longer forbids the route as a future door.
 

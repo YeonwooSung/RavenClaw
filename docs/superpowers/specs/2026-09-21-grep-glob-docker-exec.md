@@ -2,7 +2,7 @@
 
 Date: 2026-09-21  
 Status: implemented  
-Shipped sha: `e03fe02` (this worktree; not yet on `main`).  
+Shipped sha: `a52eab1` on `main` (PR #16).  
 Reviewed against tree at `dc45aec` (`origin/main`, waist closed).  
 Successor to `2026-09-20-rewind-recovery-v11.md` (Status: implemented). Amends prior OUT for **Grep/Glob docker-exec** only. Does not reopen WorkspaceFs as a docker I/O port, NotebookEdit docker, sandbox network policy, `ignored`, or LSP depth.
 
@@ -106,7 +106,7 @@ When `terminal.backend: docker` actually constructs a docker Bash backend, **fil
 
 ## Per-slice board
 
-Board as of `e03fe02` on this worktree. S0–S2.1 code is done. S2.2 is this docs pass. Not yet on `main`.
+Board as of `a52eab1` on `main` (PR #16). S0–S2.2 done.
 
 | ID | Status vs tree |
 |---|---|

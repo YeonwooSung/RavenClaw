@@ -2,7 +2,7 @@
 
 Date: 2026-09-20  
 Status: implemented  
-Shipped sha: not yet on `main` (this worktree).  
+Shipped sha: `067bfba` on `main`.  
 Reviewed against tree at `a707249` (`origin/main`, waist closed).  
 Successor to `2026-09-18-parent-tree-stop.md` (Status: implemented at `9901d0e`). Amends that spec’s OUT for **cancel-without-live of this session’s parked asks**, **interrupt abort-pair**, and **cancel HTTP 202/200** only. Does not reopen tree-stop of descendants, keep-id `/clear`, or stream `version` / `continuationToken`.
 
@@ -138,7 +138,7 @@ These lock underspecification. The implementation plan may only add detail, not 
 
 ## Per-slice board
 
-Board as of this worktree. L0.1–L4.1 code is done. L4.2 is this docs pass. Not yet on `main`.
+Board as of `067bfba` on `main`. L0.1–L4.2 done.
 
 | ID | Status vs tree |
 |---|---|

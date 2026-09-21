@@ -1,7 +1,8 @@
 # RavenClaw next-horizon roadmap (rewind recovery, schema v11, async createSessionEngine)
 
 Date: 2026-09-20  
-Status: implemented (SHA blank until land)  
+Status: implemented  
+Shipped sha: `dc45aec` on `main`.  
 Reviewed against tree at `a707249` (`origin/main` after parent tree-stop `9901d0e`).  
 Successor to `2026-09-18-parent-tree-stop.md` (Status: implemented at `9901d0e`). Amends prior OUT **only** for: compact-then-die sliver, schema v11, async `createSessionEngine`. Does not reopen abort / I2 / cancel 202 / tree-stop.
 
@@ -139,7 +140,7 @@ export async function createSessionEngine(opts: SessionEngineOptions): Promise<S
 
 ## Per-slice board
 
-Board as of this land. All rows **done** on this branch (SHA blank until land).
+Board as of `dc45aec` on `main`. All rows **done**.
 
 | ID | Status vs tree |
 |---|---|
