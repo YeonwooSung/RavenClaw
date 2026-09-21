@@ -1,4 +1,5 @@
 import { timingSafeEqual } from 'node:crypto'
+import { isPendingAskAnswer, type PendingAskAnswer } from '../session/pending-asks'
 import { safeWebhookToolNames } from './webhook'
 
 export type TurnRequest =
@@ -43,7 +44,7 @@ export function parseCancelBody(
 
 export function parseResolveBody(
   body: unknown,
-): { ok: true; callId: string; allow: boolean } | { ok: false; error: string } {
+): { ok: true; callId: string; answer: PendingAskAnswer } | { ok: false; error: string } {
   if (body === null || typeof body !== 'object' || Array.isArray(body)) {
     return { ok: false, error: 'body must be an object' }
   }
@@ -53,10 +54,27 @@ export function parseResolveBody(
   }
   const callId = rec.callId.trim()
   if (callId === '') return { ok: false, error: 'callId is required' }
-  if (typeof rec.allow !== 'boolean') {
+  const hasAllow = rec.allow !== undefined
+  const hasAnswer = rec.answer !== undefined
+  if (hasAllow && typeof rec.allow !== 'boolean') {
     return { ok: false, error: 'allow must be a boolean' }
   }
-  return { ok: true, callId, allow: rec.allow }
+  if (hasAnswer && !isPendingAskAnswer(rec.answer)) {
+    return { ok: false, error: 'answer must be allow, deny, allow_always, or ignored' }
+  }
+  if (!hasAllow && !hasAnswer) {
+    return { ok: false, error: 'allow or answer is required' }
+  }
+  const fromAllow: PendingAskAnswer | undefined = hasAllow
+    ? rec.allow
+      ? 'allow'
+      : 'deny'
+    : undefined
+  const fromAnswer = hasAnswer ? rec.answer : undefined
+  if (fromAllow !== undefined && fromAnswer !== undefined && fromAllow !== fromAnswer) {
+    return { ok: false, error: 'allow and answer disagree' }
+  }
+  return { ok: true, callId, answer: fromAnswer ?? fromAllow! }
 }
 
 export function checkBearer(authHeader: string | undefined, secret: string): boolean {

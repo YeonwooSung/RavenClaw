@@ -776,13 +776,12 @@ export async function handleServeRequest(req: Request, ctx: ServeRequestContext)
       if (!parsedBody.ok) return parsedBody.res
       const parsed = parseResolveBody(parsedBody.body)
       if (!parsed.ok) return Response.json({ error: parsed.error }, { status: 400 })
-      const answer = parsed.allow ? 'allow' : 'deny'
-      if (ctx.settleAsk?.(parsed.callId, answer)) {
+      if (ctx.settleAsk?.(parsed.callId, parsed.answer)) {
         return Response.json({ status: 'matched' })
       }
       const loaded = await loadSessionRuntime(ctx, sessionId)
       if (!loaded.ok) return loaded.res
-      const status = await loaded.runtime.engine.applyAskAnswer(parsed.callId, answer)
+      const status = await loaded.runtime.engine.applyAskAnswer(parsed.callId, parsed.answer)
       if (status === 'unmatched') return Response.json({ status }, { status: 404 })
       return Response.json({ status })
     }

@@ -43,7 +43,7 @@ describe('checkBearer', () => {
 })
 
 describe('parseResolveBody', () => {
-  test('requires callId string and allow boolean', () => {
+  test('requires callId string and allow boolean or answer', () => {
     expect(parseResolveBody(null)).toEqual({ ok: false, error: 'body must be an object' })
     expect(parseResolveBody([])).toEqual({ ok: false, error: 'body must be an object' })
     expect(parseResolveBody({})).toEqual({ ok: false, error: 'callId is required' })
@@ -53,24 +53,51 @@ describe('parseResolveBody', () => {
     })
     expect(parseResolveBody({ callId: 'c1' })).toEqual({
       ok: false,
-      error: 'allow must be a boolean',
+      error: 'allow or answer is required',
     })
     expect(parseResolveBody({ callId: 'c1', allow: 'yes' })).toEqual({
       ok: false,
       error: 'allow must be a boolean',
     })
+    expect(parseResolveBody({ callId: 'c1', answer: 'bogus' })).toEqual({
+      ok: false,
+      error: 'answer must be allow, deny, allow_always, or ignored',
+    })
+    expect(parseResolveBody({ callId: 'c1', allow: true, answer: 'ignored' })).toEqual({
+      ok: false,
+      error: 'allow and answer disagree',
+    })
+    expect(parseResolveBody({ callId: 'c1', allow: true, answer: 'allow_always' })).toEqual({
+      ok: false,
+      error: 'allow and answer disagree',
+    })
   })
 
-  test('returns trimmed callId and allow', () => {
+  test('returns trimmed callId and mapped answer', () => {
     expect(parseResolveBody({ callId: '  c1  ', allow: true })).toEqual({
       ok: true,
       callId: 'c1',
-      allow: true,
+      answer: 'allow',
     })
     expect(parseResolveBody({ callId: 'c1', allow: false })).toEqual({
       ok: true,
       callId: 'c1',
-      allow: false,
+      answer: 'deny',
+    })
+    expect(parseResolveBody({ callId: 'c1', answer: 'ignored' })).toEqual({
+      ok: true,
+      callId: 'c1',
+      answer: 'ignored',
+    })
+    expect(parseResolveBody({ callId: 'c1', answer: 'allow_always' })).toEqual({
+      ok: true,
+      callId: 'c1',
+      answer: 'allow_always',
+    })
+    expect(parseResolveBody({ callId: 'c1', allow: false, answer: 'deny' })).toEqual({
+      ok: true,
+      callId: 'c1',
+      answer: 'deny',
     })
   })
 })

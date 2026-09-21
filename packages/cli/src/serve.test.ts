@@ -8,6 +8,7 @@ import {
   PersistError,
   SessionLockError,
   type PendingAsk,
+  type PendingAskAnswer,
   type SessionJob,
   type SessionRecord,
   type StreamEvent,
@@ -234,7 +235,7 @@ async function makeServeCtx(secret = ''): Promise<ServeRequestContext & {
   abortKinds: Array<'cancel' | 'interrupt' | undefined>
   compactCalls: number
   clearCalls: number
-  applyCalls: Array<{ callId: string; answer: 'allow' | 'deny' | 'allow_always' }>
+  applyCalls: Array<{ callId: string; answer: PendingAskAnswer }>
   submitted: UserSubmitInput[]
   submitEvents: StreamEvent[]
   replayEvents: StreamEvent[]
@@ -250,7 +251,7 @@ async function makeServeCtx(secret = ''): Promise<ServeRequestContext & {
   const submitEvents: StreamEvent[] = []
   const replayEvents: StreamEvent[] = []
   const submitted: UserSubmitInput[] = []
-  const applyCalls: Array<{ callId: string; answer: 'allow' | 'deny' | 'allow_always' }> = []
+  const applyCalls: Array<{ callId: string; answer: PendingAskAnswer }> = []
   const state: {
     abortCalls: number
     abortKinds: Array<'cancel' | 'interrupt' | undefined>
@@ -283,7 +284,7 @@ async function makeServeCtx(secret = ''): Promise<ServeRequestContext & {
       followup?: string
       lastEnd?: { reason: string }
     },
-    async applyAskAnswer(callId: string, answer: 'allow' | 'deny' | 'allow_always') {
+    async applyAskAnswer(callId: string, answer: PendingAskAnswer) {
       applyCalls.push({ callId, answer })
       const row = await store.getPendingAsk(callId)
       if (!row || row.sessionId !== engine.session.id) return 'unmatched' as const
@@ -511,6 +512,45 @@ describe('handleServeRequest', () => {
     )
     expect(res.status).toBe(404)
     expect(await res.json()).toEqual({ status: 'unmatched' })
+  })
+
+  test('POST resolve answer ignored crash-resolve calls applyAskAnswer ignored', async () => {
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    await ctx.store.upsertPendingAsk({
+      callId: 'parked',
+      sessionId: 's1',
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    } satisfies PendingAsk)
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/resolve', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+        body: JSON.stringify({ callId: 'parked', answer: 'ignored' }),
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ status: 'matched' })
+    expect(ctx.applyCalls).toEqual([{ callId: 'parked', answer: 'ignored' }])
+  })
+
+  test('POST resolve disagreeing allow and answer is 400', async () => {
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/resolve', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+        body: JSON.stringify({ callId: 'c1', allow: true, answer: 'ignored' }),
+      }),
+      ctx,
+    )
+    expect(res.status).toBe(400)
+    expect(await res.json()).toEqual({ error: 'allow and answer disagree' })
+    expect(ctx.applyCalls).toEqual([])
   })
 
   test('GET /v1/session/:id/stream without Bearer is 401', async () => {
@@ -1687,6 +1727,48 @@ describe('handleServeRequest', () => {
     expect(res.status).toBe(200)
     expect(await res.json()).toEqual({ status: 'matched' })
     await expect(pending).resolves.toBe('allow')
+    expect(ctx.applyCalls).toEqual([])
+  })
+
+  test('POST resolve answer ignored settles a live leftover-ask without applyAskAnswer', async () => {
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const host = createServeAskHost()
+    const pending = host.askUser(
+      { type: 'permission_ask', id: 'c1', tool: 'Write', input: {}, message: 'Write?' },
+      new AbortController().signal,
+    )
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/resolve', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+        body: JSON.stringify({ callId: 'c1', answer: 'ignored' }),
+      }),
+      { ...ctx, settleAsk: (callId, answer) => host.settle(callId, answer) },
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ status: 'matched' })
+    await expect(pending).resolves.toBe('ignored')
+    expect(ctx.applyCalls).toEqual([])
+  })
+
+  test('POST resolve answer allow_always settles live without applyAskAnswer', async () => {
+    const ctx = await makeServeCtx(gatewaySecret({ GATEWAY_SECRET: 'secret' }))
+    const host = createServeAskHost()
+    const pending = host.askUser(
+      { type: 'permission_ask', id: 'c1', tool: 'Write', input: {}, message: 'Write?' },
+      new AbortController().signal,
+    )
+    const res = await handleServeRequest(
+      new Request('http://127.0.0.1/v1/session/s1/resolve', {
+        method: 'POST',
+        headers: { authorization: 'Bearer secret' },
+        body: JSON.stringify({ callId: 'c1', answer: 'allow_always' }),
+      }),
+      { ...ctx, settleAsk: (callId, answer) => host.settle(callId, answer) },
+    )
+    expect(res.status).toBe(200)
+    expect(await res.json()).toEqual({ status: 'matched' })
+    await expect(pending).resolves.toBe('allow_always')
     expect(ctx.applyCalls).toEqual([])
   })
 
