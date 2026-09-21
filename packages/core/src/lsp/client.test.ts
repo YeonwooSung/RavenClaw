@@ -433,6 +433,121 @@ describe('lsp client', () => {
     const init = fake.params[0] as { initializationOptions?: unknown }
     expect(init.initializationOptions).toEqual({ plugins: ['p'] })
   })
+
+  test('implementation and typeDefinition send the real methods', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'a.ts'), 'x\n')
+    writeConfig(root, { servers: [{ command: 'fake-ls', extensions: ['.ts'] }] })
+    const fake = fakeLspChild({
+      implementation: [{ uri: 'file:///a.ts', range: { start: { line: 1, character: 0 } } }],
+      typeDefinition: [{ uri: 'file:///a.ts', range: { start: { line: 2, character: 0 } } }],
+    })
+    const client = createLspClient({ start: () => fake.child })
+    const impl = await client.query({ operation: 'implementation', path: 'a.ts', line: 0 }, root)
+    const typed = await client.query({ operation: 'typeDefinition', path: 'a.ts', line: 0, character: 1 }, root)
+    expect(fake.methods).toContain('textDocument/implementation')
+    expect(fake.methods).toContain('textDocument/typeDefinition')
+    expect(JSON.parse(impl)).toEqual([
+      { uri: 'file:///a.ts', range: { start: { line: 1, character: 0 } } },
+    ])
+    expect(JSON.parse(typed)).toEqual([
+      { uri: 'file:///a.ts', range: { start: { line: 2, character: 0 } } },
+    ])
+  })
+
+  test('implementationProvider false refuses without sending the method', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'a.ts'), 'x\n')
+    writeConfig(root, { servers: [{ command: 'fake-ls', extensions: ['.ts'] }] })
+    const fake = fakeLspChild({
+      initialize: { capabilities: { implementationProvider: false } },
+      implementation: [{ uri: 'file:///nope' }],
+    })
+    const client = createLspClient({ start: () => fake.child })
+    expect(await client.query({ operation: 'implementation', path: 'a.ts', line: 0 }, root)).toBe(
+      'LSP failed: server does not support implementation',
+    )
+    expect(fake.methods).not.toContain('textDocument/implementation')
+  })
+
+  test('diagnostic drains publishDiagnostics into compact errors', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'a.ts'), 'x\n')
+    writeConfig(root, { servers: [{ command: 'fake-ls', extensions: ['.ts'] }] })
+    const fake = fakeLspChild(
+      {},
+      {
+        publishOnOpen: [
+          {
+            range: { start: { line: 3, character: 1 }, end: { line: 3, character: 2 } },
+            severity: 2,
+            code: 'W1',
+            message: 'careful',
+          },
+          {
+            range: { start: { line: 1, character: 0 }, end: { line: 1, character: 1 } },
+            severity: 1,
+            code: 'E1',
+            message: 'boom',
+          },
+        ],
+      },
+    )
+    const client = createLspClient({ start: () => fake.child, diagnosticDrainMs: 80 })
+    const out = await client.query({ operation: 'diagnostic', path: 'a.ts', line: 0 }, root)
+    expect(fake.methods).not.toContain('textDocument/diagnostic')
+    expect(out).toBe('a.ts:1:0 error E1 boom\na.ts:3:1 warning W1 careful')
+  })
+
+  test('diagnostic pulls textDocument/diagnostic when diagnosticProvider is advertised', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'a.ts'), 'x\n')
+    writeConfig(root, { servers: [{ command: 'fake-ls', extensions: ['.ts'] }] })
+    const fake = fakeLspChild({
+      initialize: {
+        capabilities: { diagnosticProvider: { interFileDependencies: false, workspaceDiagnostics: false } },
+      },
+      diagnostic: {
+        kind: 'full',
+        items: [
+          {
+            range: { start: { line: 2, character: 4 }, end: { line: 2, character: 5 } },
+            severity: 1,
+            code: { value: 'TS2322' },
+            message: 'nope',
+          },
+        ],
+      },
+    })
+    const client = createLspClient({ start: () => fake.child, diagnosticDrainMs: 200 })
+    const started = Date.now()
+    const out = await client.query({ operation: 'diagnostic', path: 'a.ts', line: 99, character: 7 }, root)
+    expect(Date.now() - started).toBeLessThan(150)
+    expect(fake.methods).toContain('textDocument/diagnostic')
+    expect(out).toBe('a.ts:2:4 error TS2322 nope')
+  })
+
+  test('diagnostic caps at 20 items errors-first and clips at 8k', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'a.ts'), 'x\n')
+    writeConfig(root, { servers: [{ command: 'fake-ls', extensions: ['.ts'] }] })
+    const items = Array.from({ length: 25 }, (_, i) => ({
+      range: { start: { line: i, character: 0 }, end: { line: i, character: 1 } },
+      severity: i < 5 ? 1 : 2,
+      message: i === 0 ? 'x'.repeat(LSP_RESULT_CAP + 50) : `m${i}`,
+    }))
+    const fake = fakeLspChild({
+      initialize: { capabilities: { diagnosticProvider: true } },
+      diagnostic: { kind: 'full', items },
+    })
+    const client = createLspClient({ start: () => fake.child })
+    const out = await client.query({ operation: 'diagnostic', path: 'a.ts', line: 0 }, root)
+    const lines = out.split('\n').filter((line) => line !== '... [truncated]')
+    expect(lines.length).toBeLessThanOrEqual(20)
+    expect(out).toContain('error')
+    expect(out).toContain('... [truncated]')
+    expect(out.length).toBeGreaterThan(LSP_RESULT_CAP)
+  })
 })
 
 function fakeLspChild(

@@ -5,7 +5,13 @@ import { pathToFileURL } from 'node:url'
 import { encodeJsonRpcFrame } from '../mcp/client'
 import { readPackageVersion } from '../package-version'
 
-export type LspOperation = 'hover' | 'definition' | 'references'
+export type LspOperation =
+  | 'hover'
+  | 'definition'
+  | 'references'
+  | 'implementation'
+  | 'typeDefinition'
+  | 'diagnostic'
 
 export interface LspQueryRequest {
   operation: LspOperation
@@ -17,6 +23,7 @@ export interface LspQueryRequest {
 export const LSP_MAX_FRAME_BYTES = 256 * 1024
 const INITIALIZE_TIMEOUT_MS = 30_000
 const REQUEST_TIMEOUT_MS = 8_000
+const DIAGNOSTIC_DRAIN_MS = 1_500
 
 export type LspQueryRoots = { workspaceCwd: string; configCwd: string }
 
@@ -66,10 +73,12 @@ export interface LspClient {
 export const NO_SERVER_MESSAGE = 'LSP failed: no server configured for this file'
 export const LSP_RESULT_CAP = 8_000
 
-const METHODS: Record<LspOperation, string> = {
+const METHODS: Record<Exclude<LspOperation, 'diagnostic'>, string> = {
   hover: 'textDocument/hover',
   definition: 'textDocument/definition',
   references: 'textDocument/references',
+  implementation: 'textDocument/implementation',
+  typeDefinition: 'textDocument/typeDefinition',
 }
 
 const PROVIDER_KEY: Record<string, string> = {
@@ -119,11 +128,13 @@ interface LspSession {
   capabilities?: Record<string, unknown>
   workspaceFolders: Array<{ uri: string; name: string }>
   diagnostics: Map<string, unknown[]>
+  diagnosticWaiters: Map<string, Set<() => void>>
 }
 
 interface HandshakeTimeouts {
   initializeTimeoutMs: number
   queryTimeoutMs: number
+  diagnosticDrainMs: number
 }
 
 function providerExplicitFalse(caps: Record<string, unknown> | undefined, operation: string): boolean {
@@ -171,6 +182,7 @@ export function createLspClient(opts?: LspClientOpts): LspClient {
   const timeouts: HandshakeTimeouts = {
     initializeTimeoutMs: opts?.initializeTimeoutMs ?? INITIALIZE_TIMEOUT_MS,
     queryTimeoutMs: opts?.queryTimeoutMs ?? REQUEST_TIMEOUT_MS,
+    diagnosticDrainMs: opts?.diagnosticDrainMs ?? DIAGNOSTIC_DRAIN_MS,
   }
   return {
     async query(req, cwdOrRoots) {
@@ -226,6 +238,9 @@ async function queryWithHandshake(
   const session = await ensureSession(sessions, starting, start, server, cwd, timeouts)
   const uri = pathToFileURL(abs).href
   await syncDocument(session, uri, abs, text)
+  if (req.operation === 'diagnostic') {
+    return queryDiagnostic(session, req.path, uri, timeouts)
+  }
   if (providerExplicitFalse(session.capabilities, req.operation)) {
     return `LSP failed: server does not support ${req.operation}`
   }
@@ -313,6 +328,7 @@ function startSession(
       ready: Promise.reject(new Error('not available')),
       workspaceFolders: [],
       diagnostics: new Map(),
+      diagnosticWaiters: new Map(),
     }
     failed.ready = failed.ready.catch(() => undefined).then(() => {
       throw new Error('not available')
@@ -348,6 +364,7 @@ function startSession(
     ready: Promise.resolve(),
     workspaceFolders: [],
     diagnostics: new Map(),
+    diagnosticWaiters: new Map(),
   }
 
   const onData = (chunk: Buffer | string): void => {
@@ -520,8 +537,9 @@ function dispatchLspMessage(session: LspSession, message: unknown): void {
     if (rec.method === 'textDocument/publishDiagnostics') {
       const params = rec.params as { uri?: unknown; diagnostics?: unknown } | undefined
       if (params && typeof params.uri === 'string') {
-        const items = Array.isArray(params.diagnostics) ? params.diagnostics.slice(0, 20) : []
-        session.diagnostics.set(params.uri, items)
+        const items = Array.isArray(params.diagnostics) ? params.diagnostics : []
+        session.diagnostics.set(params.uri, storeDiagnostics(items))
+        wakeDiagnosticWaiters(session, params.uri)
       }
     }
     return
@@ -563,8 +581,131 @@ function clipPayload(value: unknown): string {
   } catch {
     text = String(value)
   }
+  return clipPayloadText(text)
+}
+
+function clipPayloadText(text: string): string {
   if (text.length <= LSP_RESULT_CAP) return text
   return `${text.slice(0, LSP_RESULT_CAP)}\n... [truncated]`
+}
+
+async function queryDiagnostic(
+  session: LspSession,
+  path: string,
+  uri: string,
+  timeouts: HandshakeTimeouts,
+): Promise<string> {
+  const provider = session.capabilities?.diagnosticProvider
+  if (provider !== undefined && provider !== false && provider !== null) {
+    const result = await rpcRequest(
+      session,
+      'textDocument/diagnostic',
+      { textDocument: { uri } },
+      timeouts.queryTimeoutMs,
+    )
+    return formatDiagnostics(path, pullDiagnosticItems(result))
+  }
+  const items = await drainDiagnostics(session, uri, timeouts.diagnosticDrainMs)
+  return formatDiagnostics(path, items)
+}
+
+function pullDiagnosticItems(result: unknown): unknown[] {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return []
+  const rec = result as { kind?: unknown; items?: unknown }
+  if (rec.kind === undefined || rec.items === undefined) return []
+  return Array.isArray(rec.items) ? rec.items : []
+}
+
+async function drainDiagnostics(
+  session: LspSession,
+  uri: string,
+  timeoutMs: number,
+): Promise<unknown[]> {
+  if (!session.diagnostics.has(uri)) {
+    await waitForDiagnosticPublish(session, uri, timeoutMs)
+  }
+  return session.diagnostics.get(uri) ?? []
+}
+
+function waitForDiagnosticPublish(session: LspSession, uri: string, timeoutMs: number): Promise<void> {
+  return new Promise((resolve) => {
+    if (session.diagnostics.has(uri)) {
+      resolve()
+      return
+    }
+    const waiters = session.diagnosticWaiters.get(uri) ?? new Set<() => void>()
+    session.diagnosticWaiters.set(uri, waiters)
+    const timer = setTimeout(finish, timeoutMs)
+    function finish() {
+      clearTimeout(timer)
+      waiters.delete(finish)
+      if (waiters.size === 0) session.diagnosticWaiters.delete(uri)
+      resolve()
+    }
+    waiters.add(finish)
+    if (session.diagnostics.has(uri)) finish()
+  })
+}
+
+function wakeDiagnosticWaiters(session: LspSession, uri: string): void {
+  const waiters = session.diagnosticWaiters.get(uri)
+  if (!waiters) return
+  session.diagnosticWaiters.delete(uri)
+  for (const wake of waiters) wake()
+}
+
+function storeDiagnostics(items: unknown[]): unknown[] {
+  return [...items]
+    .sort((a, b) => diagnosticSeverityRank(a) - diagnosticSeverityRank(b))
+    .slice(0, 20)
+}
+
+function formatDiagnostics(path: string, items: unknown[]): string {
+  const rows = items
+    .map((item) => asDiagnosticRow(path, item))
+    .sort((a, b) => a.rank - b.rank)
+    .slice(0, 20)
+    .map((row) => row.line)
+  return clipPayloadText(rows.join('\n'))
+}
+
+function asDiagnosticRow(path: string, item: unknown): { rank: number; line: string } {
+  const rec = item && typeof item === 'object' ? (item as Record<string, unknown>) : {}
+  const range = rec.range && typeof rec.range === 'object' ? (rec.range as { start?: unknown }) : undefined
+  const start =
+    range?.start && typeof range.start === 'object'
+      ? (range.start as { line?: unknown; character?: unknown })
+      : undefined
+  const line = typeof start?.line === 'number' ? start.line : 0
+  const col = typeof start?.character === 'number' ? start.character : 0
+  const severity = typeof rec.severity === 'number' ? rec.severity : 1
+  const name = severity === 2 ? 'warning' : severity === 3 ? 'information' : severity === 4 ? 'hint' : 'error'
+  const code = diagnosticCode(rec.code)
+  const message = typeof rec.message === 'string' ? rec.message : ''
+  const parts = [`${path}:${line}:${col}`, name]
+  if (code !== undefined) parts.push(code)
+  parts.push(message)
+  return { rank: diagnosticSeverityRank(item), line: parts.join(' ') }
+}
+
+function diagnosticCode(code: unknown): string | undefined {
+  if (typeof code === 'string' || typeof code === 'number') return String(code)
+  if (code && typeof code === 'object' && 'value' in code) {
+    const value = (code as { value?: unknown }).value
+    if (typeof value === 'string' || typeof value === 'number') return String(value)
+  }
+  return undefined
+}
+
+function diagnosticSeverityRank(item: unknown): number {
+  const severity =
+    item && typeof item === 'object' && typeof (item as { severity?: unknown }).severity === 'number'
+      ? (item as { severity: number }).severity
+      : 1
+  if (severity === 2) return 1
+  if (severity === 3) return 2
+  if (severity === 4) return 3
+  return 0
 }
 
 export function resolveInWorkspace(cwd: string, userPath: string): string | undefined {
@@ -635,6 +776,9 @@ function dropSession(
       waiter.reject(new Error('not available'))
     }
     session.pending.clear()
+    for (const uri of [...session.diagnosticWaiters.keys()]) {
+      wakeDiagnosticWaiters(session, uri)
+    }
     if (!opts?.skipShutdown) {
       try {
         session.child.stdin?.write(

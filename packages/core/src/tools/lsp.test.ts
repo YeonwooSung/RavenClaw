@@ -88,7 +88,12 @@ describe('createLspTool', () => {
       true,
     )
     expect(tool.parse({ operation: 'references', path: 'a.ts', line: 0 }).ok).toBe(true)
+    expect(tool.parse({ operation: 'implementation', path: 'a.ts', line: 0 }).ok).toBe(true)
+    expect(tool.parse({ operation: 'typeDefinition', path: 'a.ts', line: 0 }).ok).toBe(true)
+    expect(tool.parse({ operation: 'diagnostic', path: 'a.ts', line: 0 }).ok).toBe(true)
     expect(tool.parse({ operation: 'rename', path: 'a.ts', line: 0 }).ok).toBe(false)
+    expect(tool.parse({ operation: 'completion', path: 'a.ts', line: 0 }).ok).toBe(false)
+    expect(tool.parse({ operation: 'diagnostic', path: 'a.ts' }).ok).toBe(false)
     expect(tool.parse({ operation: 'hover', path: 'a.ts' }).ok).toBe(false)
     expect(tool.parse({ operation: 'hover', line: 0 }).ok).toBe(false)
     expect(tool.parse({ path: 'a.ts', line: 0 }).ok).toBe(false)
