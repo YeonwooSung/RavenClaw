@@ -74,6 +74,32 @@ describe('createLocalTerminalBackend', () => {
       }),
     ).rejects.toMatchObject({ name: 'AbortError' })
   })
+
+  test('pipes stdin into the child when set', async () => {
+    const root = fixtureRoot()
+    const result = await createLocalTerminalBackend().exec({
+      command: 'cat',
+      cwd: root,
+      timeoutMs: 5_000,
+      signal: new AbortController().signal,
+      stdin: 'hello-stdin\n',
+    })
+    expect(result.stdout).toContain('hello-stdin')
+    expect(result.exitCode).toBe(0)
+  })
+
+  test('accepts Uint8Array stdin', async () => {
+    const root = fixtureRoot()
+    const result = await createLocalTerminalBackend().exec({
+      command: 'cat',
+      cwd: root,
+      timeoutMs: 5_000,
+      signal: new AbortController().signal,
+      stdin: new Uint8Array([104, 105, 10]),
+    })
+    expect(result.stdout).toContain('hi')
+    expect(result.exitCode).toBe(0)
+  })
 })
 
 const LIVE_DOCKER_IMAGE = 'bash:5'
@@ -244,6 +270,28 @@ describe('createDockerTerminalBackend', () => {
     expect(script).toContain('echo ok')
     expect(script).toMatch(/RAVENCLAW_CWD/)
     expect(seen.cwd).toBe(cwd)
+  })
+
+  test('docker runCommand receives stdin and keeps -i', async () => {
+    const root = fixtureRoot()
+    let seen: TerminalRunRequest | undefined
+    const backend = createDockerTerminalBackend({
+      image: 'bash:5',
+      runCommand: async (req) => {
+        seen = req
+        return { stdout: '', stderr: '', exitCode: 0 }
+      },
+    })
+    await backend.exec({
+      command: 'tee /tmp/x',
+      cwd: root,
+      timeoutMs: 5_000,
+      signal: new AbortController().signal,
+      stdin: 'payload',
+    })
+    expect(seen?.stdin).toBe('payload')
+    expect(seen?.command).toBe('docker')
+    expect(seen?.args).toContain('-i')
   })
 
   test('passes only PATH/HOME/TERM/LANG and never the host process.env', async () => {

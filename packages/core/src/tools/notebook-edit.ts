@@ -58,7 +58,6 @@ export function createNotebookEditTool(
       return { behavior: 'ask', message: 'Edit this notebook?', saveAs: 'session' }
     },
     async execute(input: NotebookEditInput, ctx: ToolContext) {
-      void backend
       if (ctx.signal.aborted) throw abortError()
       const resolved = resolveWritePath(ctx.turn.cwd, input.path)
       if (isHardDeniedWritePath(resolved)) {
@@ -71,14 +70,10 @@ export function createNotebookEditTool(
         return `NotebookEdit failed: path must be Read first: ${input.path}`
       }
 
-      let text: string
-      try {
-        text = readFileSync(resolved, 'utf8')
-      } catch (error) {
-        return `NotebookEdit failed: ${errorMessage(error)}`
-      }
+      const read = await readNotebookText(resolved, ctx, backend)
+      if (!read.ok) return `NotebookEdit failed: ${read.message}`
 
-      const parsed = parseNotebook(text)
+      const parsed = parseNotebook(read.text)
       if (!parsed.ok) return `NotebookEdit failed: ${parsed.message}`
 
       const mode = input.edit_mode ?? 'replace'
@@ -92,8 +87,15 @@ export function createNotebookEditTool(
 
       try {
         ctx.fileHistory?.snapshot(resolved)
-        writeFileSync(resolved, stringifyNotebook(parsed.value), 'utf8')
+        const written = await writeNotebookText(
+          resolved,
+          stringifyNotebook(parsed.value),
+          ctx,
+          backend,
+        )
+        if (!written.ok) return `NotebookEdit failed: ${written.message}`
       } catch (error) {
+        if (isAbortError(error) || ctx.signal.aborted) throw abortError()
         return `NotebookEdit failed: ${errorMessage(error)}`
       }
       return statusLine(mode, input.path)
@@ -115,4 +117,83 @@ function errorMessage(error: unknown): string {
 
 function abortError(): Error {
   return Object.assign(new Error('aborted'), { name: 'AbortError' })
+}
+
+const NOTEBOOK_TIMEOUT_MS = 30_000
+
+function shQuote(value: string): string {
+  return `'${value.replace(/'/g, `'\\''`)}'`
+}
+
+function isDockerNotebook(backend?: TerminalBackend): boolean {
+  return backend?.kind === 'docker'
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError'
+}
+
+async function readNotebookText(
+  resolved: string,
+  ctx: ToolContext,
+  backend?: TerminalBackend,
+): Promise<{ ok: true; text: string } | { ok: false; message: string }> {
+  if (!isDockerNotebook(backend) || backend === undefined) {
+    try {
+      return { ok: true, text: readFileSync(resolved, 'utf8') }
+    } catch (error) {
+      return { ok: false, message: errorMessage(error) }
+    }
+  }
+  try {
+    const result = await backend.exec({
+      command: `cat ${shQuote(resolved)}`,
+      cwd: ctx.turn.cwd,
+      timeoutMs: NOTEBOOK_TIMEOUT_MS,
+      signal: ctx.signal,
+    })
+    if (ctx.signal.aborted) throw abortError()
+    if (result.exitCode !== 0) {
+      const err = (result.stderr || result.stdout || 'docker cat failed').trim()
+      return { ok: false, message: err }
+    }
+    return { ok: true, text: result.stdout }
+  } catch (error) {
+    if (isAbortError(error) || ctx.signal.aborted) throw abortError()
+    return { ok: false, message: errorMessage(error) }
+  }
+}
+
+async function writeNotebookText(
+  resolved: string,
+  text: string,
+  ctx: ToolContext,
+  backend?: TerminalBackend,
+): Promise<{ ok: true } | { ok: false; message: string }> {
+  if (!isDockerNotebook(backend) || backend === undefined) {
+    try {
+      writeFileSync(resolved, text, 'utf8')
+      return { ok: true }
+    } catch (error) {
+      return { ok: false, message: errorMessage(error) }
+    }
+  }
+  try {
+    const result = await backend.exec({
+      command: `tee ${shQuote(resolved)}`,
+      cwd: ctx.turn.cwd,
+      timeoutMs: NOTEBOOK_TIMEOUT_MS,
+      signal: ctx.signal,
+      stdin: text,
+    })
+    if (ctx.signal.aborted) throw abortError()
+    if (result.exitCode !== 0) {
+      const err = (result.stderr || result.stdout || 'docker tee failed').trim()
+      return { ok: false, message: err }
+    }
+    return { ok: true }
+  } catch (error) {
+    if (isAbortError(error) || ctx.signal.aborted) throw abortError()
+    return { ok: false, message: errorMessage(error) }
+  }
 }

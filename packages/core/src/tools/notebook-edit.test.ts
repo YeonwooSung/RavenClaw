@@ -7,6 +7,12 @@ import type { ToolContext, Turn } from '../types'
 import { decidePermission } from '../permissions/pipeline'
 import { createNotebookEditTool, notebookEditTool } from './notebook-edit'
 import { parseNotebook } from './notebook-format'
+import {
+  createDockerTerminalBackend,
+  createLocalTerminalBackend,
+  createTerminalBackend,
+  type TerminalRunRequest,
+} from './terminal-backend'
 
 const emptyRules = { session: [], user: [], project: [] }
 const HOME_ENV = 'RAVENCLAW_HOME'
@@ -96,6 +102,16 @@ function writeNotebook(dir: string, name: string, cells: unknown[]): string {
     'utf8',
   )
   return path
+}
+
+function fakeDocker(
+  runCommand: (req: TerminalRunRequest) => Promise<{
+    stdout: string
+    stderr: string
+    exitCode: number
+  }>,
+) {
+  return createDockerTerminalBackend({ image: 'bash:5', runCommand })
 }
 
 describe('NotebookEdit', () => {
@@ -275,6 +291,260 @@ describe('NotebookEdit', () => {
     const ctx = makeCtx(root)
     ctx.turn.readFiles.add(resolvedOf(root, 'nb.ipynb'))
     const out = await tool.execute({ path: 'nb.ipynb', new_source: 'print(9)' }, ctx)
+    expect(out).toContain('nb.ipynb')
+    const parsed = parseNotebook(readFileSync(join(root, 'nb.ipynb'), 'utf8'))
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) throw new Error('expected notebook')
+    expect(parsed.value.cells[0]?.source).toEqual(['print(9)'])
+  })
+})
+
+describe('NotebookEdit docker backend', () => {
+  test('two execs: cat then tee with stdin; host writeFileSync is not the write path', async () => {
+    const root = fixtureRoot()
+    writeNotebook(root, 'nb.ipynb', [{ id: 'abc', cell_type: 'code', source: ['old'] }])
+    const before = readFileSync(join(root, 'nb.ipynb'), 'utf8')
+    const history = mockHistory()
+    const calls: TerminalRunRequest[] = []
+    let started = false
+    const backend = fakeDocker(async (req) => {
+      calls.push(req)
+      const script = req.args.at(-1) ?? ''
+      if (script.includes('cat ')) {
+        return { stdout: before, stderr: '', exitCode: 0 }
+      }
+      return { stdout: '', stderr: '', exitCode: 0 }
+    })
+    const start = backend.start
+    backend.start = (opts) => {
+      started = true
+      return start!(opts)
+    }
+    const ctx = makeCtx(root, undefined, history)
+    ctx.turn.readFiles.add(resolvedOf(root, 'nb.ipynb'))
+    const out = await createNotebookEditTool(backend).execute(
+      { path: 'nb.ipynb', new_source: 'print(9)' },
+      ctx,
+    )
+    expect(out).toContain('nb.ipynb')
+    expect(out.toLowerCase()).not.toMatch(/fail|error|deny/)
+    expect(started).toBe(false)
+    expect(calls).toHaveLength(2)
+    expect(calls[0]?.command).toBe('docker')
+    expect(calls[0]?.timeoutMs).toBe(30_000)
+    expect(calls[0]?.args).toContain('-v')
+    expect(calls[0]?.args).toContain(`${root}:${root}`)
+    expect(calls[0]?.args).toContain('-w')
+    expect(calls[0]?.args).toContain(root)
+    expect(Object.keys(calls[0]?.env ?? {}).sort()).toEqual(['HOME', 'LANG', 'PATH', 'TERM'])
+    expect(calls[0]?.env?.ANTHROPIC_API_KEY).toBeUndefined()
+    const readScript = calls[0]?.args.at(-1) ?? ''
+    const writeScript = calls[1]?.args.at(-1) ?? ''
+    const resolved = resolvedOf(root, 'nb.ipynb')
+    expect(readScript).toContain(`cat '${resolved}'`)
+    expect(readScript).not.toContain('tee')
+    expect(writeScript).toContain(`tee '${resolved}'`)
+    expect(writeScript).not.toMatch(/\bcat\b/)
+    expect(calls[0]?.stdin).toBeUndefined()
+    expect(typeof calls[1]?.stdin).toBe('string')
+    const teed = parseNotebook(String(calls[1]?.stdin ?? ''))
+    expect(teed.ok).toBe(true)
+    if (!teed.ok) throw new Error('expected teed notebook')
+    expect(teed.value.cells[0]?.source).toEqual(['print(9)'])
+    expect(JSON.stringify(calls[1]?.args)).not.toContain('print(9)')
+    expect(readFileSync(join(root, 'nb.ipynb'), 'utf8')).toBe(before)
+    expect(history.snaps).toContain(resolved)
+    expect(calls[1]?.timeoutMs).toBe(30_000)
+  })
+
+  test('outside-cwd fails at the jail and does not exec', async () => {
+    const root = fixtureRoot()
+    const outside = fixtureRoot()
+    const outsideNb = writeNotebook(outside, 'nb.ipynb', [
+      { id: 'abc', cell_type: 'code', source: ['old'] },
+    ])
+    const calls: TerminalRunRequest[] = []
+    const backend = fakeDocker(async (req) => {
+      calls.push(req)
+      return { stdout: '', stderr: '', exitCode: 0 }
+    })
+    const ctx = makeCtx(root)
+    ctx.turn.terminalBackend = 'docker'
+    ctx.turn.readFiles.add(resolvedOf(outside, 'nb.ipynb'))
+    const out = await createNotebookEditTool(backend).execute(
+      { path: outsideNb, new_source: 'hacked' },
+      ctx,
+    )
+    expect(calls).toHaveLength(0)
+    expect(out).toBe('NotebookEdit failed: outside workspace')
+  })
+
+  test('wasRead miss does not exec', async () => {
+    const root = fixtureRoot()
+    writeNotebook(root, 'nb.ipynb', [{ id: 'abc', cell_type: 'code', source: ['old'] }])
+    const calls: TerminalRunRequest[] = []
+    const backend = fakeDocker(async (req) => {
+      calls.push(req)
+      return { stdout: '', stderr: '', exitCode: 0 }
+    })
+    const out = await createNotebookEditTool(backend).execute(
+      { path: 'nb.ipynb', new_source: 'new' },
+      makeCtx(root),
+    )
+    expect(calls).toHaveLength(0)
+    expect(out).toBe('NotebookEdit failed: path must be Read first: nb.ipynb')
+  })
+
+  test('hard-deny does not exec', async () => {
+    const root = fixtureRoot()
+    const calls: TerminalRunRequest[] = []
+    const backend = fakeDocker(async (req) => {
+      calls.push(req)
+      return { stdout: '', stderr: '', exitCode: 0 }
+    })
+    const ctx = makeCtx(root)
+    ctx.turn.readFiles.add('/etc/shadow')
+    const out = await createNotebookEditTool(backend).execute(
+      { path: '/etc/shadow', new_source: 'x' },
+      ctx,
+    )
+    expect(calls).toHaveLength(0)
+    expect(out).toBe('NotebookEdit failed: write denied to protected path: /etc/shadow')
+  })
+
+  test('no daemon returns NotebookEdit failed: and does not host-write', async () => {
+    const root = fixtureRoot()
+    writeNotebook(root, 'nb.ipynb', [{ id: 'abc', cell_type: 'code', source: ['old'] }])
+    const before = readFileSync(join(root, 'nb.ipynb'), 'utf8')
+    const backend = fakeDocker(async () => ({
+      stdout: '',
+      stderr: 'Cannot connect to the Docker daemon',
+      exitCode: 1,
+    }))
+    const ctx = makeCtx(root)
+    ctx.turn.readFiles.add(resolvedOf(root, 'nb.ipynb'))
+    const out = await createNotebookEditTool(backend).execute(
+      { path: 'nb.ipynb', new_source: 'print(9)' },
+      ctx,
+    )
+    expect(out).toMatch(/^NotebookEdit failed:/)
+    expect(out).toContain('Cannot connect to the Docker daemon')
+    expect(readFileSync(join(root, 'nb.ipynb'), 'utf8')).toBe(before)
+  })
+
+  test('missing cat returns NotebookEdit failed: and does not host-write', async () => {
+    const root = fixtureRoot()
+    writeNotebook(root, 'nb.ipynb', [{ id: 'abc', cell_type: 'code', source: ['old'] }])
+    const before = readFileSync(join(root, 'nb.ipynb'), 'utf8')
+    const backend = fakeDocker(async () => ({
+      stdout: '',
+      stderr: 'cat: not found',
+      exitCode: 127,
+    }))
+    const ctx = makeCtx(root)
+    ctx.turn.readFiles.add(resolvedOf(root, 'nb.ipynb'))
+    const out = await createNotebookEditTool(backend).execute(
+      { path: 'nb.ipynb', new_source: 'print(9)' },
+      ctx,
+    )
+    expect(out).toMatch(/^NotebookEdit failed:/)
+    expect(readFileSync(join(root, 'nb.ipynb'), 'utf8')).toBe(before)
+  })
+
+  test('tee fail after cat leaves the host file unchanged', async () => {
+    const root = fixtureRoot()
+    writeNotebook(root, 'nb.ipynb', [{ id: 'abc', cell_type: 'code', source: ['old'] }])
+    const before = readFileSync(join(root, 'nb.ipynb'), 'utf8')
+    let n = 0
+    const backend = fakeDocker(async () => {
+      n += 1
+      if (n === 1) return { stdout: before, stderr: '', exitCode: 0 }
+      return { stdout: '', stderr: 'tee: not found', exitCode: 127 }
+    })
+    const ctx = makeCtx(root)
+    ctx.turn.readFiles.add(resolvedOf(root, 'nb.ipynb'))
+    const out = await createNotebookEditTool(backend).execute(
+      { path: 'nb.ipynb', new_source: 'print(9)' },
+      ctx,
+    )
+    expect(out).toMatch(/^NotebookEdit failed:/)
+    expect(readFileSync(join(root, 'nb.ipynb'), 'utf8')).toBe(before)
+  })
+
+  test('30s timeout returns NotebookEdit failed: and does not host-write', async () => {
+    const root = fixtureRoot()
+    writeNotebook(root, 'nb.ipynb', [{ id: 'abc', cell_type: 'code', source: ['old'] }])
+    const before = readFileSync(join(root, 'nb.ipynb'), 'utf8')
+    const backend = fakeDocker(async () => ({
+      stdout: '',
+      stderr: 'timed out',
+      exitCode: 124,
+    }))
+    const ctx = makeCtx(root)
+    ctx.turn.readFiles.add(resolvedOf(root, 'nb.ipynb'))
+    const out = await createNotebookEditTool(backend).execute(
+      { path: 'nb.ipynb', new_source: 'print(9)' },
+      ctx,
+    )
+    expect(out).toMatch(/^NotebookEdit failed:/)
+    expect(readFileSync(join(root, 'nb.ipynb'), 'utf8')).toBe(before)
+  })
+
+  test('turn abort throws AbortError and does not stringify NotebookEdit failed:', async () => {
+    const root = fixtureRoot()
+    writeNotebook(root, 'nb.ipynb', [{ id: 'abc', cell_type: 'code', source: ['old'] }])
+    const ac = new AbortController()
+    const backend = fakeDocker(async ({ signal }) => {
+      return new Promise((_, reject) => {
+        const fail = () =>
+          reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+        if (signal.aborted) {
+          fail()
+          return
+        }
+        signal.addEventListener('abort', fail, { once: true })
+      })
+    })
+    const ctx = makeCtx(root, ac.signal)
+    ctx.turn.readFiles.add(resolvedOf(root, 'nb.ipynb'))
+    const pending = createNotebookEditTool(backend).execute(
+      { path: 'nb.ipynb', new_source: 'x' },
+      ctx,
+    )
+    ac.abort()
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    await pending.catch((error: unknown) => {
+      expect(String(error)).not.toMatch(/NotebookEdit failed:/)
+    })
+  })
+
+  test('createTerminalBackend docker without image stays on the host path', async () => {
+    const root = fixtureRoot()
+    writeNotebook(root, 'nb.ipynb', [{ id: 'abc', cell_type: 'code', source: ['old'] }])
+    const backend = createTerminalBackend('docker')
+    expect(backend.kind).toBe('local')
+    const ctx = makeCtx(root)
+    ctx.turn.readFiles.add(resolvedOf(root, 'nb.ipynb'))
+    const out = await createNotebookEditTool(backend).execute(
+      { path: 'nb.ipynb', new_source: 'print(9)' },
+      ctx,
+    )
+    expect(out).toContain('nb.ipynb')
+    const parsed = parseNotebook(readFileSync(join(root, 'nb.ipynb'), 'utf8'))
+    expect(parsed.ok).toBe(true)
+    if (!parsed.ok) throw new Error('expected notebook')
+    expect(parsed.value.cells[0]?.source).toEqual(['print(9)'])
+  })
+
+  test('local-kind backend still host-writes after the jail', async () => {
+    const root = fixtureRoot()
+    writeNotebook(root, 'nb.ipynb', [{ id: 'abc', cell_type: 'code', source: ['old'] }])
+    const ctx = makeCtx(root)
+    ctx.turn.readFiles.add(resolvedOf(root, 'nb.ipynb'))
+    const out = await createNotebookEditTool(createLocalTerminalBackend()).execute(
+      { path: 'nb.ipynb', new_source: 'print(9)' },
+      ctx,
+    )
     expect(out).toContain('nb.ipynb')
     const parsed = parseNotebook(readFileSync(join(root, 'nb.ipynb'), 'utf8'))
     expect(parsed.ok).toBe(true)
