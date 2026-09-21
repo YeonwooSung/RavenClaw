@@ -499,6 +499,43 @@ describe('lsp client', () => {
     expect(out).toBe('a.ts:1:0 error E1 boom\na.ts:3:1 warning W1 careful')
   })
 
+  test('diagnostic drain after didChange waits for a fresh publish, not the old buffer', async () => {
+    const root = fixtureRoot()
+    const path = join(root, 'a.ts')
+    writeFileSync(path, 'const a = 1\n')
+    writeConfig(root, { servers: [{ command: 'fake-ls', extensions: ['.ts'] }] })
+    const fake = fakeLspChild(
+      {},
+      {
+        publishOnOpen: [
+          {
+            range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+            severity: 1,
+            code: 'OLD',
+            message: 'stale line',
+          },
+        ],
+        publishOnChange: [
+          {
+            range: { start: { line: 2, character: 4 }, end: { line: 2, character: 5 } },
+            severity: 1,
+            code: 'NEW',
+            message: 'fresh line',
+          },
+        ],
+      },
+    )
+    const client = createLspClient({ start: () => fake.child, diagnosticDrainMs: 80 })
+    const first = await client.query({ operation: 'diagnostic', path: 'a.ts', line: 0 }, root)
+    expect(first).toBe('a.ts:0:0 error OLD stale line')
+    writeFileSync(path, 'const a = 2\n')
+    const second = await client.query({ operation: 'diagnostic', path: 'a.ts', line: 0 }, root)
+    expect(fake.methods.filter((method) => method === 'textDocument/didChange')).toHaveLength(1)
+    expect(second).toBe('a.ts:2:4 error NEW fresh line')
+    expect(second).not.toContain('OLD')
+    expect(second).not.toContain('stale line')
+  })
+
   test('diagnostic pulls textDocument/diagnostic when diagnosticProvider is advertised', async () => {
     const root = fixtureRoot()
     writeFileSync(join(root, 'a.ts'), 'x\n')
@@ -552,7 +589,7 @@ describe('lsp client', () => {
 
 function fakeLspChild(
   results: Partial<Record<string, unknown>> = {},
-  opts?: { silent?: ReadonlySet<string>; publishOnOpen?: unknown[] },
+  opts?: { silent?: ReadonlySet<string>; publishOnOpen?: unknown[]; publishOnChange?: unknown[] },
 ): {
   child: LspChild
   methods: string[]
@@ -571,6 +608,28 @@ function fakeLspChild(
   const state = { killed: false }
   let buffer = Buffer.alloc(0)
   const silent = opts?.silent ?? new Set<string>()
+  function uriOf(messageParams: unknown): string | undefined {
+    return (messageParams as { textDocument?: { uri?: string } } | undefined)?.textDocument?.uri
+  }
+  function publishDiagnostics(
+    uri: string | undefined,
+    diagnostics: unknown[],
+    delayMs = 0,
+  ): void {
+    if (!uri) return
+    const emit = (): void => {
+      stdout.emit(
+        'data',
+        encodeJsonRpcFrame({
+          jsonrpc: '2.0',
+          method: 'textDocument/publishDiagnostics',
+          params: { uri, diagnostics },
+        }),
+      )
+    }
+    if (delayMs > 0) setTimeout(emit, delayMs)
+    else queueMicrotask(emit)
+  }
   const child: LspChild = {
     stdin: {
       write(chunk: string | Uint8Array) {
@@ -588,20 +647,10 @@ function fakeLspChild(
           methods.push(rec.method)
           params.push(rec.params)
           if (rec.method === 'textDocument/didOpen' && opts?.publishOnOpen) {
-            const uri = (rec.params as { textDocument?: { uri?: string } } | undefined)?.textDocument
-              ?.uri
-            if (uri) {
-              queueMicrotask(() => {
-                stdout.emit(
-                  'data',
-                  encodeJsonRpcFrame({
-                    jsonrpc: '2.0',
-                    method: 'textDocument/publishDiagnostics',
-                    params: { uri, diagnostics: opts.publishOnOpen },
-                  }),
-                )
-              })
-            }
+            publishDiagnostics(uriOf(rec.params), opts.publishOnOpen)
+          }
+          if (rec.method === 'textDocument/didChange' && opts?.publishOnChange) {
+            publishDiagnostics(uriOf(rec.params), opts.publishOnChange, 20)
           }
           if (rec.id === undefined) continue
           if (silent.has(rec.method)) continue

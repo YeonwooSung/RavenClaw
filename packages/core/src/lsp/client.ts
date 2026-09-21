@@ -447,6 +447,7 @@ async function syncDocument(session: LspSession, uri: string, abs: string, text:
   if (prev.text === text) return
   const version = prev.version + 1
   session.docs.set(uri, { version, text })
+  invalidatePublishedDiagnostics(session, uri)
   await rpcNotify(session, 'textDocument/didChange', {
     textDocument: { uri, version },
     contentChanges: [{ text }],
@@ -652,6 +653,11 @@ function wakeDiagnosticWaiters(session: LspSession, uri: string): void {
   if (!waiters) return
   session.diagnosticWaiters.delete(uri)
   for (const wake of waiters) wake()
+}
+
+function invalidatePublishedDiagnostics(session: LspSession, uri: string): void {
+  session.diagnostics.delete(uri)
+  wakeDiagnosticWaiters(session, uri)
 }
 
 function storeDiagnostics(items: unknown[]): unknown[] {
