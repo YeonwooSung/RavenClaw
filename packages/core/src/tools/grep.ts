@@ -120,7 +120,9 @@ async function grepByDocker(
           .filter((line) => {
             if (!line) return false
             const file = hitFile(line)
-            return file !== undefined && matchGlob(fileFilter, file)
+            if (file === undefined) return false
+            const abs = isAbsolute(file) ? file : resolve(cwd, file)
+            return matchGlob(fileFilter, posixRel(searchRoot, abs))
           })
           .join('\n')
         return capInMessage(text)

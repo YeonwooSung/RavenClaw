@@ -194,6 +194,25 @@ describe('Grep docker backend', () => {
     expect(out).not.toContain('HOST_ONLY_GREP_TOKEN')
   })
 
+  test('glob filter matches searchRoot-relative paths when path is a subdirectory', async () => {
+    const root = fixtureRoot()
+    mkdirSync(join(root, 'src'))
+    writeFileSync(join(root, 'src', 'hit.ts'), 'const DOCKER_GREP_GLOB_TOKEN = 1\n')
+    const hitPath = join(root, 'src', 'hit.ts')
+    const backend = fakeDocker(async () => ({
+      stdout: `${hitPath}:1:from-container\n`,
+      stderr: '',
+      exitCode: 0,
+    }))
+    const out = await createGrepTool(backend).execute(
+      { pattern: 'DOCKER_GREP_GLOB_TOKEN', path: 'src', glob: '*.ts' },
+      makeCtx(root),
+    )
+    expect(out).toContain('src/hit.ts')
+    expect(out).toContain('from-container')
+    expect(out).not.toContain('DOCKER_GREP_GLOB_TOKEN')
+  })
+
   test('outside-cwd fails at jail stat and does not exec', async () => {
     const root = fixtureRoot()
     const calls: TerminalRunRequest[] = []
