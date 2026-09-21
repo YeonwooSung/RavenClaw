@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { ABORTED_TEXT, INCOMPLETE_TEXT, unpairedToolUseIds } from '../loop/pairing'
+import { ABORTED_TEXT, IGNORED_TEXT, INCOMPLETE_TEXT, unpairedToolUseIds } from '../loop/pairing'
 import { createSessionEngine } from '../loop/session-engine'
 import { maybeRunFollowup, writeFollowup } from '../session/followup'
 import { jobDiff } from '../session/job-diff'
@@ -67,6 +67,10 @@ export async function runEvalDir(dir: string): Promise<void> {
     const spec = readCase(join(dir, name, 'case.json'))
     if (name === 'pending-ask-persist') {
       await runPendingAskPersist(spec)
+      continue
+    }
+    if (name === 'ignored-dismiss') {
+      await runIgnoredDismiss(spec)
       continue
     }
     if (name === 'sandbox-cwd') {
@@ -248,6 +252,103 @@ async function runPendingAskPersist(spec: EvalCase): Promise<void> {
     if (unpairedToolUseIds(after.messages).length > 0) {
       throw new Error('pending-ask-persist: applyAskAnswer deny did not pair')
     }
+  }
+
+  await engine.close()
+  await resumed.close()
+}
+
+async function runIgnoredDismiss(spec: EvalCase): Promise<void> {
+  const store = createMemoryStore()
+  const session = makeSession({ id: 'sess_eval_ignored_dismiss' })
+  await store.createSession(session)
+
+  let release!: (answer: 'allow' | 'deny' | 'allow_always') => void
+  const held = new Promise<'allow' | 'deny' | 'allow_always'>((resolve) => {
+    release = resolve
+  })
+
+  const echo = createAskEcho()
+  const provider = createFakeProvider([
+    toolThenStop('call_eval', 'Echo', { text: 'hi' }),
+    textThenStop('done'),
+  ])
+  const engine = await createSessionEngine({
+    session,
+    provider,
+    store,
+    tools: [echo],
+    compact: defaultCompact(),
+    model: defaultModel(),
+    maxRounds: 8,
+    bare: true,
+    askUser: async () => held,
+  })
+
+  const gen = engine.submitMessage(spec.prompt)
+  const pumping = drain(gen)
+  let pending: Awaited<ReturnType<SessionStore['listPendingAsks']>>
+  try {
+    pending = await waitForPendingAsks(store, session.id)
+    if (spec.expect.pendingAskPersists === true && pending.length === 0) {
+      throw new Error('ignored-dismiss: expected listPendingAsks nonempty')
+    }
+  } catch (error) {
+    release('deny')
+    await pumping
+    throw error
+  }
+
+  const cloned = await cloneStore(store)
+  release('deny')
+  await pumping
+
+  const loaded = await cloned.loadSession(session.id)
+  if (spec.expect.noIncomplete === true && hasIncompleteToolRow(loaded.messages)) {
+    throw new Error('ignored-dismiss: loadSession inserted an incomplete tool row')
+  }
+
+  const resumed = await createSessionEngine({
+    session: loaded.session,
+    messages: loaded.messages,
+    provider: createFakeProvider([textThenStop('resumed')]),
+    store: cloned,
+    tools: [createAskEcho()],
+    compact: defaultCompact(),
+    model: defaultModel(),
+    maxRounds: 8,
+    bare: true,
+    askUser: async () => 'deny',
+  })
+
+  if (typeof resumed.applyAskAnswer !== 'function') {
+    throw new Error('ignored-dismiss: applyAskAnswer is missing')
+  }
+
+  const callId = pending[0]?.callId
+  if (callId === undefined) {
+    throw new Error('ignored-dismiss: no pending callId to pair')
+  }
+  const status = await resumed.applyAskAnswer(callId, 'ignored')
+  if (status !== 'matched') {
+    throw new Error(`ignored-dismiss: applyAskAnswer ignored returned ${status}`)
+  }
+  const after = await cloned.loadSession(session.id)
+  const toolRow = after.messages.find((m) => m.role === 'tool')
+  const text = toolRow && toolRow.role === 'tool' ? (toolRow.blocks[0]?.text ?? '') : ''
+  if (text !== IGNORED_TEXT) {
+    throw new Error(`ignored-dismiss: expected IGNORED_TEXT, got ${JSON.stringify(text)}`)
+  }
+  if (text.includes('permission_denied') || text === ABORTED_TEXT) {
+    throw new Error(
+      `ignored-dismiss: tool text must not be permission_denied or ABORTED_TEXT: ${JSON.stringify(text)}`,
+    )
+  }
+  if (text === 'hi') {
+    throw new Error('ignored-dismiss: tool executed')
+  }
+  if (spec.expect.pairing === true && unpairedToolUseIds(after.messages).length > 0) {
+    throw new Error('ignored-dismiss: applyAskAnswer ignored did not pair')
   }
 
   await engine.close()
