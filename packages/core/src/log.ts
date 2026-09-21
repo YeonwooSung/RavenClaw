@@ -110,6 +110,9 @@ export function wrapSessionEngineLog(
     reloadSystem(system) {
       engine.reloadSystem(system)
     },
+    setInstructionFiles(mode) {
+      engine.setInstructionFiles(mode)
+    },
     abort(kind) {
       engine.abort(kind)
     },

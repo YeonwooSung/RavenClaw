@@ -1259,6 +1259,7 @@ async function executeOneCall(
   if (state.store) ctx.store = state.store
   if (state.session) ctx.session = state.session
   if (state.registerChildEngine) ctx.registerChildEngine = state.registerChildEngine
+  if (state.instructionFiles !== undefined) ctx.instructionFiles = state.instructionFiles
 
   let allowed = false
   try {
@@ -1494,7 +1495,12 @@ function appendSubdirAgents(
   if (path === undefined) return content
   const seen = state.turn.injectedAgentsDirs ?? new Set<string>()
   if (!state.turn.injectedAgentsDirs) state.turn.injectedAgentsDirs = seen
-  const injection = loadNearestSubdirAgents(state.turn.cwd, resolve(state.turn.cwd, path), seen)
+  const injection = loadNearestSubdirAgents(
+    state.turn.cwd,
+    resolve(state.turn.cwd, path),
+    seen,
+    state.instructionFiles ?? 'both',
+  )
   if (injection === undefined) return content
   return `${content}\n\n${injection}`
 }

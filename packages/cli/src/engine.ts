@@ -470,6 +470,7 @@ async function finishOpenEngine(
   const system = buildSystemParts({
     cwd: session.cwd,
     permissionMode: session.permissionMode,
+    instructionFiles: opts.config.instructionFiles,
     ...(opts.config.bare === true ? { bare: true } : {}),
     ...(opts.config.effort !== undefined ? { effort: opts.config.effort } : {}),
   })
@@ -563,6 +564,7 @@ async function finishOpenEngine(
     askUser: opts.askUser,
     system,
     terminalBackend: opts.config.terminal?.backend ?? 'local',
+    instructionFiles: opts.config.instructionFiles,
   }
   if (opts.messages) engineOpts.messages = opts.messages
   if (hooks.length > 0) engineOpts.hooks = hooks
@@ -1091,6 +1093,9 @@ function attachRavenclawLog(engine: SessionEngine, log: RavenclawLog): SessionEn
     },
     reloadSystem(system) {
       engine.reloadSystem(system)
+    },
+    setInstructionFiles(mode) {
+      engine.setInstructionFiles(mode)
     },
     abort(kind) {
       engine.abort(kind)

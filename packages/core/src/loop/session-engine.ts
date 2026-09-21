@@ -155,6 +155,7 @@ export async function createSessionEngine(opts: SessionEngineOptions): Promise<S
   let treeStopRequested = false
   let treeStopAbortedLiveChild = false
   let leftoverFlightRequested = false
+  let instructionFiles = opts.instructionFiles ?? 'both'
 
   function registerChildEngine(engine: SessionEngine): () => void {
     const id = engine.session.id
@@ -536,6 +537,7 @@ export async function createSessionEngine(opts: SessionEngineOptions): Promise<S
       tasks,
       fileHistory,
       registerChildEngine,
+      instructionFiles,
     }
     if (target.sessionId === session.id) ctx.session = session
 
@@ -935,6 +937,7 @@ export async function createSessionEngine(opts: SessionEngineOptions): Promise<S
         if (opts.verifyOnStop === true) loopOpts.verifyOnStop = true
         if (opts.refreshTools !== undefined) loopOpts.refreshTools = opts.refreshTools
         loopOpts.registerChildEngine = registerChildEngine
+        loopOpts.instructionFiles = instructionFiles
         loopOpts.session = session
         const todos = sessionTodosOf(session)
         if (todos !== undefined) loopOpts.todos = todos
@@ -1058,6 +1061,7 @@ export async function createSessionEngine(opts: SessionEngineOptions): Promise<S
             tools: opts.tools,
             compact: opts.compact,
             model,
+            instructionFiles,
           })
         }
         return end
@@ -1084,6 +1088,10 @@ export async function createSessionEngine(opts: SessionEngineOptions): Promise<S
 
     reloadSystem(next: SystemPart[]) {
       system = next
+    },
+
+    setInstructionFiles(mode: import('../config').InstructionFilesMode) {
+      instructionFiles = mode
     },
 
     async setModel(next: SessionEngineOptions['model']) {
@@ -1189,6 +1197,7 @@ function startDetachedReview(opts: {
   tools: SessionEngineOptions['tools']
   compact: SessionEngineOptions['compact']
   model: SessionEngineOptions['model']
+  instructionFiles: import('../config').InstructionFilesMode
 }): () => void {
   const reviewTools = filterBackgroundReviewTools(opts.tools)
   if (reviewTools.length === 0) return () => {}
@@ -1210,6 +1219,7 @@ function startDetachedReview(opts: {
         maxRounds: 8,
         askUser: async () => 'deny',
         bare: true,
+        instructionFiles: opts.instructionFiles,
       }
       if (opts.system !== undefined) childOpts.system = opts.system
       child = await createSessionEngine(childOpts)

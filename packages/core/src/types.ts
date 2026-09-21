@@ -233,6 +233,7 @@ export interface ToolContext {
   store?: SessionStore
   session?: SessionRecord
   registerChildEngine?(engine: SessionEngine): () => void
+  instructionFiles?: import('./config').InstructionFilesMode
 }
 
 export interface ToolResult {
@@ -487,6 +488,7 @@ export interface SessionEngineOptions {
     e: Extract<StreamEvent, { type: 'permission_ask' }>,
     signal: AbortSignal,
   ) => Promise<PendingAskAnswer>
+  instructionFiles?: import('./config').InstructionFilesMode
 }
 
 export interface SessionEngine {
@@ -511,6 +513,7 @@ export interface SessionEngine {
   setModel(profile: ModelProfile): Promise<void>
   setPermissionMode(mode: PermissionMode): Promise<void>
   reloadSystem(system: SystemPart[]): void
+  setInstructionFiles(mode: import('./config').InstructionFilesMode): void
   setFollowup(text: string): Promise<{ ok: true } | { ok: false; notice: string }>
   clearFollowup(): Promise<void>
   getFollowup(): string | null
@@ -544,6 +547,7 @@ export interface QueryLoopOptions {
   refreshTools?: () => Promise<Tool[] | undefined> | Tool[] | undefined
   /** Parent registrar for in-process child engines. Tree-stop calls child.abort('cancel'). */
   registerChildEngine?: (engine: SessionEngine) => () => void
+  instructionFiles?: import('./config').InstructionFilesMode
   /** Live session record. TodoWrite mutates `todos` in place for mid-turn compact/TUI. */
   session?: SessionRecord
   /** Session todos for compact restore. Unset until the engine has a session list. */

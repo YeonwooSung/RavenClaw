@@ -256,6 +256,7 @@ async function spawnChild(
         askUser: opts.askUser,
         bare: true,
       }
+      if (ctx.instructionFiles !== undefined) engineOpts.instructionFiles = ctx.instructionFiles
       const system = childSystemParts(definition, opts.system)
       if (system !== undefined) engineOpts.system = system
       if (opts.hooks !== undefined) engineOpts.hooks = opts.hooks

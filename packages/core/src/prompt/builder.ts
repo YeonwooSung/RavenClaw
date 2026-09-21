@@ -18,13 +18,16 @@ export interface PromptBuildInput {
   git?: { branch: string; head: string; dirty: boolean } | null
   /** Optional preloaded project text (tests). If omitted, load from cwd walk. */
   projectFilesText?: string
+  instructionFiles?: import('../config').InstructionFilesMode
   bare?: boolean
   effort?: string
 }
 
 export function buildSystemParts(input: PromptBuildInput): SystemPart[] {
   const projectText =
-    input.projectFilesText !== undefined ? input.projectFilesText : loadProjectFiles(input.cwd)
+    input.projectFilesText !== undefined
+      ? input.projectFilesText
+      : loadProjectFiles(input.cwd, input.instructionFiles ?? 'both')
   const memoryText = input.bare === true ? '' : loadMemorySnapshot(input.cwd)
   const fileTree = loadProjectFileTree(input.cwd)
   const git = resolveGit(input)

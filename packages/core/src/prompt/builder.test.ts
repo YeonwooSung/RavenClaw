@@ -380,4 +380,19 @@ describe('buildStablePrompt', () => {
     expect(parts[0]?.text).toBe(buildStablePrompt())
     expect(parts[2]?.text).toContain('Current permission mode: acceptEdits')
   })
+
+  test('buildSystemParts walks project files with instructionFiles claude', () => {
+    const cwd = tempDir('ravenclaw-builder-instr-')
+    writeFileSync(join(cwd, 'AGENTS.md'), 'AGENTS_ONLY\n')
+    writeFileSync(join(cwd, 'CLAUDE.md'), 'CLAUDE_ONLY\n')
+    const parts = buildSystemParts({
+      cwd,
+      permissionMode: 'default',
+      instructionFiles: 'claude',
+      git: GIT,
+    })
+    const context = parts.find((part) => part.tier === 'context')?.text ?? ''
+    expect(context).toContain('CLAUDE_ONLY')
+    expect(context).not.toContain('AGENTS_ONLY')
+  })
 })

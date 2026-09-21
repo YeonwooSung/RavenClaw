@@ -223,6 +223,7 @@ export async function createRavenSession(
   const system = buildSystemParts({
     cwd: session.cwd,
     permissionMode: session.permissionMode,
+    instructionFiles: config.instructionFiles,
   })
   const askUser = opts.askUser ?? defaultAskUser
   const tools = opts.tools ?? defaultSessionTools({ store, provider, config, compact, system, askUser })
@@ -237,6 +238,7 @@ export async function createRavenSession(
     maxRounds: config.maxRounds,
     askUser,
     system,
+    instructionFiles: config.instructionFiles,
   }
   if (opts.messages !== undefined) engineOpts.messages = opts.messages
   engineOpts.sessionLock = { holderId: lockHolderId }
