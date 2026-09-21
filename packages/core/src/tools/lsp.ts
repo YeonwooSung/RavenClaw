@@ -53,8 +53,10 @@ export function createLspTool(opts?: LspClientOpts): Tool<LspInput, string> {
     },
     async execute(input: LspInput, ctx: ToolContext) {
       if (ctx.signal.aborted) throw abortError()
-      const root = ctx.turn.projectCwd ?? ctx.turn.cwd
-      return client.query(input, root)
+      return client.query(input, {
+        workspaceCwd: ctx.turn.cwd,
+        configCwd: ctx.turn.projectCwd ?? ctx.turn.cwd,
+      })
     },
   }
 }
