@@ -5,6 +5,7 @@ import type { Tool, ToolContext } from '../types'
 import {
   DEFAULT_IGNORE_DIR_NAMES,
   WALK_MAX_BYTES,
+  WALK_MAX_DEPTH,
   WALK_MAX_FILES,
   capInMessage,
   matchGlob,
@@ -12,6 +13,7 @@ import {
   walkFiles,
 } from './glob'
 import { parseWithSchema } from './parse'
+import { execSandboxSearch, isAbortError } from './sandbox-search'
 import type { TerminalBackend } from './terminal-backend'
 import { workspaceFsFor } from './workspace-fs'
 
@@ -73,7 +75,9 @@ export function createGrepTool(backend?: TerminalBackend): Tool<GrepInput, strin
         return `Grep failed: ${message}`
       }
       const fileFilter = input.glob ?? input.include
-      void backend
+      if (backend?.kind === 'docker') {
+        return grepByDocker(backend, input, ctx, searchRoot, cwd, fileFilter)
+      }
       const rg = tryRipgrep(input.pattern, searchRoot, cwd, fileFilter)
       if (rg !== undefined) return rg
       return grepByWalk(input.pattern, searchRoot, cwd, fileFilter)
@@ -82,6 +86,55 @@ export function createGrepTool(backend?: TerminalBackend): Tool<GrepInput, strin
 }
 
 export const grepTool: Tool<GrepInput, string> = createGrepTool()
+
+async function grepByDocker(
+  backend: TerminalBackend,
+  input: GrepInput,
+  ctx: ToolContext,
+  searchRoot: string,
+  cwd: string,
+  fileFilter: string | undefined,
+): Promise<string> {
+  try {
+    const result = await execSandboxSearch(backend, {
+      kind: 'grep',
+      cwd,
+      searchRoot,
+      pattern: input.pattern,
+      fileFilter,
+      ignoreDirNames: DEFAULT_IGNORE_DIR_NAMES,
+      maxFiles: WALK_MAX_FILES,
+      maxDepth: WALK_MAX_DEPTH,
+      signal: ctx.signal,
+    })
+    if (ctx.signal.aborted) throw abortError()
+    if (result.exitCode === 0 || result.exitCode === 1) {
+      const stderr = (result.stderr ?? '').trim()
+      if (result.exitCode === 1 && stderr && !(result.stdout ?? '').trim()) {
+        return capInMessage(`Grep failed: ${stderr}`)
+      }
+      let text = formatHitLines(result.stdout ?? '', cwd)
+      if (fileFilter !== undefined) {
+        text = text
+          .split('\n')
+          .filter((line) => {
+            if (!line) return false
+            const file = hitFile(line)
+            return file !== undefined && matchGlob(fileFilter, file)
+          })
+          .join('\n')
+        return capInMessage(text)
+      }
+      return text
+    }
+    const err = (result.stderr || result.stdout || 'docker search failed').trim()
+    return capInMessage(`Grep failed: ${err}`)
+  } catch (error) {
+    if (isAbortError(error) || ctx.signal.aborted) throw abortError()
+    const message = error instanceof Error ? error.message : String(error)
+    return `Grep failed: ${message}`
+  }
+}
 
 function tryRipgrep(
   pattern: string,

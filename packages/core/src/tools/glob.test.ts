@@ -4,6 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ToolContext, Turn } from '../types'
 import { createGlobTool, globTool } from './glob'
+import {
+  createDockerTerminalBackend,
+  type TerminalRunRequest,
+} from './terminal-backend'
 
 const tempDirs: string[] = []
 
@@ -42,6 +46,14 @@ function makeTurn(cwd: string): Turn {
 function makeCtx(cwd: string): ToolContext {
   const turn = makeTurn(cwd)
   return { turn, signal: turn.abort.signal, onProgress() {} }
+}
+
+function fakeDocker(runCommand: (req: TerminalRunRequest) => Promise<{
+  stdout: string
+  stderr: string
+  exitCode: number
+}>) {
+  return createDockerTerminalBackend({ image: 'bash:5', runCommand })
 }
 
 function resultLines(out: string): string[] {
@@ -109,5 +121,76 @@ describe('Glob', () => {
     expect(tool.name).toBe('Glob')
     const out = await tool.execute({ pattern: '**/*.ts' }, makeCtx(root))
     expect(resultLines(out)).toContain('a.ts')
+  })
+})
+
+describe('Glob docker backend', () => {
+  test('one exec on an in-tree path; host walk is not used', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'host-only.ts'), 'x\n')
+    const calls: TerminalRunRequest[] = []
+    const backend = fakeDocker(async (req) => {
+      calls.push(req)
+      return { stdout: 'FAKE_DOCKER_GLOB.ts\n', stderr: '', exitCode: 0 }
+    })
+    const out = await createGlobTool(backend).execute({ pattern: '**/*.ts' }, makeCtx(root))
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.args).toContain(`${root}:${root}`)
+    expect(calls[0]?.timeoutMs).toBe(30_000)
+    expect(Object.keys(calls[0]?.env ?? {}).sort()).toEqual(['HOME', 'LANG', 'PATH', 'TERM'])
+    expect(out).toContain('FAKE_DOCKER_GLOB.ts')
+    expect(out).not.toContain('host-only.ts')
+  })
+
+  test('outside-cwd fails at jail stat and does not exec', async () => {
+    const root = fixtureRoot()
+    const calls: TerminalRunRequest[] = []
+    const backend = fakeDocker(async (req) => {
+      calls.push(req)
+      return { stdout: 'nope\n', stderr: '', exitCode: 0 }
+    })
+    const ctx = makeCtx(root)
+    ctx.turn.terminalBackend = 'docker'
+    const out = await createGlobTool(backend).execute({ pattern: '*', path: '/etc' }, ctx)
+    expect(calls).toHaveLength(0)
+    expect(String(out).toLowerCase()).toMatch(/outside workspace|denied|protected/)
+    expect(String(out)).toMatch(/^Glob failed:/)
+  })
+
+  test('missing find returns Glob failed: and does not host-walk', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'host-only.ts'), 'x\n')
+    const backend = fakeDocker(async () => ({
+      stdout: '',
+      stderr: 'find: not found',
+      exitCode: 127,
+    }))
+    const out = await createGlobTool(backend).execute({ pattern: '**/*.ts' }, makeCtx(root))
+    expect(out).toMatch(/^Glob failed:/)
+    expect(out).not.toContain('host-only.ts')
+  })
+
+  test('turn abort throws AbortError and does not stringify Glob failed:', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'a.ts'), 'x\n')
+    const ac = new AbortController()
+    const backend = fakeDocker(async ({ signal }) => {
+      return new Promise((_, reject) => {
+        const fail = () =>
+          reject(Object.assign(new Error('aborted'), { name: 'AbortError' }))
+        if (signal.aborted) {
+          fail()
+          return
+        }
+        signal.addEventListener('abort', fail, { once: true })
+      })
+    })
+    const ctx = makeCtx(root)
+    const pending = createGlobTool(backend).execute({ pattern: '**/*.ts' }, {
+      ...ctx,
+      signal: ac.signal,
+    })
+    ac.abort()
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
   })
 })
