@@ -1,7 +1,7 @@
 # RavenClaw next-horizon roadmap (dismiss-on-message)
 
 Date: 2026-09-21  
-Status: draft  
+Status: **implemented**  
 Reviewed against tree at `0a1176f` (`origin/main`, instructionFiles + three doors landed).  
 Successor to `2026-09-21-ignored-dismiss.md` (Status: implemented). Amends prior OUT for **dismiss-on-message** only. Does not reopen abort-pair I2, Slack/ACP skip UI, timeout→ignored, WorkspaceFs docker, or NotebookEdit docker.
 
@@ -114,15 +114,15 @@ New user text means the operator moved on. Every parked owned ask is paired as i
 
 ## Per-slice board
 
-Board as of this draft (not implemented).
+Board as of this worktree (done). Leave Shipped sha empty until it lands on `main`.
 
 | ID | Status vs tree |
 |---|---|
-| D0.1 `submitMessage` dismiss-then-continue | **not implemented** |
-| D0.2 Persist-fail all-or-nothing | **not implemented** |
-| D1.1 Child leftover-ask on parent submit | **not implemented** |
-| D1.2 Live turn / applyAskAnswer / clear / rewind pins | **not implemented** |
-| D2 Eval + docs | **not implemented** |
+| D0.1 `submitMessage` dismiss-then-continue | **done** |
+| D0.2 Persist-fail all-or-nothing | **done** |
+| D1.1 Child leftover-ask on parent submit | **done** |
+| D1.2 Live turn / applyAskAnswer / clear / rewind pins | **done** |
+| D2 Eval + docs | **done** |
 
 ---
 

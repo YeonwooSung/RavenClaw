@@ -1,0 +1,7 @@
+{
+  "prompt": "go on",
+  "expect": {
+    "dismissOnMessage": true,
+    "pairing": true
+  }
+}
