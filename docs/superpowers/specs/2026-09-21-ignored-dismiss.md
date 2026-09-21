@@ -2,7 +2,7 @@
 
 Date: 2026-09-21  
 Status: implemented  
-Shipped sha: not yet on `main` (this worktree).  
+Shipped sha: `22a55c1` on `main` (PR #15).  
 Reviewed against tree at `dc45aec` (`origin/main`, waist closed).  
 Successor to `2026-09-20-leftover-ask-abort-pair.md` (Status: implemented). Amends prior OUT for **`ignored` as a leftover-ask result** only. Does not reopen abort-pair I2, tree-stop, dismiss-on-message, Grep/Glob docker-exec, or LSP depth.
 
@@ -138,7 +138,7 @@ The operator can skip **one** parked or live ask. The tool is not executed. Pair
 
 ## Per-slice board
 
-Board as of this worktree. I0.1–I2 code is done. I2 docs is this pass. Not yet on `main`.
+Board as of `22a55c1` on `main` (PR #15). I0.1–I2 done.
 
 | ID | Status vs tree |
 |---|---|
