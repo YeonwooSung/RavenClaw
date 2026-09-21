@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from 'bun:test'
 import { EventEmitter } from 'node:events'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { consumeJsonRpcFrames, encodeJsonRpcFrame } from '../mcp/client'
 import {
   LSP_RESULT_CAP,
@@ -211,21 +212,250 @@ describe('lsp client', () => {
     expect(out).toContain('... [truncated]')
     expect(out).not.toContain('x'.repeat(LSP_RESULT_CAP + 1))
   })
+
+  test('initialize sends processId, workspaceFolders, and client capabilities', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'lib.ts'), 'export const n = 1\n')
+    writeConfig(root, { servers: [{ command: 'fake-ls', extensions: ['.ts'] }] })
+    const fake = fakeLspChild({ hover: { contents: 'ok' } })
+    const client = createLspClient({
+      start(command, args, opts) {
+        fake.starts.push({ command, args: [...args], cwd: opts.cwd })
+        return fake.child
+      },
+    })
+    await client.query({ operation: 'hover', path: 'lib.ts', line: 0 }, root)
+    const init = fake.params[0] as {
+      processId?: unknown
+      rootUri?: string
+      workspaceFolders?: unknown
+      initializationOptions?: unknown
+      capabilities?: {
+        workspace?: { workspaceFolders?: { supported?: boolean } }
+        textDocument?: Record<string, unknown>
+      }
+    }
+    expect(init.processId).toBe(process.pid)
+    expect(init.rootUri).toBe(pathToFileURL(root).href)
+    expect(init.workspaceFolders).toEqual([{ uri: pathToFileURL(root).href, name: basename(root) }])
+    expect(init.initializationOptions).toBeUndefined()
+    expect(init.capabilities?.workspace?.workspaceFolders?.supported).toBe(true)
+    const td = init.capabilities?.textDocument ?? {}
+    for (const key of [
+      'hover',
+      'definition',
+      'references',
+      'implementation',
+      'typeDefinition',
+      'publishDiagnostics',
+      'diagnostic',
+    ]) {
+      expect(td).toHaveProperty(key)
+    }
+  })
+
+  test('hoverProvider false refuses without sending textDocument/hover', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'a.ts'), 'x\n')
+    writeConfig(root, { servers: [{ command: 'fake-ls', extensions: ['.ts'] }] })
+    const fake = fakeLspChild({
+      initialize: { capabilities: { hoverProvider: false } },
+      hover: { contents: 'should not run' },
+    })
+    const client = createLspClient({ start: () => fake.child })
+    expect(await client.query({ operation: 'hover', path: 'a.ts', line: 0 }, root)).toBe(
+      'LSP failed: server does not support hover',
+    )
+    expect(fake.methods).toContain('initialize')
+    expect(fake.methods).toContain('textDocument/didOpen')
+    expect(fake.methods).not.toContain('textDocument/hover')
+  })
+
+  test('absent provider still tries the method', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'a.ts'), 'x\n')
+    writeConfig(root, { servers: [{ command: 'fake-ls', extensions: ['.ts'] }] })
+    const fake = fakeLspChild({
+      initialize: { capabilities: {} },
+      hover: { contents: 'tried' },
+    })
+    const client = createLspClient({ start: () => fake.child })
+    const out = await client.query({ operation: 'hover', path: 'a.ts', line: 0 }, root)
+    expect(fake.methods).toContain('textDocument/hover')
+    expect(out).toContain('tried')
+  })
+
+  test('answers reverse-RPC and refuses applyEdit without writing files', async () => {
+    const root = fixtureRoot()
+    const path = join(root, 'lib.ts')
+    writeFileSync(path, 'export const n = 1\n')
+    writeConfig(root, { servers: [{ command: 'fake-ls', extensions: ['.ts'] }] })
+    const fake = fakeLspChild({ hover: { contents: 'ok' } })
+    const client = createLspClient({ start: () => fake.child })
+    await client.query({ operation: 'hover', path: 'lib.ts', line: 0 }, root)
+    const before = readFileSync(path, 'utf8')
+    const folders = [{ uri: pathToFileURL(root).href, name: basename(root) }]
+    fake.emitRequest('workspace/workspaceFolders', 71, null)
+    fake.emitRequest('workspace/configuration', 72, { items: [{ section: 'a' }, { section: 'b' }] })
+    fake.emitRequest('window/workDoneProgress/create', 73, { token: 't' })
+    fake.emitRequest('workspace/applyEdit', 74, {
+      edit: {
+        changes: {
+          [pathToFileURL(path).href]: [
+            {
+              range: { start: { line: 0, character: 0 }, end: { line: 0, character: 1 } },
+              newText: 'HACKED',
+            },
+          ],
+        },
+      },
+    })
+    await Promise.resolve()
+    expect(fake.replies).toContainEqual({ id: 71, result: folders })
+    expect(fake.replies).toContainEqual({ id: 72, result: [{}, {}] })
+    expect(fake.replies).toContainEqual({ id: 73, result: null })
+    expect(fake.replies).toContainEqual({ id: 74, result: { applied: false } })
+    expect(readFileSync(path, 'utf8')).toBe(before)
+  })
+
+  test('query timeout copy is not missing-binary copy', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'a.ts'), 'x\n')
+    writeConfig(root, { servers: [{ command: 'fake-ls', extensions: ['.ts'] }] })
+    const fake = fakeLspChild({ hover: { contents: 'late' } }, { silent: new Set(['textDocument/hover']) })
+    const client = createLspClient({ start: () => fake.child, queryTimeoutMs: 40 })
+    expect(await client.query({ operation: 'hover', path: 'a.ts', line: 0 }, root)).toBe(
+      'LSP failed: timed out',
+    )
+  })
+
+  test('initialize timeout copy is not missing-binary copy', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'a.ts'), 'x\n')
+    writeConfig(root, { servers: [{ command: 'fake-ls', extensions: ['.ts'] }] })
+    const fake = fakeLspChild({}, { silent: new Set(['initialize']) })
+    const client = createLspClient({ start: () => fake.child, initializeTimeoutMs: 40 })
+    expect(await client.query({ operation: 'hover', path: 'a.ts', line: 0 }, root)).toBe(
+      'LSP failed: timed out',
+    )
+  })
+
+  test('drop writes shutdown then exit before kill', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'a.ts'), 'x\n')
+    writeConfig(root, { servers: [{ command: 'fake-ls', extensions: ['.ts'] }] })
+    const fake = fakeLspChild({ hover: { contents: 'one' } })
+    const client = createLspClient({ start: () => fake.child })
+    await client.query({ operation: 'hover', path: 'a.ts', line: 0 }, root)
+    fake.exit()
+    expect(fake.methods).toContain('shutdown')
+    expect(fake.methods).toContain('exit')
+    expect(fake.methods.indexOf('shutdown')).toBeLessThan(fake.methods.indexOf('exit'))
+    expect(fake.killed).toBe(true)
+  })
+
+  test('LSP drops frames over 256 KiB without JSON.parse', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'a.ts'), 'x\n')
+    writeConfig(root, { servers: [{ command: 'fake-ls', extensions: ['.ts'] }] })
+    const fake = fakeLspChild({ hover: { contents: 'ok' } })
+    const client = createLspClient({ start: () => fake.child })
+    await client.query({ operation: 'hover', path: 'a.ts', line: 0 }, root)
+    const huge = Buffer.alloc(256 * 1024 + 32, 0x78)
+    fake.pushRaw(Buffer.concat([Buffer.from(`Content-Length: ${huge.length}\r\n\r\n`), huge]))
+    const out = await client.query({ operation: 'hover', path: 'a.ts', line: 0 }, root)
+    expect(out).toContain('ok')
+  })
+
+  test('MCP consumeJsonRpcFrames still parses a frame larger than 256 KiB', () => {
+    const payload = { jsonrpc: '2.0', id: 1, result: { pad: 'x'.repeat(256 * 1024) } }
+    const frame = Buffer.from(encodeJsonRpcFrame(payload), 'utf8')
+    expect(frame.length).toBeGreaterThan(256 * 1024)
+    const parsed = consumeJsonRpcFrames(frame)
+    expect(parsed.messages).toHaveLength(1)
+    expect((parsed.messages[0] as { result: { pad: string } }).result.pad.length).toBe(256 * 1024)
+  })
+
+  test('query uses configCwd for lsp.json and workspaceCwd for spawn and jail', async () => {
+    const project = fixtureRoot()
+    const worktree = fixtureRoot()
+    writeFileSync(join(worktree, 'lib.ts'), 'export const n = 1\n')
+    writeConfig(project, { servers: [{ command: 'fake-ls', args: ['--stdio'], extensions: ['.ts'] }] })
+    const fake = fakeLspChild({ hover: { contents: 'wt' } })
+    const client = createLspClient({
+      start(command, args, opts) {
+        fake.starts.push({ command, args: [...args], cwd: opts.cwd })
+        return fake.child
+      },
+    })
+    const out = await client.query(
+      { operation: 'hover', path: 'lib.ts', line: 0 },
+      { workspaceCwd: worktree, configCwd: project },
+    )
+    expect(out).toContain('wt')
+    expect(fake.starts).toEqual([{ command: 'fake-ls', args: ['--stdio'], cwd: worktree }])
+    const init = fake.params[0] as { rootUri?: string; workspaceFolders?: Array<{ uri: string }> }
+    expect(init.rootUri).toBe(pathToFileURL(worktree).href)
+    expect(init.workspaceFolders?.[0]?.uri).toBe(pathToFileURL(worktree).href)
+  })
+
+  test('passes initializationOptions object through and ignores unknown server keys', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'a.ts'), 'x\n')
+    mkdirSync(join(root, '.ravenclaw'), { recursive: true })
+    writeFileSync(
+      lspConfigPath(root),
+      `${JSON.stringify({
+        servers: [
+          {
+            command: 'fake-ls',
+            extensions: ['.ts'],
+            env: { SECRET: 'nope' },
+            extra: true,
+            initializationOptions: { plugins: ['p'] },
+          },
+        ],
+      })}\n`,
+      'utf8',
+    )
+    expect(loadLspConfig(root)).toEqual({
+      servers: [
+        {
+          command: 'fake-ls',
+          extensions: ['.ts'],
+          initializationOptions: { plugins: ['p'] },
+        },
+      ],
+    })
+    const fake = fakeLspChild({ hover: { contents: 'ok' } })
+    const client = createLspClient({ start: () => fake.child })
+    await client.query({ operation: 'hover', path: 'a.ts', line: 0 }, root)
+    const init = fake.params[0] as { initializationOptions?: unknown }
+    expect(init.initializationOptions).toEqual({ plugins: ['p'] })
+  })
 })
 
-function fakeLspChild(results: Partial<Record<string, unknown>>): {
+function fakeLspChild(
+  results: Partial<Record<string, unknown>> = {},
+  opts?: { silent?: ReadonlySet<string>; publishOnOpen?: unknown[] },
+): {
   child: LspChild
   methods: string[]
   params: unknown[]
+  replies: Array<{ id: unknown; result: unknown }>
   starts: Array<{ command: string; args: string[]; cwd: string }>
   killed: boolean
   exit: () => void
+  emitRequest: (method: string, id: number, params: unknown) => void
+  pushRaw: (chunk: Buffer) => void
 } {
   const stdout = new EventEmitter()
   const methods: string[] = []
   const params: unknown[] = []
+  const replies: Array<{ id: unknown; result: unknown }> = []
   const state = { killed: false }
   let buffer = Buffer.alloc(0)
+  const silent = opts?.silent ?? new Set<string>()
   const child: LspChild = {
     stdin: {
       write(chunk: string | Uint8Array) {
@@ -235,15 +465,41 @@ function fakeLspChild(results: Partial<Record<string, unknown>>): {
         buffer = parsed.rest
         for (const message of parsed.messages) {
           if (!message || typeof message !== 'object') continue
-          const rec = message as { id?: unknown; method?: unknown; params?: unknown }
-          if (typeof rec.method !== 'string') continue
+          const rec = message as { id?: unknown; method?: unknown; params?: unknown; result?: unknown }
+          if (typeof rec.method !== 'string') {
+            if (rec.id !== undefined) replies.push({ id: rec.id, result: rec.result })
+            continue
+          }
           methods.push(rec.method)
           params.push(rec.params)
+          if (rec.method === 'textDocument/didOpen' && opts?.publishOnOpen) {
+            const uri = (rec.params as { textDocument?: { uri?: string } } | undefined)?.textDocument
+              ?.uri
+            if (uri) {
+              queueMicrotask(() => {
+                stdout.emit(
+                  'data',
+                  encodeJsonRpcFrame({
+                    jsonrpc: '2.0',
+                    method: 'textDocument/publishDiagnostics',
+                    params: { uri, diagnostics: opts.publishOnOpen },
+                  }),
+                )
+              })
+            }
+          }
           if (rec.id === undefined) continue
+          if (silent.has(rec.method)) continue
           const short = rec.method.split('/').at(-1) ?? rec.method
           const result =
             rec.method === 'initialize'
-              ? { capabilities: { hoverProvider: true, definitionProvider: true, referencesProvider: true } }
+              ? (results.initialize ?? {
+                  capabilities: {
+                    hoverProvider: true,
+                    definitionProvider: true,
+                    referencesProvider: true,
+                  },
+                })
               : (results[short] ?? results[rec.method] ?? null)
           queueMicrotask(() => {
             stdout.emit('data', encodeJsonRpcFrame({ jsonrpc: '2.0', id: rec.id, result }))
@@ -271,12 +527,19 @@ function fakeLspChild(results: Partial<Record<string, unknown>>): {
     child,
     methods,
     params,
+    replies,
     starts: [],
     get killed() {
       return state.killed
     },
     exit() {
       stdout.emit('exit', 1)
+    },
+    emitRequest(method, id, params) {
+      stdout.emit('data', encodeJsonRpcFrame({ jsonrpc: '2.0', id, method, params }))
+    },
+    pushRaw(chunk) {
+      stdout.emit('data', chunk)
     },
   }
 }
