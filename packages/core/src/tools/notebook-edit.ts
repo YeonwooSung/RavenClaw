@@ -8,6 +8,7 @@ import {
   type NotebookEditMode,
 } from './notebook-format'
 import { parseWithSchema } from './parse'
+import { isInTreePath } from '../permissions/modes'
 import { isHardDeniedWritePath, resolveWritePath } from './write'
 import { wasRead } from './read-files'
 
@@ -57,6 +58,9 @@ export const notebookEditTool: Tool<NotebookEditInput, string> = {
     const resolved = resolveWritePath(ctx.turn.cwd, input.path)
     if (isHardDeniedWritePath(resolved)) {
       return `NotebookEdit failed: write denied to protected path: ${input.path}`
+    }
+    if (!isInTreePath(ctx.turn.cwd, resolved)) {
+      return 'NotebookEdit failed: outside workspace'
     }
     if (!wasRead(ctx.turn.readFiles, resolved, resolve(ctx.turn.cwd, input.path))) {
       return `NotebookEdit failed: path must be Read first: ${input.path}`

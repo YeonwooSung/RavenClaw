@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { FileHistory } from '../session/file-history'
@@ -206,6 +206,50 @@ describe('NotebookEdit', () => {
     const out = await notebookEditTool.execute({ path: db, new_source: 'hacked' }, ctx)
     expect(out.toLowerCase()).toMatch(/deny|denied|protected|refused|not allowed/)
     expect(readFileSync(db, 'utf8')).toBe('{"cells":[]}\n')
+  })
+
+  test('refuses a path outside cwd and does not write', async () => {
+    const root = fixtureRoot()
+    const outside = fixtureRoot()
+    const outsideNb = writeNotebook(outside, 'nb.ipynb', [
+      { id: 'abc', cell_type: 'code', source: ['old'] },
+    ])
+    const before = readFileSync(outsideNb, 'utf8')
+    const ctx = makeCtx(root)
+    ctx.turn.readFiles.add(resolvedOf(outside, 'nb.ipynb'))
+    const out = await notebookEditTool.execute(
+      { path: outsideNb, new_source: 'hacked' },
+      ctx,
+    )
+    expect(out).toBe('NotebookEdit failed: outside workspace')
+    expect(readFileSync(outsideNb, 'utf8')).toBe(before)
+  })
+
+  test('refuses a relative path that escapes cwd and does not write', async () => {
+    const parent = fixtureRoot()
+    const cwd = join(parent, 'proj')
+    mkdirSync(cwd)
+    writeNotebook(parent, 'nb.ipynb', [{ id: 'abc', cell_type: 'code', source: ['old'] }])
+    const before = readFileSync(join(parent, 'nb.ipynb'), 'utf8')
+    const ctx = makeCtx(cwd)
+    ctx.turn.readFiles.add(resolvedOf(parent, 'nb.ipynb'))
+    const out = await notebookEditTool.execute(
+      { path: '../nb.ipynb', new_source: 'hacked' },
+      ctx,
+    )
+    expect(out).toBe('NotebookEdit failed: outside workspace')
+    expect(readFileSync(join(parent, 'nb.ipynb'), 'utf8')).toBe(before)
+  })
+
+  test('hard-deny still runs before the cwd jail', async () => {
+    const root = fixtureRoot()
+    const ctx = makeCtx(root)
+    ctx.turn.readFiles.add('/etc/shadow')
+    const out = await notebookEditTool.execute(
+      { path: '/etc/shadow', new_source: 'x' },
+      ctx,
+    )
+    expect(out).toBe('NotebookEdit failed: write denied to protected path: /etc/shadow')
   })
 
   test('execute refuses when the signal is already aborted', async () => {
