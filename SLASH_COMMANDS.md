@@ -1005,13 +1005,15 @@ Related: `/skills`, `/learn`.
 
 - **Aliases:** none
 - **Kind:** shared
-- **When:** any (read-only)
+- **When:** any
 
-If `runtime.config.home` is set: `formatPublicConfig({ home })` — resolved home, provider, model, permissionMode, maxRounds, childMaxRounds, compact flags, ads feed URL, included gateway URL, terminal backend, MCP server **names**, and whether selected env keys are `unset` or `set (N chars)` (values not printed).
+Bare `/config`: `formatPublicConfig({ home })` — resolved home, provider, model, permissionMode, `instructionFiles` (`claude` | `agents-fallback` | `both`, default `both`), maxRounds, childMaxRounds, compact flags, ads feed URL, included gateway URL, terminal backend, MCP server **names**, and whether selected env keys are `unset` or `set (N chars)` (values not printed). Home unset: `see raven config`.
 
-If home is unset: `see raven config`.
+`/config instructions`: print the current mode plus the three token lines. No write.
 
-Related CLI: `raven config`.
+`/config instructions claude|agents-fallback|both`: write `instructionFiles` in `$RAVENCLAW_HOME/config.yaml` (surgical upsert), set the live runtime, `setInstructionFiles`, rebuild system parts. Notice `instructionFiles: <mode>`. Unknown token: `usage: /config instructions claude|agents-fallback|both`. No home: `no home directory`. Write fail: `failed to write config.yaml` (runtime unchanged).
+
+Related CLI: `raven config` (dump only).
 
 ---
 

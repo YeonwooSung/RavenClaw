@@ -47,6 +47,7 @@ Optional `~/.ravenclaw/config.yaml`:
 model: claude-sonnet-5       # official API id; omit to use the provider default
 provider: anthropic          # anthropic | openai_compat | ollama | vllm
 permissionMode: default      # default | acceptEdits | plan | dontAsk
+instructionFiles: both     # claude | agents-fallback | both
 maxRounds: 80
 terminal:
   backend: local             # local | docker
@@ -269,7 +270,7 @@ Ink is the default. OpenTUI is `--tui opentui`.
 | `/mcp` | Configured MCP servers |
 | `/reload` | Rebuild system parts (skills, memory) |
 | `/permissions` | Extra rule files |
-| `/config` | Resolved config |
+| `/config` | Resolved config; `/config instructions` sets CLAUDE.md / AGENTS.md mode |
 | `/context` | Compact generation and message count |
 | `/copy` | Copy the conversation as markdown |
 | `/bash <cmd>` | Local shell (also `!cmd`) |

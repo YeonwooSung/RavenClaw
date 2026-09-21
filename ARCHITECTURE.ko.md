@@ -491,7 +491,7 @@ builtin 8개:
 | `context` | 프로젝트 파일, 파일 트리, memory snapshot, git snapshot, coding posture | breakpoint |
 | `volatile` | cwd, 현재 모드, locale, effort, 스킬 인덱스(이름 + 설명 60자) | 없음 |
 
-프로젝트 파일은 `AGENTS.md` / `RAVEN.md` / `CLAUDE.md`, `.ravenclaw/RAVEN.md`, `RAVEN.local.md`, `AGENTS.local.md`, `.ravenclaw/rules/*`다 (`packages/core/src/prompt/project-files.ts`). 파일당 40k, 합 60k. `@path` include를 펼친다. vendor 프롬프트를 쓰지 않는다. 읽기만 한다.
+프로젝트 파일은 `AGENTS.md` / `RAVEN.md` / `CLAUDE.md`, `.ravenclaw/RAVEN.md`, `RAVEN.local.md`, `AGENTS.local.md`, `.ravenclaw/rules/*`다 (`packages/core/src/prompt/project-files.ts`). 파일당 40k, 합 60k. `@path` include를 펼친다. vendor 프롬프트를 쓰지 않는다. 읽기만 한다. `config.yaml` `instructionFiles` (`claude` | `agents-fallback` | `both`, 기본 `both`)가 `AGENTS.md` / `AGENTS.local.md`와 `CLAUDE.md`를 고른다. `agents-fallback`은 디렉터리마다 적용한다. `RAVEN.md`와 rules는 항상 읽는다. `/config instructions`가 모드를 저장한다.
 
 memory snapshot (`packages/core/src/prompt/memory.ts`):
 
@@ -692,7 +692,7 @@ fire는 새 `dontAsk` 세션을 연다. `lockHolder`는 `cron`이다. surface는
 | 경로 | 내용 |
 |---|---|
 | `~/.ravenclaw/.env` | API 키. mode `0600`을 권장 |
-| `~/.ravenclaw/config.yaml` | 모델, provider, MCP, slack/discord, ads, included |
+| `~/.ravenclaw/config.yaml` | 모델, provider, MCP, slack/discord, ads, included, `instructionFiles` |
 | `~/.ravenclaw/state.db` | 세션, 메시지, FTS5, 락, mailbox, deliveries |
 | `~/.ravenclaw/USER.md`, `MEMORY.md` | 유저/에이전트 메모리 |
 | `~/.ravenclaw/skills/` | 유저 스킬 |

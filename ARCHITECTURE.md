@@ -601,7 +601,7 @@ These eight are original RavenClaw prose. The official Anthropic 19-skill set is
 
 **MEMORY.md / USER.md** (`packages/core/src/prompt/memory.ts`): 8_000 chars/file, 16_000 total. Load order: `~/.ravenclaw/USER.md`, `~/.ravenclaw/MEMORY.md`, `<cwd>/USER.md`, `<cwd>/MEMORY.md`, `<cwd>/.ravenclaw/USER.md`, `<cwd>/.ravenclaw/MEMORY.md`. `--bare` skips this.
 
-**Project instructions** (`packages/core/src/prompt/project-files.ts`): walk cwd toward root collecting `AGENTS.md`, `RAVEN.md`, `CLAUDE.md`, `.ravenclaw/RAVEN.md`, `RAVEN.local.md`, `AGENTS.local.md`, and `.ravenclaw/rules/*`. `@include` lines expand (realpath-confined). Caps: 40k/file, 60k total.
+**Project instructions** (`packages/core/src/prompt/project-files.ts`): walk cwd toward root collecting `AGENTS.md`, `RAVEN.md`, `CLAUDE.md`, `.ravenclaw/RAVEN.md`, `RAVEN.local.md`, `AGENTS.local.md`, and `.ravenclaw/rules/*`. `@include` lines expand (realpath-confined). Caps: 40k/file, 60k total. `config.yaml` `instructionFiles` (`claude` | `agents-fallback` | `both`, default `both`) filters `AGENTS.md` / `AGENTS.local.md` vs `CLAUDE.md`; `agents-fallback` is per directory; RavenClaw-native `RAVEN.md` / rules always load. `/config instructions` persists the mode.
 
 **Coding posture** (`packages/core/src/prompt/coding-posture.ts`): detect bun/pnpm/yarn/npm/cargo/go/python from lockfiles; list `verify:` commands from exact script names (`test`, `lint`, `typecheck`, …) and `test:`/`lint:` prefixes. Used by verify-on-stop nudges.
 
@@ -759,7 +759,7 @@ Home is `$RAVENCLAW_HOME` or `~/.ravenclaw/`. Secrets belong in `~/.ravenclaw/.e
 | Path | What |
 |---|---|
 | `$RAVENCLAW_HOME/state.db` (+ `-wal`/`-shm`) | Sessions, messages, FTS5, mail, deliveries, session locks, session permission rules |
-| `$RAVENCLAW_HOME/config.yaml` | Provider, model, modes, MCP, slack/discord, ads, included, terminal, review |
+| `$RAVENCLAW_HOME/config.yaml` | Provider, model, modes, `instructionFiles`, MCP, slack/discord, ads, included, terminal, review |
 | `$RAVENCLAW_HOME/.env` | API keys (0600) |
 | `$RAVENCLAW_HOME/USER.md`, `MEMORY.md` | User / agent memory (also project copies) |
 | `$RAVENCLAW_HOME/permissions.json` | User allow/deny rules |

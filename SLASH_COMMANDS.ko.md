@@ -492,9 +492,10 @@ Ink status line은 모델·mode·usage·`shortSessionId`·funding·near-compact�
 ### `/config`
 
 - 분류: shared
-- home이 있으면 `formatPublicConfig`: home, provider, model, permissionMode, maxRounds, childMaxRounds, compact.*, ads.feedUrl, included.gatewayUrl, terminal, mcp 이름, 키는 `unset` 또는 `set (N chars)`
-- home 없으면 `see raven config`
-- 관련: `raven config` (플래그 반영)
+- 인자 없음: `formatPublicConfig`. `instructionFiles` (`claude` | `agents-fallback` | `both`, 기본 `both`) 포함. home 없으면 `see raven config`
+- `/config instructions`: 현재 모드와 세 토큰 설명. 파일에 쓰지 않음
+- `/config instructions claude|agents-fallback|both`: `$RAVENCLAW_HOME/config.yaml`에 스칼라 upsert, 런타임 반영, 시스템 파트 재구성. 공지 `instructionFiles: <mode>`. 알 수 없는 토큰은 `usage: /config instructions claude|agents-fallback|both`. home 없으면 `no home directory`. 쓰기 실패는 `failed to write config.yaml` (런타임 유지)
+- 관련: `raven config` (덤프만)
 
 ### `/context`
 
