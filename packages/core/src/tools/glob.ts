@@ -1,7 +1,9 @@
 import { readdirSync, statSync } from 'node:fs'
-import { join, relative, resolve, sep } from 'node:path'
+import { isAbsolute, join, relative, resolve, sep } from 'node:path'
 import type { Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
+import { execSandboxSearch, isAbortError } from './sandbox-search'
+import type { TerminalBackend } from './terminal-backend'
 import { workspaceFsFor } from './workspace-fs'
 
 export const DEFAULT_IGNORE_DIR_NAMES = [
@@ -126,40 +128,91 @@ export function walkFiles(searchRoot: string, cwd: string): WalkFile[] {
   return out
 }
 
-export const globTool: Tool<GlobInput, string> = {
-  name: 'Glob',
-  description:
-    'Find files matching a glob pattern. Supports *, **, and ?. Optional path is the search root (defaults to the turn cwd). Results are cwd-relative. Ignores node_modules, .git, dist, build, .next, coverage, vendor, and target. Bounded to 200 files, depth 20, and 20000 characters.',
-  inputSchema,
-  parse(input: unknown) {
-    return parseWithSchema<GlobInput>(inputSchema, input)
-  },
-  isConcurrencySafe() {
-    return true
-  },
-  isReadOnly() {
-    return true
-  },
-  async checkPermissions() {
-    return { behavior: 'allow', reason: 'mode' }
-  },
-  async execute(input: GlobInput, ctx: ToolContext) {
+export function createGlobTool(backend?: TerminalBackend): Tool<GlobInput, string> {
+  return {
+    name: 'Glob',
+    description:
+      'Find files matching a glob pattern. Supports *, **, and ?. Optional path is the search root (defaults to the turn cwd). Results are cwd-relative. Ignores node_modules, .git, dist, build, .next, coverage, vendor, and target. Bounded to 200 files, depth 20, and 20000 characters.',
+    inputSchema,
+    parse(input: unknown) {
+      return parseWithSchema<GlobInput>(inputSchema, input)
+    },
+    isConcurrencySafe() {
+      return true
+    },
+    isReadOnly() {
+      return true
+    },
+    async checkPermissions() {
+      return { behavior: 'allow', reason: 'mode' }
+    },
+    async execute(input: GlobInput, ctx: ToolContext) {
+      if (ctx.signal.aborted) throw abortError()
+      const cwd = ctx.turn.cwd
+      const searchRoot = resolve(cwd, input.path ?? '.')
+      try {
+        workspaceFsFor(ctx.turn).stat(searchRoot)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return `Glob failed: ${message}`
+      }
+      if (backend?.kind === 'docker') {
+        return globByDocker(backend, input, ctx, searchRoot, cwd)
+      }
+      const matches: string[] = []
+      for (const file of walkFiles(searchRoot, cwd)) {
+        if (matchGlob(input.pattern, file.relToRoot)) matches.push(file.relToCwd)
+      }
+      matches.sort()
+      return capInMessage(matches.join('\n'))
+    },
+  }
+}
+
+export const globTool: Tool<GlobInput, string> = createGlobTool()
+
+async function globByDocker(
+  backend: TerminalBackend,
+  input: GlobInput,
+  ctx: ToolContext,
+  searchRoot: string,
+  cwd: string,
+): Promise<string> {
+  try {
+    const result = await execSandboxSearch(backend, {
+      kind: 'glob',
+      cwd,
+      searchRoot,
+      pattern: input.pattern,
+      ignoreDirNames: DEFAULT_IGNORE_DIR_NAMES,
+      maxFiles: WALK_MAX_FILES,
+      maxDepth: WALK_MAX_DEPTH,
+      signal: ctx.signal,
+    })
     if (ctx.signal.aborted) throw abortError()
-    const cwd = ctx.turn.cwd
-    const searchRoot = resolve(cwd, input.path ?? '.')
-    try {
-      workspaceFsFor(ctx.turn).stat(searchRoot)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      return `Glob failed: ${message}`
+    if (result.exitCode === 0 || result.exitCode === 1) {
+      const stderr = (result.stderr ?? '').trim()
+      if (result.exitCode === 1 && stderr && !(result.stdout ?? '').trim()) {
+        return capInMessage(`Glob failed: ${stderr}`)
+      }
+      const matches: string[] = []
+      for (const raw of (result.stdout ?? '').split('\n')) {
+        if (!raw) continue
+        const relToRoot = isAbsolute(raw) ? posixRel(searchRoot, raw) : raw.replace(/\\/g, '/')
+        if (!matchGlob(input.pattern, relToRoot)) continue
+        const relToCwd = isAbsolute(raw) ? posixRel(cwd, raw) : raw.replace(/\\/g, '/')
+        matches.push(relToCwd)
+      }
+      matches.sort()
+      return capInMessage(matches.join('\n'))
     }
-    const matches: string[] = []
-    for (const file of walkFiles(searchRoot, cwd)) {
-      if (matchGlob(input.pattern, file.relToRoot)) matches.push(file.relToCwd)
-    }
-    matches.sort()
-    return capInMessage(matches.join('\n'))
-  },
+    const err = (result.stderr || result.stdout || 'docker search failed').trim()
+    return capInMessage(`Glob failed: ${err}`)
+  } catch (error) {
+    if (isAbortError(error) || ctx.signal.aborted) throw abortError()
+    const message = error instanceof Error ? error.message : String(error)
+    return `Glob failed: ${message}`
+  }
 }
 
 function globToRegExp(pattern: string): RegExp {

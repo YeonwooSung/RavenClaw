@@ -173,6 +173,8 @@ Goal: `terminal.backend: docker` means **the model’s filesystem is the contain
 
 **Done when.** Docker session: Write creates the file inside the container mount; host-only paths outside cwd fail closed. Tests with a fake `runCommand`.
 
+**Shipped pointer (2026-09-21).** Grep/Glob docker-exec was unparked by [`2026-09-21-grep-glob-docker-exec.md`](2026-09-21-grep-glob-docker-exec.md): search shares Bash’s `TerminalBackend` (one `docker run` per call). WorkspaceFs docker-exec (Read/Write/Edit/ApplyPatch/ListDir/ReadSubtree `docker exec cat`) is still parked. NotebookEdit docker, `ignored`, LSP depth, and web UI stay OUT.
+
 ### E2.2 Read-before-write + stale hash
 
 **Why.** eve `write_file` refuses a write if the file was never read or the hash drifted. RavenClaw already has `Turn.readFiles` / `readFileMtimes` (`tools/read-files.ts`). Edit, ApplyPatch, and NotebookEdit already error “path must be Read first” / “file changed since last Read” (**mtime**, this `submitMessage` only). `Write.execute` still overwrites with no check. Compact does not reset a session map because the map dies with the turn.

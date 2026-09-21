@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, test } from 'bun:test'
+import { EventEmitter } from 'node:events'
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { NO_SERVER_MESSAGE } from '../lsp/client'
+import { consumeJsonRpcFrames, encodeJsonRpcFrame } from '../mcp/client'
 import { decidePermission } from '../permissions/pipeline'
 import type { ToolContext, Turn } from '../types'
 import { createLspTool } from './lsp'
@@ -88,7 +90,12 @@ describe('createLspTool', () => {
       true,
     )
     expect(tool.parse({ operation: 'references', path: 'a.ts', line: 0 }).ok).toBe(true)
+    expect(tool.parse({ operation: 'implementation', path: 'a.ts', line: 0 }).ok).toBe(true)
+    expect(tool.parse({ operation: 'typeDefinition', path: 'a.ts', line: 0 }).ok).toBe(true)
+    expect(tool.parse({ operation: 'diagnostic', path: 'a.ts', line: 0 }).ok).toBe(true)
     expect(tool.parse({ operation: 'rename', path: 'a.ts', line: 0 }).ok).toBe(false)
+    expect(tool.parse({ operation: 'completion', path: 'a.ts', line: 0 }).ok).toBe(false)
+    expect(tool.parse({ operation: 'diagnostic', path: 'a.ts' }).ok).toBe(false)
     expect(tool.parse({ operation: 'hover', path: 'a.ts' }).ok).toBe(false)
     expect(tool.parse({ operation: 'hover', line: 0 }).ok).toBe(false)
     expect(tool.parse({ path: 'a.ts', line: 0 }).ok).toBe(false)
@@ -129,26 +136,85 @@ describe('createLspTool', () => {
     expect(out).toBe('ok hover src/a.ts:10:3')
   })
 
-  test('reads lsp.json from projectCwd and sends a real definition request', async () => {
+  test('execute loads config from projectCwd and indexes the worktree cwd', async () => {
+    const project = fixtureRoot()
+    const worktree = fixtureRoot()
+    writeFileSync(join(worktree, 'a.ts'), 'export const a = 1\n')
+    writeLspConfig(project)
+    const started: Array<{ command: string; cwd: string }> = []
+    const methods: string[] = []
+    const stdout = new EventEmitter()
+    let buffer = Buffer.alloc(0)
+    const child = {
+      stdin: {
+        write(chunk: string | Uint8Array) {
+          const incoming = typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk
+          buffer = Buffer.concat([buffer, incoming])
+          const parsed = consumeJsonRpcFrames(buffer)
+          buffer = parsed.rest
+          for (const message of parsed.messages) {
+            if (!message || typeof message !== 'object') continue
+            const rec = message as { id?: unknown; method?: unknown }
+            if (typeof rec.method !== 'string') continue
+            methods.push(rec.method)
+            if (rec.id === undefined) continue
+            const result =
+              rec.method === 'initialize'
+                ? { capabilities: { definitionProvider: true } }
+                : [{ uri: 'file:///a.ts', range: { start: { line: 0, character: 7 } } }]
+            queueMicrotask(() => {
+              stdout.emit('data', encodeJsonRpcFrame({ jsonrpc: '2.0', id: rec.id, result }))
+            })
+          }
+          return true
+        },
+      },
+      stdout,
+      kill() {
+        return true
+      },
+      on(event: string, listener: (...args: unknown[]) => void) {
+        stdout.on(event, listener)
+        return this
+      },
+      off(event: string, listener: (...args: unknown[]) => void) {
+        stdout.off(event, listener)
+        return this
+      },
+    }
+    const tool = createLspTool({
+      start(command, _args, opts) {
+        started.push({ command, cwd: opts.cwd })
+        return child
+      },
+    })
+    const out = await tool.execute(
+      { operation: 'definition', path: 'a.ts', line: 0 },
+      makeCtx(worktree, { projectCwd: project }),
+    )
+    expect(started).toEqual([{ command: 'fake-ls', cwd: worktree }])
+    expect(methods).toContain('initialize')
+    expect(methods).toContain('textDocument/definition')
+    expect(out).toContain('file:///a.ts')
+  })
+
+  test('execute jails the path to worktree cwd not projectCwd', async () => {
     const project = fixtureRoot()
     const worktree = fixtureRoot()
     mkdirSync(join(project, 'src'), { recursive: true })
     writeFileSync(join(project, 'src', 'a.ts'), 'export const a = 1\n')
     writeLspConfig(project)
-    const started: Array<{ command: string; cwd: string }> = []
     const tool = createLspTool({
-      query: async (req) => `ok ${req.operation} ${req.path}:${req.line}`,
-      start(command, _args, opts) {
-        started.push({ command, cwd: opts.cwd })
-        throw new Error('query mock should win')
+      start() {
+        throw new Error('must not start when the file is outside the workspace jail')
       },
     })
-    const out = await tool.execute(
-      { operation: 'definition', path: 'src/a.ts', line: 2 },
-      makeCtx(worktree, { projectCwd: project }),
-    )
-    expect(started).toEqual([])
-    expect(out).toBe('ok definition src/a.ts:2')
+    expect(
+      await tool.execute(
+        { operation: 'definition', path: 'src/a.ts', line: 0 },
+        makeCtx(worktree, { projectCwd: project }),
+      ),
+    ).toBe('LSP failed: cannot read file')
   })
 
   test('isEnabled is false without lsp.json and true once configured', () => {

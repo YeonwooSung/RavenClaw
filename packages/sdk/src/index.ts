@@ -15,6 +15,8 @@ import {
   fetchTool,
   globTool,
   grepTool,
+  createGlobTool,
+  createGrepTool,
   loadConfig,
   normalizeOpenAiBaseUrl,
   OLLAMA_DEFAULT_HOST,
@@ -53,6 +55,7 @@ import {
   type SessionStore,
   type StreamEvent,
   type SystemPart,
+  type TerminalBackend,
   type Tool,
 } from '@ravenclaw/core'
 import { createProvider } from '@ravenclaw/providers'
@@ -123,12 +126,13 @@ export function createRootTools(
   store: SessionStore,
   bash: Tool = bashTool,
   network = false,
+  backend?: TerminalBackend,
 ): Tool[] {
   const plan = createPlanModeTools(store)
   const list: Tool[] = [
     readTool,
-    grepTool,
-    globTool,
+    backend !== undefined ? createGrepTool(backend) : grepTool,
+    backend !== undefined ? createGlobTool(backend) : globTool,
     listDirTool,
     readSubtreeTool,
     editTool,
@@ -160,10 +164,11 @@ export function createSessionTools(opts: {
   childMaxRounds: number
   system?: SystemPart[]
   bash?: Tool
+  backend?: TerminalBackend
   network?: boolean
 }): Tool[] {
   const networkOn = opts.network === true
-  const base = createRootTools(opts.store, opts.bash ?? bashTool, networkOn)
+  const base = createRootTools(opts.store, opts.bash ?? bashTool, networkOn, opts.backend)
   const deferred = networkOn ? [] : [fetchTool, webSearchTool].map(hideDeferredFromWire)
   const always = [...base, ...deferred]
   if (deferred.length > 0) {
@@ -267,7 +272,8 @@ function defaultSessionTools(opts: {
   const terminal = opts.config.terminal
   const backendOpts: { image?: string } = {}
   if (terminal?.image !== undefined) backendOpts.image = terminal.image
-  const bash = createBashTool(createTerminalBackend(terminal?.backend ?? 'local', backendOpts))
+  const backend = createTerminalBackend(terminal?.backend ?? 'local', backendOpts)
+  const bash = createBashTool(backend)
   return createSessionTools({
     store: opts.store,
     provider: opts.provider,
@@ -277,6 +283,7 @@ function defaultSessionTools(opts: {
     childMaxRounds: opts.config.childMaxRounds,
     system: opts.system,
     bash,
+    backend,
     network: (opts.config as { tools?: { network?: boolean } }).tools?.network === true,
   })
 }

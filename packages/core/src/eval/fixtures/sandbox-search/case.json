@@ -1,0 +1,4 @@
+{
+  "prompt": "grep the in-tree unique file",
+  "expect": { "sandboxSearchUsesBackend": true }
+}

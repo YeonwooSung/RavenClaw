@@ -3,7 +3,14 @@ import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ModelProfile, Provider, ProviderChunk, ProviderRequest, StreamEvent } from '@ravenclaw/core'
-import { createRavenSession } from './index'
+import {
+  bashTool,
+  createLocalTerminalBackend,
+  createMemoryStore,
+  globTool,
+  grepTool,
+} from '@ravenclaw/core'
+import { createRavenSession, createRootTools } from './index'
 
 const ENV_KEYS = [
   'RAVENCLAW_HOME',
@@ -155,6 +162,21 @@ describe('createRavenSession', () => {
     await expect(createRavenSession({ cwd: home, home })).rejects.toThrow(
       /config\.yaml|API key|provider/i,
     )
+  })
+})
+
+describe('createRootTools', () => {
+  test('with a backend does not reuse the Grep/Glob singletons', () => {
+    const backend = createLocalTerminalBackend()
+    const tools = createRootTools(createMemoryStore(), bashTool, false, backend)
+    expect(tools.find((tool) => tool.name === 'Grep')).not.toBe(grepTool)
+    expect(tools.find((tool) => tool.name === 'Glob')).not.toBe(globTool)
+  })
+
+  test('without a backend keeps the Grep/Glob singletons', () => {
+    const tools = createRootTools(createMemoryStore())
+    expect(tools.find((tool) => tool.name === 'Grep')).toBe(grepTool)
+    expect(tools.find((tool) => tool.name === 'Glob')).toBe(globTool)
   })
 })
 

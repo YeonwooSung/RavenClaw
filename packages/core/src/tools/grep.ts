@@ -5,6 +5,7 @@ import type { Tool, ToolContext } from '../types'
 import {
   DEFAULT_IGNORE_DIR_NAMES,
   WALK_MAX_BYTES,
+  WALK_MAX_DEPTH,
   WALK_MAX_FILES,
   capInMessage,
   matchGlob,
@@ -12,6 +13,8 @@ import {
   walkFiles,
 } from './glob'
 import { parseWithSchema } from './parse'
+import { execSandboxSearch, isAbortError } from './sandbox-search'
+import type { TerminalBackend } from './terminal-backend'
 import { workspaceFsFor } from './workspace-fs'
 
 export interface GrepInput {
@@ -35,39 +38,104 @@ const inputSchema = {
 
 let ripgrepCached: boolean | undefined
 
-export const grepTool: Tool<GrepInput, string> = {
-  name: 'Grep',
-  description:
-    'Search file contents for a regular expression. Optional path is a file or directory (defaults to the turn cwd). Optional glob or include filters file names. Uses ripgrep when available, otherwise a bounded walk (200 files, depth 20, 10 MB). Ignores node_modules, .git, dist, build, .next, coverage, vendor, and target. In-message output is capped at 20000 characters and is never disk-persisted.',
-  inputSchema,
-  parse(input: unknown) {
-    return parseWithSchema<GrepInput>(inputSchema, input)
-  },
-  isConcurrencySafe() {
-    return true
-  },
-  isReadOnly() {
-    return true
-  },
-  async checkPermissions() {
-    return { behavior: 'allow', reason: 'mode' }
-  },
-  async execute(input: GrepInput, ctx: ToolContext) {
-    if (ctx.signal.aborted) throw abortError()
-    const cwd = ctx.turn.cwd
-    const searchRoot = resolve(cwd, input.path ?? '.')
-    try {
-      workspaceFsFor(ctx.turn).stat(searchRoot)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      return `Grep failed: ${message}`
-    }
-    const fileFilter = input.glob ?? input.include
+export function isolatedSpawnEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' }
+  delete env.GIT_DIR
+  delete env.GIT_WORK_TREE
+  delete env.GIT_INDEX_FILE
+  return env
+}
 
-    const rg = tryRipgrep(input.pattern, searchRoot, cwd, fileFilter)
-    if (rg !== undefined) return rg
-    return grepByWalk(input.pattern, searchRoot, cwd, fileFilter)
-  },
+export function createGrepTool(backend?: TerminalBackend): Tool<GrepInput, string> {
+  return {
+    name: 'Grep',
+    description:
+      'Search file contents for a regular expression. Optional path is a file or directory (defaults to the turn cwd). Optional glob or include filters file names. Uses ripgrep when available, otherwise a bounded walk (200 files, depth 20, 10 MB). Ignores node_modules, .git, dist, build, .next, coverage, vendor, and target. In-message output is capped at 20000 characters and is never disk-persisted.',
+    inputSchema,
+    parse(input: unknown) {
+      return parseWithSchema<GrepInput>(inputSchema, input)
+    },
+    isConcurrencySafe() {
+      return true
+    },
+    isReadOnly() {
+      return true
+    },
+    async checkPermissions() {
+      return { behavior: 'allow', reason: 'mode' }
+    },
+    async execute(input: GrepInput, ctx: ToolContext) {
+      if (ctx.signal.aborted) throw abortError()
+      const cwd = ctx.turn.cwd
+      const searchRoot = resolve(cwd, input.path ?? '.')
+      try {
+        workspaceFsFor(ctx.turn).stat(searchRoot)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return `Grep failed: ${message}`
+      }
+      const fileFilter = input.glob ?? input.include
+      if (backend?.kind === 'docker') {
+        return grepByDocker(backend, input, ctx, searchRoot, cwd, fileFilter)
+      }
+      const rg = tryRipgrep(input.pattern, searchRoot, cwd, fileFilter)
+      if (rg !== undefined) return rg
+      return grepByWalk(input.pattern, searchRoot, cwd, fileFilter)
+    },
+  }
+}
+
+export const grepTool: Tool<GrepInput, string> = createGrepTool()
+
+async function grepByDocker(
+  backend: TerminalBackend,
+  input: GrepInput,
+  ctx: ToolContext,
+  searchRoot: string,
+  cwd: string,
+  fileFilter: string | undefined,
+): Promise<string> {
+  try {
+    const result = await execSandboxSearch(backend, {
+      kind: 'grep',
+      cwd,
+      searchRoot,
+      pattern: input.pattern,
+      fileFilter,
+      ignoreDirNames: DEFAULT_IGNORE_DIR_NAMES,
+      maxFiles: WALK_MAX_FILES,
+      maxDepth: WALK_MAX_DEPTH,
+      signal: ctx.signal,
+    })
+    if (ctx.signal.aborted) throw abortError()
+    if (result.exitCode === 0 || result.exitCode === 1) {
+      const stderr = (result.stderr ?? '').trim()
+      if (result.exitCode === 1 && stderr && !(result.stdout ?? '').trim()) {
+        return capInMessage(`Grep failed: ${stderr}`)
+      }
+      let text = formatHitLines(result.stdout ?? '', cwd)
+      if (fileFilter !== undefined) {
+        text = text
+          .split('\n')
+          .filter((line) => {
+            if (!line) return false
+            const file = hitFile(line)
+            if (file === undefined) return false
+            const abs = isAbsolute(file) ? file : resolve(cwd, file)
+            return matchGlob(fileFilter, posixRel(searchRoot, abs))
+          })
+          .join('\n')
+        return capInMessage(text)
+      }
+      return text
+    }
+    const err = (result.stderr || result.stdout || 'docker search failed').trim()
+    return capInMessage(`Grep failed: ${err}`)
+  } catch (error) {
+    if (isAbortError(error) || ctx.signal.aborted) throw abortError()
+    const message = error instanceof Error ? error.message : String(error)
+    return `Grep failed: ${message}`
+  }
 }
 
 function tryRipgrep(
@@ -95,6 +163,7 @@ function tryRipgrep(
     timeout: 30_000,
     maxBuffer: 2 * 1024 * 1024,
     cwd,
+    env: isolatedSpawnEnv(),
   })
   if (result.error) return undefined
   if (result.status === 2) {
@@ -195,6 +264,7 @@ function hasRipgrep(): boolean {
     const result = spawnSync('rg', ['--version'], {
       encoding: 'utf8',
       timeout: 3000,
+      env: isolatedSpawnEnv(),
     })
     ripgrepCached = result.status === 0
   } catch {
