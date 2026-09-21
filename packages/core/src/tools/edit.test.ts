@@ -2,10 +2,15 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
+import type { FileHistory } from '../session/file-history'
 import type { ToolContext, Turn } from '../types'
 import { decidePermission } from '../permissions/pipeline'
 import { createEditTool, editTool } from './edit'
 import { readTool } from './read'
+import {
+  createDockerTerminalBackend,
+  type TerminalRunRequest,
+} from './terminal-backend'
 
 const emptyRules = { session: [], user: [], project: [] }
 
@@ -48,12 +53,43 @@ function makeTurn(cwd: string): Turn {
   }
 }
 
-function makeCtx(cwd: string, signal?: AbortSignal): ToolContext {
+function makeCtx(cwd: string, signal?: AbortSignal, history?: FileHistory): ToolContext {
   const turn = makeTurn(cwd)
   return {
     turn,
     signal: signal ?? turn.abort.signal,
     onProgress() {},
+    fileHistory: history,
+  }
+}
+
+function fakeDocker(runCommand: (req: TerminalRunRequest) => Promise<{
+  stdout: string
+  stderr: string
+  exitCode: number
+}>) {
+  return createDockerTerminalBackend({ image: 'bash:5', runCommand })
+}
+
+function mockHistory(): FileHistory & { snaps: string[] } {
+  const snaps: string[] = []
+  return {
+    snaps,
+    beginTurn() {},
+    endTurn() {},
+    snapshot(path: string) {
+      snaps.push(path)
+    },
+    undo() {
+      return { restored: [], removed: [] }
+    },
+    pendingCount() {
+      return snaps.length
+    },
+    turnWriteCount() {
+      return snaps.length
+    },
+    reset() {},
   }
 }
 
@@ -383,5 +419,104 @@ describe('Edit', () => {
     )
     expect(out).toContain('Updated')
     expect(readFileSync(join(root, 'note.txt'), 'utf8')).toBe('hello edited\n')
+  })
+})
+
+describe('Edit docker backend', () => {
+  test('leftover-ask and interruptBehavior block are unchanged', async () => {
+    const tool = createEditTool(fakeDocker(async () => ({ stdout: '', stderr: '', exitCode: 0 })))
+    expect(tool.interruptBehavior?.()).toBe('block')
+    expect(tool.isConcurrencySafe({ path: 'a.txt', old_string: 'a', new_string: 'b' })).toBe(false)
+    expect(tool.isReadOnly({ path: 'a.txt', old_string: 'a', new_string: 'b' })).toBe(false)
+    const decision = await tool.checkPermissions(
+      { path: 'a.txt', old_string: 'a', new_string: 'b' },
+      makeCtx('/tmp'),
+    )
+    expect(decision.behavior).toBe('ask')
+    if (decision.behavior === 'ask') {
+      expect(decision.saveAs).toBe('session')
+    }
+  })
+
+  test('docker readFile unique replace then writeFile stdin is the replacement', async () => {
+    const root = fixtureRoot()
+    const path = join(root, 'note.txt')
+    writeFileSync(path, 'HOST_OLD_BYTES')
+    const order: string[] = []
+    const history = mockHistory()
+    const orig = history.snapshot.bind(history)
+    history.snapshot = (snapPath: string) => {
+      order.push('snapshot')
+      orig(snapPath)
+    }
+    const calls: TerminalRunRequest[] = []
+    const backend = fakeDocker(async (req) => {
+      calls.push(req)
+      const script = String(req.args.at(-1))
+      if (script.includes('EXISTS') || script.includes('kind=dir')) {
+        return { stdout: 'EXISTS file 14 1\n', stderr: '', exitCode: 0 }
+      }
+      if (script.includes('tee') || req.stdin !== undefined) {
+        order.push('write')
+        return { stdout: '', stderr: '', exitCode: 0 }
+      }
+      return { stdout: 'UNIQUE_OLD_STRING', stderr: '', exitCode: 0 }
+    })
+    const ctx = makeCtx(root, undefined, history)
+    ctx.turn.readFiles.add(resolvedOf(root, 'note.txt'))
+    const out = await createEditTool(backend).execute(
+      { path: 'note.txt', old_string: 'UNIQUE_OLD_STRING', new_string: 'REPLACEMENT_PAYLOAD' },
+      ctx,
+    )
+    expect(out).toMatch(/^Updated /)
+    expect(readFileSync(path, 'utf8')).toBe('HOST_OLD_BYTES')
+    expect(calls.some((req) => req.stdin === 'REPLACEMENT_PAYLOAD')).toBe(true)
+    expect(order).toEqual(['snapshot', 'write'])
+  })
+
+  test('abort throws AbortError', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'a.txt'), 'ok\n')
+    const ac = new AbortController()
+    ac.abort()
+    const tool = createEditTool(fakeDocker(async () => ({ stdout: 'x', stderr: '', exitCode: 0 })))
+    await expect(
+      tool.execute({ path: 'a.txt', old_string: 'ok', new_string: 'no' }, makeCtx(root, ac.signal)),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('ok\n')
+
+    const mid = fakeDocker(async () => {
+      throw Object.assign(new Error('aborted'), { name: 'AbortError' })
+    })
+    const ctx = makeCtx(root)
+    ctx.turn.readFiles.add(resolvedOf(root, 'a.txt'))
+    await expect(
+      createEditTool(mid).execute({ path: 'a.txt', old_string: 'ok', new_string: 'no' }, ctx),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(readFileSync(join(root, 'a.txt'), 'utf8')).toBe('ok\n')
+  })
+
+  test('exec fail is Edit failed: with no host write', async () => {
+    const root = fixtureRoot()
+    const path = join(root, 'note.txt')
+    writeFileSync(path, 'HOST_OLD')
+    const backend = fakeDocker(async (req) => {
+      const script = String(req.args.at(-1))
+      if (script.includes('EXISTS') || script.includes('kind=dir')) {
+        return { stdout: 'EXISTS file 8 1\n', stderr: '', exitCode: 0 }
+      }
+      if (script.includes('tee') || req.stdin !== undefined) {
+        return { stdout: '', stderr: 'Cannot connect to the Docker daemon', exitCode: 1 }
+      }
+      return { stdout: 'UNIQUE_OLD_STRING', stderr: '', exitCode: 0 }
+    })
+    const ctx = makeCtx(root)
+    ctx.turn.readFiles.add(resolvedOf(root, 'note.txt'))
+    const out = await createEditTool(backend).execute(
+      { path: 'note.txt', old_string: 'UNIQUE_OLD_STRING', new_string: 'NEW' },
+      ctx,
+    )
+    expect(out).toMatch(/^Edit failed:/)
+    expect(readFileSync(path, 'utf8')).toBe('HOST_OLD')
   })
 })

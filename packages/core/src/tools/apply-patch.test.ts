@@ -7,6 +7,10 @@ import type { ToolContext, Turn } from '../types'
 import { decidePermission } from '../permissions/pipeline'
 import { applyPatchTool, applyUnifiedDiff, contentFromCreateDiff, createApplyPatchTool } from './apply-patch'
 import { readTool } from './read'
+import {
+  createDockerTerminalBackend,
+  type TerminalRunRequest,
+} from './terminal-backend'
 
 const emptyRules = { session: [], user: [], project: [] }
 const HOME_ENV = 'RAVENCLAW_HOME'
@@ -66,7 +70,16 @@ function mockHistory(): FileHistory & { snaps: string[] } {
     turnWriteCount() {
       return snaps.length
     },
+    reset() {},
   }
+}
+
+function fakeDocker(runCommand: (req: TerminalRunRequest) => Promise<{
+  stdout: string
+  stderr: string
+  exitCode: number
+}>) {
+  return createDockerTerminalBackend({ image: 'bash:5', runCommand })
 }
 
 function makeCtx(cwd: string, signal?: AbortSignal, history?: FileHistory): ToolContext {
@@ -406,6 +419,117 @@ describe('ApplyPatch', () => {
     )
     expect(out).toContain('created')
     expect(readFileSync(join(root, 'note.txt'), 'utf8')).toContain('hello factory')
+  })
+})
+
+describe('ApplyPatch docker backend', () => {
+  test('create_file uses mkdir and writeFile stdin', async () => {
+    const root = fixtureRoot()
+    const path = join(root, 'src', 'new.ts')
+    const calls: TerminalRunRequest[] = []
+    const order: string[] = []
+    const history = mockHistory()
+    const orig = history.snapshot.bind(history)
+    history.snapshot = (snapPath: string) => {
+      order.push('snapshot')
+      orig(snapPath)
+    }
+    const backend = fakeDocker(async (req) => {
+      calls.push(req)
+      const script = String(req.args.at(-1))
+      if (script.includes('mkdir')) return { stdout: '', stderr: '', exitCode: 0 }
+      if (script.includes('tee') || req.stdin !== undefined) {
+        order.push('write')
+        return { stdout: '', stderr: '', exitCode: 0 }
+      }
+      return { stdout: '', stderr: 'No such file', exitCode: 1 }
+    })
+    const out = await createApplyPatchTool(backend).execute(
+      {
+        operations: [
+          { type: 'create_file', path: 'src/new.ts', diff: '+NEW_PAYLOAD\n' },
+        ],
+      },
+      makeCtx(root, undefined, history),
+    )
+    expect(out).toContain('created src/new.ts')
+    expect(existsSync(path)).toBe(false)
+    expect(calls.some((req) => String(req.args.at(-1)).includes('mkdir'))).toBe(true)
+    expect(calls.some((req) => req.stdin === 'NEW_PAYLOAD' || String(req.args.at(-1)).includes('tee'))).toBe(true)
+    expect(order).toEqual(['snapshot', 'write'])
+  })
+
+  test('delete_file uses unlink', async () => {
+    const root = fixtureRoot()
+    const path = join(root, 'gone.txt')
+    writeFileSync(path, 'bye\n')
+    const calls: TerminalRunRequest[] = []
+    const backend = fakeDocker(async (req) => {
+      calls.push(req)
+      const script = String(req.args.at(-1))
+      if (script.includes('rm -f')) return { stdout: '', stderr: '', exitCode: 0 }
+      if (script.includes('tee')) return { stdout: '', stderr: '', exitCode: 0 }
+      return { stdout: 'bye\n', stderr: '', exitCode: 0 }
+    })
+    const ctx = makeCtx(root)
+    ctx.turn.readFiles.add(resolvedOf(root, 'gone.txt'))
+    const out = await createApplyPatchTool(backend).execute(
+      { operations: [{ type: 'delete_file', path: 'gone.txt' }] },
+      ctx,
+    )
+    expect(out).toContain('deleted gone.txt')
+    expect(existsSync(path)).toBe(true)
+    expect(readFileSync(path, 'utf8')).toBe('bye\n')
+    expect(calls.some((req) => String(req.args.at(-1)).includes('rm -f'))).toBe(true)
+  })
+
+  test('protected path does not exec', async () => {
+    const root = fixtureRoot()
+    const calls: TerminalRunRequest[] = []
+    const backend = fakeDocker(async (req) => {
+      calls.push(req)
+      return { stdout: '', stderr: '', exitCode: 0 }
+    })
+    const out = await createApplyPatchTool(backend).execute(
+      { operations: [{ type: 'create_file', path: '/etc/shadow', diff: '+x\n' }] },
+      makeCtx(root),
+    )
+    expect(calls).toHaveLength(0)
+    expect(out).toMatch(/^ApplyPatch failed:/)
+    expect(out).toMatch(/protected path/)
+  })
+
+  test('exec fail is ApplyPatch failed: with no host write', async () => {
+    const root = fixtureRoot()
+    const path = join(root, 'out.txt')
+    const backend = fakeDocker(async (req) => {
+      const script = String(req.args.at(-1))
+      if (script.includes('mkdir')) return { stdout: '', stderr: '', exitCode: 0 }
+      if (script.includes('tee') || req.stdin !== undefined) {
+        return { stdout: '', stderr: 'Cannot connect to the Docker daemon', exitCode: 1 }
+      }
+      return { stdout: '', stderr: 'No such file', exitCode: 1 }
+    })
+    const out = await createApplyPatchTool(backend).execute(
+      { operations: [{ type: 'create_file', path: 'out.txt', diff: '+NEW_PAYLOAD\n' }] },
+      makeCtx(root),
+    )
+    expect(out).toMatch(/^ApplyPatch failed:/)
+    expect(existsSync(path)).toBe(false)
+  })
+
+  test('create_file abort during read is AbortError not file-missing', async () => {
+    const root = fixtureRoot()
+    const backend = fakeDocker(async () => {
+      throw Object.assign(new Error('aborted'), { name: 'AbortError' })
+    })
+    await expect(
+      createApplyPatchTool(backend).execute(
+        { operations: [{ type: 'create_file', path: 'a.txt', diff: '+x\n' }] },
+        makeCtx(root),
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+    expect(existsSync(join(root, 'a.txt'))).toBe(false)
   })
 })
 

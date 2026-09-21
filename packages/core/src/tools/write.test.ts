@@ -2,9 +2,14 @@ import { afterEach, describe, expect, test } from 'bun:test'
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import type { FileHistory } from '../session/file-history'
 import type { ToolContext, Turn } from '../types'
 import { decidePermission } from '../permissions/pipeline'
 import { recordReadFile } from './read-files'
+import {
+  createDockerTerminalBackend,
+  type TerminalRunRequest,
+} from './terminal-backend'
 import { createWriteTool, writeTool } from './write'
 
 const emptyRules = { session: [], user: [], project: [] }
@@ -43,12 +48,43 @@ function makeTurn(cwd: string): Turn {
   }
 }
 
-function makeCtx(cwd: string, signal?: AbortSignal): ToolContext {
+function makeCtx(cwd: string, signal?: AbortSignal, history?: FileHistory): ToolContext {
   const turn = makeTurn(cwd)
   return {
     turn,
     signal: signal ?? turn.abort.signal,
     onProgress() {},
+    fileHistory: history,
+  }
+}
+
+function fakeDocker(runCommand: (req: TerminalRunRequest) => Promise<{
+  stdout: string
+  stderr: string
+  exitCode: number
+}>) {
+  return createDockerTerminalBackend({ image: 'bash:5', runCommand })
+}
+
+function mockHistory(): FileHistory & { snaps: string[] } {
+  const snaps: string[] = []
+  return {
+    snaps,
+    beginTurn() {},
+    endTurn() {},
+    snapshot(path: string) {
+      snaps.push(path)
+    },
+    undo() {
+      return { restored: [], removed: [] }
+    },
+    pendingCount() {
+      return snaps.length
+    },
+    turnWriteCount() {
+      return snaps.length
+    },
+    reset() {},
   }
 }
 
@@ -192,5 +228,122 @@ describe('Write', () => {
     const out = await tool.execute({ path: 'note.txt', content: 'hello factory\n' }, makeCtx(root))
     expect(out).toContain('Wrote')
     expect(readFileSync(join(root, 'note.txt'), 'utf8')).toBe('hello factory\n')
+  })
+})
+
+describe('Write docker backend', () => {
+  test('docker write sends stdin and does not host-write on exec fail', async () => {
+    const root = fixtureRoot()
+    const path = join(root, 'out.txt')
+    const calls: TerminalRunRequest[] = []
+    const backend = fakeDocker(async (req) => {
+      calls.push(req)
+      const script = String(req.args.at(-1))
+      if (script.includes('EXISTS') || script.includes('kind=dir')) {
+        return { stdout: '__RC_FS_MISSING__\n', stderr: '', exitCode: 0 }
+      }
+      if (script.includes('mkdir')) return { stdout: '', stderr: '', exitCode: 0 }
+      return { stdout: '', stderr: 'Cannot connect to the Docker daemon', exitCode: 1 }
+    })
+    const out = await createWriteTool(backend).execute(
+      { path: 'out.txt', content: 'NEW_PAYLOAD' },
+      makeCtx(root),
+    )
+    expect(out).toMatch(/^Write failed:/)
+    expect(existsSync(path)).toBe(false)
+    expect(calls.some((req) => req.stdin === 'NEW_PAYLOAD' || String(req.args.at(-1)).includes('tee'))).toBe(true)
+  })
+
+  test('hard-denied path does not exec', async () => {
+    const root = fixtureRoot()
+    const calls: TerminalRunRequest[] = []
+    const backend = fakeDocker(async (req) => {
+      calls.push(req)
+      return { stdout: '', stderr: '', exitCode: 0 }
+    })
+    const out = await createWriteTool(backend).execute(
+      { path: '/etc/shadow', content: 'x' },
+      makeCtx(root),
+    )
+    expect(calls).toHaveLength(0)
+    expect(out).toMatch(/^Write failed:/)
+    expect(out).toMatch(/protected path/)
+  })
+
+  test('outside-cwd does not exec', async () => {
+    const root = fixtureRoot()
+    const calls: TerminalRunRequest[] = []
+    const backend = fakeDocker(async (req) => {
+      calls.push(req)
+      return { stdout: '', stderr: '', exitCode: 0 }
+    })
+    const out = await createWriteTool(backend).execute(
+      { path: '/tmp/raven-outside.txt', content: 'x' },
+      makeCtx(root),
+    )
+    expect(calls).toHaveLength(0)
+    expect(out).toMatch(/outside workspace|Write failed:/)
+  })
+
+  test('overwrite still requires Read; new file does not', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'old.txt'), 'old')
+    const backend = fakeDocker(async (req) => {
+      const script = String(req.args.at(-1))
+      if (script.includes('EXISTS') || script.includes('kind=dir')) {
+        return { stdout: 'EXISTS file 3 1\n', stderr: '', exitCode: 0 }
+      }
+      return { stdout: '', stderr: '', exitCode: 0 }
+    })
+    const denied = await createWriteTool(backend).execute(
+      { path: 'old.txt', content: 'new' },
+      makeCtx(root),
+    )
+    expect(denied).toMatch(/must be Read first/)
+
+    const missing = fakeDocker(async (req) => {
+      const script = String(req.args.at(-1))
+      if (script.includes('EXISTS') || script.includes('kind=dir')) {
+        return { stdout: '__RC_FS_MISSING__\n', stderr: '', exitCode: 0 }
+      }
+      return { stdout: '', stderr: '', exitCode: 0 }
+    })
+    const created = await createWriteTool(missing).execute(
+      { path: 'fresh.txt', content: 'new' },
+      makeCtx(root),
+    )
+    expect(created).toMatch(/^Wrote /)
+    expect(created).not.toMatch(/must be Read first/)
+    expect(existsSync(join(root, 'fresh.txt'))).toBe(false)
+  })
+
+  test('snapshot runs before the write exec', async () => {
+    const root = fixtureRoot()
+    const order: string[] = []
+    const history = mockHistory()
+    const orig = history.snapshot.bind(history)
+    history.snapshot = (path: string) => {
+      order.push('snapshot')
+      orig(path)
+    }
+    const backend = fakeDocker(async (req) => {
+      const script = String(req.args.at(-1))
+      if (script.includes('EXISTS') || script.includes('kind=dir')) {
+        return { stdout: '__RC_FS_MISSING__\n', stderr: '', exitCode: 0 }
+      }
+      if (script.includes('mkdir')) return { stdout: '', stderr: '', exitCode: 0 }
+      if (script.includes('tee') || req.stdin !== undefined) {
+        order.push('write')
+        return { stdout: '', stderr: '', exitCode: 0 }
+      }
+      return { stdout: '', stderr: '', exitCode: 0 }
+    })
+    const out = await createWriteTool(backend).execute(
+      { path: 'out.txt', content: 'SNAP_PAYLOAD' },
+      makeCtx(root, undefined, history),
+    )
+    expect(out).toMatch(/^Wrote /)
+    expect(order).toEqual(['snapshot', 'write'])
+    expect(history.snaps.length).toBe(1)
   })
 })
