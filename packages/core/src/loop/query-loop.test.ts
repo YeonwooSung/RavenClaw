@@ -1106,7 +1106,7 @@ describe('queryLoop via SessionEngine', () => {
     expect(echo.executeCount).toBe(0)
   })
 
-  test('applyAskAnswer ignored of one parked ask still blocks submitMessage on the other', async () => {
+  test('applyAskAnswer ignored of one parked ask leaves the other until submitMessage dismisses it', async () => {
     const store = createMemoryStore()
     const session = makeSession({ id: 'sess_ignored_other_parked' })
     await store.createSession(session)
@@ -1148,12 +1148,25 @@ describe('queryLoop via SessionEngine', () => {
     )
     expect(await engine.applyAskAnswer('call_a', 'ignored')).toBe('matched')
     expect(await store.listPendingAsks(session.id)).toHaveLength(1)
+    expect(echo.executeCount).toBe(0)
     const { events, result } = await collect(engine.submitMessage('hello anyway'))
     expect(result).toEqual({ reason: 'completed' })
-    expect(events.some((e) => e.type === 'status' && e.message.includes('pending'))).toBe(true)
-    const loaded = await store.loadSession(session.id)
-    expect(loaded.messages.filter((m) => m.role === 'user')).toHaveLength(0)
+    expect(events.some((e) => e.type === 'status' && e.message === 'pending permission ask')).toBe(
+      false,
+    )
     expect(echo.executeCount).toBe(0)
+    const loaded = await store.loadSession(session.id)
+    expect(
+      loaded.messages.some(
+        (m) => m.role === 'user' && m.blocks.some((b) => b.type === 'text' && b.text === 'hello anyway'),
+      ),
+    ).toBe(true)
+    const tools = loaded.messages.filter(
+      (m): m is Extract<Message, { role: 'tool' }> => m.role === 'tool',
+    )
+    expect(tools).toHaveLength(2)
+    expect(tools.map((row) => row.blocks[0]?.text)).toEqual([IGNORED_TEXT, IGNORED_TEXT])
+    expect(await store.listPendingAsks(session.id)).toHaveLength(0)
   })
 
   test('applyAskAnswer ignored does not rewrite an existing ABORTED_TEXT pair', async () => {
@@ -1670,7 +1683,7 @@ describe('queryLoop via SessionEngine', () => {
     expect(echo.executeCount).toBe(1)
   })
 
-  test('submitMessage while a pending ask exists does not append a user row', async () => {
+  test('submitMessage while a pending ask exists dismisses it then appends a user row', async () => {
     const store = createMemoryStore()
     const session = makeSession({ id: 'sess_block' })
     await store.createSession(session)
@@ -1692,9 +1705,16 @@ describe('queryLoop via SessionEngine', () => {
     )
     const { events, result } = await collect(engine.submitMessage('hello anyway'))
     expect(result).toEqual({ reason: 'completed' })
-    expect(events.some((e) => e.type === 'status' && e.message.includes('pending'))).toBe(true)
+    expect(events.some((e) => e.type === 'status' && e.message === 'pending permission ask')).toBe(
+      false,
+    )
     const loaded = await store.loadSession(session.id)
-    expect(loaded.messages.filter((m) => m.role === 'user')).toHaveLength(0)
+    expect(
+      loaded.messages.some(
+        (m) => m.role === 'user' && m.blocks.some((b) => b.type === 'text' && b.text === 'hello anyway'),
+      ),
+    ).toBe(true)
+    expect(await store.listPendingAsks(session.id)).toHaveLength(0)
   })
 
   test('8. maxRounds: 2 with tool-use on round 2 → grace stream tools:[]', async () => {
