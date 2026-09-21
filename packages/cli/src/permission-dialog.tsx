@@ -1,5 +1,5 @@
 import { Box, Text } from 'ink'
-import type { StreamEvent } from '@ravenclaw/core'
+import type { PendingAskAnswer, StreamEvent } from '@ravenclaw/core'
 
 export type PermissionAsk = Extract<StreamEvent, { type: 'permission_ask' }>
 
@@ -14,16 +14,17 @@ export function PermissionDialog(props: { event: PermissionAsk }) {
       <Text bold>Allow {props.event.tool}?</Text>
       {childLabel ? <Text>{childLabel}</Text> : null}
       <Text>{props.event.message}</Text>
-      <Text dimColor>y allow   n deny   a always   esc abort</Text>
+      <Text dimColor>y allow   n deny   a always   i skip   esc abort</Text>
     </Box>
   )
 }
 
 export function keyToPermission(
   input: string,
-): 'allow' | 'deny' | 'allow_always' | undefined {
+): PendingAskAnswer | undefined {
   if (input === 'y' || input === 'Y') return 'allow'
   if (input === 'n' || input === 'N') return 'deny'
   if (input === 'a' || input === 'A') return 'allow_always'
+  if (input === 'i' || input === 'I') return 'ignored'
   return undefined
 }

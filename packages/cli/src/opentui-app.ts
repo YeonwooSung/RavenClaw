@@ -16,6 +16,7 @@ import {
   runFollowupAfterSubmit,
   createSecondAbortGate,
   formatKilledBackgroundNotice,
+  type PendingAskAnswer,
   type StreamEvent,
 } from '@ravenclaw/core'
 import { handleSlashCommand } from './commands'
@@ -483,11 +484,12 @@ function abortError(): Error {
   return Object.assign(new Error('aborted'), { name: 'AbortError' })
 }
 
-function parsePermissionAnswer(line: string): 'allow' | 'deny' | 'allow_always' | undefined {
+function parsePermissionAnswer(line: string): PendingAskAnswer | undefined {
   const key = line.trim().toLowerCase()
   if (key === 'y' || key === 'yes' || key === 'allow') return 'allow'
   if (key === 'n' || key === 'no' || key === 'deny') return 'deny'
   if (key === 'a' || key === 'always' || key === 'allow_always') return 'allow_always'
+  if (key === 'i' || key === 'skip' || key === 'ignored') return 'ignored'
   return undefined
 }
 

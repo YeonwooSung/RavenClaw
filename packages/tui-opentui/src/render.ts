@@ -41,7 +41,7 @@ export function permissionPromptLines(
   const title = event.childSessionId
     ? `Allow ${event.tool}? (child ${event.childSessionId})`
     : `Allow ${event.tool}?`
-  return [title, event.message, 'y allow   n deny   a always']
+  return [title, event.message, 'y allow   n deny   a always   i skip']
 }
 
 function applyEvent(rows: Row[], event: StreamEvent): Row[] {

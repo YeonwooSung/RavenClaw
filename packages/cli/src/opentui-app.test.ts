@@ -233,6 +233,62 @@ describe('runOpenTuiApp', () => {
     expect(written.join('')).toContain('answer:allow')
   })
 
+  test('permission_ask then i ignores via the ask bridge', async () => {
+    const answers: Array<'allow' | 'deny' | 'allow_always' | 'ignored'> = []
+    const ask = createAskBridge()
+    const event: Extract<StreamEvent, { type: 'permission_ask' }> = {
+      type: 'permission_ask',
+      id: 'p1',
+      tool: 'Bash',
+      input: { command: 'ls' },
+      message: 'Allow Bash?',
+    }
+    const engine = fakeEngine(makeSession(), async function* (text) {
+      expect(text).toBe('run ls')
+      yield event
+      const answer = await ask.ask(event, new AbortController().signal)
+      answers.push(answer)
+      yield { type: 'text_delta', text: `answer:${answer}` }
+      return { reason: 'completed' }
+    })
+    const written: string[] = []
+    const code = await runOpenTuiApp(fakeRuntime(engine, { ask }), {
+      input: asyncLines('run ls', 'i', '/quit'),
+      write: (chunk) => {
+        written.push(chunk)
+      },
+    })
+    expect(code).toBe(0)
+    expect(answers).toEqual(['ignored'])
+    expect(written.join('')).toContain('answer:ignored')
+  })
+
+  test('permission_ask skip and ignored aliases map to ignored', async () => {
+    for (const line of ['skip', 'ignored', 'SKIP'] as const) {
+      const answers: Array<'allow' | 'deny' | 'allow_always' | 'ignored'> = []
+      const ask = createAskBridge()
+      const event: Extract<StreamEvent, { type: 'permission_ask' }> = {
+        type: 'permission_ask',
+        id: 'p1',
+        tool: 'Bash',
+        input: { command: 'ls' },
+        message: 'Allow Bash?',
+      }
+      const engine = fakeEngine(makeSession(), async function* (text) {
+        expect(text).toBe('run ls')
+        yield event
+        answers.push(await ask.ask(event, new AbortController().signal))
+        return { reason: 'completed' }
+      })
+      const code = await runOpenTuiApp(fakeRuntime(engine, { ask }), {
+        input: asyncLines('run ls', line, '/quit'),
+        write: () => {},
+      })
+      expect(code).toBe(0)
+      expect(answers).toEqual(['ignored'])
+    }
+  })
+
   test('casual line during leftover-ask does not deny; y still allows', async () => {
     const answers: Array<'allow' | 'deny' | 'allow_always'> = []
     const ask = createAskBridge()
