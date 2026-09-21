@@ -13,8 +13,14 @@ import {
   defaultCompactPolicy,
   defaultConfig,
   filterToolsForTurn,
+  applyPatchTool,
+  editTool,
   globTool,
   grepTool,
+  listDirTool,
+  readSubtreeTool,
+  readTool,
+  writeTool,
   loadMcpTools,
   type ModelProfile,
   type Provider,
@@ -137,6 +143,27 @@ describe('createRootTools', () => {
     const tools = createRootTools(createMemoryStore())
     expect(tools.find((tool) => tool.name === 'Grep')).toBe(grepTool)
     expect(tools.find((tool) => tool.name === 'Glob')).toBe(globTool)
+  })
+
+  test('createRootTools with a backend does not reuse the file-tool singletons', () => {
+    const backend = createLocalTerminalBackend()
+    const tools = createRootTools(createMemoryStore(), bashTool, askUserTool, false, backend)
+    expect(tools.find((tool) => tool.name === 'Read')).not.toBe(readTool)
+    expect(tools.find((tool) => tool.name === 'Write')).not.toBe(writeTool)
+    expect(tools.find((tool) => tool.name === 'Edit')).not.toBe(editTool)
+    expect(tools.find((tool) => tool.name === 'ApplyPatch')).not.toBe(applyPatchTool)
+    expect(tools.find((tool) => tool.name === 'ListDir')).not.toBe(listDirTool)
+    expect(tools.find((tool) => tool.name === 'ReadSubtree')).not.toBe(readSubtreeTool)
+  })
+
+  test('createRootTools without a backend keeps the file-tool singletons', () => {
+    const tools = createRootTools(createMemoryStore())
+    expect(tools.find((tool) => tool.name === 'Read')).toBe(readTool)
+    expect(tools.find((tool) => tool.name === 'Write')).toBe(writeTool)
+    expect(tools.find((tool) => tool.name === 'Edit')).toBe(editTool)
+    expect(tools.find((tool) => tool.name === 'ApplyPatch')).toBe(applyPatchTool)
+    expect(tools.find((tool) => tool.name === 'ListDir')).toBe(listDirTool)
+    expect(tools.find((tool) => tool.name === 'ReadSubtree')).toBe(readSubtreeTool)
   })
 
   test('filterToolsForTurn hides gated builtins without lsp.json, git, or cron jobs', () => {

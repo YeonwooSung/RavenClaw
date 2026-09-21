@@ -6,7 +6,8 @@ import { ravenclawHome } from '../home'
 import { parseWithSchema } from './parse'
 import { appendLintBlock, lintWrittenFile } from './lint'
 import { isStaleSinceRead, markReadPath, wasRead } from './read-files'
-import { workspaceFsFor } from './workspace-fs'
+import type { TerminalBackend } from './terminal-backend'
+import { createWorkspaceFs } from './workspace-fs'
 
 export interface WriteInput {
   path: string
@@ -23,64 +24,72 @@ const inputSchema = {
   },
 }
 
-export const writeTool: Tool<WriteInput, string> = {
-  name: 'Write',
-  description:
-    'Create or overwrite a utf-8 file (destructive). path is resolved relative to the turn cwd. Parent directories are created as needed. Overwriting an existing file requires a prior Read of that path on this turn and fails if the file changed since last Read. New files do not require Read. Refuses protected paths such as ~/.ssh/id_*, state.db, and /etc/shadow. .env writes are not hard-denied.',
-  inputSchema,
-  parse(input: unknown) {
-    return parseWithSchema<WriteInput>(inputSchema, input)
-  },
-  isConcurrencySafe() {
-    return false
-  },
-  isReadOnly() {
-    return false
-  },
-  interruptBehavior() {
-    return 'block'
-  },
-  async checkPermissions() {
-    return { behavior: 'ask', message: 'Write this file?', saveAs: 'session' }
-  },
-  async execute(input: WriteInput, ctx: ToolContext) {
-    if (ctx.signal.aborted) throw abortError()
-    const resolved = resolveWritePath(ctx.turn.cwd, input.path)
-    if (isHardDeniedWritePath(resolved)) {
-      return `Write failed: write denied to protected path: ${input.path}`
-    }
-    const fs = workspaceFsFor(ctx.turn)
-    const candidate = resolve(ctx.turn.cwd, input.path)
-    let exists = false
-    try {
-      exists = (await fs.stat(resolved)).isFile
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') throw error
-      const message = error instanceof Error ? error.message : String(error)
-      return `Write failed: ${message}`
-    }
-    if (exists) {
-      if (!wasRead(ctx.turn.readFiles, resolved, candidate)) {
-        return `Write failed: path must be Read first: ${input.path}`
+export function createWriteTool(backend?: TerminalBackend): Tool<WriteInput, string> {
+  return {
+    name: 'Write',
+    description:
+      'Create or overwrite a utf-8 file (destructive). path is resolved relative to the turn cwd. Parent directories are created as needed. Overwriting an existing file requires a prior Read of that path on this turn and fails if the file changed since last Read. New files do not require Read. Refuses protected paths such as ~/.ssh/id_*, state.db, and /etc/shadow. .env writes are not hard-denied.',
+    inputSchema,
+    parse(input: unknown) {
+      return parseWithSchema<WriteInput>(inputSchema, input)
+    },
+    isConcurrencySafe() {
+      return false
+    },
+    isReadOnly() {
+      return false
+    },
+    interruptBehavior() {
+      return 'block'
+    },
+    async checkPermissions() {
+      return { behavior: 'ask', message: 'Write this file?', saveAs: 'session' }
+    },
+    async execute(input: WriteInput, ctx: ToolContext) {
+      if (ctx.signal.aborted) throw abortError()
+      const resolved = resolveWritePath(ctx.turn.cwd, input.path)
+      if (isHardDeniedWritePath(resolved)) {
+        return `Write failed: write denied to protected path: ${input.path}`
       }
-      if (isStaleSinceRead(ctx.turn, resolved, candidate)) {
-        return `Write failed: file changed since last Read`
+      const fs = createWorkspaceFs({
+        cwd: ctx.turn.cwd,
+        exec: backend,
+        signal: ctx.signal,
+      })
+      const candidate = resolve(ctx.turn.cwd, input.path)
+      let exists = false
+      try {
+        exists = (await fs.stat(resolved)).isFile
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') throw error
+        const message = error instanceof Error ? error.message : String(error)
+        return `Write failed: ${message}`
       }
-    }
+      if (exists) {
+        if (!wasRead(ctx.turn.readFiles, resolved, candidate)) {
+          return `Write failed: path must be Read first: ${input.path}`
+        }
+        if (isStaleSinceRead(ctx.turn, resolved, candidate)) {
+          return `Write failed: file changed since last Read`
+        }
+      }
 
-    try {
-      await fs.mkdir(dirname(resolved))
-      ctx.fileHistory?.snapshot(resolved)
-      await fs.writeFile(resolved, input.content)
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') throw error
-      const message = error instanceof Error ? error.message : String(error)
-      return `Write failed: ${message}`
-    }
-    markReadPath(ctx.turn, resolved)
-    return appendLintBlock(`Wrote ${input.path}`, [lintWrittenFile(resolved, ctx.turn.cwd)])
-  },
+      try {
+        await fs.mkdir(dirname(resolved))
+        ctx.fileHistory?.snapshot(resolved)
+        await fs.writeFile(resolved, input.content)
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') throw error
+        const message = error instanceof Error ? error.message : String(error)
+        return `Write failed: ${message}`
+      }
+      markReadPath(ctx.turn, resolved)
+      return appendLintBlock(`Wrote ${input.path}`, [lintWrittenFile(resolved, ctx.turn.cwd)])
+    },
+  }
 }
+
+export const writeTool: Tool<WriteInput, string> = createWriteTool()
 
 export function resolveWritePath(cwd: string, inputPath: string): string {
   const candidate = resolve(cwd, inputPath)

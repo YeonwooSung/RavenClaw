@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ToolContext, Turn } from '../types'
-import { listDirTool } from './list-dir'
+import { createListDirTool, listDirTool } from './list-dir'
 
 const tempDirs: string[] = []
 
@@ -131,5 +131,15 @@ describe('ListDir', () => {
     ctx.turn.terminalBackend = 'docker'
     const out = await listDirTool.execute({ path: '/etc' }, ctx)
     expect(String(out).toLowerCase()).toMatch(/outside workspace|denied|protected/)
+  })
+
+  test('createListDirTool without backend still lists a unique file', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'note.txt'), 'hello factory\n')
+    const tool = createListDirTool()
+    expect(tool.name).toBe('ListDir')
+    expect(tool).not.toBe(listDirTool)
+    const out = await tool.execute({}, makeCtx(root))
+    expect(out).toContain('note.txt')
   })
 })

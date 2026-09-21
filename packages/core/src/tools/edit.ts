@@ -4,7 +4,8 @@ import { parseWithSchema } from './parse'
 import { appendLintBlock, lintWrittenFile } from './lint'
 import { isHardDeniedWritePath, resolveWritePath } from './write'
 import { isStaleSinceRead, markReadPath, wasRead } from './read-files'
-import { workspaceFsFor } from './workspace-fs'
+import type { TerminalBackend } from './terminal-backend'
+import { createWorkspaceFs } from './workspace-fs'
 
 export interface EditInput {
   path: string
@@ -23,86 +24,94 @@ const inputSchema = {
   },
 }
 
-export const editTool: Tool<EditInput, string> = {
-  name: 'Edit',
-  description:
-    'Replace exactly one unique occurrence of old_string with new_string in a utf-8 file. path is resolved relative to the turn cwd. Requires a prior successful Read of that path on this turn. Fails if old_string is missing or not unique. Refuses protected paths.',
-  inputSchema,
-  parse(input: unknown) {
-    return parseWithSchema<EditInput>(inputSchema, input)
-  },
-  isConcurrencySafe() {
-    return false
-  },
-  isReadOnly() {
-    return false
-  },
-  interruptBehavior() {
-    return 'block'
-  },
-  async checkPermissions() {
-    return { behavior: 'ask', message: 'Edit this file?', saveAs: 'session' }
-  },
-  async execute(input: EditInput, ctx: ToolContext) {
-    if (ctx.signal.aborted) throw abortError()
-    const resolved = resolveWritePath(ctx.turn.cwd, input.path)
-    if (isHardDeniedWritePath(resolved)) {
-      return `Edit failed: write denied to protected path: ${input.path}`
-    }
-    const fs = workspaceFsFor(ctx.turn)
-    try {
-      await fs.stat(resolved)
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') throw error
-      const message = error instanceof Error ? error.message : String(error)
-      return `Edit failed: ${message}`
-    }
-    const candidate = resolve(ctx.turn.cwd, input.path)
-    if (!wasRead(ctx.turn.readFiles, resolved, candidate)) {
-      return `Edit failed: path must be Read first: ${input.path}`
-    }
-    if (isStaleSinceRead(ctx.turn, resolved, candidate)) {
-      return `Edit failed: file changed since last Read`
-    }
-    if (input.old_string.length === 0) {
-      return 'Edit failed: old_string is empty; provide more context to make it unique'
-    }
-
-    let raw: string
-    try {
-      raw = await fs.readFile(resolved)
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') throw error
-      const message = error instanceof Error ? error.message : String(error)
-      return `Edit failed: ${message}`
-    }
-
-    const crlf = raw.includes('\r\n')
-    const text = normalizeNewlines(raw)
-    const oldString = normalizeNewlines(input.old_string)
-    const newString = normalizeNewlines(input.new_string)
-
-    const replacement = resolveReplacement(text, oldString, newString)
-    if (replacement.ok === false) {
-      if (replacement.matches === 0) {
-        return `Edit failed: old_string not found in ${input.path}`
+export function createEditTool(backend?: TerminalBackend): Tool<EditInput, string> {
+  return {
+    name: 'Edit',
+    description:
+      'Replace exactly one unique occurrence of old_string with new_string in a utf-8 file. path is resolved relative to the turn cwd. Requires a prior successful Read of that path on this turn. Fails if old_string is missing or not unique. Refuses protected paths.',
+    inputSchema,
+    parse(input: unknown) {
+      return parseWithSchema<EditInput>(inputSchema, input)
+    },
+    isConcurrencySafe() {
+      return false
+    },
+    isReadOnly() {
+      return false
+    },
+    interruptBehavior() {
+      return 'block'
+    },
+    async checkPermissions() {
+      return { behavior: 'ask', message: 'Edit this file?', saveAs: 'session' }
+    },
+    async execute(input: EditInput, ctx: ToolContext) {
+      if (ctx.signal.aborted) throw abortError()
+      const resolved = resolveWritePath(ctx.turn.cwd, input.path)
+      if (isHardDeniedWritePath(resolved)) {
+        return `Edit failed: write denied to protected path: ${input.path}`
       }
-      return `Edit failed: old_string matched ${replacement.matches} times; provide more context to make it unique`
-    }
+      const fs = createWorkspaceFs({
+        cwd: ctx.turn.cwd,
+        exec: backend,
+        signal: ctx.signal,
+      })
+      try {
+        await fs.stat(resolved)
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') throw error
+        const message = error instanceof Error ? error.message : String(error)
+        return `Edit failed: ${message}`
+      }
+      const candidate = resolve(ctx.turn.cwd, input.path)
+      if (!wasRead(ctx.turn.readFiles, resolved, candidate)) {
+        return `Edit failed: path must be Read first: ${input.path}`
+      }
+      if (isStaleSinceRead(ctx.turn, resolved, candidate)) {
+        return `Edit failed: file changed since last Read`
+      }
+      if (input.old_string.length === 0) {
+        return 'Edit failed: old_string is empty; provide more context to make it unique'
+      }
 
-    try {
-      ctx.fileHistory?.snapshot(resolved)
-      const updated = text.replace(replacement.oldString, replacement.newString)
-      await fs.writeFile(resolved, crlf ? restoreCrlf(updated) : updated)
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') throw error
-      const message = error instanceof Error ? error.message : String(error)
-      return `Edit failed: ${message}`
-    }
-    markReadPath(ctx.turn, resolved)
-    return appendLintBlock(`Updated ${input.path}`, [lintWrittenFile(resolved, ctx.turn.cwd)])
-  },
+      let raw: string
+      try {
+        raw = await fs.readFile(resolved)
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') throw error
+        const message = error instanceof Error ? error.message : String(error)
+        return `Edit failed: ${message}`
+      }
+
+      const crlf = raw.includes('\r\n')
+      const text = normalizeNewlines(raw)
+      const oldString = normalizeNewlines(input.old_string)
+      const newString = normalizeNewlines(input.new_string)
+
+      const replacement = resolveReplacement(text, oldString, newString)
+      if (replacement.ok === false) {
+        if (replacement.matches === 0) {
+          return `Edit failed: old_string not found in ${input.path}`
+        }
+        return `Edit failed: old_string matched ${replacement.matches} times; provide more context to make it unique`
+      }
+
+      try {
+        ctx.fileHistory?.snapshot(resolved)
+        const updated = text.replace(replacement.oldString, replacement.newString)
+        await fs.writeFile(resolved, crlf ? restoreCrlf(updated) : updated)
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') throw error
+        const message = error instanceof Error ? error.message : String(error)
+        return `Edit failed: ${message}`
+      }
+      markReadPath(ctx.turn, resolved)
+      return appendLintBlock(`Updated ${input.path}`, [lintWrittenFile(resolved, ctx.turn.cwd)])
+    },
+  }
 }
+
+export const editTool: Tool<EditInput, string> = createEditTool()
 
 function resolveReplacement(
   text: string,

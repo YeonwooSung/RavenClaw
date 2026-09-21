@@ -5,7 +5,7 @@ import { join } from 'node:path'
 import type { ToolContext, Turn } from '../types'
 import { decidePermission } from '../permissions/pipeline'
 import { recordReadFile } from './read-files'
-import { writeTool } from './write'
+import { createWriteTool, writeTool } from './write'
 
 const emptyRules = { session: [], user: [], project: [] }
 
@@ -182,5 +182,15 @@ describe('Write', () => {
     ctx.turn.terminalBackend = 'docker'
     const out = await writeTool.execute({ path: '/etc/passwd', content: 'x' }, ctx)
     expect(String(out).toLowerCase()).toMatch(/outside workspace|denied|protected/)
+  })
+
+  test('createWriteTool without backend still writes a unique file', async () => {
+    const root = fixtureRoot()
+    const tool = createWriteTool()
+    expect(tool.name).toBe('Write')
+    expect(tool).not.toBe(writeTool)
+    const out = await tool.execute({ path: 'note.txt', content: 'hello factory\n' }, makeCtx(root))
+    expect(out).toContain('Wrote')
+    expect(readFileSync(join(root, 'note.txt'), 'utf8')).toBe('hello factory\n')
   })
 })

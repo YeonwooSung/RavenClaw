@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { ToolContext, Turn } from '../types'
 import { decidePermission } from '../permissions/pipeline'
-import { editTool } from './edit'
+import { createEditTool, editTool } from './edit'
 import { readTool } from './read'
 
 const emptyRules = { session: [], user: [], project: [] }
@@ -367,5 +367,21 @@ describe('Edit', () => {
       ctx,
     )
     expect(String(out).toLowerCase()).toMatch(/outside workspace|denied|protected/)
+  })
+
+  test('createEditTool without backend still edits a unique file', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'note.txt'), 'hello factory\n')
+    const ctx = makeCtx(root)
+    ctx.turn.readFiles.add(resolvedOf(root, 'note.txt'))
+    const tool = createEditTool()
+    expect(tool.name).toBe('Edit')
+    expect(tool).not.toBe(editTool)
+    const out = await tool.execute(
+      { path: 'note.txt', old_string: 'hello factory', new_string: 'hello edited' },
+      ctx,
+    )
+    expect(out).toContain('Updated')
+    expect(readFileSync(join(root, 'note.txt'), 'utf8')).toBe('hello edited\n')
   })
 })

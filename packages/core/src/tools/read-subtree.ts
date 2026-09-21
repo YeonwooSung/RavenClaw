@@ -8,7 +8,8 @@ import {
   type WalkFile,
 } from './glob'
 import { parseWithSchema } from './parse'
-import { workspaceFsFor, type WorkspaceFs } from './workspace-fs'
+import type { TerminalBackend } from './terminal-backend'
+import { createWorkspaceFs, type WorkspaceFs } from './workspace-fs'
 
 export interface ReadSubtreeInput {
   path?: string
@@ -32,76 +33,84 @@ const inputSchema = {
   },
 }
 
-export const readSubtreeTool: Tool<ReadSubtreeInput, string> = {
-  name: 'ReadSubtree',
-  description:
-    'Walk a directory tree and list each file with size and up to 8 top-level symbol lines (function/class/const/type/interface/enum). Skips node_modules, .git, dist, build, .next, and other default ignore dirs. maxFiles defaults to 40 and is capped at 80. Binary and files ≥ 200000 bytes show size only.',
-  inputSchema,
-  parse(input: unknown) {
-    return parseWithSchema<ReadSubtreeInput>(inputSchema, input)
-  },
-  isConcurrencySafe() {
-    return true
-  },
-  isReadOnly() {
-    return true
-  },
-  interruptBehavior() {
-    return 'cancel'
-  },
-  async checkPermissions() {
-    return { behavior: 'allow', reason: 'mode' }
-  },
-  async execute(input: ReadSubtreeInput, ctx: ToolContext) {
-    if (ctx.signal.aborted) throw abortError()
-    const cwd = ctx.turn.cwd
-    const searchRoot = resolve(cwd, input.path ?? '.')
-    const fs = workspaceFsFor(ctx.turn)
-    try {
-      const rootStat = await fs.stat(searchRoot)
-      if (!rootStat.exists) return `ReadSubtree failed: file not found`
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') throw error
-      const message = error instanceof Error ? error.message : String(error)
-      return `ReadSubtree failed: ${message}`
-    }
-
-    const limit = Math.min(input.maxFiles ?? DEFAULT_MAX_FILES, MAX_FILES_CAP)
-    const files = (await walkWorkspace(fs, searchRoot, cwd))
-      .slice()
-      .sort((a, b) => a.relToCwd.localeCompare(b.relToCwd))
-      .slice(0, limit)
-
-    const blocks: string[] = []
-    for (const file of files) {
-      const rel = file.relToCwd
-      const header = `${rel}  ${file.size}b`
-      if (file.size >= TEXT_BYTE_CAP) {
-        blocks.push(header)
-        continue
-      }
-      let text: string
+export function createReadSubtreeTool(backend?: TerminalBackend): Tool<ReadSubtreeInput, string> {
+  return {
+    name: 'ReadSubtree',
+    description:
+      'Walk a directory tree and list each file with size and up to 8 top-level symbol lines (function/class/const/type/interface/enum). Skips node_modules, .git, dist, build, .next, and other default ignore dirs. maxFiles defaults to 40 and is capped at 80. Binary and files ≥ 200000 bytes show size only.',
+    inputSchema,
+    parse(input: unknown) {
+      return parseWithSchema<ReadSubtreeInput>(inputSchema, input)
+    },
+    isConcurrencySafe() {
+      return true
+    },
+    isReadOnly() {
+      return true
+    },
+    interruptBehavior() {
+      return 'cancel'
+    },
+    async checkPermissions() {
+      return { behavior: 'allow', reason: 'mode' }
+    },
+    async execute(input: ReadSubtreeInput, ctx: ToolContext) {
+      if (ctx.signal.aborted) throw abortError()
+      const cwd = ctx.turn.cwd
+      const searchRoot = resolve(cwd, input.path ?? '.')
+      const fs = createWorkspaceFs({
+        cwd: ctx.turn.cwd,
+        exec: backend,
+        signal: ctx.signal,
+      })
       try {
-        text = await fs.readFile(file.absPath)
+        const rootStat = await fs.stat(searchRoot)
+        if (!rootStat.exists) return `ReadSubtree failed: file not found`
       } catch (error) {
         if (error instanceof Error && error.name === 'AbortError') throw error
-        blocks.push(header)
-        continue
+        const message = error instanceof Error ? error.message : String(error)
+        return `ReadSubtree failed: ${message}`
       }
-      if (text.slice(0, BINARY_SCAN).includes('\0')) {
-        blocks.push(header)
-        continue
+
+      const limit = Math.min(input.maxFiles ?? DEFAULT_MAX_FILES, MAX_FILES_CAP)
+      const files = (await walkWorkspace(fs, searchRoot, cwd))
+        .slice()
+        .sort((a, b) => a.relToCwd.localeCompare(b.relToCwd))
+        .slice(0, limit)
+
+      const blocks: string[] = []
+      for (const file of files) {
+        const rel = file.relToCwd
+        const header = `${rel}  ${file.size}b`
+        if (file.size >= TEXT_BYTE_CAP) {
+          blocks.push(header)
+          continue
+        }
+        let text: string
+        try {
+          text = await fs.readFile(file.absPath)
+        } catch (error) {
+          if (error instanceof Error && error.name === 'AbortError') throw error
+          blocks.push(header)
+          continue
+        }
+        if (text.slice(0, BINARY_SCAN).includes('\0')) {
+          blocks.push(header)
+          continue
+        }
+        const symbols = extractSymbols(text)
+        if (symbols.length === 0) {
+          blocks.push(header)
+          continue
+        }
+        blocks.push([header, ...symbols.map((sym) => `    ${sym}`)].join('\n'))
       }
-      const symbols = extractSymbols(text)
-      if (symbols.length === 0) {
-        blocks.push(header)
-        continue
-      }
-      blocks.push([header, ...symbols.map((sym) => `    ${sym}`)].join('\n'))
-    }
-    return blocks.join('\n')
-  },
+      return blocks.join('\n')
+    },
+  }
 }
+
+export const readSubtreeTool: Tool<ReadSubtreeInput, string> = createReadSubtreeTool()
 
 async function walkWorkspace(fs: WorkspaceFs, searchRoot: string, cwd: string): Promise<WalkFile[]> {
   const out: WalkFile[] = []

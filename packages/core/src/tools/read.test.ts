@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { ToolContext, Turn } from '../types'
-import { readTool } from './read'
+import { createReadTool, readTool } from './read'
 
 const tempDirs: string[] = []
 
@@ -145,6 +145,16 @@ describe('Read', () => {
       name: 'AbortError',
     })
     expect(ctx.turn.readFiles.size).toBe(0)
+  })
+
+  test('createReadTool without backend still reads a unique file', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'note.txt'), 'hello factory\n')
+    const tool = createReadTool()
+    expect(tool.name).toBe('Read')
+    expect(tool).not.toBe(readTool) // new instance is fine; name/behavior match
+    const out = await tool.execute({ path: 'note.txt' }, makeCtx(root))
+    expect(out).toContain('hello factory')
   })
 })
 

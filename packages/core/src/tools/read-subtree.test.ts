@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ToolContext, Turn } from '../types'
-import { extractSymbols, readSubtreeTool } from './read-subtree'
+import { createReadSubtreeTool, extractSymbols, readSubtreeTool } from './read-subtree'
 
 const tempDirs: string[] = []
 
@@ -154,6 +154,16 @@ describe('ReadSubtree', () => {
     await expect(readSubtreeTool.execute({}, makeCtx(root, ac.signal))).rejects.toMatchObject({
       name: 'AbortError',
     })
+  })
+
+  test('createReadSubtreeTool without backend still lists a unique file', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'note.txt'), 'hello factory\n')
+    const tool = createReadSubtreeTool()
+    expect(tool.name).toBe('ReadSubtree')
+    expect(tool).not.toBe(readSubtreeTool)
+    const out = await tool.execute({}, makeCtx(root))
+    expect(out).toContain('note.txt')
   })
 })
 

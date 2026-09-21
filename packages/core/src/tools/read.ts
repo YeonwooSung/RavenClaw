@@ -6,7 +6,8 @@ import { formatNotebookRead, parseNotebook } from './notebook-format'
 import { extractOfficeText, type OfficeExt } from './read-extract'
 import { markReadPath } from './read-files'
 import { READ_CHAR_CAP, TRUNCATION_NOTE, sliceUtf8Lines, streamUtf8LineWindow } from './read-lines'
-import { workspaceFsFor } from './workspace-fs'
+import type { TerminalBackend } from './terminal-backend'
+import { createWorkspaceFs } from './workspace-fs'
 
 export interface ReadInput {
   path: string
@@ -36,121 +37,129 @@ const inputSchema = {
   },
 }
 
-export const readTool: Tool<ReadInput, string> = {
-  name: 'Read',
-  description:
-    'Read a utf-8 text file or a small image (png/jpeg/gif/webp, ≤ 512000 bytes). path is resolved relative to the turn cwd. offset is a 1-based line number; limit is the maximum number of lines to return. Binary files (NUL in the first 8 KiB) are rejected. Output is capped around 100000 characters. Exempt from disk persist.',
-  inputSchema,
-  parse(input: unknown) {
-    return parseWithSchema<ReadInput>(inputSchema, input)
-  },
-  isConcurrencySafe() {
-    return true
-  },
-  isReadOnly() {
-    return true
-  },
-  interruptBehavior() {
-    return 'block'
-  },
-  async checkPermissions() {
-    return { behavior: 'allow', reason: 'mode' }
-  },
-  async execute(input: ReadInput, ctx: ToolContext) {
-    if (ctx.signal.aborted) throw abortError()
-    const resolved = resolve(ctx.turn.cwd, input.path)
-    const fs = workspaceFsFor(ctx.turn)
+export function createReadTool(backend?: TerminalBackend): Tool<ReadInput, string> {
+  return {
+    name: 'Read',
+    description:
+      'Read a utf-8 text file or a small image (png/jpeg/gif/webp, ≤ 512000 bytes). path is resolved relative to the turn cwd. offset is a 1-based line number; limit is the maximum number of lines to return. Binary files (NUL in the first 8 KiB) are rejected. Output is capped around 100000 characters. Exempt from disk persist.',
+    inputSchema,
+    parse(input: unknown) {
+      return parseWithSchema<ReadInput>(inputSchema, input)
+    },
+    isConcurrencySafe() {
+      return true
+    },
+    isReadOnly() {
+      return true
+    },
+    interruptBehavior() {
+      return 'block'
+    },
+    async checkPermissions() {
+      return { behavior: 'allow', reason: 'mode' }
+    },
+    async execute(input: ReadInput, ctx: ToolContext) {
+      if (ctx.signal.aborted) throw abortError()
+      const resolved = resolve(ctx.turn.cwd, input.path)
+      const fs = createWorkspaceFs({
+        cwd: ctx.turn.cwd,
+        exec: backend,
+        signal: ctx.signal,
+      })
 
-    let stat
-    try {
-      stat = await fs.stat(resolved)
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') throw error
-      const message = error instanceof Error ? error.message : String(error)
-      return `Read failed: ${message}`
-    }
-    if (!stat.exists) {
-      return `Read failed: file not found: ${input.path}`
-    }
-    if (stat.isDir) {
-      return `Read failed: path is a directory: ${input.path}`
-    }
-
-    const mediaEarly = imageMediaType(resolved)
-    const officeEarly = officeExtOf(resolved)
-    if (
-      !mediaEarly &&
-      !officeEarly &&
-      extname(resolved).toLowerCase() !== '.ipynb' &&
-      stat.size > STREAM_AFTER
-    ) {
-      let jailed: string
+      let stat
       try {
-        jailed = fs.realpath(resolved)
+        stat = await fs.stat(resolved)
       } catch (error) {
         if (error instanceof Error && error.name === 'AbortError') throw error
         const message = error instanceof Error ? error.message : String(error)
         return `Read failed: ${message}`
       }
-      if (peekHasNul(jailed)) {
-        return 'Read failed: binary file (NUL in first 8 KiB)'
+      if (!stat.exists) {
+        return `Read failed: file not found: ${input.path}`
       }
-      markReadPath(ctx.turn, resolved)
-      return streamUtf8LineWindow(jailed, input.offset, input.limit)
-    }
+      if (stat.isDir) {
+        return `Read failed: path is a directory: ${input.path}`
+      }
 
-    if (mediaEarly || officeEarly) {
-      let buf: Buffer
-      try {
-        buf = readFileSync(fs.realpath(resolved))
-      } catch (error) {
-        if (error instanceof Error && error.name === 'AbortError') throw error
-        const message = error instanceof Error ? error.message : String(error)
-        return `Read failed: ${message}`
-      }
-      if (mediaEarly) {
-        if (buf.length > IMAGE_BYTE_CAP) {
-          return `Read failed: image too large (${buf.length} bytes)`
+      const mediaEarly = imageMediaType(resolved)
+      const officeEarly = officeExtOf(resolved)
+      if (
+        !mediaEarly &&
+        !officeEarly &&
+        extname(resolved).toLowerCase() !== '.ipynb' &&
+        stat.size > STREAM_AFTER
+      ) {
+        let jailed: string
+        try {
+          jailed = fs.realpath(resolved)
+        } catch (error) {
+          if (error instanceof Error && error.name === 'AbortError') throw error
+          const message = error instanceof Error ? error.message : String(error)
+          return `Read failed: ${message}`
+        }
+        if (peekHasNul(jailed)) {
+          return 'Read failed: binary file (NUL in first 8 KiB)'
         }
         markReadPath(ctx.turn, resolved)
-        return `IMAGE::${mediaEarly}::${buf.toString('base64')}`
+        return streamUtf8LineWindow(jailed, input.offset, input.limit)
       }
-      const extracted = extractOfficeText(buf, officeEarly as OfficeExt)
-      if (!extracted.ok) return 'Read failed: cannot extract'
-      markReadPath(ctx.turn, resolved)
-      return extracted.text.length > READ_CHAR_CAP
-        ? extracted.text.slice(0, READ_CHAR_CAP) + TRUNCATION_NOTE
-        : extracted.text
-    }
 
-    let text: string
-    try {
-      text = await fs.readFile(resolved)
-    } catch (error) {
-      if (error instanceof Error && error.name === 'AbortError') throw error
-      const message = error instanceof Error ? error.message : String(error)
-      return `Read failed: ${message}`
-    }
-
-    if (text.slice(0, BINARY_SCAN).includes('\0')) {
-      return 'Read failed: binary file (NUL in first 8 KiB)'
-    }
-
-    if (extname(resolved).toLowerCase() === '.ipynb') {
-      const parsed = parseNotebook(text)
-      if (parsed.ok) {
+      if (mediaEarly || officeEarly) {
+        let buf: Buffer
+        try {
+          buf = readFileSync(fs.realpath(resolved))
+        } catch (error) {
+          if (error instanceof Error && error.name === 'AbortError') throw error
+          const message = error instanceof Error ? error.message : String(error)
+          return `Read failed: ${message}`
+        }
+        if (mediaEarly) {
+          if (buf.length > IMAGE_BYTE_CAP) {
+            return `Read failed: image too large (${buf.length} bytes)`
+          }
+          markReadPath(ctx.turn, resolved)
+          return `IMAGE::${mediaEarly}::${buf.toString('base64')}`
+        }
+        const extracted = extractOfficeText(buf, officeEarly as OfficeExt)
+        if (!extracted.ok) return 'Read failed: cannot extract'
         markReadPath(ctx.turn, resolved)
-        const formatted = formatNotebookRead(parsed.value)
-        return formatted.length > READ_CHAR_CAP
-          ? formatted.slice(0, READ_CHAR_CAP) + TRUNCATION_NOTE
-          : formatted
+        return extracted.text.length > READ_CHAR_CAP
+          ? extracted.text.slice(0, READ_CHAR_CAP) + TRUNCATION_NOTE
+          : extracted.text
       }
-    }
 
-    markReadPath(ctx.turn, resolved)
-    return sliceUtf8Lines(text, input.offset, input.limit)
-  },
+      let text: string
+      try {
+        text = await fs.readFile(resolved)
+      } catch (error) {
+        if (error instanceof Error && error.name === 'AbortError') throw error
+        const message = error instanceof Error ? error.message : String(error)
+        return `Read failed: ${message}`
+      }
+
+      if (text.slice(0, BINARY_SCAN).includes('\0')) {
+        return 'Read failed: binary file (NUL in first 8 KiB)'
+      }
+
+      if (extname(resolved).toLowerCase() === '.ipynb') {
+        const parsed = parseNotebook(text)
+        if (parsed.ok) {
+          markReadPath(ctx.turn, resolved)
+          const formatted = formatNotebookRead(parsed.value)
+          return formatted.length > READ_CHAR_CAP
+            ? formatted.slice(0, READ_CHAR_CAP) + TRUNCATION_NOTE
+            : formatted
+        }
+      }
+
+      markReadPath(ctx.turn, resolved)
+      return sliceUtf8Lines(text, input.offset, input.limit)
+    },
+  }
 }
+
+export const readTool: Tool<ReadInput, string> = createReadTool()
 
 function peekHasNul(path: string): boolean {
   const fd = openSync(path, 'r')

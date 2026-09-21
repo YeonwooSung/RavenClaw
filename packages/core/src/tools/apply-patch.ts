@@ -4,7 +4,8 @@ import { parseWithSchema } from './parse'
 import { appendLintBlock, lintWrittenFile } from './lint'
 import { isHardDeniedWritePath, resolveWritePath } from './write'
 import { isStaleSinceRead, markReadPath, wasRead } from './read-files'
-import { workspaceFsFor, type WorkspaceFs } from './workspace-fs'
+import type { TerminalBackend } from './terminal-backend'
+import { createWorkspaceFs, type WorkspaceFs } from './workspace-fs'
 
 export type ApplyPatchOp =
   | { type: 'create_file'; path: string; diff: string }
@@ -37,61 +38,70 @@ const inputSchema = {
   },
 }
 
-export const applyPatchTool: Tool<ApplyPatchInput, string> = {
-  name: 'ApplyPatch',
-  description:
-    'Apply one or more file operations: create_file (diff +lines become content), update_file (unified diff with @@ hunks), or delete_file. update_file and delete_file require a prior Read of that path. Refuses protected paths. Snapshots each path before mutating.',
-  inputSchema,
-  parse(input: unknown) {
-    const parsed = parseWithSchema<ApplyPatchInput>(inputSchema, input)
-    if (!parsed.ok) return parsed
-    for (const op of parsed.value.operations) {
-      if (op.type !== 'delete_file' && typeof op.diff !== 'string') {
-        return { ok: false, message: `data/operations must have required property 'diff' for ${op.type}` }
+export function createApplyPatchTool(backend?: TerminalBackend): Tool<ApplyPatchInput, string> {
+  return {
+    name: 'ApplyPatch',
+    description:
+      'Apply one or more file operations: create_file (diff +lines become content), update_file (unified diff with @@ hunks), or delete_file. update_file and delete_file require a prior Read of that path. Refuses protected paths. Snapshots each path before mutating.',
+    inputSchema,
+    parse(input: unknown) {
+      const parsed = parseWithSchema<ApplyPatchInput>(inputSchema, input)
+      if (!parsed.ok) return parsed
+      for (const op of parsed.value.operations) {
+        if (op.type !== 'delete_file' && typeof op.diff !== 'string') {
+          return { ok: false, message: `data/operations must have required property 'diff' for ${op.type}` }
+        }
       }
-    }
-    return parsed
-  },
-  isConcurrencySafe() {
-    return false
-  },
-  isReadOnly() {
-    return false
-  },
-  interruptBehavior() {
-    return 'block'
-  },
-  async checkPermissions() {
-    return { behavior: 'ask', message: 'Apply this patch?', saveAs: 'session' }
-  },
-  async execute(input: ApplyPatchInput, ctx: ToolContext) {
-    if (ctx.signal.aborted) throw abortError()
-    const actions: string[] = []
-    const lintPaths: string[] = []
-    for (const op of input.operations) {
-      const result = await applyOne(op, ctx)
-      if (result.ok === false) return `ApplyPatch failed: ${result.message}`
-      actions.push(result.action)
-      if (op.type !== 'delete_file') {
-        lintPaths.push(resolveWritePath(ctx.turn.cwd, op.path))
+      return parsed
+    },
+    isConcurrencySafe() {
+      return false
+    },
+    isReadOnly() {
+      return false
+    },
+    interruptBehavior() {
+      return 'block'
+    },
+    async checkPermissions() {
+      return { behavior: 'ask', message: 'Apply this patch?', saveAs: 'session' }
+    },
+    async execute(input: ApplyPatchInput, ctx: ToolContext) {
+      if (ctx.signal.aborted) throw abortError()
+      const fs = createWorkspaceFs({
+        cwd: ctx.turn.cwd,
+        exec: backend,
+        signal: ctx.signal,
+      })
+      const actions: string[] = []
+      const lintPaths: string[] = []
+      for (const op of input.operations) {
+        const result = await applyOne(op, ctx, fs)
+        if (result.ok === false) return `ApplyPatch failed: ${result.message}`
+        actions.push(result.action)
+        if (op.type !== 'delete_file') {
+          lintPaths.push(resolveWritePath(ctx.turn.cwd, op.path))
+        }
       }
-    }
-    return appendLintBlock(
-      actions.join('\n'),
-      lintPaths.map((path) => lintWrittenFile(path, ctx.turn.cwd)),
-    )
-  },
+      return appendLintBlock(
+        actions.join('\n'),
+        lintPaths.map((path) => lintWrittenFile(path, ctx.turn.cwd)),
+      )
+    },
+  }
 }
+
+export const applyPatchTool: Tool<ApplyPatchInput, string> = createApplyPatchTool()
 
 async function applyOne(
   op: ApplyPatchOp,
   ctx: ToolContext,
+  fs: WorkspaceFs,
 ): Promise<{ ok: true; action: string } | { ok: false; message: string }> {
   const resolved = resolveWritePath(ctx.turn.cwd, op.path)
   if (isHardDeniedWritePath(resolved)) {
     return { ok: false, message: `write denied to protected path: ${op.path}` }
   }
-  const fs = workspaceFsFor(ctx.turn)
 
   if (op.type === 'create_file') {
     return createFile(op.path, resolved, op.diff, ctx, fs)

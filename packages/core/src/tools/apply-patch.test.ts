@@ -5,7 +5,7 @@ import { join, resolve } from 'node:path'
 import type { FileHistory } from '../session/file-history'
 import type { ToolContext, Turn } from '../types'
 import { decidePermission } from '../permissions/pipeline'
-import { applyPatchTool, applyUnifiedDiff, contentFromCreateDiff } from './apply-patch'
+import { applyPatchTool, applyUnifiedDiff, contentFromCreateDiff, createApplyPatchTool } from './apply-patch'
 import { readTool } from './read'
 
 const emptyRules = { session: [], user: [], project: [] }
@@ -393,6 +393,19 @@ describe('ApplyPatch', () => {
     )
     expect(String(out).toLowerCase()).toMatch(/outside workspace|denied|protected/)
     expect(existsSync('/tmp/raven-outside.txt')).toBe(false)
+  })
+
+  test('createApplyPatchTool without backend still creates a unique file', async () => {
+    const root = fixtureRoot()
+    const tool = createApplyPatchTool()
+    expect(tool.name).toBe('ApplyPatch')
+    expect(tool).not.toBe(applyPatchTool)
+    const out = await tool.execute(
+      { operations: [{ type: 'create_file', path: 'note.txt', diff: '+hello factory\n' }] },
+      makeCtx(root),
+    )
+    expect(out).toContain('created')
+    expect(readFileSync(join(root, 'note.txt'), 'utf8')).toContain('hello factory')
   })
 })
 
