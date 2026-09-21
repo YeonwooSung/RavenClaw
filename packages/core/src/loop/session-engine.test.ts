@@ -3530,4 +3530,346 @@ describe('dismiss-on-message', () => {
       ),
     ).toBe(true)
   })
+
+  test('parent submitMessage ignores a child leftover-ask then continues', async () => {
+    const store = createMemoryStore()
+    const parent = makeSession({ id: 'sess_dismiss_parent' })
+    const child = makeSession({ id: 'sess_dismiss_child', parentSessionId: parent.id })
+    await store.createSession(parent)
+    await store.createSession(child)
+    await store.persistToolCalls(child.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_child', name: 'Echo', input: { text: 'hi' } }],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_child',
+      sessionId: child.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    const echo = createAskEcho()
+    const provider = createFakeProvider([textThenStop('done')])
+    const engine = await createSessionEngine(
+      engineOpts({
+        provider,
+        store,
+        session: parent,
+        tools: [echo],
+      }),
+    )
+    const { events, result } = await drain(engine.submitMessage('go on'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(events.some((e) => e.type === 'status' && e.message === 'pending permission ask')).toBe(
+      false,
+    )
+    expect(echo.executeCount).toBe(0)
+    expect(provider.streamCount).toBe(1)
+    expect(await store.listPendingAsks(child.id)).toHaveLength(0)
+    expect(await store.listPendingAsks(parent.id)).toHaveLength(0)
+    const childLoaded = await store.loadSession(child.id)
+    const childTools = childLoaded.messages.filter(
+      (m) => m.role === 'tool' && m.toolUseId === 'call_child',
+    )
+    expect(childTools).toHaveLength(1)
+    expect(childTools[0] && childTools[0].role === 'tool' ? childTools[0].blocks[0]?.text : '').toBe(
+      IGNORED_TEXT,
+    )
+    const parentLoaded = await store.loadSession(parent.id)
+    expect(parentLoaded.messages.some((m) => m.role === 'tool')).toBe(false)
+    expect(
+      parentLoaded.messages.some(
+        (m) => m.role === 'user' && m.blocks.some((b) => b.type === 'text' && b.text === 'go on'),
+      ),
+    ).toBe(true)
+  })
+
+  test('applyAskAnswer ignored still does not start a turn', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_dismiss_apply_no_turn' })
+    await store.createSession(session)
+    await store.persistToolCalls(session.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_1', name: 'Echo', input: { text: 'hi' } }],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    const echo = createAskEcho()
+    const provider = createFakeProvider([textThenStop('nope')])
+    const engine = await createSessionEngine(
+      engineOpts({
+        provider,
+        store,
+        session,
+        tools: [echo],
+      }),
+    )
+    expect(await engine.applyAskAnswer('call_1', 'ignored')).toBe('matched')
+    expect(echo.executeCount).toBe(0)
+    expect(provider.streamCount).toBe(0)
+    expect(engine.liveTurnId()).toBeNull()
+    expect(await store.listPendingAsks(session.id)).toHaveLength(0)
+    const loaded = await store.loadSession(session.id)
+    expect(loaded.messages.some((m) => m.role === 'user')).toBe(false)
+    const toolRow = loaded.messages.find((m) => m.role === 'tool' && m.toolUseId === 'call_1')
+    expect(toolRow && toolRow.role === 'tool' ? toolRow.blocks[0]?.text : '').toBe(IGNORED_TEXT)
+  })
+
+  test('liveTurn still blocks submitMessage and does not ignore the row', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_dismiss_live_block' })
+    await store.createSession(session)
+    const echo = createAskEcho()
+    const engine = await createSessionEngine({
+      ...engineOpts({
+        provider: createFakeProvider([toolThenStop('call_live', 'Echo', { text: 'hi' })]),
+        store,
+        session,
+        tools: [echo],
+      }),
+      askUser: hangAskUser,
+    })
+    const gen = engine.submitMessage('hi')
+    await consumeUntilAsk(gen)
+    expect(engine.liveTurnId()).not.toBeNull()
+    expect(await store.listPendingAsks(session.id)).toHaveLength(1)
+    const second = await drain(engine.submitMessage('go on'))
+    expect(second.result).toEqual({ reason: 'completed' })
+    expect(
+      second.events.some((e) => e.type === 'status' && e.message === 'pending permission ask'),
+    ).toBe(true)
+    expect(echo.executeCount).toBe(0)
+    expect(await store.listPendingAsks(session.id)).toHaveLength(1)
+    const mid = await store.loadSession(session.id)
+    expect(
+      mid.messages.some(
+        (m) => m.role === 'user' && m.blocks.some((b) => b.type === 'text' && b.text === 'go on'),
+      ),
+    ).toBe(false)
+    engine.abort('cancel')
+    await drain(gen)
+  })
+
+  test('clearKeepId and rewindLast still refuse unpaired leftover-asks', async () => {
+    const store = createMemoryStore()
+    const parent = makeSession({ id: 'sess_dismiss_refuse_parent' })
+    const child = makeSession({ id: 'sess_dismiss_refuse_child', parentSessionId: parent.id })
+    await store.createSession(parent)
+    await store.createSession(child)
+    await store.persistToolCalls(parent.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_parent', name: 'Echo', input: { text: 'hi' } }],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_parent',
+      sessionId: parent.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_child',
+      sessionId: child.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    const engine = await createSessionEngine(
+      engineOpts({
+        provider: createFakeProvider([]),
+        store,
+        session: parent,
+        tools: [createAskEcho()],
+      }),
+    )
+    expect(await engine.rewindLast()).toEqual({ ok: false, notice: 'pending permission ask' })
+    expect(await engine.clearKeepId()).toEqual({ ok: false, notice: 'pending permission ask' })
+    expect(await store.listPendingAsks(parent.id)).toHaveLength(1)
+    expect(await store.listPendingAsks(child.id)).toHaveLength(1)
+    expect(engine.liveTurnId()).toBeNull()
+  })
+
+  test('abort still abort-pairs ABORTED_TEXT and submitMessage does not rewrite it', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_dismiss_abort' })
+    await store.createSession(session)
+    await store.persistToolCalls(session.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_1', name: 'Echo', input: { text: 'hi' } }],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    const echo = createAskEcho()
+    const provider = createFakeProvider([textThenStop('done')])
+    const engine = await createSessionEngine(
+      engineOpts({
+        provider,
+        store,
+        session,
+        tools: [echo],
+      }),
+    )
+    engine.abort('cancel')
+    await engine.whenTreeStop()
+    expect(await store.listPendingAsks(session.id)).toHaveLength(0)
+    const aborted = await store.loadSession(session.id)
+    const abortedTools = aborted.messages.filter((m) => m.role === 'tool' && m.toolUseId === 'call_1')
+    expect(abortedTools).toHaveLength(1)
+    expect(abortedTools[0] && abortedTools[0].role === 'tool' ? abortedTools[0].blocks[0]?.text : '').toBe(
+      ABORTED_TEXT,
+    )
+    const { result } = await drain(engine.submitMessage('go on'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(echo.executeCount).toBe(0)
+    const loaded = await store.loadSession(session.id)
+    const tools = loaded.messages.filter((m) => m.role === 'tool' && m.toolUseId === 'call_1')
+    expect(tools).toHaveLength(1)
+    expect(tools[0] && tools[0].role === 'tool' ? tools[0].blocks[0]?.text : '').toBe(ABORTED_TEXT)
+    expect(
+      loaded.messages.some(
+        (m) =>
+          m.role === 'tool' &&
+          m.blocks.some((b) => b.type === 'text' && b.text === IGNORED_TEXT),
+      ),
+    ).toBe(false)
+  })
+
+  test('allow of one parked ask does not ignore the sibling; later submitMessage does', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_dismiss_allow_sibling' })
+    await store.createSession(session)
+    await store.persistToolCalls(session.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [
+        { type: 'tool_use', id: 'call_a', name: 'Echo', input: { text: 'a' } },
+        { type: 'tool_use', id: 'call_b', name: 'Echo', input: { text: 'b' } },
+      ],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_a',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo a?',
+      input: { text: 'a' },
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_b',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo b?',
+      input: { text: 'b' },
+      createdAt: 2,
+    })
+    const echo = createAskEcho()
+    const provider = createFakeProvider([textThenStop('done')])
+    const engine = await createSessionEngine(
+      engineOpts({
+        provider,
+        store,
+        session,
+        tools: [echo],
+      }),
+    )
+    expect(await engine.applyAskAnswer('call_a', 'allow')).toBe('matched')
+    expect(echo.executeCount).toBe(1)
+    expect(provider.streamCount).toBe(0)
+    expect(await store.listPendingAsks(session.id)).toHaveLength(1)
+    const { events, result } = await drain(engine.submitMessage('go on'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(events.some((e) => e.type === 'status' && e.message === 'pending permission ask')).toBe(
+      false,
+    )
+    expect(echo.executeCount).toBe(1)
+    expect(provider.streamCount).toBe(1)
+    expect(await store.listPendingAsks(session.id)).toHaveLength(0)
+    const loaded = await store.loadSession(session.id)
+    const byId = Object.fromEntries(
+      loaded.messages
+        .filter((m): m is Extract<Message, { role: 'tool' }> => m.role === 'tool')
+        .map((row) => [row.toolUseId, row.blocks[0]?.text]),
+    )
+    expect(byId.call_a).toBe('a')
+    expect(byId.call_b).toBe(IGNORED_TEXT)
+  })
+
+  test('concurrent allow vs dismiss keeps one tool row', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_dismiss_race' })
+    await store.createSession(session)
+    await store.persistToolCalls(session.id, {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'tool_use', id: 'call_1', name: 'Echo', input: { text: 'hi' } }],
+      createdAt: 1,
+    })
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Echo',
+      message: 'Echo?',
+      input: { text: 'hi' },
+      createdAt: 1,
+    })
+    const echo = createAskEcho()
+    const provider = createFakeProvider([textThenStop('done')])
+    const engine = await createSessionEngine(
+      engineOpts({
+        provider,
+        store,
+        session,
+        tools: [echo],
+      }),
+    )
+    const allow = engine.applyAskAnswer('call_1', 'allow')
+    const submit = drain(engine.submitMessage('go on'))
+    const [allowStatus, { result }] = await Promise.all([allow, submit])
+    expect(allowStatus).toBe('matched')
+    expect(result).toEqual({ reason: 'completed' })
+    expect(await store.listPendingAsks(session.id)).toHaveLength(0)
+    const loaded = await store.loadSession(session.id)
+    const tools = loaded.messages.filter((m) => m.role === 'tool' && m.toolUseId === 'call_1')
+    expect(tools).toHaveLength(1)
+    const text = tools[0] && tools[0].role === 'tool' ? tools[0].blocks[0]?.text : ''
+    expect(text === 'hi' || text === IGNORED_TEXT).toBe(true)
+    expect(echo.executeCount).toBe(text === 'hi' ? 1 : 0)
+    expect(
+      loaded.messages.some(
+        (m) => m.role === 'user' && m.blocks.some((b) => b.type === 'text' && b.text === 'go on'),
+      ),
+    ).toBe(true)
+  })
 })
