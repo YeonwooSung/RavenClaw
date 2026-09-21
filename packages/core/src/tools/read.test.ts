@@ -4,6 +4,11 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import type { ToolContext, Turn } from '../types'
 import { createReadTool, readTool } from './read'
+import { FS_MISSING } from './sandbox-fs'
+import {
+  createDockerTerminalBackend,
+  type TerminalRunRequest,
+} from './terminal-backend'
 
 const tempDirs: string[] = []
 
@@ -46,6 +51,14 @@ function makeCtx(cwd: string, signal?: AbortSignal): ToolContext {
     signal: signal ?? turn.abort.signal,
     onProgress() {},
   }
+}
+
+function fakeDocker(runCommand: (req: TerminalRunRequest) => Promise<{
+  stdout: string
+  stderr: string
+  exitCode: number
+}>) {
+  return createDockerTerminalBackend({ image: 'bash:5', runCommand })
 }
 
 describe('Read', () => {
@@ -155,6 +168,98 @@ describe('Read', () => {
     expect(tool).not.toBe(readTool) // new instance is fine; name/behavior match
     const out = await tool.execute({ path: 'note.txt' }, makeCtx(root))
     expect(out).toContain('hello factory')
+  })
+})
+
+describe('Read docker backend', () => {
+  test('utf-8 read uses fake exec stdout not host bytes', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'a.txt'), 'HOST_ONLY_READ_TOKEN\n')
+    const calls: TerminalRunRequest[] = []
+    const backend = fakeDocker(async (req) => {
+      calls.push(req)
+      if (String(req.args.at(-1)).includes('kind=dir') || String(req.args.at(-1)).includes('EXISTS')) {
+        return { stdout: 'EXISTS file 21 1\n', stderr: '', exitCode: 0 }
+      }
+      return { stdout: 'FROM_CONTAINER\n', stderr: '', exitCode: 0 }
+    })
+    const out = await createReadTool(backend).execute({ path: 'a.txt' }, makeCtx(root))
+    expect(out).toContain('FROM_CONTAINER')
+    expect(out).not.toContain('HOST_ONLY_READ_TOKEN')
+    expect(calls.length).toBeGreaterThan(0)
+    expect(calls[0]?.command).toBe('docker')
+  })
+
+  test('NUL / image / large-file docker path does not host-read content', async () => {
+    const root = fixtureRoot()
+    const nulPath = join(root, 'bin.dat')
+    writeFileSync(nulPath, Buffer.from([0x00, 0x01, 0x02]))
+    const imgPath = join(root, 'pic.png')
+    writeFileSync(imgPath, Buffer.from('HOST_PNG'))
+    const bigPath = join(root, 'big.txt')
+    writeFileSync(bigPath, 'HOST_BIG\n'.repeat(40_000)) // > STREAM_AFTER
+    const fakeB64 = Buffer.from('FROM_CONTAINER_PNG').toString('base64')
+    const backendFor = (stdout: string) =>
+      fakeDocker(async (req) => {
+        const script = String(req.args.at(-1))
+        if (script.includes(FS_MISSING) || script.includes('EXISTS') || script.includes('kind=dir')) {
+          return { stdout: 'EXISTS file 3 1\n', stderr: '', exitCode: 0 }
+        }
+        if (script.includes('base64')) return { stdout: fakeB64, stderr: '', exitCode: 0 }
+        return { stdout, stderr: '', exitCode: 0 }
+      })
+
+    const nulOut = await createReadTool(backendFor('no-nul-text')).execute(
+      { path: 'bin.dat' },
+      makeCtx(root),
+    )
+    expect(String(nulOut)).not.toMatch(/binary file/)
+    expect(nulOut).toContain('no-nul-text')
+
+    const imgOut = await createReadTool(backendFor('')).execute({ path: 'pic.png' }, makeCtx(root))
+    expect(imgOut).toMatch(/^IMAGE::image\/png::/)
+    expect(imgOut).toContain(fakeB64)
+    expect(imgOut).not.toContain(Buffer.from('HOST_PNG').toString('base64'))
+
+    const bigOut = await createReadTool(backendFor('FROM_CONTAINER_BIG\n')).execute(
+      { path: 'big.txt' },
+      makeCtx(root),
+    )
+    expect(bigOut).toContain('FROM_CONTAINER_BIG')
+    expect(bigOut).not.toContain('HOST_BIG')
+  })
+
+  test('exec fail is Read failed: and abort throws AbortError', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'a.txt'), 'HOST_ONLY_READ_TOKEN\n')
+    const fail = fakeDocker(async () => ({
+      stdout: '',
+      stderr: 'Cannot connect to the Docker daemon',
+      exitCode: 1,
+    }))
+    const failed = await createReadTool(fail).execute({ path: 'a.txt' }, makeCtx(root))
+    expect(failed).toMatch(/^Read failed:/)
+    expect(failed).not.toContain('HOST_ONLY_READ_TOKEN')
+
+    const ac = new AbortController()
+    ac.abort()
+    const tool = createReadTool(fakeDocker(async () => ({ stdout: 'x', stderr: '', exitCode: 0 })))
+    await expect(tool.execute({ path: 'a.txt' }, makeCtx(root, ac.signal))).rejects.toMatchObject({
+      name: 'AbortError',
+    })
+  })
+
+  test('outside-cwd fails at jail with no exec', async () => {
+    const root = fixtureRoot()
+    const calls: TerminalRunRequest[] = []
+    const backend = fakeDocker(async (req) => {
+      calls.push(req)
+      return { stdout: 'nope', stderr: '', exitCode: 0 }
+    })
+    const out = await createReadTool(backend).execute({ path: '/etc/passwd' }, makeCtx(root))
+    expect(calls).toHaveLength(0)
+    expect(out).toMatch(/^Read failed:/)
+    expect(out).toMatch(/outside workspace/)
   })
 })
 

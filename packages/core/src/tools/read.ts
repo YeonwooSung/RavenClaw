@@ -1,4 +1,4 @@
-import { closeSync, openSync, readFileSync, readSync } from 'node:fs'
+import { closeSync, openSync, readSync } from 'node:fs'
 import { extname, resolve } from 'node:path'
 import type { Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
@@ -85,6 +85,7 @@ export function createReadTool(backend?: TerminalBackend): Tool<ReadInput, strin
       const mediaEarly = imageMediaType(resolved)
       const officeEarly = officeExtOf(resolved)
       if (
+        backend?.kind !== 'docker' &&
         !mediaEarly &&
         !officeEarly &&
         extname(resolved).toLowerCase() !== '.ipynb' &&
@@ -108,7 +109,7 @@ export function createReadTool(backend?: TerminalBackend): Tool<ReadInput, strin
       if (mediaEarly || officeEarly) {
         let buf: Buffer
         try {
-          buf = readFileSync(fs.realpath(resolved))
+          buf = await fs.readFileBuffer(resolved)
         } catch (error) {
           if (error instanceof Error && error.name === 'AbortError') throw error
           const message = error instanceof Error ? error.message : String(error)
