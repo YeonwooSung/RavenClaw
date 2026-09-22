@@ -2,7 +2,7 @@
 
 Date: 2026-09-21  
 Status: implemented  
-Shipped sha: worktree `docs/notebookedit-docker` (code `f67c49f`; not yet on `main`).  
+Shipped sha: `6d439b6` on `main` (merge of `docs/notebookedit-docker`; code `f67c49f`).  
 Reviewed against tree at `0a1176f` (`origin/main`, instructionFiles + three doors landed).  
 Successor to `2026-09-21-grep-glob-docker-exec.md` (Status: implemented). Amends prior OUT for **NotebookEdit docker** only. Does not reopen WorkspaceFs docker I/O, sandbox network policy, dismiss-on-message, or the LSP museum.
 
@@ -137,7 +137,7 @@ Board as of this worktree (`docs/notebookedit-docker`). N0.1–N2.1 done.
 
 ## Wave N2 — Tests + docs
 
-**Contract.** Unit tests for jail, wasRead, hard-deny, docker fake, abort. No new eval fixture required; optional sibling of `sandbox-fs` only if that fixture already exists. Docs: `ARCHITECTURE.md` / `.ko.md` NotebookEdit row, `docs/headless.md`. Pointer from E2.1: NotebookEdit docker unparked by this spec; WorkspaceFs docker stays parked unless that sibling spec has shipped.
+**Contract.** Unit tests for jail, wasRead, hard-deny, docker fake, abort. No new eval fixture required; optional sibling of `sandbox-fs` only if that fixture already exists. Docs: `ARCHITECTURE.md` / `.ko.md` NotebookEdit row, `docs/headless.md`. Pointer from E2.1: NotebookEdit docker unparked by this spec; WorkspaceFs docker stays parked unless that sibling spec has shipped. Amended: WorkspaceFs docker shipped on `main` at `9c8d9db` ([`2026-09-21-workspacefs-docker.md`](2026-09-21-workspacefs-docker.md)). Dismiss-on-message shipped on `main` at `061d23c` ([`2026-09-21-dismiss-on-message.md`](2026-09-21-dismiss-on-message.md)).
 
 ---
 

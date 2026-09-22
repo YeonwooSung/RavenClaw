@@ -188,7 +188,7 @@ The operator picks how project instructions are assembled: CLAUDE.md only, CLAUD
 
 ## Per-slice board
 
-Board as of this worktree (`docs/instruction-files-config`). Status stays **draft** until land on `main`.
+Board done on `main` at `0a1176f`.
 
 | ID | Slice | Status vs tree |
 |---|---|---|
