@@ -169,7 +169,7 @@ Goal: one container per call; fail-closed; no host fallback.
 
 ### S2.2 Docs
 
-**Contract.** `docs/headless.md`, `ARCHITECTURE.md` / `.ko.md` Grep/Glob rows. Historical E2.1 “missing” line gets a pointer: Grep/Glob unparked by this spec; WorkspaceFs docker-exec still parked.
+**Contract.** `docs/headless.md`, `ARCHITECTURE.md` / `.ko.md` Grep/Glob rows. Historical E2.1 “missing” line gets a pointer: Grep/Glob unparked by this spec; WorkspaceFs docker-exec still parked. Amended by [`2026-09-21-workspacefs-docker.md`](2026-09-21-workspacefs-docker.md) (on `main` at `9c8d9db`). NotebookEdit docker amended by [`2026-09-21-notebookedit-docker.md`](2026-09-21-notebookedit-docker.md) (on `main` at `6d439b6`).
 
 **Done when.** Docs no longer say Grep/Glob always run on the host when docker Bash is on.
 
@@ -205,7 +205,7 @@ Do not touch: `workspace-fs.ts`, `notebook-edit.ts`, `memory.ts`, `file-history.
 
 ## Out of this closeout
 
-Web UI, Prisma Task, Socket.IO, wiki, Workflow loop, agent compiler, `ignored`, LSP depth, WorkspaceFs docker-exec, NotebookEdit docker, Memory in container, sandbox network policy, Kata, isolation-trust, `dontAsk` as isolation, yaml `extraArgs`.
+Web UI, Prisma Task, Socket.IO, wiki, Workflow loop, agent compiler, `ignored` (amended by [`2026-09-21-ignored-dismiss.md`](2026-09-21-ignored-dismiss.md) at `22a55c1`; dismiss-on-message amended by [`2026-09-21-dismiss-on-message.md`](2026-09-21-dismiss-on-message.md) at `061d23c`), LSP depth (amended by [`2026-09-21-lsp-depth.md`](2026-09-21-lsp-depth.md) at `6c797d1`), WorkspaceFs docker-exec (amended by [`2026-09-21-workspacefs-docker.md`](2026-09-21-workspacefs-docker.md) at `9c8d9db`), NotebookEdit docker (amended by [`2026-09-21-notebookedit-docker.md`](2026-09-21-notebookedit-docker.md) at `6d439b6`), Memory in container, sandbox network policy, Kata, isolation-trust, `dontAsk` as isolation, yaml `extraArgs`.
 
 ---
 

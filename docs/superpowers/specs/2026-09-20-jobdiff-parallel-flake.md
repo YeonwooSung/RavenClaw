@@ -1,11 +1,14 @@
 # RavenClaw jobDiff parallel flake (sanitize `runGit` env)
 
 Date: 2026-09-20  
-Status: spec  
+Status: implemented  
+Shipped sha: `2c2f009` on `main`.  
 Reviewed against tree at `a707249` (`origin/main` after parent tree-stop + docs honesty + truncation persist-count).  
 Does not reopen G3.1 / G3.2 product doors from [`2026-09-17-job-host-state-roadmap.md`](2026-09-17-job-host-state-roadmap.md). Job diff stays `base...HEAD` ∪ dirty, store-free `jobDiff(job)`.
 
 Implementation plan: [2026-09-20-jobdiff-parallel-flake.md](../plans/2026-09-20-jobdiff-parallel-flake.md). Isolated worktree only. Do not implement in this docs commit.
+
+**Shipped.** `packages/core/src/tools/session-worktree.ts` `runGit` copies `process.env`, sets `GIT_TERMINAL_PROMPT=0`, and deletes `GIT_DIR` / `GIT_WORK_TREE` / `GIT_INDEX_FILE`. `job-diff.test.ts` pins `jobDiff ignores foreign GIT_DIR`. `serve.test.ts` `gitRun` uses the same sanitization. Sibling `worktree.ts` / `diff-cmd.ts` `runGit` stay OUT of this hole.
 
 Sources: current tree. No new steal from eve/y0.
 
