@@ -33,7 +33,7 @@ At `dc45aec`:
 | ACP | Timeout throws `AskWaiterExpired` (leave row). Editor `cancelled` maps to `'deny'`. |
 | `submitMessage` | Unpaired owned ask → `{ type: 'status', message: 'pending permission ask' }`, no user row. |
 
-eve steal: dismiss-and-continue for a **single** question; unmatched leftover responses re-queue. eve trigger (new user text auto-dismisses) stays parked.
+eve steal: dismiss-and-continue for a **single** question; unmatched leftover responses re-queue. eve trigger (new user text auto-dismisses) stays parked. Amended by [`2026-09-21-dismiss-on-message.md`](2026-09-21-dismiss-on-message.md) (on `main` at `061d23c`).
 
 This horizon unparks **one new answer** `'ignored'`.
 

@@ -28,8 +28,16 @@ function tempCwd(prefix: string): string {
   return dir
 }
 
+function gitSpawnEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' }
+  delete env.GIT_DIR
+  delete env.GIT_WORK_TREE
+  delete env.GIT_INDEX_FILE
+  return env
+}
+
 function runGit(cwd: string, args: string[]): void {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8' })
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8', env: gitSpawnEnv() })
   expect(result.status).toBe(0)
 }
 
@@ -87,6 +95,33 @@ describe('formatGitDiff', () => {
     expect(tracked?.staged).toBe(false)
     expect(stagedFile?.staged).toBe(true)
     expect(stagedFile?.unstaged).toBe(false)
+  })
+
+  test('formatGitDiff ignores foreign GIT_DIR', () => {
+    const cwd = tempCwd('raven-diff-foreign-')
+    initGitRepo(cwd)
+    runGit(cwd, ['commit', '--allow-empty', '-m', 'init'])
+
+    const foreign = join(tempCwd('raven-diff-foreign-gitdir-'), 'not-a-git')
+    const prevDir = process.env.GIT_DIR
+    const prevWorkTree = process.env.GIT_WORK_TREE
+    const prevIndex = process.env.GIT_INDEX_FILE
+    process.env.GIT_DIR = foreign
+    process.env.GIT_WORK_TREE = tempCwd('raven-diff-foreign-wt-')
+    process.env.GIT_INDEX_FILE = join(tempCwd('raven-diff-foreign-index-'), 'index')
+    try {
+      expect(formatGitDiff(cwd)).toBe('')
+      writeFileSync(join(cwd, 'dirty.txt'), 'x\n')
+      runGit(cwd, ['add', 'dirty.txt'])
+      expect(formatGitDiff(cwd)).toContain('dirty.txt')
+    } finally {
+      if (prevDir === undefined) delete process.env.GIT_DIR
+      else process.env.GIT_DIR = prevDir
+      if (prevWorkTree === undefined) delete process.env.GIT_WORK_TREE
+      else process.env.GIT_WORK_TREE = prevWorkTree
+      if (prevIndex === undefined) delete process.env.GIT_INDEX_FILE
+      else process.env.GIT_INDEX_FILE = prevIndex
+    }
   })
 })
 
