@@ -1,7 +1,8 @@
 # RavenClaw next-horizon roadmap (WorkspaceFs docker I/O)
 
 Date: 2026-09-21  
-Status: draft  
+Status: implemented  
+Shipped sha: (recorded after this commit on `docs/workspacefs-docker`).  
 Reviewed against tree at `0a1176f` (`origin/main`, instructionFiles + three doors landed).  
 Successor to `2026-09-21-grep-glob-docker-exec.md` (Status: implemented). Amends prior OUT for **WorkspaceFs docker I/O** only. Does not reopen NotebookEdit docker, sandbox network policy, session-long containers, `ignored`, dismiss-on-message, or the LSP museum.
 
@@ -116,18 +117,18 @@ When `terminal.backend: docker` actually constructs a docker Bash backend, **the
 
 ## Per-slice board
 
-Board as of this draft (not implemented).
+Board as of this worktree (`docs/workspacefs-docker`). W0–W2 done.
 
 | ID | Status vs tree |
 |---|---|
-| W0.1 Stdin on `TerminalExecOpts` / `runSpawned` | **not implemented** |
-| W0.2 Async WorkspaceFs + sync jail helper + docker method scripts | **not implemented** |
-| W0.3 Factories + `createRootTools` / SDK wiring | **not implemented** |
-| W1.1 Read byte I/O through WorkspaceFs (close host bypasses) | **not implemented** |
-| W1.2 Write / Edit / ApplyPatch docker writeFile | **not implemented** |
-| W1.3 ListDir / ReadSubtree docker readdir/readFile | **not implemented** |
-| W2.1 Eval `sandbox-fs` | **not implemented** |
-| W2.2 Docs honesty | **not implemented** |
+| W0.1 Stdin on `TerminalExecOpts` / `runSpawned` | **done** |
+| W0.2 Async WorkspaceFs + sync jail helper + docker method scripts | **done** |
+| W0.3 Factories + `createRootTools` / SDK wiring | **done** |
+| W1.1 Read byte I/O through WorkspaceFs (close host bypasses) | **done** |
+| W1.2 Write / Edit / ApplyPatch docker writeFile | **done** |
+| W1.3 ListDir / ReadSubtree docker readdir/readFile | **done** |
+| W2.1 Eval `sandbox-fs` | **done** |
+| W2.2 Docs honesty | **done** |
 
 ---
 

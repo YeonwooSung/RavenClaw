@@ -1,0 +1,4 @@
+{
+  "prompt": "read then write the in-tree unique file",
+  "expect": { "sandboxFsUsesBackend": true }
+}

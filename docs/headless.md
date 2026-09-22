@@ -43,7 +43,7 @@ raven exec --dont-ask --tools-preset ci "run bun test"
 
 ## Optional Docker sandbox
 
-When Bash is actually docker (backend **and** image), allowed Bash and Grep/Glob `docker run` in that container (`-v cwd:cwd -w cwd`). Omit, local, or `createTerminalBackend('docker')` without an image keeps Grep/Glob on host `rg`/walk. Read/Write/Edit/ApplyPatch/ListDir/ReadSubtree stay the host WorkspaceFs jail (in-tree paths are the same inodes as the cwd bind). It is not a substitute for `dontAsk`. Do not treat this as docker-exec for Read/Write.
+When Bash is actually docker (backend **and** image), allowed Bash, Grep/Glob, and Read/Write/Edit/ApplyPatch/ListDir/ReadSubtree `docker run` in that container (`-v cwd:cwd -w cwd`). Omit, local, or `createTerminalBackend('docker')` without an image keeps Grep/Glob on host `rg`/walk and file tools on the host WorkspaceFs jail. It is not a substitute for `dontAsk`. Do not treat this as docker-exec for NotebookEdit, Memory, or file-history writers.
 
 ```yaml
 # ~/.ravenclaw/config.yaml

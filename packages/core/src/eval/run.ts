@@ -11,10 +11,11 @@ import { createFileHistory } from '../session/file-history'
 import { rewindLastTurn, rewindToCheckpoint } from '../session/rewind'
 import { createGlobTool } from '../tools/glob'
 import { createGrepTool } from '../tools/grep'
+import { createReadTool } from '../tools/read'
+import { createWriteTool, writeTool } from '../tools/write'
 import { enterSessionWorktree, exitSessionWorktree, getSessionWorktree } from '../tools/session-worktree'
 import { createDockerTerminalBackend } from '../tools/terminal-backend'
 import { todoJsonPath } from '../tools/todo'
-import { writeTool } from '../tools/write'
 import type {
   CompactPolicy,
   Message,
@@ -57,6 +58,7 @@ type EvalExpect = {
   keepIdClear?: boolean
   parentTreeStop?: boolean
   sandboxSearchUsesBackend?: boolean
+  sandboxFsUsesBackend?: boolean
 }
 
 type EvalCase = {
@@ -151,6 +153,10 @@ export async function runEvalDir(dir: string): Promise<void> {
     }
     if (name === 'sandbox-search') {
       await runSandboxSearch(spec)
+      continue
+    }
+    if (name === 'sandbox-fs') {
+      await runSandboxFs(spec)
       continue
     }
     throw new Error(`unknown eval fixture: ${name}`)
@@ -461,6 +467,82 @@ async function runSandboxSearch(spec: EvalCase): Promise<void> {
     }
     if (text.includes(hostToken)) {
       throw new Error('sandbox-search: host rg/walk ran')
+    }
+    await engine.close()
+  } finally {
+    rmSync(cwd, { recursive: true, force: true })
+  }
+}
+
+async function runSandboxFs(spec: EvalCase): Promise<void> {
+  if (spec.expect.sandboxFsUsesBackend !== true) {
+    throw new Error('sandbox-fs: expect.sandboxFsUsesBackend must be true')
+  }
+  const cwd = mkdtempSync(join(tmpdir(), 'raven-eval-sandbox-fs-'))
+  const uniqueName = `unique-sandbox-fs-${crypto.randomUUID()}.txt`
+  const uniquePath = join(cwd, uniqueName)
+  const hostToken = `SANDBOX_FS_HOST_TOKEN_${crypto.randomUUID().slice(0, 8)}`
+  writeFileSync(uniquePath, `${hostToken}\n`)
+  const calls: Array<{ command: string; args: string[]; stdin?: string | Uint8Array }> = []
+  try {
+    const fakeBackend = createDockerTerminalBackend({
+      image: 'bash:5',
+      runCommand: async (req) => {
+        calls.push({ command: req.command, args: req.args, stdin: req.stdin })
+        const script = String(req.args.at(-1) ?? '')
+        if (script.includes('__RC_FS_MISSING__') || script.includes('kind=dir')) {
+          return { stdout: 'EXISTS file 8 1\n', stderr: '', exitCode: 0 }
+        }
+        if (script.includes('tee') || script.includes('mkdir')) {
+          return { stdout: '', stderr: 'Cannot connect to the Docker daemon', exitCode: 1 }
+        }
+        return { stdout: 'FAKE_DOCKER_READ\n', stderr: '', exitCode: 0 }
+      },
+    })
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_eval_sandbox_fs', cwd })
+    await store.createSession(session)
+    const engine = await createSessionEngine({
+      session,
+      provider: createFakeProvider([
+        toolThenStop('call_eval_read', 'Read', { path: uniqueName }),
+        toolThenStop('call_eval_write', 'Write', {
+          path: uniqueName,
+          content: 'SHOULD_NOT_HOST_WRITE',
+        }),
+        textThenStop('done'),
+      ]),
+      store,
+      tools: [createReadTool(fakeBackend), createWriteTool(fakeBackend)],
+      compact: defaultCompact(),
+      model: defaultModel(),
+      maxRounds: 8,
+      bare: true,
+      askUser: async () => 'allow',
+    })
+    await drain(engine.submitMessage(spec.prompt))
+    const loaded = await store.loadSession(session.id)
+    const text = toolResultText(loaded.messages)
+    if (calls.length < 1) {
+      throw new Error(`sandbox-fs: expected backend exec, got ${calls.length}`)
+    }
+    if (calls[0]?.command !== 'docker') {
+      throw new Error(`sandbox-fs: expected docker exec, got ${calls[0]?.command}`)
+    }
+    if (!calls.some((c) => c.args.includes(`${cwd}:${cwd}`) && c.args.includes('-w'))) {
+      throw new Error('sandbox-fs: docker argv missing cwd bind')
+    }
+    if (!text.includes('FAKE_DOCKER_READ')) {
+      throw new Error(`sandbox-fs: expected fake read stdout, got ${JSON.stringify(text)}`)
+    }
+    if (text.includes(hostToken)) {
+      throw new Error('sandbox-fs: host readFileSync ran')
+    }
+    if (!/Write failed:/.test(text)) {
+      throw new Error(`sandbox-fs: expected Write failed on exec reject, got ${JSON.stringify(text)}`)
+    }
+    if (readFileSync(uniquePath, 'utf8').includes('SHOULD_NOT_HOST_WRITE')) {
+      throw new Error('sandbox-fs: host writeFileSync ran')
     }
     await engine.close()
   } finally {

@@ -173,7 +173,7 @@ Goal: `terminal.backend: docker` means **the model’s filesystem is the contain
 
 **Done when.** Docker session: Write creates the file inside the container mount; host-only paths outside cwd fail closed. Tests with a fake `runCommand`.
 
-**Shipped pointer (2026-09-21).** Grep/Glob docker-exec landed on `main` at `a52eab1` ([`2026-09-21-grep-glob-docker-exec.md`](2026-09-21-grep-glob-docker-exec.md)): search shares Bash’s `TerminalBackend` (one `docker run` per call). WorkspaceFs docker-exec (Read/Write/Edit/ApplyPatch/ListDir/ReadSubtree `docker exec cat`) is still parked. `ignored` leftover-ask result landed at `22a55c1` ([`2026-09-21-ignored-dismiss.md`](2026-09-21-ignored-dismiss.md); dismiss-on-message stays parked). Bounded LSP depth landed at `6c797d1` ([`2026-09-21-lsp-depth.md`](2026-09-21-lsp-depth.md); handshake museum stays OUT). NotebookEdit docker and web UI stay OUT.
+**Shipped pointer (2026-09-21).** Grep/Glob docker-exec landed on `main` at `a52eab1` ([`2026-09-21-grep-glob-docker-exec.md`](2026-09-21-grep-glob-docker-exec.md)): search shares Bash’s `TerminalBackend` (one `docker run` per call). WorkspaceFs docker I/O is unparked by [`2026-09-21-workspacefs-docker.md`](2026-09-21-workspacefs-docker.md) (Read/Write/Edit/ApplyPatch/ListDir/ReadSubtree share that same port). NotebookEdit docker, Memory in container, file-history docker, `ignored` dismiss-on-message, LSP museum, and web UI stay OUT. `ignored` leftover-ask result landed at `22a55c1` ([`2026-09-21-ignored-dismiss.md`](2026-09-21-ignored-dismiss.md); dismiss-on-message stays parked). Bounded LSP depth landed at `6c797d1` ([`2026-09-21-lsp-depth.md`](2026-09-21-lsp-depth.md); handshake museum stays OUT).
 
 ### E2.2 Read-before-write + stale hash
 
