@@ -547,6 +547,55 @@ describe('createAcpServer', () => {
     }
   })
 
+  test('editor Skip option settles askUser as ignored', async () => {
+    const requests: JsonRpcRequest[] = []
+    let decided: string | undefined
+    const server = createAcpServer({
+      engineFactory: (_sessionId, opts) => ({
+        async *submitMessage() {
+          decided = await opts?.requestPermission?.({
+            id: 'call_skip',
+            tool: 'Bash',
+            input: { command: 'ls' },
+            message: 'run ls',
+          })
+          return { reason: 'completed' }
+        },
+        abort() {},
+      }),
+      request: async (req) => {
+        requests.push(req)
+        return { outcome: { outcome: 'selected', optionId: 'ignored' } }
+      },
+    })
+    const sessionId = resultOf(
+      await server.handle({
+        jsonrpc: '2.0',
+        id: 1,
+        method: ACP_METHODS.sessionNew,
+        params: { cwd: '/tmp' },
+      }),
+    ).sessionId
+    await server.handle({
+      jsonrpc: '2.0',
+      id: 2,
+      method: ACP_METHODS.sessionPrompt,
+      params: { sessionId, prompt: 'ls' },
+    })
+    expect(requests).toHaveLength(1)
+    expect(requests[0]?.params).toMatchObject({
+      sessionId,
+      title: 'Allow Bash?',
+      options: PERMISSION_OPTIONS,
+    })
+    expect(
+      (requests[0]?.params as { options: Array<{ optionId: string }> }).options.some(
+        (option) => option.optionId === 'ignored',
+      ),
+    ).toBe(true)
+    expect(decided).toBe('ignored')
+  })
+
   test('permission_ask stream event also emits session/request_permission', async () => {
     const requests: JsonRpcRequest[] = []
     const server = createAcpServer({
@@ -712,6 +761,7 @@ describe('createAcpServer', () => {
     })
     const options = (requests[0]?.params as { options?: Array<{ optionId: string }> }).options
     expect(options?.some((option) => option.optionId === 'allow_always')).toBe(false)
+    expect(options?.some((option) => option.optionId === 'ignored')).toBe(true)
     expect(decided).toBe('allow')
   })
 
