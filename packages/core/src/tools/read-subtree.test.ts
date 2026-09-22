@@ -197,7 +197,11 @@ describe('ReadSubtree docker backend', () => {
         return { stdout: 'EXISTS dir 0 1\n', stderr: '', exitCode: 0 }
       }
       cats += 1
-      return { stdout: 'export function fromContainer() {}\n', stderr: '', exitCode: 0 }
+      return {
+        stdout: Buffer.from('export function fromContainer() {}\n', 'utf8').toString('base64'),
+        stderr: '',
+        exitCode: 0,
+      }
     })
     const out = await createReadSubtreeTool(backend).execute({ path: '.' }, makeCtx(root))
     expect(cats).toBe(2)
@@ -225,7 +229,11 @@ describe('ReadSubtree docker backend', () => {
         return { stdout: 'EXISTS dir 0 1\n', stderr: '', exitCode: 0 }
       }
       cats += 1
-      return { stdout: 'export function fromContainer() {}\n', stderr: '', exitCode: 0 }
+      return {
+        stdout: Buffer.from('export function fromContainer() {}\n', 'utf8').toString('base64'),
+        stderr: '',
+        exitCode: 0,
+      }
     })
     const out = await createReadSubtreeTool(backend).execute({ path: '.' }, makeCtx(root))
     expect(cats).toBe(1)
@@ -265,6 +273,42 @@ describe('ReadSubtree docker backend', () => {
     const out = await createReadSubtreeTool(backend).execute({ path: '/etc' }, makeCtx(root))
     expect(calls).toHaveLength(0)
     expect(out).toMatch(/^ReadSubtree failed:/)
+  })
+
+  test('nested docker readdir fail after root stat is ReadSubtree failed:', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'a.ts'), 'export function alpha() {}\n')
+    const backend = fakeDocker(async (req) => {
+      const script = String(req.args.at(-1))
+      if (script.includes('EXISTS') || script.includes('kind=dir')) {
+        return { stdout: 'EXISTS dir 0 1\n', stderr: '', exitCode: 0 }
+      }
+      return { stdout: '', stderr: 'Cannot connect to the Docker daemon', exitCode: 1 }
+    })
+    const out = await createReadSubtreeTool(backend).execute({}, makeCtx(root))
+    expect(out).toMatch(/^ReadSubtree failed:/)
+    expect(out).toMatch(/Docker daemon/)
+  })
+
+  test('nested docker readFile fail after listing is ReadSubtree failed:', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'a.ts'), 'export function alpha() {}\n')
+    const backend = fakeDocker(async (req) => {
+      const script = String(req.args.at(-1))
+      if (script.includes('find') || script.startsWith('if [ ! -d')) {
+        return { stdout: 'f a.ts\n', stderr: '', exitCode: 0 }
+      }
+      if (script.includes('EXISTS') || script.includes('kind=dir')) {
+        if (script.includes('a.ts')) {
+          return { stdout: 'EXISTS file 24 1\n', stderr: '', exitCode: 0 }
+        }
+        return { stdout: 'EXISTS dir 0 1\n', stderr: '', exitCode: 0 }
+      }
+      return { stdout: '', stderr: 'Cannot connect to the Docker daemon', exitCode: 1 }
+    })
+    const out = await createReadSubtreeTool(backend).execute({ path: '.' }, makeCtx(root))
+    expect(out).toMatch(/^ReadSubtree failed:/)
+    expect(out).toMatch(/Docker daemon/)
   })
 })
 

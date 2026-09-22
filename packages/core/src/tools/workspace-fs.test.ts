@@ -42,6 +42,16 @@ function fakeDocker(runCommand: (req: TerminalRunRequest) => Promise<{
   return createDockerTerminalBackend({ image: 'bash:5', runCommand })
 }
 
+function liveDockerFileStdout(req: TerminalRunRequest, fileContent: string, cwd: string): string {
+  const script = String(req.args.at(-1) ?? '')
+  const match = /printf "%s\\n" "(__RAVENCLAW_CWD_[^"]+)"/.exec(script)
+  if (!match?.[1]) throw new Error('expected cwd marker in docker script')
+  const payload = script.includes('base64')
+    ? `${Buffer.from(fileContent, 'utf8').toString('base64')}\n`
+    : fileContent
+  return `${payload}${match[1]}\n${cwd}\n`
+}
+
 describe('createWorkspaceFs', () => {
   test('rejects path outside cwd without exec', async () => {
     const cwd = fixtureRoot()
@@ -143,7 +153,7 @@ describe('createWorkspaceFs docker exec', () => {
     const calls: TerminalRunRequest[] = []
     const exec = fakeDocker(async (req) => {
       calls.push(req)
-      return { stdout: 'FROM_CONTAINER', stderr: '', exitCode: 0 }
+      return { stdout: Buffer.from('FROM_CONTAINER', 'utf8').toString('base64'), stderr: '', exitCode: 0 }
     })
     const fs = createWorkspaceFs({
       cwd,
@@ -222,5 +232,55 @@ describe('createWorkspaceFs docker exec', () => {
     const exec = fakeDocker(async () => ({ stdout: 'nope', stderr: '', exitCode: 0 }))
     const fs = createWorkspaceFs({ cwd, exec, signal: ac.signal })
     await expect(fs.readFile(join(cwd, 'a.txt'))).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  test('docker readFile round-trips utf8 through cwd marker with and without trailing newline', async () => {
+    for (const content of ['hello\n', 'hello'] as const) {
+      const cwd = fixtureRoot()
+      writeFileSync(join(cwd, 'a.txt'), 'HOST_ONLY_TOKEN')
+      const exec = fakeDocker(async (req) => ({
+        stdout: liveDockerFileStdout(req, content, cwd),
+        stderr: '',
+        exitCode: 0,
+      }))
+      const fs = createWorkspaceFs({ cwd, exec, signal: new AbortController().signal })
+      expect(await fs.readFile(join(cwd, 'a.txt'))).toBe(content)
+    }
+  })
+
+  test('docker readdir throws on non-empty stdout with no d/f lines', async () => {
+    const cwd = fixtureRoot()
+    const exec = fakeDocker(async () => ({
+      stdout: 'garbage listing\ntruncated',
+      stderr: '',
+      exitCode: 0,
+    }))
+    const fs = createWorkspaceFs({ cwd, exec, signal: new AbortController().signal })
+    await expect(fs.readdir(cwd)).rejects.toThrow(/failed to parse readdir/)
+  })
+
+  test('docker readdir throws on empty stdout with stderr', async () => {
+    const cwd = fixtureRoot()
+    const exec = fakeDocker(async () => ({
+      stdout: '',
+      stderr: 'find: Permission denied',
+      exitCode: 0,
+    }))
+    const fs = createWorkspaceFs({ cwd, exec, signal: new AbortController().signal })
+    await expect(fs.readdir(cwd)).rejects.toThrow(/Permission denied/)
+  })
+
+  test('docker readdir script does not hide find stderr', async () => {
+    const cwd = fixtureRoot()
+    const calls: TerminalRunRequest[] = []
+    const exec = fakeDocker(async (req) => {
+      calls.push(req)
+      return { stdout: '', stderr: '', exitCode: 0 }
+    })
+    const fs = createWorkspaceFs({ cwd, exec, signal: new AbortController().signal })
+    expect(await fs.readdir(cwd)).toEqual([])
+    const script = String(calls[0]?.args.at(-1))
+    expect(script).toContain('find')
+    expect(script).not.toMatch(/find[^\n]*2>\/dev\/null/)
   })
 })

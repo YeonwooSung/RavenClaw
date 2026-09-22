@@ -12,7 +12,6 @@ import { resolveExisting } from '../permissions/modes'
 import {
   buildMkdirScript,
   buildReadFileBufferScript,
-  buildReadFileScript,
   buildReaddirScript,
   buildStatScript,
   buildUnlinkScript,
@@ -147,15 +146,16 @@ function dockerWorkspaceFs(
     return result
   }
 
+  async function readFileBuffer(path: string): Promise<Buffer> {
+    const result = await runChecked(buildReadFileBufferScript(jailed(path)))
+    return decodeBase64(result.stdout)
+  }
+
   return {
     async readFile(path) {
-      const result = await runChecked(buildReadFileScript(jailed(path)))
-      return result.stdout
+      return (await readFileBuffer(path)).toString('utf8')
     },
-    async readFileBuffer(path) {
-      const result = await runChecked(buildReadFileBufferScript(jailed(path)))
-      return decodeBase64(result.stdout)
-    },
+    readFileBuffer,
     async writeFile(path, content) {
       await runChecked(buildWriteFileScript(jailed(path)), content)
     },
@@ -172,6 +172,7 @@ function dockerWorkspaceFs(
     },
     async readdir(path) {
       const result = await runChecked(buildReaddirScript(jailed(path)))
+      if (result.stdout.trim() === '' && result.stderr.trim() !== '') throw failClosed(result)
       return parseReaddir(result.stdout)
     },
     realpath(path) {
@@ -217,6 +218,9 @@ function parseReaddir(stdout: string): Array<{ name: string; isFile: boolean; is
     if (!raw) continue
     if (raw.startsWith('d ')) out.push({ name: raw.slice(2), isFile: false, isDir: true })
     else if (raw.startsWith('f ')) out.push({ name: raw.slice(2), isFile: true, isDir: false })
+  }
+  if (out.length === 0 && stdout.trim().length > 0) {
+    throw new Error('failed to parse readdir')
   }
   return out
 }

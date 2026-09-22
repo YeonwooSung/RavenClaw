@@ -204,4 +204,28 @@ describe('ListDir docker backend', () => {
     expect(calls).toHaveLength(0)
     expect(out).toMatch(/^ListDir failed:/)
   })
+
+  test('garbage readdir stdout is ListDir failed:', async () => {
+    const root = fixtureRoot()
+    const backend = fakeDocker(async () => ({
+      stdout: 'not-a-listing\ntruncated junk',
+      stderr: '',
+      exitCode: 0,
+    }))
+    const out = await createListDirTool(backend).execute({}, makeCtx(root))
+    expect(out).toMatch(/^ListDir failed:/)
+    expect(out).toMatch(/failed to parse readdir/)
+  })
+
+  test('empty readdir stdout with find stderr is ListDir failed:', async () => {
+    const root = fixtureRoot()
+    const backend = fakeDocker(async () => ({
+      stdout: '',
+      stderr: 'find: Permission denied',
+      exitCode: 0,
+    }))
+    const out = await createListDirTool(backend).execute({}, makeCtx(root))
+    expect(out).toMatch(/^ListDir failed:/)
+    expect(out).toMatch(/Permission denied/)
+  })
 })

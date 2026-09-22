@@ -460,7 +460,7 @@ describe('Edit docker backend', () => {
         order.push('write')
         return { stdout: '', stderr: '', exitCode: 0 }
       }
-      return { stdout: 'UNIQUE_OLD_STRING', stderr: '', exitCode: 0 }
+      return { stdout: Buffer.from('UNIQUE_OLD_STRING', 'utf8').toString('base64'), stderr: '', exitCode: 0 }
     })
     const ctx = makeCtx(root, undefined, history)
     ctx.turn.readFiles.add(resolvedOf(root, 'note.txt'))
@@ -508,7 +508,7 @@ describe('Edit docker backend', () => {
       if (script.includes('tee') || req.stdin !== undefined) {
         return { stdout: '', stderr: 'Cannot connect to the Docker daemon', exitCode: 1 }
       }
-      return { stdout: 'UNIQUE_OLD_STRING', stderr: '', exitCode: 0 }
+      return { stdout: Buffer.from('UNIQUE_OLD_STRING', 'utf8').toString('base64'), stderr: '', exitCode: 0 }
     })
     const ctx = makeCtx(root)
     ctx.turn.readFiles.add(resolvedOf(root, 'note.txt'))

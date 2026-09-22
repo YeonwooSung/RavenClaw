@@ -496,7 +496,7 @@ async function runSandboxFs(spec: EvalCase): Promise<void> {
         if (script.includes('tee') || script.includes('mkdir')) {
           return { stdout: '', stderr: 'Cannot connect to the Docker daemon', exitCode: 1 }
         }
-        return { stdout: 'FAKE_DOCKER_READ\n', stderr: '', exitCode: 0 }
+        return { stdout: Buffer.from('FAKE_DOCKER_READ\n', 'utf8').toString('base64'), stderr: '', exitCode: 0 }
       },
     })
     const store = createMemoryStore()

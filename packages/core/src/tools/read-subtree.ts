@@ -63,56 +63,63 @@ export function createReadSubtreeTool(backend?: TerminalBackend): Tool<ReadSubtr
         exec: backend,
         signal: ctx.signal,
       })
+      const failClosed = backend?.kind === 'docker'
       try {
         const rootStat = await fs.stat(searchRoot)
         if (!rootStat.exists) return `ReadSubtree failed: file not found`
+
+        const limit = Math.min(input.maxFiles ?? DEFAULT_MAX_FILES, MAX_FILES_CAP)
+        const files = (await walkWorkspace(fs, searchRoot, cwd, failClosed))
+          .slice()
+          .sort((a, b) => a.relToCwd.localeCompare(b.relToCwd))
+          .slice(0, limit)
+
+        const blocks: string[] = []
+        for (const file of files) {
+          const rel = file.relToCwd
+          const header = `${rel}  ${file.size}b`
+          if (file.size >= TEXT_BYTE_CAP) {
+            blocks.push(header)
+            continue
+          }
+          let text: string
+          try {
+            text = await fs.readFile(file.absPath)
+          } catch (error) {
+            if (error instanceof Error && error.name === 'AbortError') throw error
+            if (failClosed) throw error
+            blocks.push(header)
+            continue
+          }
+          if (text.slice(0, BINARY_SCAN).includes('\0')) {
+            blocks.push(header)
+            continue
+          }
+          const symbols = extractSymbols(text)
+          if (symbols.length === 0) {
+            blocks.push(header)
+            continue
+          }
+          blocks.push([header, ...symbols.map((sym) => `    ${sym}`)].join('\n'))
+        }
+        return blocks.join('\n')
       } catch (error) {
         if (error instanceof Error && error.name === 'AbortError') throw error
         const message = error instanceof Error ? error.message : String(error)
         return `ReadSubtree failed: ${message}`
       }
-
-      const limit = Math.min(input.maxFiles ?? DEFAULT_MAX_FILES, MAX_FILES_CAP)
-      const files = (await walkWorkspace(fs, searchRoot, cwd))
-        .slice()
-        .sort((a, b) => a.relToCwd.localeCompare(b.relToCwd))
-        .slice(0, limit)
-
-      const blocks: string[] = []
-      for (const file of files) {
-        const rel = file.relToCwd
-        const header = `${rel}  ${file.size}b`
-        if (file.size >= TEXT_BYTE_CAP) {
-          blocks.push(header)
-          continue
-        }
-        let text: string
-        try {
-          text = await fs.readFile(file.absPath)
-        } catch (error) {
-          if (error instanceof Error && error.name === 'AbortError') throw error
-          blocks.push(header)
-          continue
-        }
-        if (text.slice(0, BINARY_SCAN).includes('\0')) {
-          blocks.push(header)
-          continue
-        }
-        const symbols = extractSymbols(text)
-        if (symbols.length === 0) {
-          blocks.push(header)
-          continue
-        }
-        blocks.push([header, ...symbols.map((sym) => `    ${sym}`)].join('\n'))
-      }
-      return blocks.join('\n')
     },
   }
 }
 
 export const readSubtreeTool: Tool<ReadSubtreeInput, string> = createReadSubtreeTool()
 
-async function walkWorkspace(fs: WorkspaceFs, searchRoot: string, cwd: string): Promise<WalkFile[]> {
+async function walkWorkspace(
+  fs: WorkspaceFs,
+  searchRoot: string,
+  cwd: string,
+  failClosed: boolean,
+): Promise<WalkFile[]> {
   const out: WalkFile[] = []
   const rootStat = await fs.stat(searchRoot)
   if (!rootStat.exists) return out
@@ -138,6 +145,7 @@ async function walkWorkspace(fs: WorkspaceFs, searchRoot: string, cwd: string): 
       entries = await fs.readdir(dir)
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') throw error
+      if (failClosed) throw error
       return
     }
     for (const ent of entries) {
@@ -156,6 +164,7 @@ async function walkWorkspace(fs: WorkspaceFs, searchRoot: string, cwd: string): 
         size = st.size
       } catch (error) {
         if (error instanceof Error && error.name === 'AbortError') throw error
+        if (failClosed) throw error
         continue
       }
       out.push({

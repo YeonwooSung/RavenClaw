@@ -181,7 +181,7 @@ describe('Read docker backend', () => {
       if (String(req.args.at(-1)).includes('kind=dir') || String(req.args.at(-1)).includes('EXISTS')) {
         return { stdout: 'EXISTS file 21 1\n', stderr: '', exitCode: 0 }
       }
-      return { stdout: 'FROM_CONTAINER\n', stderr: '', exitCode: 0 }
+      return { stdout: Buffer.from('FROM_CONTAINER\n', 'utf8').toString('base64'), stderr: '', exitCode: 0 }
     })
     const out = await createReadTool(backend).execute({ path: 'a.txt' }, makeCtx(root))
     expect(out).toContain('FROM_CONTAINER')
@@ -205,8 +205,8 @@ describe('Read docker backend', () => {
         if (script.includes(FS_MISSING) || script.includes('EXISTS') || script.includes('kind=dir')) {
           return { stdout: 'EXISTS file 3 1\n', stderr: '', exitCode: 0 }
         }
-        if (script.includes('base64')) return { stdout: fakeB64, stderr: '', exitCode: 0 }
-        return { stdout, stderr: '', exitCode: 0 }
+        if (script.includes('pic.png')) return { stdout: fakeB64, stderr: '', exitCode: 0 }
+        return { stdout: Buffer.from(stdout, 'utf8').toString('base64'), stderr: '', exitCode: 0 }
       })
 
     const nulOut = await createReadTool(backendFor('no-nul-text')).execute(

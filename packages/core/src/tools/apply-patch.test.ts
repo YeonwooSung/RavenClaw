@@ -469,7 +469,7 @@ describe('ApplyPatch docker backend', () => {
       const script = String(req.args.at(-1))
       if (script.includes('rm -f')) return { stdout: '', stderr: '', exitCode: 0 }
       if (script.includes('tee')) return { stdout: '', stderr: '', exitCode: 0 }
-      return { stdout: 'bye\n', stderr: '', exitCode: 0 }
+      return { stdout: Buffer.from('bye\n', 'utf8').toString('base64'), stderr: '', exitCode: 0 }
     })
     const ctx = makeCtx(root)
     ctx.turn.readFiles.add(resolvedOf(root, 'gone.txt'))

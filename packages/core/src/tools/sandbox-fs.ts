@@ -7,10 +7,6 @@ export function shQuote(value: string): string {
   return `'${value.replace(/'/g, `'\\''`)}'`
 }
 
-export function buildReadFileScript(path: string): string {
-  return `cat -- ${shQuote(path)}`
-}
-
 export function buildReadFileBufferScript(path: string): string {
   return `base64 ${shQuote(path)}`
 }
@@ -49,7 +45,7 @@ printf 'EXISTS %s %s %s\\n' "$kind" "$size" "$mtime"
 export function buildReaddirScript(path: string): string {
   const p = shQuote(path)
   return `if [ ! -d ${p} ]; then exit 1; fi
-find ${p} -maxdepth 1 -mindepth 1 2>/dev/null | while IFS= read -r ent; do
+find ${p} -maxdepth 1 -mindepth 1 | while IFS= read -r ent; do
   name=$(basename "$ent")
   if [ -d "$ent" ]; then printf 'd %s\\n' "$name"
   elif [ -f "$ent" ]; then printf 'f %s\\n' "$name"
