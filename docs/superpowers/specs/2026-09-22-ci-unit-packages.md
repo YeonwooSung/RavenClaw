@@ -56,7 +56,7 @@ At `061d23c`:
 - Default-on live smoke (`raven smoke`, env-gated provider live tests must keep `test.skipIf`)
 - Eval fixtures, schema bump, version bump
 - Slack/ACP skip UI, Memory docker, file-history docker undo (sibling unmerged branches)
-- Changing no-key CLI smoke steps in `ci.yml`
+- Rewriting no-key CLI smoke in `ci.yml` (doctor stays; `|| true` is replaced by an exit-1 assertion)
 
 ---
 
@@ -82,7 +82,7 @@ These lock underspecification. The implementation plan may only add detail, not 
    - no line matches `/^\s*bun test\s*$/`
    Do not spawn `bash scripts/ci-unit.sh` from that test (it would re-run core+cli). Env-gated live provider tests stay skipped in CI; do not unskip them.
 
-4. **Workflows stay one job.** Push CI still: bun 1.1.29, `bun install`, `bash scripts/ci-unit.sh`, no-key CLI. Nightly unit still calls the same script. Live-smoke job stays `workflow_dispatch` + secret.
+4. **Workflows stay one job.** Push CI still: bun 1.1.29, `bun install`, `bash scripts/ci-unit.sh`, no-key CLI. No-key `raven doctor` asserts exit 1 (`code=0; doctor || code=$?; test "$code" -eq 1`) and must not use `|| true`. Nightly unit still calls the same script. Live-smoke job stays `workflow_dispatch` + secret.
 
 5. **Docs honesty.** CONTRIBUTING Tests section says CI (`scripts/ci-unit.sh`) runs every workspace package and never bare `bun test`. remaining-roadmap R4.1 nightly sentence is amended: unit job uses `scripts/ci-unit.sh` covering all workspace packages (this spec), never full-repo `bun test`. CHANGELOG Unreleased Added bullet. eve-analysis en/ko closer pointer. This spec Status → implemented after code. Do not claim the Docker hang is fixed. Do not claim `npm test` / `bun test` at repo root is safe.
 

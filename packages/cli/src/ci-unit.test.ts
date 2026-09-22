@@ -29,6 +29,16 @@ describe('ci-unit.sh', () => {
     ])
   })
 
+  test('no-key CLI asserts doctor exits 1 instead of swallowing it', () => {
+    const yml = readFileSync(
+      join(import.meta.dir, '../../..', '.github/workflows/ci.yml'),
+      'utf8',
+    )
+    expect(yml).not.toMatch(/doctor \|\| true/)
+    expect(yml).toContain('bun packages/cli/src/index.ts doctor')
+    expect(yml).toContain('test "$code" -eq 1')
+  })
+
   test('CONTRIBUTING names ci-unit.sh for every workspace package', () => {
     const contributing = readFileSync(
       join(import.meta.dir, '../../..', 'CONTRIBUTING.md'),
