@@ -1,7 +1,7 @@
 # RavenClaw next-horizon roadmap (Memory docker I/O)
 
 Date: 2026-09-22  
-Status: draft  
+Status: implemented  
 Shipped sha:  
 Reviewed against tree at `061d23c` (`origin/main`, WorkspaceFs docker + NotebookEdit docker + dismiss-on-message landed).  
 Successor to `2026-09-21-workspacefs-docker.md` and `2026-09-21-notebookedit-docker.md` (Status: implemented). Amends prior OUT for **Memory docker I/O** only. Does not reopen file-history docker, TodoWrite/Skill docker, Slack/ACP skip UI, sandbox network policy, session-long containers, or the LSP museum.
@@ -100,14 +100,14 @@ A docker session writes `.ravenclaw/MEMORY.md` / `USER.md` in the same container
 
 ## Per-slice board
 
-Board as of this spec (draft). Implement in the isolated worktree.
+Board as of this worktree (`docs/memory-docker`). M0–M3 done.
 
 | ID | Status vs tree |
 |---|---|
-| M0 Factory + path + local singleton | **missing** |
-| M1 Docker in-tree I/O + outside-cwd fail-close | **missing** |
-| M2 CLI/SDK wiring + tests | **missing** |
-| M3 Docs honesty | **missing** |
+| M0 Factory + path + local singleton | **done** |
+| M1 Docker in-tree I/O + outside-cwd fail-close | **done** |
+| M2 CLI/SDK wiring + tests | **done** |
+| M3 Docs honesty | **done** |
 
 ---
 

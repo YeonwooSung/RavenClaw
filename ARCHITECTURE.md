@@ -126,7 +126,7 @@ Entry is `packages/cli/src/index.ts`. When `import.meta.main`, `main()` runs and
    - Creates or reuses a `SessionRecord`.
    - `acquireSessionLock(session.id, { holderId, holderName })` unless `skipLock`.
    - `buildSystemParts({ cwd, permissionMode, bare, effort })`.
-   - Builds one `TerminalBackend` (`local|docker`) and passes that same object to `createBashTool`, Grep/Glob (`createGrepTool` / `createGlobTool` via `createSessionTools`), the six file-tool factories (`createReadTool` / `createWriteTool` / `createEditTool` / `createApplyPatchTool` / `createListDirTool` / `createReadSubtreeTool`), and NotebookEdit (`createNotebookEditTool` via `createRootTools`). Docker kind needs an image; without image, search stays host `rg`/walk, file tools stay the host WorkspaceFs jail, and NotebookEdit stays host I/O after the cwd jail.
+   - Builds one `TerminalBackend` (`local|docker`) and passes that same object to `createBashTool`, Grep/Glob (`createGrepTool` / `createGlobTool` via `createSessionTools`), the six file-tool factories (`createReadTool` / `createWriteTool` / `createEditTool` / `createApplyPatchTool` / `createListDirTool` / `createReadSubtreeTool`), NotebookEdit (`createNotebookEditTool` via `createRootTools`), and Memory (`createMemoryTool` via `createRootTools`). Docker kind needs an image; without image, search stays host `rg`/walk, file tools stay the host WorkspaceFs jail, NotebookEdit stays host I/O after the cwd jail, and Memory stays host `node:fs`. When kind+image **and** the memory file is inside `turn.cwd`, Memory bytes exec in that container; `projectCwd` outside `cwd` on docker is `Memory failed: outside workspace`.
    - Loads MCP (`loadConfiguredMcpTools`) — a failed spawn is skipped, not fatal.
    - Merges local plugins (`loadLocalPlugins`) when the host did not pass an explicit tool list.
    - Loads file hooks unless `--bare`.
@@ -506,7 +506,7 @@ Registry: `createToolRegistry` (`packages/core/src/tools/registry.ts`) — last 
 | `TaskOutput` / `TaskStop` / `TaskSteer` | yes | yes (CLI; SDK omits Steer) | Steer is Agent-only |
 | `AskUser` | yes | yes | Headless default deny |
 | `SessionSearch` | yes | yes | FTS5 |
-| `Memory` | yes | yes | USER.md / MEMORY.md |
+| `Memory` | yes | yes | Leftover-ask; SDK includes Memory. Docker kind + in-tree path: WorkspaceFs exec (`stat`/`readFile`, `mkdir`, `writeFile` tee+stdin); fail-closed (`Memory failed:`; no host write). Job isolation on docker: exactly `Memory failed: outside workspace`, zero exec. Omit/local/image-less: host `node:fs` including the `projectCwd` sidecar. Abort → `AbortError` / `ABORTED_TEXT`. No `fileHistory.snapshot`. TodoWrite / Skill / file-history stay host. |
 | `SetOutput` | yes | yes | Child structured result |
 | `AddDir` | yes | yes (CLI) | Not in SDK |
 | `ToolSearch` / `ToolCall` | yes | when anything is deferred | Frozen prefix; Call targets must be off-prefix |

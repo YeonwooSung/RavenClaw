@@ -123,7 +123,7 @@ flowchart TD
 - `$RAVENCLAW_HOME/state.db`에 SQLite WAL 스토어를 연다.
 - included gateway를 probe한다. `--provider`가 있으면 BYOK를 선호한다. headless 표면에서 gateway가 `placementRequired`를 주면 신규 세션은 BYOK로 남는다.
 - `createProvider`로 Provider를 만든다.
-- `createSession !== false`이면 `openEngine`이 세션, 락, 시스템 파트, 툴 풀, MCP, 훅, `SessionEngine`을 만든다. `TerminalBackend`는 한 번만 만들고 Bash, Grep/Glob, 그리고 여섯 파일 툴 팩토리(`createReadTool` / `createWriteTool` / `createEditTool` / `createApplyPatchTool` / `createListDirTool` / `createReadSubtreeTool`)에 같은 객체를 넘긴다.
+- `createSession !== false`이면 `openEngine`이 세션, 락, 시스템 파트, 툴 풀, MCP, 훅, `SessionEngine`을 만든다. `TerminalBackend`는 한 번만 만들고 Bash, Grep/Glob, 여섯 파일 툴 팩토리(`createReadTool` / `createWriteTool` / `createEditTool` / `createApplyPatchTool` / `createListDirTool` / `createReadSubtreeTool`), NotebookEdit, Memory (`createMemoryTool`)에 같은 객체를 넘긴다.
 
 기본 대화형 경로는 `lockHolder: 'tui'`로 Ink `App`을 render한다. `--tui opentui`면 `runOpenTuiApp`이다.
 
@@ -407,7 +407,7 @@ CLI `createRootTools` (`packages/cli/src/engine.ts`)가 실제로 조립하는 �
 | `SetOutput` | 자식 structured 출력 |
 | `AddDir` | 세션 permission root 추가 |
 | `SessionSearch` | FTS5 |
-| `Memory` | `USER.md` / `MEMORY.md` 읽기·쓰기 |
+| `Memory` | leftover-ask. SDK에 있다. docker(+image)이고 파일이 `turn.cwd` 안이면 WorkspaceFs exec (`stat`/`readFile`, `mkdir`, `tee`+stdin); 실패는 `Memory failed:`(호스트 `writeFileSync` 없음). `projectCwd`가 cwd 밖인 docker는 `Memory failed: outside workspace`, exec 없음. omit/local/이미지 없는 docker는 호스트 `node:fs`(`projectCwd` 사이드카 포함). 턴 abort는 `AbortError` / `ABORTED_TEXT`. FileHistory snapshot 없음 |
 | `LSP` | hover/definition/references/implementation/typeDefinition/diagnostic. `.ravenclaw/lsp.json`이 있을 때만 `isEnabled` |
 | `EnterWorktree` `ExitWorktree` | 세션 git worktree. cwd는 persist. dirty worktree는 **report-only**. `remove`는 dirty면 `discard_changes` 없이는 실패하고, 강제 삭제하지 않는다 |
 | `CronCreate` `CronList` `CronDelete` `CronSetEnabled` | 루트만. 자식에게는 nesting deny |
@@ -713,7 +713,7 @@ fire는 새 `dontAsk` 세션을 연다. `lockHolder`는 `cron`이다. surface는
 | `<cwd>/.ravenclaw/` | 프로젝트 스킬, 에이전트, 플러그인, hooks, permissions, `plan.md`, `tasks.json`, `lsp.json`, `MEMORY.md`/`USER.md`, worktrees |
 | `<cwd>/AGENTS.md` 등 | 프로젝트 지시. `raven init`이 없으면 작성 |
 
-이 프로세스는 사용자와 같은 OS 유저다. 네트워크 샌드박스는 없다. Docker terminal backend(kind+image)는 허용된 Bash, Grep/Glob, Read/Write/Edit/ApplyPatch/ListDir/ReadSubtree, NotebookEdit가 어디서 도는지 바꿀 뿐, 권한 결정을 바꾸지 않는다. omit/local/이미지 없는 docker는 Grep/Glob가 호스트 `rg`/walk, 파일 툴은 호스트 WorkspaceFs jail, NotebookEdit는 호스트 I/O(jail 후). Memory·file-history writer는 호스트다. `dontAsk` 대체가 아니다.
+이 프로세스는 사용자와 같은 OS 유저다. 네트워크 샌드박스는 없다. Docker terminal backend(kind+image)는 허용된 Bash, Grep/Glob, Read/Write/Edit/ApplyPatch/ListDir/ReadSubtree, NotebookEdit, in-tree Memory가 어디서 도는지 바꿀 뿐, 권한 결정을 바꾸지 않는다. omit/local/이미지 없는 docker는 Grep/Glob가 호스트 `rg`/walk, 파일 툴은 호스트 WorkspaceFs jail, NotebookEdit는 호스트 I/O(jail 후), Memory는 호스트 `node:fs`. docker에서 `projectCwd`가 cwd 밖이면 Memory는 `Memory failed: outside workspace`. TodoWrite·Skill·file-history writer는 호스트다. `dontAsk` 대체가 아니다.
 
 ---
 
@@ -729,7 +729,7 @@ fire는 새 `dontAsk` 세션을 연다. `lockHolder`는 `cron`이다. surface는
 - **스킬** — agentskills.io frontmatter. builtin 8개를 키친싱크로 키우지 않는다.
 - **훅** — `hooks.json` 라이프사이클 / `pre_tool`.
 - **권한 규칙** — session / user / project JSON.
-- **terminal backend** — `local` | `docker`. Bash, Grep/Glob, Read/Write/Edit/ApplyPatch/ListDir/ReadSubtree, NotebookEdit가 같은 객체를 쓴다. `dontAsk` 대체가 아니다.
+- **terminal backend** — `local` | `docker`. Bash, Grep/Glob, 파일 툴, NotebookEdit, in-tree Memory가 같은 객체를 쓴다. docker에서 `projectCwd`가 cwd 밖이면 Memory는 `Memory failed: outside workspace`. TodoWrite·Skill·file-history writer는 호스트다. `dontAsk` 대체가 아니다.
 - **TUI 표면** — Ink 또는 OpenTUI. 루프는 공유.
 - **SDK** — `createRavenSession`.
 - **chat host** — Slack/Discord처럼 `createChatSessionHost` + admit 함수.

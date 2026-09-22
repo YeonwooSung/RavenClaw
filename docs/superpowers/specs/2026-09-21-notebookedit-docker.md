@@ -171,7 +171,7 @@ Do not touch: `workspace-fs.ts`, `read.ts`, `write.ts`, `edit.ts`, `apply-patch.
 
 ## Out of this closeout
 
-WorkspaceFs docker I/O, Memory in container, file-history docker, SDK NotebookEdit, `acceptEdits` promotion, session-long container, dismiss-on-message, web UI, Prisma Task, Socket.IO, wiki, schema bump.
+WorkspaceFs docker I/O, Memory docker I/O ([`2026-09-22-memory-docker.md`](2026-09-22-memory-docker.md)), file-history docker, SDK NotebookEdit, `acceptEdits` promotion, session-long container, dismiss-on-message, web UI, Prisma Task, Socket.IO, wiki, schema bump.
 
 ---
 
