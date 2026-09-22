@@ -18,7 +18,7 @@ export interface FileHistory {
   beginTurn(): void
   endTurn(): void
   snapshot(absPath: string): void
-  undo(): UndoResult
+  undo(): Promise<UndoResult>
   pendingCount(): number
   peekLast?(): { open: boolean } | undefined
   /** Snapshots recorded on the current (this-turn) generation. */
@@ -66,7 +66,7 @@ export function createFileHistory(sessionId: string, home = ravenclawHome()): Fi
       current.rows.push({ path: absPath, existed: true, backupPath })
     },
 
-    undo() {
+    async undo() {
       const idx = lastUndoableIndex(generations)
       if (idx < 0) {
         const blocked = generations.some((gen) => gen.open && gen.rows.length > 0)

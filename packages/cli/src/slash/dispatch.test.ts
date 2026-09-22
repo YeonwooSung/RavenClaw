@@ -192,6 +192,22 @@ function jobAt(cwd: string): SessionJob {
 }
 
 describe('dispatchSharedSlash', () => {
+  test('/undo awaits fileHistory.undo and prints the notice', async () => {
+    const session = makeSession()
+    const engine = fakeEngine(session)
+    let resolved = false
+    engine.fileHistory.undo = async () => {
+      await Promise.resolve()
+      resolved = true
+      return { restored: ['a.txt'], removed: [] }
+    }
+    const host = fakeHost(fakeRuntime(engine))
+    const result = await dispatchSharedSlash(cmd('undo'), host)
+    expect(result).toBe('handled')
+    expect(resolved).toBe(true)
+    expect(host.notices[0]).toBe('undo: restored 1')
+  })
+
   test('help is handled and prints the shared list', async () => {
     const host = fakeHost(fakeRuntime(fakeEngine(makeSession())))
     const result = await dispatchSharedSlash(cmd('help'), host)

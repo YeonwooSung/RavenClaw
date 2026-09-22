@@ -5,7 +5,24 @@ import { join } from 'node:path'
 import { createFileHistory, formatUndoNotice } from './file-history'
 
 describe('createFileHistory', () => {
-  test('undo restores the last turn and can remove a created file', () => {
+  test('undo returns a Promise and still restores the last turn', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'raven-fh-async-'))
+    const cwd = mkdtempSync(join(tmpdir(), 'raven-fh-async-cwd-'))
+    const existing = join(cwd, 'a.txt')
+    writeFileSync(existing, 'old\n')
+    const history = createFileHistory('sess_async', home)
+    history.beginTurn()
+    history.snapshot(existing)
+    writeFileSync(existing, 'new\n')
+    history.endTurn()
+    const pending = history.undo()
+    expect(pending).toBeInstanceOf(Promise)
+    const first = await pending
+    expect(first.restored).toEqual([existing])
+    expect(readFileSync(existing, 'utf8')).toBe('old\n')
+  })
+
+  test('undo restores the last turn and can remove a created file', async () => {
     const home = mkdtempSync(join(tmpdir(), 'raven-fh-'))
     const cwd = mkdtempSync(join(tmpdir(), 'raven-fh-cwd-'))
     const existing = join(cwd, 'a.txt')
@@ -19,7 +36,7 @@ describe('createFileHistory', () => {
     writeFileSync(created, 'fresh\n')
     history.endTurn()
 
-    const first = history.undo()
+    const first = await history.undo()
     expect(first.restored).toEqual([existing])
     expect(first.removed).toEqual([created])
     expect(readFileSync(existing, 'utf8')).toBe('old\n')
@@ -31,7 +48,7 @@ describe('createFileHistory', () => {
     )
   })
 
-  test('undo during an open turn does not pop the live generation', () => {
+  test('undo during an open turn does not pop the live generation', async () => {
     const home = mkdtempSync(join(tmpdir(), 'raven-fh-open-'))
     const cwd = mkdtempSync(join(tmpdir(), 'raven-fh-open-cwd-'))
     const prior = join(cwd, 'prior.txt')
@@ -49,19 +66,19 @@ describe('createFileHistory', () => {
     history.snapshot(live)
     writeFileSync(live, 'new-live\n')
 
-    const mid = history.undo()
+    const mid = await history.undo()
     expect(mid.blocked).toBeUndefined()
     expect(mid.restored).toEqual([prior])
     expect(readFileSync(prior, 'utf8')).toBe('old-prior\n')
     expect(readFileSync(live, 'utf8')).toBe('new-live\n')
 
-    const blocked = history.undo()
+    const blocked = await history.undo()
     expect(blocked.blocked).toBe(true)
     expect(blocked.restored).toEqual([])
     expect(readFileSync(live, 'utf8')).toBe('new-live\n')
 
     history.endTurn()
-    const after = history.undo()
+    const after = await history.undo()
     expect(after.restored).toEqual([live])
     expect(readFileSync(live, 'utf8')).toBe('old-live\n')
   })
@@ -78,7 +95,7 @@ describe('createFileHistory', () => {
     expect(history.peekLast()).toEqual({ open: false })
   })
 
-  test('failed restore keeps the generation for retry', () => {
+  test('failed restore keeps the generation for retry', async () => {
     const home = mkdtempSync(join(tmpdir(), 'raven-fh-fail-'))
     const cwd = mkdtempSync(join(tmpdir(), 'raven-fh-fail-cwd-'))
     const path = join(cwd, 'keep.txt')
@@ -90,17 +107,17 @@ describe('createFileHistory', () => {
     history.endTurn()
     const backup = join(home, 'file-history', 'sess_fail', '0001')
     unlinkSync(backup)
-    const failed = history.undo()
+    const failed = await history.undo()
     expect(failed.restored).toEqual([])
     expect(history.pendingCount()).toBe(1)
     expect(readFileSync(path, 'utf8')).toBe('new\n')
     writeFileSync(backup, 'old\n')
-    const retried = history.undo()
+    const retried = await history.undo()
     expect(retried.restored).toEqual([path])
     expect(readFileSync(path, 'utf8')).toBe('old\n')
   })
 
-  test('reset drops generations without touching files or backups', () => {
+  test('reset drops generations without touching files or backups', async () => {
     const home = mkdtempSync(join(tmpdir(), 'raven-fh-reset-'))
     const cwd = mkdtempSync(join(tmpdir(), 'raven-fh-reset-cwd-'))
     const path = join(cwd, 'keep.txt')
@@ -116,14 +133,14 @@ describe('createFileHistory', () => {
     history.reset()
     expect(history.peekLast()).toBeUndefined()
     expect(history.pendingCount()).toBe(0)
-    const undone = history.undo()
+    const undone = await history.undo()
     expect(undone).toEqual({ restored: [], removed: [] })
     expect(undone.blocked).toBeUndefined()
     expect(readFileSync(path, 'utf8')).toBe('new\n')
     expect(existsSync(backup)).toBe(true)
   })
 
-  test('reset drops an open generation and undo is not blocked', () => {
+  test('reset drops an open generation and undo is not blocked', async () => {
     const home = mkdtempSync(join(tmpdir(), 'raven-fh-reset-open-'))
     const cwd = mkdtempSync(join(tmpdir(), 'raven-fh-reset-open-cwd-'))
     const path = join(cwd, 'live.txt')
@@ -136,7 +153,7 @@ describe('createFileHistory', () => {
     history.reset()
     expect(history.peekLast()).toBeUndefined()
     expect(history.pendingCount()).toBe(0)
-    expect(history.undo()).toEqual({ restored: [], removed: [] })
+    expect(await history.undo()).toEqual({ restored: [], removed: [] })
     expect(readFileSync(path, 'utf8')).toBe('new\n')
   })
 })
