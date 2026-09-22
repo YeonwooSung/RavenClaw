@@ -1,9 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
+import { isInTreePath } from '../permissions/modes'
 import { MEMORY_FILE_CHAR_CAP } from '../prompt/memory'
 import type { Tool, ToolContext } from '../types'
 import { parseWithSchema } from './parse'
 import type { TerminalBackend } from './terminal-backend'
+import { createWorkspaceFs } from './workspace-fs'
 
 export type MemoryAction = 'add' | 'replace' | 'remove'
 export type MemoryTarget = 'agent' | 'user'
@@ -57,20 +59,22 @@ export function createMemoryTool(
       return { behavior: 'ask', message: `Update .ravenclaw/${file}?`, saveAs: 'session' }
     },
     async execute(input: MemoryInput, ctx: ToolContext) {
-      void backend
       if (ctx.signal.aborted) throw abortError()
       const root = ctx.turn.projectCwd ?? ctx.turn.cwd
       const path = memoryFilePath(root, input.target)
-      const existing = readExisting(path)
-      const next = nextBody(existing, input)
-      if (next.error !== undefined) return next.error
-      if (next.body.length > MEMORY_FILE_CHAR_CAP) {
-        return `Memory failed: file would exceed ${MEMORY_FILE_CHAR_CAP} characters; consolidate first`
+      if (isDockerMemory(backend) && !isInTreePath(ctx.turn.cwd, path)) {
+        return 'Memory failed: outside workspace'
       }
       try {
-        mkdirSync(dirname(path), { recursive: true })
-        writeFileSync(path, next.body, 'utf8')
+        const existing = await readMemoryBody(path, ctx, backend)
+        const next = nextBody(existing, input)
+        if (next.error !== undefined) return next.error
+        if (next.body.length > MEMORY_FILE_CHAR_CAP) {
+          return `Memory failed: file would exceed ${MEMORY_FILE_CHAR_CAP} characters; consolidate first`
+        }
+        await writeMemoryBody(path, next.body, ctx, backend)
       } catch (error) {
+        if (isAbortError(error) || ctx.signal.aborted) throw abortError()
         const message = error instanceof Error ? error.message : String(error)
         return `Memory failed: ${message}`
       }
@@ -117,4 +121,50 @@ function readExisting(path: string): string {
 
 function abortError(): Error {
   return Object.assign(new Error('aborted'), { name: 'AbortError' })
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === 'AbortError'
+}
+
+function isDockerMemory(backend?: TerminalBackend): boolean {
+  return backend?.kind === 'docker'
+}
+
+async function readMemoryBody(
+  path: string,
+  ctx: ToolContext,
+  backend?: TerminalBackend,
+): Promise<string> {
+  if (!isDockerMemory(backend) || backend === undefined) {
+    return readExisting(path)
+  }
+  const fs = createWorkspaceFs({
+    cwd: ctx.turn.cwd,
+    exec: backend,
+    signal: ctx.signal,
+  })
+  const st = await fs.stat(path)
+  if (!st.exists) return ''
+  return fs.readFile(path)
+}
+
+async function writeMemoryBody(
+  path: string,
+  body: string,
+  ctx: ToolContext,
+  backend?: TerminalBackend,
+): Promise<void> {
+  if (!isDockerMemory(backend) || backend === undefined) {
+    mkdirSync(dirname(path), { recursive: true })
+    writeFileSync(path, body, 'utf8')
+    return
+  }
+  const fs = createWorkspaceFs({
+    cwd: ctx.turn.cwd,
+    exec: backend,
+    signal: ctx.signal,
+  })
+  await fs.mkdir(dirname(path))
+  await fs.writeFile(path, body)
 }
