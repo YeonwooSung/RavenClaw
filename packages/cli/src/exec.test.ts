@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
@@ -663,5 +663,45 @@ describe('openEngine', () => {
     }
     const names = (provider.requests[0]?.tools ?? []).map((tool) => tool.name)
     expect(names).toContain('AskUser')
+  })
+
+  test('injects fileHistory under config.home not ravenclawHome()', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'raven-fh-cli-home-'))
+    const envHome = mkdtempSync(join(tmpdir(), 'raven-fh-cli-env-'))
+    const cwd = mkdtempSync(join(tmpdir(), 'raven-fh-cli-cwd-'))
+    tempDirs.push(home, envHome, cwd)
+    const prev = process.env.RAVENCLAW_HOME
+    process.env.RAVENCLAW_HOME = envHome
+    try {
+      const { engine } = await openEngine({
+        provider: createFakeProvider([]),
+        store: createMemoryStore(),
+        config: { ...testResolvedConfig(), home },
+        cwd,
+        async askUser() {
+          return 'deny'
+        },
+      })
+      const path = join(cwd, 'a.txt')
+      writeFileSync(path, 'old\n')
+      engine.fileHistory.beginTurn()
+      engine.fileHistory.snapshot(path)
+      engine.fileHistory.endTurn()
+      expect(existsSync(join(home, 'file-history', engine.session.id, '0001'))).toBe(true)
+      expect(existsSync(join(envHome, 'file-history', engine.session.id, '0001'))).toBe(false)
+    } finally {
+      if (prev === undefined) delete process.env.RAVENCLAW_HOME
+      else process.env.RAVENCLAW_HOME = prev
+    }
+  })
+
+  test('SessionEngineOptions still has no TerminalBackend instance field', () => {
+    const types = readFileSync(join(import.meta.dir, '../../core/src/types.ts'), 'utf8')
+    const start = types.indexOf('export interface SessionEngineOptions')
+    const end = types.indexOf('export interface SessionEngine {')
+    const block = types.slice(start, end)
+    expect(block).toContain('fileHistory?')
+    expect(block).toContain("terminalBackend?: 'local' | 'docker'")
+    expect(block).not.toMatch(/backend\?: TerminalBackend/)
   })
 })
