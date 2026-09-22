@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { MEMORY_FILE_CHAR_CAP } from '../prompt/memory'
 import type { ToolContext, Turn } from '../types'
-import { memoryFilePath, memoryTool } from './memory'
+import { createMemoryTool, memoryFilePath, memoryTool } from './memory'
 
 const tempDirs: string[] = []
 
@@ -154,5 +154,20 @@ describe('Memory', () => {
     )
     expect(out).toContain('8000')
     expect(readFileSync(path, 'utf8')).toBe(original)
+  })
+
+  test('createMemoryTool without backend still adds MEMORY.md', async () => {
+    const root = fixtureRoot()
+    const tool = createMemoryTool()
+    expect(tool.name).toBe('Memory')
+    expect(tool.isConcurrencySafe({ action: 'add', target: 'agent', text: 'x' })).toBe(false)
+    expect(tool.isReadOnly({ action: 'add', target: 'agent', text: 'x' })).toBe(false)
+    expect(tool.interruptBehavior?.()).toBe('block')
+    const out = await tool.execute(
+      { action: 'add', target: 'agent', text: 'Prefer bun test.' },
+      makeCtx(root),
+    )
+    expect(out).toContain('MEMORY.md')
+    expect(readFileSync(memoryFilePath(root, 'agent'), 'utf8')).toBe('Prefer bun test.\n')
   })
 })
