@@ -1,7 +1,7 @@
 # RavenClaw next-horizon roadmap (CI unit packages)
 
 Date: 2026-09-22  
-Status: draft  
+Status: implemented  
 Shipped sha:  
 Reviewed against tree at `061d23c` (`origin/main`).  
 Successor to remaining-roadmap R4.1 (`2026-09-12-ravenclaw-remaining-roadmap.md`). Amends that spec’s nightly line **only** so `scripts/ci-unit.sh` lists every workspace package. Does not reopen the full-repo Docker hang, live smoke secrets, `package.json` `"test"` / `"test:ci"` scripts, or a new GitHub Actions job/matrix.
@@ -102,8 +102,8 @@ Board as of this worktree (`docs/ci-unit-packages`).
 
 | ID | Status vs tree |
 |---|---|
-| C0 lock test + `ci-unit.sh` lines | **todo** |
-| C1 docs honesty | **todo** |
+| C0 lock test + `ci-unit.sh` lines | **done** |
+| C1 docs honesty | **done** |
 
 ---
 

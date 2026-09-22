@@ -28,4 +28,17 @@ describe('ci-unit.sh', () => {
       'bun test packages/tui-opentui',
     ])
   })
+
+  test('CONTRIBUTING names ci-unit.sh for every workspace package', () => {
+    const contributing = readFileSync(
+      join(import.meta.dir, '../../..', 'CONTRIBUTING.md'),
+      'utf8',
+    )
+    expect(contributing).toContain('scripts/ci-unit.sh')
+    expect(contributing).toContain('packages/providers')
+    expect(contributing).toContain('packages/ads')
+    expect(contributing).toContain('packages/sdk')
+    expect(contributing).toContain('packages/acp')
+    expect(contributing).toContain('packages/tui-opentui')
+  })
 })
