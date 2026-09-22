@@ -1,7 +1,8 @@
 # RavenClaw next-horizon roadmap (`/config` instruction files)
 
 Date: 2026-09-21  
-Status: draft  
+Status: implemented  
+Shipped sha: `0a1176f` on `main`.  
 Reviewed against tree at `5ac0679` (`origin/main`, three doors + honesty landed).  
 Successor to `2026-09-21-lsp-depth.md` / `2026-09-21-ignored-dismiss.md` / `2026-09-21-grep-glob-docker-exec.md` (all Status: implemented). Unparks **user-selectable project-instruction files** only. Does not reopen user `USER.md`/`MEMORY.md`, `CLAUDE.local.md`, project-level `config.yaml`, WorkspaceFs docker, NotebookEdit docker, dismiss-on-message, or the LSP museum.
 
