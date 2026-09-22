@@ -562,7 +562,7 @@ SQLite WAL, `$RAVENCLAW_HOME/state.db`. `PRAGMA journal_mode = WAL`, `busy_timeo
 
 FTS5는 `raven search` / `/search` / `SessionSearch`가 쓴다. compact로 비활성화된 행은 검색에서 빠진다.
 
-**Rewind vs undo:** `/undo`는 닫힌 마지막 generation의 `fileHistory.undo()`만이다. `/rewind`는 세션에 따라 갈린다. job 기록이 있으면 `rewindToCheckpoint`(compact `rewind` persist, `job.pendingResetSha` 기록, 그 다음 worktree에서 `git reset --hard`, `session.todos` 복원, flag clear, 프로젝트 `.ravenclaw/todo.json` 재투영; mid-reset crash는 construct / 다음 `submitMessage` / `rewindLast` / host `/diff`의 `maybeFinishRewindReset`이 끝냄), 없으면 file-history undo + 마지막 user 턴 drop + compact `rewind` 경계 + 남은 assistant `todoSnapshot`으로 `session.todos` 복원(`todo.json` 재투영; 스탬프 없는 예전 assistant는 그대로). 둘 다 라이브 턴/열린 generation이면 `a turn is in progress`로 거절한다.
+**Rewind vs undo:** `/undo`는 닫힌 마지막 generation의 `fileHistory.undo()`만이다. docker(+image)이고 FileHistory가 그 백엔드로 inject되면 `/undo`와 no-job `/rewind`의 restore/remove는 컨테이너다. 스냅샷 백업은 호스트 `$RAVENCLAW_HOME`. `/rewind`는 세션에 따라 갈린다. job 기록이 있으면 `rewindToCheckpoint`(compact `rewind` persist, `job.pendingResetSha` 기록, 그 다음 worktree에서 `git reset --hard`, `session.todos` 복원, flag clear, 프로젝트 `.ravenclaw/todo.json` 재투영; mid-reset crash는 construct / 다음 `submitMessage` / `rewindLast` / host `/diff`의 `maybeFinishRewindReset`이 끝냄), 없으면 file-history undo + 마지막 user 턴 drop + compact `rewind` 경계 + 남은 assistant `todoSnapshot`으로 `session.todos` 복원(`todo.json` 재투영; 스탬프 없는 예전 assistant는 그대로). 둘 다 라이브 턴/열린 generation이면 `a turn is in progress`로 거절한다.
 
 ---
 
@@ -713,7 +713,7 @@ fire는 새 `dontAsk` 세션을 연다. `lockHolder`는 `cron`이다. surface는
 | `<cwd>/.ravenclaw/` | 프로젝트 스킬, 에이전트, 플러그인, hooks, permissions, `plan.md`, `tasks.json`, `lsp.json`, `MEMORY.md`/`USER.md`, worktrees |
 | `<cwd>/AGENTS.md` 등 | 프로젝트 지시. `raven init`이 없으면 작성 |
 
-이 프로세스는 사용자와 같은 OS 유저다. 네트워크 샌드박스는 없다. Docker terminal backend(kind+image)는 허용된 Bash, Grep/Glob, Read/Write/Edit/ApplyPatch/ListDir/ReadSubtree, NotebookEdit가 어디서 도는지 바꿀 뿐, 권한 결정을 바꾸지 않는다. omit/local/이미지 없는 docker는 Grep/Glob가 호스트 `rg`/walk, 파일 툴은 호스트 WorkspaceFs jail, NotebookEdit는 호스트 I/O(jail 후). Memory·file-history writer는 호스트다. `dontAsk` 대체가 아니다.
+이 프로세스는 사용자와 같은 OS 유저다. 네트워크 샌드박스는 없다. Docker terminal backend(kind+image)는 허용된 Bash, Grep/Glob, Read/Write/Edit/ApplyPatch/ListDir/ReadSubtree, NotebookEdit, file-history undo restore/remove가 어디서 도는지 바꿀 뿐, 권한 결정을 바꾸지 않는다. omit/local/이미지 없는 docker는 Grep/Glob가 호스트 `rg`/walk, 파일 툴은 호스트 WorkspaceFs jail, NotebookEdit는 호스트 I/O(jail 후), file-history undo는 호스트. snapshot은 호스트. Memory·TodoWrite는 호스트다. `dontAsk` 대체가 아니다.
 
 ---
 
@@ -729,7 +729,7 @@ fire는 새 `dontAsk` 세션을 연다. `lockHolder`는 `cron`이다. surface는
 - **스킬** — agentskills.io frontmatter. builtin 8개를 키친싱크로 키우지 않는다.
 - **훅** — `hooks.json` 라이프사이클 / `pre_tool`.
 - **권한 규칙** — session / user / project JSON.
-- **terminal backend** — `local` | `docker`. Bash, Grep/Glob, Read/Write/Edit/ApplyPatch/ListDir/ReadSubtree, NotebookEdit가 같은 객체를 쓴다. `dontAsk` 대체가 아니다.
+- **terminal backend** — `local` | `docker`. Bash, Grep/Glob, Read/Write/Edit/ApplyPatch/ListDir/ReadSubtree, NotebookEdit, file-history undo restore/remove가 같은 객체를 쓴다. snapshot은 호스트. Memory·TodoWrite는 호스트. `dontAsk` 대체가 아니다.
 - **TUI 표면** — Ink 또는 OpenTUI. 루프는 공유.
 - **SDK** — `createRavenSession`.
 - **chat host** — Slack/Discord처럼 `createChatSessionHost` + admit 함수.

@@ -1,7 +1,7 @@
 # RavenClaw next-horizon roadmap (file-history docker undo)
 
 Date: 2026-09-22  
-Status: draft  
+Status: implemented  
 Shipped sha:  
 Reviewed against tree at `061d23c` (`origin/main`, WorkspaceFs docker + NotebookEdit docker + dismiss-on-message landed).  
 Successor to `2026-09-21-workspacefs-docker.md` (Status: implemented). Amends that spec’s ruling 14 **only for undo restore/remove of workspace files**. Does not reopen Memory docker, snapshot-as-docker-cp, extra mounts, Slack/ACP skip UI, or `fileHistory` todo frames.
@@ -92,14 +92,14 @@ These lock underspecification. The implementation plan may only add detail, not 
 
 ## Per-slice board
 
-Board as of this spec (draft).
+Board as of this worktree (`docs/file-history-docker`). F0–F3 done.
 
 | ID | Status vs tree |
 |---|---|
-| F0 `undo(): Promise<UndoResult>` + local wrap | **missing** |
-| F1 Docker restore/remove + jail | **missing** |
-| F2 CLI/SDK inject FileHistory | **missing** |
-| F3 Docs honesty | **missing** |
+| F0 `undo(): Promise<UndoResult>` + local wrap | **done** |
+| F1 Docker restore/remove + jail | **done** |
+| F2 CLI/SDK inject FileHistory | **done** |
+| F3 Docs honesty | **done** |
 
 ---
 

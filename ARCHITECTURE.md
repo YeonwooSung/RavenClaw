@@ -126,7 +126,7 @@ Entry is `packages/cli/src/index.ts`. When `import.meta.main`, `main()` runs and
    - Creates or reuses a `SessionRecord`.
    - `acquireSessionLock(session.id, { holderId, holderName })` unless `skipLock`.
    - `buildSystemParts({ cwd, permissionMode, bare, effort })`.
-   - Builds one `TerminalBackend` (`local|docker`) and passes that same object to `createBashTool`, Grep/Glob (`createGrepTool` / `createGlobTool` via `createSessionTools`), the six file-tool factories (`createReadTool` / `createWriteTool` / `createEditTool` / `createApplyPatchTool` / `createListDirTool` / `createReadSubtreeTool`), and NotebookEdit (`createNotebookEditTool` via `createRootTools`). Docker kind needs an image; without image, search stays host `rg`/walk, file tools stay the host WorkspaceFs jail, and NotebookEdit stays host I/O after the cwd jail.
+   - Builds one `TerminalBackend` (`local|docker`) and passes that same object to `createBashTool`, Grep/Glob (`createGrepTool` / `createGlobTool` via `createSessionTools`), the six file-tool factories (`createReadTool` / `createWriteTool` / `createEditTool` / `createApplyPatchTool` / `createListDirTool` / `createReadSubtreeTool`), NotebookEdit (`createNotebookEditTool` via `createRootTools`), and `createFileHistory(session.id, home, { backend, cwd: session.cwd })`. `createSessionEngine` still has no backend instance. Docker kind needs an image; without image, search stays host `rg`/walk, file tools stay the host WorkspaceFs jail, NotebookEdit stays host I/O after the cwd jail, and FileHistory undo stays host.
    - Loads MCP (`loadConfiguredMcpTools`) — a failed spawn is skipped, not fatal.
    - Merges local plugins (`loadLocalPlugins`) when the host did not pass an explicit tool list.
    - Loads file hooks unless `--bare`.
@@ -242,7 +242,7 @@ Unapproved DM reply is `pair with: raven pairing approve <code>`.
 | `model` | `ModelProfile` used on the **next** `submitMessage` |
 | `system` | `SystemPart[]` (stable / context / volatile) |
 | `tasks` | `TaskRegistry` (background Bash + Agent) |
-| `fileHistory` | Per-session undo snapshots under `$RAVENCLAW_HOME/file-history/<id>/` |
+| `fileHistory` | Per-session undo snapshots under `$RAVENCLAW_HOME/file-history/<id>/` (host copies). `/undo` and no-job `/rewind` restore/remove through the injected `TerminalBackend` when kind+image; fail-closed (leftover row, no host fallback write); outside-cwd leftover with zero exec. Omit/local stays host. |
 | `steering` | Texts from `enqueueSteer`, drained into mid-turn hints |
 | `liveTurn` | The in-flight `Turn`, or `null` |
 | `lifecycle` | Hooks from `hooks.json`, or a no-op when `bare` |
@@ -654,9 +654,9 @@ SQLite WAL at `$RAVENCLAW_HOME/state.db` (`PRAGMA journal_mode = WAL`, `busy_tim
 
 FTS5 indexes message body (not tool dumps as the primary search surface). `raven search` / `/search` / `SessionSearch` use it. `search --all` drops the cwd filter.
 
-**Rewind vs undo:** `/undo` is `fileHistory.undo()` only (restore/remove files from the last closed generation). `/rewind` depends on the session: with a job record it is `rewindToCheckpoint` (persist compact `rewind`, write `job.pendingResetSha`, then `git reset --hard` in the worktree, restore `session.todos`, clear the flag, re-project project `.ravenclaw/todo.json`; crash mid-reset is finished on construct / the next `submitMessage` / `rewindLast` / host `/diff` via `maybeFinishRewindReset`); without a job it is file-history undo **plus** drop the last user turn, persist a compact boundary, and restore `session.todos` from the remaining assistant `todoSnapshot` (re-project `todo.json`; legacy unstamped assistants leave todos). Both refuse an open generation / live turn (`a turn is in progress`).
+**Rewind vs undo:** `/undo` is `fileHistory.undo()` only (restore/remove files from the last closed generation). When Bash is actually docker (kind+image) and FileHistory was injected with that backend, restore/remove of workspace files runs in that container; fail-closed (leftover row, no host fallback write); outside-cwd leftover with zero exec. Omit/local stays host `writeFileSync` / `unlinkSync`. `/rewind` depends on the session: with a job record it is `rewindToCheckpoint` (persist compact `rewind`, write `job.pendingResetSha`, then `git reset --hard` in the worktree, restore `session.todos`, clear the flag, re-project project `.ravenclaw/todo.json`; crash mid-reset is finished on construct / the next `submitMessage` / `rewindLast` / host `/diff` via `maybeFinishRewindReset`); without a job it is file-history undo **plus** drop the last user turn, persist a compact boundary, and restore `session.todos` from the remaining assistant `todoSnapshot` (re-project `todo.json`; legacy unstamped assistants leave todos). Both refuse an open generation / live turn (`a turn is in progress`).
 
-File history copies pre-images under `$RAVENCLAW_HOME/file-history/<sessionId>/0001…`. `turnWriteCount()` feeds verify-on-stop.
+File history copies pre-images under `$RAVENCLAW_HOME/file-history/<sessionId>/0001…` on the host. `turnWriteCount()` feeds verify-on-stop.
 
 `createMemoryStore` is the in-memory twin (SDK `store: 'memory'`, background review). Same pairing repair on `loadSession`.
 

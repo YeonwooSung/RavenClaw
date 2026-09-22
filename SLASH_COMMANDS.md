@@ -440,7 +440,8 @@ Related tools: `TaskOutput`, `TaskStop`, `TaskSteer`; Bash `run_in_background`; 
 `fileHistory.undo()` restores the last **closed** generation:
 
 - Files that did not exist are unlinked (`removed`)
-- Files that existed are copied back from `~/.ravenclaw/file-history/<sessionId>/`
+- Files that existed are copied back from `$RAVENCLAW_HOME/file-history/<sessionId>/` **on the host**
+- When Bash is actually docker and FileHistory was injected, restore/remove of **workspace** files runs in that container (`tee` / `rm`). Omit/local stays host `writeFileSync` / `unlinkSync`.
 
 Notices (`formatUndoNotice`):
 
