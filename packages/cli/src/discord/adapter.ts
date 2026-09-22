@@ -299,6 +299,7 @@ function parsePermitReply(text: string): DiscordPermissionAnswer | undefined {
   const trimmed = text.replace(/<@!?\d+>/g, ' ').replace(/\s+/g, ' ').trim().toLowerCase()
   if (trimmed === 'allow' || trimmed === 'yes') return 'allow'
   if (trimmed === 'deny' || trimmed === 'no') return 'deny'
+  if (trimmed === 'skip' || trimmed === 'ignore' || trimmed === 'ignored') return 'ignored'
   return undefined
 }
 
@@ -318,8 +319,8 @@ async function askDiscordPermission(opts: {
   const child = opts.event.childSessionId ? ` child ${opts.event.childSessionId}` : ''
   const durable = opts.getPendingAsk !== undefined
   const prompt = durable
-    ? `Allow \`${opts.event.tool}\`${child}? Reply allow or deny.`
-    : `Allow \`${opts.event.tool}\`${child}? Reply allow or deny (${Math.round(opts.timeoutMs / 1000)}s).`
+    ? `Allow \`${opts.event.tool}\`${child}? Reply allow, deny, or skip.`
+    : `Allow \`${opts.event.tool}\`${child}? Reply allow, deny, or skip (${Math.round(opts.timeoutMs / 1000)}s).`
 
   let settle!: (answer: DiscordPermissionAnswer) => void
   let fail!: (error: Error) => void

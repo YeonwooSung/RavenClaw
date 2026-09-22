@@ -93,7 +93,7 @@ These are **not** slash names. They live on the Ink input handler (`app.tsx`). O
 |---|---|
 | Shift+Tab | Cycle permission mode `default → acceptEdits → plan → default`. `dontAsk` is **not** in the cycle (`cyclePermissionMode` returns `dontAsk` unchanged). Notice: `mode <next>`. Same store write as `/mode`. |
 | Escape | If the diff panel is open and no AskUser is pending: close diff. Else reject a pending AskUser as `AbortError`, call `engine.abort()`, and run the second-abort gate (see `/stop`). If a resume picker is open, close it. If idle (not busy, no AskUser): clear the draft. Esc abort stays `ABORTED_TEXT` (not `'ignored'`). |
-| Permission ask | Leftover-ask skip: Ink `i`, OpenTUI `i`/`skip`/`ignored`. `y` allow / `n` deny / `a` always unchanged. Esc abort. Slack/Discord/ACP stay 3-way. Spec: [`2026-09-21-ignored-dismiss.md`](docs/superpowers/specs/2026-09-21-ignored-dismiss.md). |
+| Permission ask | Leftover-ask skip: Ink `i`, OpenTUI `i`/`skip`/`ignored`. Slack Skip button / `skip`/`ignore`/`ignored` text; Discord `skip`/`ignore`/`ignored`; ACP Skip option. All emit `'ignored'`. `y` allow / `n` deny / `a` always unchanged. Esc abort. Timeout and editor `cancelled` stay deny/leave-row. Spec: [`2026-09-22-hitl-skip-hosts.md`](docs/superpowers/specs/2026-09-22-hitl-skip-hosts.md). |
 | Ctrl+C (Ink) | `exit()` — leave the TUI |
 | `!cmd` | Local `/bin/sh -c` via `parseBangLine` + `runBangCommand`. Not a slash. Same runner as `/bash`. |
 | `/bash cmd` | Same runner; see `/bash`. |

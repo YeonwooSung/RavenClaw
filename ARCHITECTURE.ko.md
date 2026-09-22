@@ -10,7 +10,7 @@ English: [ARCHITECTURE.md](ARCHITECTURE.md)
 - [SLASH_COMMANDS.ko.md](SLASH_COMMANDS.ko.md)
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [docs/headless.md](docs/headless.md)
-- 구현됨: [2026-09-16-session-as-job-roadmap.md](docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md) (`ea56edd`, closeout `0ef1554`); [job-host state](docs/superpowers/specs/2026-09-17-job-host-state-roadmap.md) (`6e56764`); [rewind persist-before-reset](docs/superpowers/specs/2026-09-18-rewind-persist-and-todo-projection.md) (`048deff`); [cancel abort-pair / reset-on-resume / follow-up persist](docs/superpowers/specs/2026-09-18-cancel-reset-followup.md) (`5eefdde`); [no-job todo revert](docs/superpowers/specs/2026-09-18-no-job-todo-revert.md) (`be5a4a7`); [stream version / continuationToken](docs/superpowers/specs/2026-09-18-stream-version-token.md) (`c9c4871`); [keep-id `/clear`](docs/superpowers/specs/2026-09-18-keep-id-clear.md) (`edeb611`); [parent tree-stop](docs/superpowers/specs/2026-09-18-parent-tree-stop.md) (`9901d0e`); [rewind recovery / schema v11 / async `createSessionEngine`](docs/superpowers/specs/2026-09-20-rewind-recovery-v11.md) (이전: [eve-inspired](docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md), implemented)
+- 구현됨: [2026-09-16-session-as-job-roadmap.md](docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md) (`ea56edd`, closeout `0ef1554`); [job-host state](docs/superpowers/specs/2026-09-17-job-host-state-roadmap.md) (`6e56764`); [rewind persist-before-reset](docs/superpowers/specs/2026-09-18-rewind-persist-and-todo-projection.md) (`048deff`); [cancel abort-pair / reset-on-resume / follow-up persist](docs/superpowers/specs/2026-09-18-cancel-reset-followup.md) (`5eefdde`); [no-job todo revert](docs/superpowers/specs/2026-09-18-no-job-todo-revert.md) (`be5a4a7`); [stream version / continuationToken](docs/superpowers/specs/2026-09-18-stream-version-token.md) (`c9c4871`); [keep-id `/clear`](docs/superpowers/specs/2026-09-18-keep-id-clear.md) (`edeb611`); [parent tree-stop](docs/superpowers/specs/2026-09-18-parent-tree-stop.md) (`9901d0e`); [rewind recovery / schema v11 / async `createSessionEngine`](docs/superpowers/specs/2026-09-20-rewind-recovery-v11.md) (`dc45aec`); [leftover-ask abort-pair](docs/superpowers/specs/2026-09-20-leftover-ask-abort-pair.md) (`067bfba`); [HTTP POST clear](docs/superpowers/specs/2026-09-20-http-post-clear.md) (`a53be93`); [Grep/Glob docker-exec](docs/superpowers/specs/2026-09-21-grep-glob-docker-exec.md) (`a52eab1`); [ignored dismiss](docs/superpowers/specs/2026-09-21-ignored-dismiss.md) (`22a55c1`); [bounded LSP depth](docs/superpowers/specs/2026-09-21-lsp-depth.md) (`6c797d1`); [instruction files `/config`](docs/superpowers/specs/2026-09-21-instruction-files-config.md) (`0a1176f`); [WorkspaceFs docker](docs/superpowers/specs/2026-09-21-workspacefs-docker.md) (`9c8d9db`); [NotebookEdit docker](docs/superpowers/specs/2026-09-21-notebookedit-docker.md) (`6d439b6`); [dismiss-on-message](docs/superpowers/specs/2026-09-21-dismiss-on-message.md) (`061d23c`) (이전: [eve-inspired](docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md), implemented)
 - 선행 분석: [eve-analysis.ko.md](docs/research/eve-analysis.ko.md), [y0-analysis.ko.md](docs/research/y0-analysis.ko.md)
 
 ---
@@ -168,7 +168,7 @@ flowchart TD
 
 `packages/cli/src/acp-stdio.ts`가 stdin/stdout JSON-RPC를 `@ravenclaw/acp`의 `createAcpServer`에 넘긴다. `bootCli({ createSession: false, surface: 'headless', lockHolder: 'acp' })` 후 에디터의 `session/new` / `session/load`마다 `openNewSession` / `resumeRuntime`을 연다.
 
-`--dont-ask`가 없으면 `askUserHost: true`다. leftover-ask는 에디터 permission 요청으로 간다. `--dont-ask`면 leftover는 거절이다. 어느 쪽이든 bypass가 아니다. permission timeout은 in-process waiter만 끊고 **deny를 persist하지 않는다** (Slack/Discord durable row와 같은 법칙).
+`--dont-ask`가 없으면 `askUserHost: true`다. leftover-ask는 에디터 permission 요청으로 간다. 에디터 Skip → `'ignored'`. `cancelled`는 여전히 deny. `--dont-ask`면 leftover는 거절이다. 어느 쪽이든 bypass가 아니다. permission timeout은 in-process waiter만 끊고 **deny를 persist하지 않는다** (Slack/Discord durable row와 같은 법칙).
 
 ACP `session/new`는 cwd, model, MCP 서버 목록을 overlay할 수 있다. 이미지 블록은 `UserSubmitInput.images`로 매핑한다.
 
@@ -205,7 +205,7 @@ Socket Mode 봇이다. 공개 URL이 필요 없다. `config.yaml`의 `slack.enab
 - 채널은 `channels`에 있어야 한다. 비어 있으면 채널 메시지를 무시한다. DM은 allowlist만 통과하면 된다.
 - `mentionOnly` 기본값은 true다.
 - DM은 `default`(leftover-ask), 채널/스레드는 `dontAsk`다.
-- DM leftover-ask는 채널에 allow/deny를 묻고 120초 안에 답이 없으면 deny다. 채널 메시지의 leftover는 묻지 않고 deny다.
+- DM leftover-ask는 Allow / Deny / Skip. Skip은 `'ignored'`. 120초 durable timeout은 행을 남긴다. 비-DM은 묻지 않고 deny다.
 - 세션 키: DM은 `raven:slack:<team>:<userId>`. 비-DM은 어댑터가 항상 `threadId`를 넘기므로 `raven:slack:<team>:<channel>:<threadTs||messageTs>`다. 3파트 채널 키 헬퍼는 있지만 라이브 경로에서는 쓰이지 않는다.
 - 인메모리 dedupe는 `team:channel:ts`다. Discord처럼 SQLite ledger를 쓰지 않는다.
 - `createChatSessionHost`로 serve와 같은 세션 맵/mailbox를 재사용한다. serve HTTP를 경유하지 않는다.
@@ -217,7 +217,7 @@ Gateway 봇이다. `discord.enabled: true`와 `DISCORD_BOT_TOKEN`이 필요하�
 - `lockHolder`는 `discord`다.
 - allowlist + DM pairing. `allowFrom`에 없거나 pairing되지 않은 DM은 `pair-dm`이 된다. 봇이 `pair with: raven pairing approve <code>`를 보낸다.
 - 길드 채널은 `channels`에 있어야 하고, `mentionOnly`면 멘션이 필요하다.
-- DM은 `default`, 길드/스레드는 `dontAsk`다. durable DM은 timer-deny하지 않는다. `pending_asks` 행이 남는다 (timeout은 in-process waiter만 끊음). 길드 메시지의 leftover는 묻지 않고 deny다.
+- DM은 `default`, 길드/스레드는 `dontAsk`다. durable DM은 timer-deny하지 않는다. `pending_asks` 행이 남는다 (timeout은 in-process waiter만 끊음). DM leftover-ask 텍스트 `skip`/`ignore`/`ignored`는 `'ignored'`다. 길드 메시지의 leftover는 묻지 않고 deny다.
 - 세션 키: DM은 `raven:discord:dm:<channelId>`, 길드는 `raven:discord:<guildId>:<channelId>`, 스레드는 `raven:discord:<guildId>:<channelId>:<thread>`.
 - inbound ledger는 `state.db`의 `deliveries` 테이블이다. 키는 `discord:<messageId>`. TTL 24시간. 같은 메시지를 두 번 돌리지 않는다.
 

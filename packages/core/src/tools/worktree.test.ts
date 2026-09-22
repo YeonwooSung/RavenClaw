@@ -22,13 +22,21 @@ function tempDir(prefix: string): string {
   return dir
 }
 
+function gitSpawnEnv(): NodeJS.ProcessEnv {
+  const env = { ...process.env, GIT_TERMINAL_PROMPT: '0' }
+  delete env.GIT_DIR
+  delete env.GIT_WORK_TREE
+  delete env.GIT_INDEX_FILE
+  return env
+}
+
 function git(cwd: string, args: string[]): string {
-  const result = spawnSync('git', args, { cwd, encoding: 'utf8' })
+  const result = spawnSync('git', args, { cwd, encoding: 'utf8', env: gitSpawnEnv() })
   return (result.stdout ?? '').trim()
 }
 
 function gitStatus(cwd: string, args: string[]): number | null {
-  return spawnSync('git', args, { cwd, encoding: 'utf8' }).status
+  return spawnSync('git', args, { cwd, encoding: 'utf8', env: gitSpawnEnv() }).status
 }
 
 function initGitRepo(dir: string): void {
@@ -187,5 +195,30 @@ describe('isWorktreeDirty', () => {
 
     handle.cleanup()
     expect(existsSync(handle.cwd)).toBe(true)
+  })
+
+  test('isWorktreeDirty ignores foreign GIT_DIR', () => {
+    const cwd = tempDir('ravenclaw-wt-foreign-')
+    initGitRepo(cwd)
+
+    const foreign = join(tempDir('ravenclaw-wt-foreign-gitdir-'), 'not-a-git')
+    const prevDir = process.env.GIT_DIR
+    const prevWorkTree = process.env.GIT_WORK_TREE
+    const prevIndex = process.env.GIT_INDEX_FILE
+    process.env.GIT_DIR = foreign
+    process.env.GIT_WORK_TREE = tempDir('ravenclaw-wt-foreign-wt-')
+    process.env.GIT_INDEX_FILE = join(tempDir('ravenclaw-wt-foreign-index-'), 'index')
+    try {
+      expect(isWorktreeDirty(cwd)).toBe(false)
+      writeFileSync(join(cwd, 'scratch.txt'), 'x\n')
+      expect(isWorktreeDirty(cwd)).toBe(true)
+    } finally {
+      if (prevDir === undefined) delete process.env.GIT_DIR
+      else process.env.GIT_DIR = prevDir
+      if (prevWorkTree === undefined) delete process.env.GIT_WORK_TREE
+      else process.env.GIT_WORK_TREE = prevWorkTree
+      if (prevIndex === undefined) delete process.env.GIT_INDEX_FILE
+      else process.env.GIT_INDEX_FILE = prevIndex
+    }
   })
 })
