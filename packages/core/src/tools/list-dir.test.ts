@@ -4,6 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ToolContext, Turn } from '../types'
 import { createListDirTool, listDirTool } from './list-dir'
+import {
+  createDockerTerminalBackend,
+  type TerminalRunRequest,
+} from './terminal-backend'
 
 const tempDirs: string[] = []
 
@@ -46,6 +50,14 @@ function makeCtx(cwd: string, signal?: AbortSignal): ToolContext {
     signal: signal ?? turn.abort.signal,
     onProgress() {},
   }
+}
+
+function fakeDocker(runCommand: (req: TerminalRunRequest) => Promise<{
+  stdout: string
+  stderr: string
+  exitCode: number
+}>) {
+  return createDockerTerminalBackend({ image: 'bash:5', runCommand })
 }
 
 describe('ListDir', () => {
@@ -141,5 +153,55 @@ describe('ListDir', () => {
     expect(tool).not.toBe(listDirTool)
     const out = await tool.execute({}, makeCtx(root))
     expect(out).toContain('note.txt')
+  })
+})
+
+describe('ListDir docker backend', () => {
+  test('docker readdir uses fake listing not host names', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'host-only.txt'), 'x')
+    mkdirSync(join(root, 'host-dir'))
+    const calls: TerminalRunRequest[] = []
+    const backend = fakeDocker(async (req) => {
+      calls.push(req)
+      return { stdout: 'd from-container-dir\nf from-container.txt\n', stderr: '', exitCode: 0 }
+    })
+    const out = await createListDirTool(backend).execute({ path: '.' }, makeCtx(root))
+    expect(out).toContain('dir   from-container-dir')
+    expect(out).toContain('file  from-container.txt')
+    expect(out).not.toContain('host-only.txt')
+    expect(calls).toHaveLength(1)
+    expect(calls[0]?.timeoutMs).toBe(30_000)
+  })
+
+  test('exec fail is ListDir failed: ; abort throws AbortError', async () => {
+    const root = fixtureRoot()
+    const backend = fakeDocker(async () => ({
+      stdout: '',
+      stderr: 'Cannot connect to the Docker daemon',
+      exitCode: 1,
+    }))
+    const out = await createListDirTool(backend).execute({}, makeCtx(root))
+    expect(out).toMatch(/^ListDir failed:/)
+    const ac = new AbortController()
+    ac.abort()
+    await expect(
+      createListDirTool(fakeDocker(async () => ({ stdout: '', stderr: '', exitCode: 0 }))).execute(
+        {},
+        makeCtx(root, ac.signal),
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  test('outside-cwd does not exec', async () => {
+    const root = fixtureRoot()
+    const calls: TerminalRunRequest[] = []
+    const backend = fakeDocker(async (req) => {
+      calls.push(req)
+      return { stdout: 'nope', stderr: '', exitCode: 0 }
+    })
+    const out = await createListDirTool(backend).execute({ path: '/etc' }, makeCtx(root))
+    expect(calls).toHaveLength(0)
+    expect(out).toMatch(/^ListDir failed:/)
   })
 })

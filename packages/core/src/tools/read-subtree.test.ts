@@ -4,6 +4,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ToolContext, Turn } from '../types'
 import { createReadSubtreeTool, extractSymbols, readSubtreeTool } from './read-subtree'
+import {
+  createDockerTerminalBackend,
+  type TerminalRunRequest,
+} from './terminal-backend'
 
 const tempDirs: string[] = []
 
@@ -46,6 +50,14 @@ function makeCtx(cwd: string, signal?: AbortSignal): ToolContext {
     signal: signal ?? turn.abort.signal,
     onProgress() {},
   }
+}
+
+function fakeDocker(runCommand: (req: TerminalRunRequest) => Promise<{
+  stdout: string
+  stderr: string
+  exitCode: number
+}>) {
+  return createDockerTerminalBackend({ image: 'bash:5', runCommand })
 }
 
 describe('ReadSubtree', () => {
@@ -164,6 +176,95 @@ describe('ReadSubtree', () => {
     expect(tool).not.toBe(readSubtreeTool)
     const out = await tool.execute({}, makeCtx(root))
     expect(out).toContain('note.txt')
+  })
+})
+
+describe('ReadSubtree docker backend', () => {
+  test('docker ReadSubtree issues one readFile exec per file under the byte cap', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'a.ts'), 'export function alpha() {}\n')
+    writeFileSync(join(root, 'b.ts'), 'export function beta() {}\n')
+    let cats = 0
+    const backend = fakeDocker(async (req) => {
+      const script = String(req.args.at(-1))
+      if (script.includes('find') || script.startsWith('if [ ! -d')) {
+        return { stdout: 'f a.ts\nf b.ts\n', stderr: '', exitCode: 0 }
+      }
+      if (script.includes('EXISTS') || script.includes('kind=dir')) {
+        if (script.includes('a.ts') || script.includes('b.ts')) {
+          return { stdout: 'EXISTS file 24 1\n', stderr: '', exitCode: 0 }
+        }
+        return { stdout: 'EXISTS dir 0 1\n', stderr: '', exitCode: 0 }
+      }
+      cats += 1
+      return { stdout: 'export function fromContainer() {}\n', stderr: '', exitCode: 0 }
+    })
+    const out = await createReadSubtreeTool(backend).execute({ path: '.' }, makeCtx(root))
+    expect(cats).toBe(2)
+    expect(out).toContain('fromContainer')
+    expect(out).not.toContain('function alpha')
+  })
+
+  test('docker ReadSubtree skips readFile when fake size is at the byte cap', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'huge.ts'), 'export function huge() {}\n')
+    writeFileSync(join(root, 'small.ts'), 'export function small() {}\n')
+    let cats = 0
+    const backend = fakeDocker(async (req) => {
+      const script = String(req.args.at(-1))
+      if (script.includes('find') || script.startsWith('if [ ! -d')) {
+        return { stdout: 'f huge.ts\nf small.ts\n', stderr: '', exitCode: 0 }
+      }
+      if (script.includes('EXISTS') || script.includes('kind=dir')) {
+        if (script.includes('huge.ts')) {
+          return { stdout: 'EXISTS file 200000 1\n', stderr: '', exitCode: 0 }
+        }
+        if (script.includes('small.ts')) {
+          return { stdout: 'EXISTS file 24 1\n', stderr: '', exitCode: 0 }
+        }
+        return { stdout: 'EXISTS dir 0 1\n', stderr: '', exitCode: 0 }
+      }
+      cats += 1
+      return { stdout: 'export function fromContainer() {}\n', stderr: '', exitCode: 0 }
+    })
+    const out = await createReadSubtreeTool(backend).execute({ path: '.' }, makeCtx(root))
+    expect(cats).toBe(1)
+    expect(out).toMatch(/huge\.ts {2}200000b/)
+    expect(out).toContain('fromContainer')
+    expect(out).not.toContain('function huge')
+    expect(out).not.toContain('function small')
+  })
+
+  test('exec fail is ReadSubtree failed: ; abort throws AbortError', async () => {
+    const root = fixtureRoot()
+    writeFileSync(join(root, 'a.ts'), 'export function alpha() {}\n')
+    const backend = fakeDocker(async () => ({
+      stdout: '',
+      stderr: 'Cannot connect to the Docker daemon',
+      exitCode: 1,
+    }))
+    const out = await createReadSubtreeTool(backend).execute({}, makeCtx(root))
+    expect(out).toMatch(/^ReadSubtree failed:/)
+    const ac = new AbortController()
+    ac.abort()
+    await expect(
+      createReadSubtreeTool(fakeDocker(async () => ({ stdout: '', stderr: '', exitCode: 0 }))).execute(
+        {},
+        makeCtx(root, ac.signal),
+      ),
+    ).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  test('outside-cwd does not exec', async () => {
+    const root = fixtureRoot()
+    const calls: TerminalRunRequest[] = []
+    const backend = fakeDocker(async (req) => {
+      calls.push(req)
+      return { stdout: 'nope', stderr: '', exitCode: 0 }
+    })
+    const out = await createReadSubtreeTool(backend).execute({ path: '/etc' }, makeCtx(root))
+    expect(calls).toHaveLength(0)
+    expect(out).toMatch(/^ReadSubtree failed:/)
   })
 })
 
