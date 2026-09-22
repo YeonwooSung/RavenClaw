@@ -101,7 +101,7 @@ These lock underspecification. The implementation plan may only add detail, not 
 
 7. **Parked `applyAskAnswer(..., 'ignored')` pairs only.** No execute, no `queryLoop`, no auto-`submitMessage`. After the pair, `submitMessage` is unblocked for **that** `callId`. Other parked rows stay.
 
-8. **`submitMessage` pending-guard unchanged.** Nonempty unpaired owned asks still block new user text. That is dismiss-and-continue for a **single** question without dismiss-on-message.
+8. **`submitMessage` pending-guard.** One-ask skip (`applyAskAnswer(..., 'ignored')` / Ink `i`) still pairs only and does not start a turn. Dismiss-and-continue of **all** parked owned asks on a new user message is amended by [`2026-09-21-dismiss-on-message.md`](2026-09-21-dismiss-on-message.md).
 
 9. **Kind `'leftover'` and `'ask_user'` share the ignored path.** Kind-based auto-dismiss is a later door.
 

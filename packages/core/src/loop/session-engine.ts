@@ -464,7 +464,12 @@ export async function createSessionEngine(opts: SessionEngineOptions): Promise<S
     }
 
     if (answer === 'ignored') {
-      await persistSettledTool(makeToolMessage(callId, false, IGNORED_TEXT), target.sessionId)
+      try {
+        await persistSettledTool(makeToolMessage(callId, false, IGNORED_TEXT), target.sessionId)
+      } catch (error) {
+        claimedAsks.delete(callId)
+        throw error
+      }
       await dropPendingAsk(callId)
       return 'matched'
     }
@@ -802,17 +807,33 @@ export async function createSessionEngine(opts: SessionEngineOptions): Promise<S
       await maybeFinishRewindReset({ session, store: opts.store, messages })
       await whenTreeStop()
       const pending = await listOwnedPendingAsks()
-      let askBlocked = false
+      const unpaired: PendingAsk[] = []
       for (const row of pending) {
         if (await isCallPaired(row.callId, row.sessionId)) {
           await dropPendingAsk(row.callId)
           continue
         }
-        askBlocked = true
+        unpaired.push(row)
       }
-      if (askBlocked) {
-        yield { type: 'status', message: 'pending permission ask' }
-        return { reason: 'completed' as const }
+      if (unpaired.length > 0) {
+        if (liveTurn !== null) {
+          yield { type: 'status', message: 'pending permission ask' }
+          return { reason: 'completed' as const }
+        }
+        for (const row of unpaired) {
+          let status: 'matched' | 'unmatched'
+          try {
+            status = await applyAskAnswer(row.callId, 'ignored')
+          } catch {
+            yield { type: 'status', message: 'pending permission ask' }
+            return { reason: 'completed' as const }
+          }
+          if (status === 'unmatched') continue
+          if (!(await isCallPaired(row.callId, row.sessionId))) {
+            yield { type: 'status', message: 'pending permission ask' }
+            return { reason: 'completed' as const }
+          }
+        }
       }
       const { text, blocks } = userSubmitToBlocks(input)
       if (!sessionStartDone) {

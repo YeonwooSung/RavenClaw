@@ -265,14 +265,16 @@ SDK `createRootTools`에 없는 CLI 루트 툴: `NotebookEdit`, `TaskSteer`, `Ad
 `submitMessage`가 하는 일:
 
 1. 세션 락을 renew하고 30초마다 갱신한다.
-2. 첫 호출에서 `SessionStart` 훅을 돌린다.
-3. `UserPromptSubmit`이 `preventContinuation`이면 그 턴을 멈춘다.
-4. agent mailbox를 drain해 user 텍스트 앞에 `[mailbox]`를 붙인다. drain 실패 시 메일을 다시 넣는다.
-5. user 메시지를 만들고 `persistUser`한다. persist 실패면 메시지를 되돌리고 던진다.
-6. 제목이 비어 있으면 첫 줄로 제목을 잡는다(최대 50자).
-7. `Turn`을 만들고 `queryLoop`에 넘긴다.
-8. 끝나면 usage, compact generation, permission mode, cwd를 세션에 다시 쓴다.
-9. 조건이 맞으면 persist-detached background review를 띄운다. included / `dontAsk` / headless에서는 켜지지 않는다.
+2. Rewind recovery (`maybeFinishRewindReset`) / `whenTreeStop`.
+3. Idle (`liveTurn === null`)이면 이 세션+자손의 unpaired leftover-ask를 `applyAskAnswer(..., 'ignored')`로 `IGNORED_TEXT` persist-then-drop한 뒤 계속한다. persist 실패는 `pending permission ask`를 내고 user 행을 붙이지 않는다. `liveTurn !== null`이면 그대로 `pending permission ask`이고 ignore하지 않는다. 성공은 quiet (추가 status 없음). 스펙: [`2026-09-21-dismiss-on-message.md`](docs/superpowers/specs/2026-09-21-dismiss-on-message.md).
+4. 첫 호출에서 `SessionStart` 훅을 돌린다.
+5. `UserPromptSubmit`이 `preventContinuation`이면 그 턴을 멈춘다.
+6. agent mailbox를 drain해 user 텍스트 앞에 `[mailbox]`를 붙인다. drain 실패 시 메일을 다시 넣는다.
+7. user 메시지를 만들고 `persistUser`한다. persist 실패면 메시지를 되돌리고 던진다.
+8. 제목이 비어 있으면 첫 줄로 제목을 잡는다(최대 50자).
+9. `Turn`을 만들고 `queryLoop`에 넘긴다.
+10. 끝나면 usage, compact generation, permission mode, cwd를 세션에 다시 쓴다.
+11. 조건이 맞으면 persist-detached background review를 띄운다. included / `dontAsk` / headless에서는 켜지지 않는다.
 
 `setModel`은 세션의 model id와 엔진이 들고 있는 `ModelProfile`을 갱신하고 `upsertSession`한다. 이미 돌아가고 있는 `queryLoop`는 제출 시점의 `model`과 `turn.model`을 이미 잡았다. 라이브 라운드의 윈도우/가격/thinking은 바뀌지 않는다. `/model <id>`는 다음 턴부터 프로필을 다시 로드한다.
 
@@ -545,7 +547,7 @@ SQLite WAL, `$RAVENCLAW_HOME/state.db`. `PRAGMA journal_mode = WAL`, `busy_timeo
 | 10 | `010_session_host_state.sql` | `sessions.last_end_json`, `sessions.job_error`, `sessions.followup_text` |
 | 11 | `011_pending_reset_sha.sql` | `sessions.pending_reset_sha` (`job_json.pendingResetSha`에서 복사, dual-write) |
 
-`applyAskAnswer(callId, allow|deny|allow_always|ignored)`는 `submitMessage`가 아닌 유일한 호스트 진입점이다. parked leftover-ask를 pair하고 모델 턴을 시작하지 않는다. parked `'ignored'`는 `IGNORED_TEXT`로 pair한 뒤 drop하며 실행하지 않는다. 알 수 없는 answer는 `'unmatched'`이고 실행하지 않는다. `resumeSession`은 pending `callId`를 paired-for-resume으로 취급한다.
+`applyAskAnswer(callId, allow|deny|allow_always|ignored)`는 `submitMessage`가 아닌 유일한 호스트 진입점이다. parked leftover-ask를 pair하고 모델 턴을 시작하지 않는다. parked `'ignored'`는 `IGNORED_TEXT`로 pair한 뒤 drop하며 실행하지 않고, 여전히 턴을 시작하지 않는다. **새 사용자 메시지**가 dismiss-on-message 트리거다. 알 수 없는 answer는 `'unmatched'`이고 실행하지 않는다. `resumeSession`은 pending `callId`를 paired-for-resume으로 취급한다.
 
 `loadSession`은 순수 read가 아니다. active 메시지를 읽은 뒤 `repairRoleAlternation`을 돌리고, 삽입된 incomplete 툴 행을 `persistToolResults`한다. `loadMessages`는 optional pure read다. 짝을 고치지 않고 persist하지 않는다. onboarding scan처럼 부작용이 없어야 하는 경로가 쓴다.
 

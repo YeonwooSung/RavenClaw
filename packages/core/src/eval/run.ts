@@ -59,6 +59,7 @@ type EvalExpect = {
   parentTreeStop?: boolean
   sandboxSearchUsesBackend?: boolean
   sandboxFsUsesBackend?: boolean
+  dismissOnMessage?: boolean
 }
 
 type EvalCase = {
@@ -77,6 +78,10 @@ export async function runEvalDir(dir: string): Promise<void> {
     }
     if (name === 'ignored-dismiss') {
       await runIgnoredDismiss(spec)
+      continue
+    }
+    if (name === 'dismiss-on-message') {
+      await runDismissOnMessage(spec)
       continue
     }
     if (name === 'sandbox-cwd') {
@@ -367,6 +372,83 @@ async function runIgnoredDismiss(spec: EvalCase): Promise<void> {
 
   await engine.close()
   await resumed.close()
+}
+
+async function runDismissOnMessage(spec: EvalCase): Promise<void> {
+  const store = createMemoryStore()
+  const session = makeSession({ id: 'sess_eval_dismiss_on_message' })
+  await store.createSession(session)
+  await store.persistToolCalls(session.id, {
+    id: 'a1',
+    role: 'assistant',
+    blocks: [{ type: 'tool_use', id: 'call_eval', name: 'Echo', input: { text: 'hi' } }],
+    createdAt: 1,
+  })
+  await store.upsertPendingAsk({
+    callId: 'call_eval',
+    sessionId: session.id,
+    kind: 'leftover',
+    tool: 'Echo',
+    message: 'Echo?',
+    input: { text: 'hi' },
+    createdAt: 1,
+  })
+
+  let executeCount = 0
+  const echo = createAskEcho()
+  const origExecute = echo.execute.bind(echo)
+  echo.execute = async (input, ctx) => {
+    executeCount += 1
+    return origExecute(input, ctx)
+  }
+
+  const engine = await createSessionEngine({
+    session,
+    provider: createFakeProvider([textThenStop('done')]),
+    store,
+    tools: [echo],
+    compact: defaultCompact(),
+    model: defaultModel(),
+    maxRounds: 8,
+    bare: true,
+    askUser: async () => 'deny',
+  })
+
+  const { events } = await drainEvents(engine.submitMessage(spec.prompt))
+  if (events.some((e) => e.type === 'status' && e.message === 'pending permission ask')) {
+    throw new Error('dismiss-on-message: yielded pending permission ask')
+  }
+  if ((await store.listPendingAsks(session.id)).length !== 0) {
+    throw new Error('dismiss-on-message: pending ask remained')
+  }
+  const loaded = await store.loadSession(session.id)
+  const toolRow = loaded.messages.find((m) => m.role === 'tool' && m.toolUseId === 'call_eval')
+  const text = toolRow && toolRow.role === 'tool' ? (toolRow.blocks[0]?.text ?? '') : ''
+  if (text !== IGNORED_TEXT) {
+    throw new Error(`dismiss-on-message: expected IGNORED_TEXT, got ${JSON.stringify(text)}`)
+  }
+  if (text.includes('permission_denied') || text === ABORTED_TEXT) {
+    throw new Error(
+      `dismiss-on-message: tool text must not be permission_denied or ABORTED_TEXT: ${JSON.stringify(text)}`,
+    )
+  }
+  if (text === 'hi' || executeCount !== 0) {
+    throw new Error('dismiss-on-message: tool executed')
+  }
+  const userIdx = loaded.messages.findIndex(
+    (m) => m.role === 'user' && m.blocks.some((b) => b.type === 'text' && b.text === spec.prompt),
+  )
+  const toolIdx = loaded.messages.findIndex((m) => m.role === 'tool' && m.toolUseId === 'call_eval')
+  if (userIdx < 0) {
+    throw new Error('dismiss-on-message: user row missing')
+  }
+  if (toolIdx < 0 || userIdx <= toolIdx) {
+    throw new Error('dismiss-on-message: expected IGNORED_TEXT then the user row')
+  }
+  if (spec.expect.pairing === true && unpairedToolUseIds(loaded.messages).length > 0) {
+    throw new Error('dismiss-on-message: unpaired tool_use remained')
+  }
+  await engine.close()
 }
 
 async function runSandboxCwd(spec: EvalCase): Promise<void> {
@@ -903,21 +985,6 @@ async function runSnapshotEndReason(spec: EvalCase): Promise<void> {
     if (engine.session.lastEnd?.reason !== 'cancelled') {
       throw new Error(
         `snapshot-end-reason: lastEnd not cancelled: ${JSON.stringify(engine.session.lastEnd)}`,
-      )
-    }
-    await store.upsertPendingAsk({
-      callId: 'parked',
-      sessionId: session.id,
-      kind: 'leftover',
-      tool: 'Bash',
-      message: 'Bash?',
-      input: { command: 'ls' },
-      createdAt: Date.now(),
-    })
-    await drain(engine.submitMessage('again'))
-    if (engine.session.lastEnd?.reason !== 'cancelled') {
-      throw new Error(
-        `snapshot-end-reason: pending-gate overwrote lastEnd: ${JSON.stringify(engine.session.lastEnd)}`,
       )
     }
   }

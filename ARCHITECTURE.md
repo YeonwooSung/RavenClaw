@@ -253,17 +253,19 @@ Accepts a string or `{ text?, images? }`. Sequence:
 
 1. Cancel any detached background review.
 2. Renew the session lock if present; start a 30s renew timer (`SESSION_LOCK_RENEW_MS`).
-3. First call: `SessionStart` hook.
-4. `UserPromptSubmit` hook — `preventContinuation` can stop the turn (`hook_stopped` or `completed`).
-5. Append user message; `fileHistory.beginTurn()`.
-6. Drain agent mailbox into the user text (`[mailbox]\n…`).
-7. `persistUser` — on failure, re-enqueue mailbox notices and throw. The user row is not left half-written.
-8. Auto-title from the first 50 chars of the first line if untitled.
-9. Every 10 user turns, inject `MEMORY_NUDGE` (`consider Memory`).
-10. `yield* queryLoop(loopOpts)`.
-11. After `completed` with `turn.round >= 10` (`shouldNudgeLearn`), inject `LEARN_NUDGE` (`consider /learn`).
-12. Upsert session (usage, compactGeneration, permissionMode, cwd).
-13. Optionally start persist-detached background review (Memory/Skill/Read/Grep only, `dontAsk`, memory store, max 8 rounds, `askUser` deny). Cancelled on the next `submitMessage` / `abort` / `close`.
+3. Rewind recovery (`maybeFinishRewindReset`) / `whenTreeStop`.
+4. Idle (`liveTurn === null`) unpaired owned leftover-asks (this session + descendants) persist-then-drop `IGNORED_TEXT` via `applyAskAnswer(..., 'ignored')` and continue; persist-fail yields `pending permission ask` and does not append the user row; `liveTurn !== null` still yields `pending permission ask` and does not ignore. Quiet success (no extra status). Spec: [`2026-09-21-dismiss-on-message.md`](docs/superpowers/specs/2026-09-21-dismiss-on-message.md).
+5. First call: `SessionStart` hook.
+6. `UserPromptSubmit` hook — `preventContinuation` can stop the turn (`hook_stopped` or `completed`).
+7. Append user message; `fileHistory.beginTurn()`.
+8. Drain agent mailbox into the user text (`[mailbox]\n…`).
+9. `persistUser` — on failure, re-enqueue mailbox notices and throw. The user row is not left half-written.
+10. Auto-title from the first 50 chars of the first line if untitled.
+11. Every 10 user turns, inject `MEMORY_NUDGE` (`consider Memory`).
+12. `yield* queryLoop(loopOpts)`.
+13. After `completed` with `turn.round >= 10` (`shouldNudgeLearn`), inject `LEARN_NUDGE` (`consider /learn`).
+14. Upsert session (usage, compactGeneration, permissionMode, cwd).
+15. Optionally start persist-detached background review (Memory/Skill/Read/Grep only, `dontAsk`, memory store, max 8 rounds, `askUser` deny). Cancelled on the next `submitMessage` / `abort` / `close`.
 
 `finally`: `fileHistory.endTurn()`, `liveTurn = null`, stop lock renew.
 
@@ -644,7 +646,7 @@ SQLite WAL at `$RAVENCLAW_HOME/state.db` (`PRAGMA journal_mode = WAL`, `busy_tim
 | 10 | `010_session_host_state.sql` | `sessions.last_end_json`, `sessions.job_error`, `sessions.followup_text` |
 | 11 | `011_pending_reset_sha.sql` | `sessions.pending_reset_sha` (copied from `job_json.pendingResetSha`; dual-write) |
 
-`applyAskAnswer(callId, allow|deny|allow_always|ignored)` is the only non-`submitMessage` host entry. It pairs a parked leftover-ask and does not start a model turn. Parked `'ignored'` writes `IGNORED_TEXT` then drops (no execute). Unknown answers are `'unmatched'` and do not execute. `resumeSession` treats pending `callId`s as paired-for-resume.
+`applyAskAnswer(callId, allow|deny|allow_always|ignored)` is the only non-`submitMessage` host entry. It pairs a parked leftover-ask and does not start a model turn. Parked `'ignored'` writes `IGNORED_TEXT` then drops (no execute) and still does not start a turn; a **new user message** is the dismiss-on-message trigger. Unknown answers are `'unmatched'` and do not execute. `resumeSession` treats pending `callId`s as paired-for-resume.
 
 `sessions.funding` is `'byok' | 'included'`. `messages.active` is 0 after compact/rewind. `persistAssistant` **refuses** rows that contain `tool_use` — those go through `persistToolCalls` only.
 
