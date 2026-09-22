@@ -105,7 +105,7 @@ These lock underspecification. The implementation plan may only add detail, not 
 
 17. **`dontAsk` unchanged.** Docker-exec is not a leftover-ask and not a permission promotion. Write/Edit still leftover-ask; `acceptEdits` still promotes in-tree Edit/Write/ApplyPatch the same way.
 
-18. **Docs honesty.** `headless.md` / `ARCHITECTURE.md` / `.ko.md`: when Bash is actually docker (backend **and** image), Read/Write/Edit/ApplyPatch/ListDir/ReadSubtree exec in that container; omit/local/image-less docker stays host jail. Do not claim NotebookEdit, Memory, or file-history writers are docker-exec.
+18. **Docs honesty.** `headless.md` / `ARCHITECTURE.md` / `.ko.md`: when Bash is actually docker (backend **and** image), Read/Write/Edit/ApplyPatch/ListDir/ReadSubtree exec in that container; omit/local/image-less docker stays host jail. Memory docker I/O is a successor ([`2026-09-22-memory-docker.md`](2026-09-22-memory-docker.md)). Do not claim TodoWrite, Skill, or file-history writers are docker-exec.
 
 ---
 
@@ -232,7 +232,7 @@ Do not touch: `notebook-edit.ts`, `memory.ts`, `file-history.ts` writers, `loop/
 
 ## Out of this closeout
 
-Web UI, Prisma Task, Socket.IO, wiki, Workflow loop, agent compiler, NotebookEdit docker (amended by [`2026-09-21-notebookedit-docker.md`](2026-09-21-notebookedit-docker.md) at `6d439b6`), Memory in container, file-history docker, sandbox network policy, Kata, isolation-trust, `dontAsk` as isolation, yaml `extraArgs` as a new key, session-long container, dismiss-on-message (amended by [`2026-09-21-dismiss-on-message.md`](2026-09-21-dismiss-on-message.md) at `061d23c`), LSP museum.
+Web UI, Prisma Task, Socket.IO, wiki, Workflow loop, agent compiler, NotebookEdit docker (amended by [`2026-09-21-notebookedit-docker.md`](2026-09-21-notebookedit-docker.md) at `6d439b6`), Memory docker I/O ([`2026-09-22-memory-docker.md`](2026-09-22-memory-docker.md)), file-history docker, sandbox network policy, Kata, isolation-trust, `dontAsk` as isolation, yaml `extraArgs` as a new key, session-long container, dismiss-on-message (amended by [`2026-09-21-dismiss-on-message.md`](2026-09-21-dismiss-on-message.md) at `061d23c`), LSP museum.
 
 ---
 
