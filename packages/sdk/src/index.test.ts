@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { ModelProfile, Provider, ProviderChunk, ProviderRequest, StreamEvent } from '@ravenclaw/core'
@@ -169,6 +169,44 @@ describe('createRavenSession', () => {
     await expect(createRavenSession({ cwd: home, home })).rejects.toThrow(
       /config\.yaml|API key|provider/i,
     )
+  })
+
+  test('injects fileHistory under opts.home', async () => {
+    const home = tempHome()
+    const cwd = tempHome()
+    const provider = createFakeProvider([
+      [
+        { type: 'text_delta', text: 'ok' },
+        { type: 'stop', reason: 'end' },
+      ],
+    ])
+    const session = await createRavenSession({
+      cwd,
+      home,
+      provider,
+      store: 'memory',
+      tools: [],
+    })
+    const path = join(cwd, 'a.txt')
+    writeFileSync(path, 'old\n')
+    session.engine.fileHistory.beginTurn()
+    session.engine.fileHistory.snapshot(path)
+    session.engine.fileHistory.endTurn()
+    expect(existsSync(join(home, 'file-history', session.engine.session.id, '0001'))).toBe(true)
+    await session.close()
+  })
+
+  test('lifts one TerminalBackend for tools and FileHistory', () => {
+    const src = readFileSync(join(import.meta.dir, 'index.ts'), 'utf8')
+    const start = src.indexOf('export async function createRavenSession')
+    const rest = src.slice(start)
+    const nextExport = rest.indexOf('\nexport ', 1)
+    const body = nextExport === -1 ? rest : rest.slice(0, nextExport)
+    expect(body).toContain('createTerminalBackend')
+    expect(body).toContain('createFileHistory')
+    expect(body).toContain('cwd: session.cwd')
+    expect(body).toMatch(/fileHistory:\s*createFileHistory\(/)
+    expect(body).toMatch(/createFileHistory\(session\.id, home, \{ backend, cwd: session\.cwd \}\)/)
   })
 })
 

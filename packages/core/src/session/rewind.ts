@@ -68,7 +68,7 @@ export async function rewindLastTurn(opts: {
     }
   }
 
-  const undo = opts.fileHistory.undo()
+  const undo = await opts.fileHistory.undo()
   if (undo.blocked === true) {
     return { ok: false, notice: formatRewindNotice(undo, 0), messages: opts.messages }
   }

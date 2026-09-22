@@ -139,7 +139,7 @@ export async function dispatchSharedSlash(
       return 'handled'
     }
     case 'undo':
-      host.notice(formatUndoNotice(runtime.engine.fileHistory.undo()))
+      host.notice(formatUndoNotice(await runtime.engine.fileHistory.undo()))
       return 'handled'
     case 'permissions': {
       let sessionRuleCount = 0

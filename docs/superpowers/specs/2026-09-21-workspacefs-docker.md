@@ -97,7 +97,7 @@ These lock underspecification. The implementation plan may only add detail, not 
 
 13. **Secrets.** Container env = `dockerAllowlistEnv()` only (`PATH`/`HOME`/`TERM`/`LANG`). Do not pass `ANTHROPIC_API_KEY` / MCP headers. Do not mount docker.sock.
 
-14. **`fileHistory.snapshot` and lint stay host.** Snapshot runs on the jailed host bind path **before** docker `writeFile` (today’s order). Lint after write stays host. Same inodes as the bind. Do not docker-exec `cp` for undo backups.
+14. **`fileHistory.snapshot` and lint stay host.** Snapshot runs on the jailed host bind path **before** docker `writeFile` (today’s order). Lint after write stays host. Same inodes as the bind. Do not docker-exec `cp` for undo backups. Undo **restore/remove** of workspace files is [`2026-09-22-file-history-docker.md`](2026-09-22-file-history-docker.md).
 
 15. **Hard-denied write paths stay host checks** (`isHardDeniedWritePath` / `resolveWritePath`) and run **before** jail exec. Protected paths never reach `backend.exec`.
 

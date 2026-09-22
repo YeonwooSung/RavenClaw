@@ -280,7 +280,7 @@ Ink status line은 모델·mode·usage·`shortSessionId`·funding·near-compact�
 - 없으면 `nothing to undo`
 - 있으면 `undo: restored N, removed M` (해당 항목만)
 - 대화 메시지는 그대로. 메시지도 버리려면 `/rewind`
-- 백업: `~/.ravenclaw/file-history/<sessionId>/`
+- 백업은 호스트 `~/.ravenclaw/file-history/<sessionId>/`. docker(+image)+inject면 워크스페이스 restore/remove는 컨테이너. omit/local은 호스트
 
 ### `/rewind`
 

@@ -1,6 +1,9 @@
 import { copyFileSync, existsSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { ravenclawHome } from '../home'
+import { isInTreePath } from '../permissions/modes'
+import { createWorkspaceFs } from '../tools/workspace-fs'
+import type { TerminalBackend } from '../tools/terminal-backend'
 
 export interface FileSnapshot {
   path: string
@@ -18,7 +21,7 @@ export interface FileHistory {
   beginTurn(): void
   endTurn(): void
   snapshot(absPath: string): void
-  undo(): UndoResult
+  undo(): Promise<UndoResult>
   pendingCount(): number
   peekLast?(): { open: boolean } | undefined
   /** Snapshots recorded on the current (this-turn) generation. */
@@ -32,11 +35,96 @@ interface Generation {
   rows: FileSnapshot[]
 }
 
-export function createFileHistory(sessionId: string, home = ravenclawHome()): FileHistory {
+export function createFileHistory(
+  sessionId: string,
+  home = ravenclawHome(),
+  opts?: { backend?: TerminalBackend; cwd?: string },
+): FileHistory {
   const root = join(home, 'file-history', sessionId)
   const generations: Generation[] = []
   let current: Generation | undefined
   let seq = 0
+  const docker =
+    opts?.backend?.kind === 'docker' && typeof opts.cwd === 'string' && opts.cwd.length > 0
+      ? { backend: opts.backend, cwd: opts.cwd }
+      : undefined
+
+  function commitUndo(generation: Generation, idx: number, leftover: FileSnapshot[]) {
+    generation.rows = leftover
+    if (leftover.length === 0) {
+      generations.splice(idx, 1)
+      if (current === generation) current = generations[generations.length - 1]
+    }
+  }
+
+  function undoHost(generation: Generation, idx: number): UndoResult {
+    const leftover: FileSnapshot[] = []
+    const restored: string[] = []
+    const removed: string[] = []
+    for (let i = generation.rows.length - 1; i >= 0; i--) {
+      const row = generation.rows[i]
+      if (!row) continue
+      if (!row.existed) {
+        try {
+          if (existsSync(row.path)) unlinkSync(row.path)
+          removed.push(row.path)
+        } catch {
+          leftover.unshift(row)
+        }
+        continue
+      }
+      if (row.backupPath && existsSync(row.backupPath)) {
+        try {
+          mkdirSync(dirname(row.path), { recursive: true })
+          writeFileSync(row.path, readFileSync(row.backupPath))
+          restored.push(row.path)
+        } catch {
+          leftover.unshift(row)
+        }
+      } else {
+        leftover.unshift(row)
+      }
+    }
+    commitUndo(generation, idx, leftover)
+    return { restored, removed }
+  }
+
+  async function undoDocker(
+    generation: Generation,
+    idx: number,
+    backend: TerminalBackend,
+    cwd: string,
+  ): Promise<UndoResult> {
+    const leftover: FileSnapshot[] = []
+    const restored: string[] = []
+    const removed: string[] = []
+    const fs = createWorkspaceFs({ cwd, exec: backend })
+    for (let i = generation.rows.length - 1; i >= 0; i--) {
+      const row = generation.rows[i]
+      if (!row) continue
+      if (!isInTreePath(cwd, row.path)) {
+        leftover.unshift(row)
+        continue
+      }
+      try {
+        if (!row.existed) {
+          await fs.unlink(row.path)
+          removed.push(row.path)
+          continue
+        }
+        if (row.backupPath && existsSync(row.backupPath)) {
+          await fs.writeFile(row.path, readFileSync(row.backupPath, 'utf8'))
+          restored.push(row.path)
+        } else {
+          leftover.unshift(row)
+        }
+      } catch {
+        leftover.unshift(row)
+      }
+    }
+    commitUndo(generation, idx, leftover)
+    return { restored, removed }
+  }
 
   return {
     beginTurn() {
@@ -66,7 +154,7 @@ export function createFileHistory(sessionId: string, home = ravenclawHome()): Fi
       current.rows.push({ path: absPath, existed: true, backupPath })
     },
 
-    undo() {
+    async undo() {
       const idx = lastUndoableIndex(generations)
       if (idx < 0) {
         const blocked = generations.some((gen) => gen.open && gen.rows.length > 0)
@@ -74,39 +162,8 @@ export function createFileHistory(sessionId: string, home = ravenclawHome()): Fi
       }
       const generation = generations[idx]
       if (!generation) return { restored: [], removed: [] }
-      const leftover: FileSnapshot[] = []
-      const restored: string[] = []
-      const removed: string[] = []
-      for (let i = generation.rows.length - 1; i >= 0; i--) {
-        const row = generation.rows[i]
-        if (!row) continue
-        if (!row.existed) {
-          try {
-            if (existsSync(row.path)) unlinkSync(row.path)
-            removed.push(row.path)
-          } catch {
-            leftover.unshift(row)
-          }
-          continue
-        }
-        if (row.backupPath && existsSync(row.backupPath)) {
-          try {
-            mkdirSync(dirname(row.path), { recursive: true })
-            writeFileSync(row.path, readFileSync(row.backupPath))
-            restored.push(row.path)
-          } catch {
-            leftover.unshift(row)
-          }
-        } else {
-          leftover.unshift(row)
-        }
-      }
-      generation.rows = leftover
-      if (leftover.length === 0) {
-        generations.splice(idx, 1)
-        if (current === generation) current = generations[generations.length - 1]
-      }
-      return { restored, removed }
+      if (docker) return undoDocker(generation, idx, docker.backend, docker.cwd)
+      return undoHost(generation, idx)
     },
 
     pendingCount() {

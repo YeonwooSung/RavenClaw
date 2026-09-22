@@ -115,7 +115,7 @@ RavenClaw 대응: `once()` ≈ `allow_always`, `always()` ≈ leftover-ask, `ask
 
 백엔드: Vercel Sandbox → Docker → microsandbox(Apple Silicon 또는 Linux KVM) → just-bash. 기본 네트워크는 `allow-all`. 크리덴셜 브로커(방화벽 헤더 주입)는 **Vercel Sandbox와 microsandbox만**. Docker는 allow-all / deny-all이다.
 
-RavenClaw는 Bash만 `terminal.backend: docker`다. Read/Write/Edit는 호스트다. 훔칠 것: **샌드박스가 켜지면 파일 툴도 같은 포트**. `write_file`의 read-before-write + stale hash는 싸게 가져올 수 있다. Closer: Grep/Glob는 Bash docker 포트를 공유한다 (`docs/superpowers/specs/2026-09-21-grep-glob-docker-exec.md`). Read/Write/Edit/ApplyPatch/ListDir/ReadSubtree도 kind+image면 같은 포트 (`docs/superpowers/specs/2026-09-21-workspacefs-docker.md`). NotebookEdit 바이트도 kind+image면 같은 포트를 쓴다 (`docs/superpowers/specs/2026-09-21-notebookedit-docker.md`). in-tree Memory는 kind+image면 같은 포트 (`docs/superpowers/specs/2026-09-22-memory-docker.md`); job isolation은 fail-close; file-history writer는 호스트.
+RavenClaw는 Bash만 `terminal.backend: docker`다. Read/Write/Edit는 호스트다. 훔칠 것: **샌드박스가 켜지면 파일 툴도 같은 포트**. `write_file`의 read-before-write + stale hash는 싸게 가져올 수 있다. Closer: Grep/Glob는 Bash docker 포트를 공유한다 (`docs/superpowers/specs/2026-09-21-grep-glob-docker-exec.md`). Read/Write/Edit/ApplyPatch/ListDir/ReadSubtree도 kind+image면 같은 포트 (`docs/superpowers/specs/2026-09-21-workspacefs-docker.md`). NotebookEdit 바이트도 kind+image면 같은 포트를 쓴다 (`docs/superpowers/specs/2026-09-21-notebookedit-docker.md`). in-tree Memory는 kind+image면 같은 포트 (`docs/superpowers/specs/2026-09-22-memory-docker.md`); job isolation은 fail-close. FileHistory undo restore/remove도 kind+image이고 inject되면 같은 포트를 쓴다 (`docs/superpowers/specs/2026-09-22-file-history-docker.md`). 스냅샷 백업은 호스트.
 
 ---
 

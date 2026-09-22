@@ -8,6 +8,7 @@ import {
   createBashTool,
   createTerminalBackend,
   createPlanModeTools,
+  createFileHistory,
   createSessionEngine,
   createSqliteStore,
   defaultCompactPolicy,
@@ -573,6 +574,12 @@ async function finishOpenEngine(
     system,
     terminalBackend: opts.config.terminal?.backend ?? 'local',
     instructionFiles: opts.config.instructionFiles,
+  }
+  if (backend) {
+    engineOpts.fileHistory = createFileHistory(session.id, opts.config.home, {
+      backend,
+      cwd: session.cwd,
+    })
   }
   if (opts.messages) engineOpts.messages = opts.messages
   if (hooks.length > 0) engineOpts.hooks = hooks

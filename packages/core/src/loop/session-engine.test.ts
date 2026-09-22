@@ -3053,7 +3053,7 @@ describe('clearKeepId', () => {
     const loaded = await store.loadSession(sess.id)
     expect(loaded.session.id).toBe('sess_clear_idle')
     expect(loaded.messages).toEqual([])
-    expect(engine.fileHistory.undo()).toEqual({ restored: [], removed: [] })
+    expect(await engine.fileHistory.undo()).toEqual({ restored: [], removed: [] })
   })
 
   test('persist fail leaves memory and disk unchanged', async () => {

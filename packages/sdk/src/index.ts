@@ -7,6 +7,7 @@ import {
   createBashTool,
   createMemoryStore,
   createPlanModeTools,
+  createFileHistory,
   createSessionEngine,
   createSqliteStore,
   createTerminalBackend,
@@ -233,7 +234,11 @@ export async function createRavenSession(
     instructionFiles: config.instructionFiles,
   })
   const askUser = opts.askUser ?? defaultAskUser
-  const tools = opts.tools ?? defaultSessionTools({ store, provider, config, compact, system, askUser })
+  const terminal = config.terminal
+  const backendOpts: { image?: string } = {}
+  if (terminal?.image !== undefined) backendOpts.image = terminal.image
+  const backend = createTerminalBackend(terminal?.backend ?? 'local', backendOpts)
+  const tools = opts.tools ?? defaultSessionTools({ store, provider, config, compact, system, askUser, backend })
 
   const engineOpts: SessionEngineOptions = {
     session,
@@ -246,6 +251,7 @@ export async function createRavenSession(
     askUser,
     system,
     instructionFiles: config.instructionFiles,
+    fileHistory: createFileHistory(session.id, home, { backend, cwd: session.cwd }),
   }
   if (opts.messages !== undefined) engineOpts.messages = opts.messages
   engineOpts.sessionLock = { holderId: lockHolderId }
@@ -277,12 +283,9 @@ function defaultSessionTools(opts: {
   compact: CompactPolicy
   system: SystemPart[]
   askUser: SessionEngineOptions['askUser']
+  backend: TerminalBackend
 }): Tool[] {
-  const terminal = opts.config.terminal
-  const backendOpts: { image?: string } = {}
-  if (terminal?.image !== undefined) backendOpts.image = terminal.image
-  const backend = createTerminalBackend(terminal?.backend ?? 'local', backendOpts)
-  const bash = createBashTool(backend)
+  const bash = createBashTool(opts.backend)
   return createSessionTools({
     store: opts.store,
     provider: opts.provider,
@@ -292,7 +295,7 @@ function defaultSessionTools(opts: {
     childMaxRounds: opts.config.childMaxRounds,
     system: opts.system,
     bash,
-    backend,
+    backend: opts.backend,
     network: (opts.config as { tools?: { network?: boolean } }).tools?.network === true,
   })
 }
