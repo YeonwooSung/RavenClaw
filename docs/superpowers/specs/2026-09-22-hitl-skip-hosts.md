@@ -1,7 +1,7 @@
 # RavenClaw next-horizon roadmap (Slack / Discord / ACP skip UI)
 
 Date: 2026-09-22  
-Status: draft  
+Status: implemented  
 Shipped sha:  
 Reviewed against tree at `061d23c` (`origin/main`, ignored dismiss + dismiss-on-message landed).  
 Successor to `2026-09-21-ignored-dismiss.md` and `2026-09-21-dismiss-on-message.md` (Status: implemented). Amends prior OUT for **Slack / Discord / ACP emitting `'ignored'`** only. Does not reopen abort-pair I2, timeout→ignored, editor `cancelled`→ignored, a fourth host entry, schema v12, or docker writers.
@@ -98,14 +98,14 @@ Every HITL host can skip one ask. The tool is not executed. Pairing holds. Cance
 
 ## Per-slice board
 
-Board as of this spec (draft).
+Board as of this worktree (done). Leave Shipped sha empty until it lands on `main`.
 
 | ID | Status vs tree |
 |---|---|
-| S1 Slack Skip button + text | **missing** |
-| S2 Discord skip text | **missing** |
-| S3 ACP Skip option | **missing** |
-| S4 Docs | **missing** |
+| S1 Slack Skip button + text | **done** |
+| S2 Discord skip text | **done** |
+| S3 ACP Skip option | **done** |
+| S4 Docs | **done** |
 
 ---
 
