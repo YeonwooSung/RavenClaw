@@ -126,7 +126,7 @@ Entry is `packages/cli/src/index.ts`. When `import.meta.main`, `main()` runs and
    - Creates or reuses a `SessionRecord`.
    - `acquireSessionLock(session.id, { holderId, holderName })` unless `skipLock`.
    - `buildSystemParts({ cwd, permissionMode, bare, effort })`.
-   - Builds one `TerminalBackend` (`local|docker`) and passes that same object to `createBashTool`, Grep/Glob (`createGrepTool` / `createGlobTool` via `createSessionTools`), **and** the six file-tool factories (`createReadTool` / `createWriteTool` / `createEditTool` / `createApplyPatchTool` / `createListDirTool` / `createReadSubtreeTool`). Docker kind needs an image; without image, search stays host `rg`/walk and file tools stay the host WorkspaceFs jail.
+   - Builds one `TerminalBackend` (`local|docker`) and passes that same object to `createBashTool`, Grep/Glob (`createGrepTool` / `createGlobTool` via `createSessionTools`), the six file-tool factories (`createReadTool` / `createWriteTool` / `createEditTool` / `createApplyPatchTool` / `createListDirTool` / `createReadSubtreeTool`), and NotebookEdit (`createNotebookEditTool` via `createRootTools`). Docker kind needs an image; without image, search stays host `rg`/walk, file tools stay the host WorkspaceFs jail, and NotebookEdit stays host I/O after the cwd jail.
    - Loads MCP (`loadConfiguredMcpTools`) — a failed spawn is skipped, not fatal.
    - Merges local plugins (`loadLocalPlugins`) when the host did not pass an explicit tool list.
    - Loads file hooks unless `--bare`.
@@ -495,7 +495,7 @@ Registry: `createToolRegistry` (`packages/core/src/tools/registry.ts`) — last 
 | `Edit` | yes | yes | Shares Bash’s `TerminalBackend`. Docker: host jail then one exec per WorkspaceFs method; fail-closed (`Edit failed:`). Abort → `AbortError` / `ABORTED_TEXT`. Snapshots via FileHistory (host). Local: host WorkspaceFs jail. |
 | `Write` | yes | yes | Shares Bash’s `TerminalBackend`. Docker: host jail then one exec per WorkspaceFs method; fail-closed (`Write failed:`). Abort → `AbortError` / `ABORTED_TEXT`. Local: host WorkspaceFs jail. |
 | `ApplyPatch` | yes | yes | Shares Bash’s `TerminalBackend`. Docker: host jail then one exec per WorkspaceFs method; fail-closed (`ApplyPatch failed:`). Abort → `AbortError` / `ABORTED_TEXT`. Local: host WorkspaceFs jail. |
-| `NotebookEdit` | yes | yes (CLI) | Not in SDK `createRootTools` |
+| `NotebookEdit` | yes | yes (CLI) | Leftover-ask; CLI-root-only (not SDK). `acceptEdits`/`dontAsk` do not promote. Cwd jail on every backend (`NotebookEdit failed: outside workspace`). Docker kind: two `backend.exec` (`cat` then `tee`+stdin); fail-closed (`NotebookEdit failed:`; no host write). Abort → `AbortError` / `ABORTED_TEXT`. Omit/local/image-less docker: host `readFileSync`/`writeFileSync` after the jail. |
 | `Bash` | yes | yes | `run_in_background` → TaskRegistry |
 | `Skill` | yes | yes | |
 | `Fetch` | yes | only if `tools.network` | else deferred |

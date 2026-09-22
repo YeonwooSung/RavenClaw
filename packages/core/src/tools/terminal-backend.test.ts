@@ -101,6 +101,19 @@ describe('createLocalTerminalBackend', () => {
     expect(result.exitCode).toBe(0)
     expect(result.stdout).toContain('ok')
   })
+
+  test('accepts Uint8Array stdin', async () => {
+    const root = fixtureRoot()
+    const result = await createLocalTerminalBackend().exec({
+      command: 'cat',
+      cwd: root,
+      timeoutMs: 5_000,
+      signal: new AbortController().signal,
+      stdin: new Uint8Array([104, 105, 10]),
+    })
+    expect(result.stdout).toContain('hi')
+    expect(result.exitCode).toBe(0)
+  })
 })
 
 const LIVE_DOCKER_IMAGE = 'bash:5'

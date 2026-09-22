@@ -18,6 +18,7 @@ import {
   globTool,
   grepTool,
   listDirTool,
+  notebookEditTool,
   readSubtreeTool,
   readTool,
   writeTool,
@@ -154,6 +155,7 @@ describe('createRootTools', () => {
     expect(tools.find((tool) => tool.name === 'ApplyPatch')).not.toBe(applyPatchTool)
     expect(tools.find((tool) => tool.name === 'ListDir')).not.toBe(listDirTool)
     expect(tools.find((tool) => tool.name === 'ReadSubtree')).not.toBe(readSubtreeTool)
+    expect(tools.find((tool) => tool.name === 'NotebookEdit')).not.toBe(notebookEditTool)
   })
 
   test('createRootTools without a backend keeps the file-tool singletons', () => {
@@ -164,6 +166,7 @@ describe('createRootTools', () => {
     expect(tools.find((tool) => tool.name === 'ApplyPatch')).toBe(applyPatchTool)
     expect(tools.find((tool) => tool.name === 'ListDir')).toBe(listDirTool)
     expect(tools.find((tool) => tool.name === 'ReadSubtree')).toBe(readSubtreeTool)
+    expect(tools.find((tool) => tool.name === 'NotebookEdit')).toBe(notebookEditTool)
   })
 
   test('filterToolsForTurn hides gated builtins without lsp.json, git, or cron jobs', () => {
