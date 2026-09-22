@@ -340,6 +340,10 @@ export function tryResolvePermit(
       pending.resolve('deny')
       return true
     }
+    if (action === 'raven_skip' || inbound.actionValue === 'skip') {
+      pending.resolve('ignored')
+      return true
+    }
     return false
   }
 
@@ -354,6 +358,7 @@ function permissionAnswerOf(inbound: SlackInbound): SlackPermissionAnswer | unde
     const action = inbound.actionId ?? ''
     if (action === 'raven_allow') return 'allow'
     if (action === 'raven_deny') return 'deny'
+    if (action === 'raven_skip') return 'ignored'
     return undefined
   }
   return parsePermitReply(inbound.text)
@@ -363,6 +368,7 @@ function parsePermitReply(text: string): SlackPermissionAnswer | undefined {
   const trimmed = slackUserText(text).toLowerCase()
   if (trimmed === 'allow' || trimmed === 'yes') return 'allow'
   if (trimmed === 'deny' || trimmed === 'no') return 'deny'
+  if (trimmed === 'skip' || trimmed === 'ignore' || trimmed === 'ignored') return 'ignored'
   return undefined
 }
 
@@ -382,8 +388,8 @@ async function askSlackPermission(opts: {
   const child = opts.event.childSessionId ? ` child ${opts.event.childSessionId}` : ''
   const durable = opts.getPendingAsk !== undefined
   const prompt = durable
-    ? `Allow \`${opts.event.tool}\`${child}? Reply *allow* or *deny*.`
-    : `Allow \`${opts.event.tool}\`${child}? Reply *allow* or *deny* (${Math.round(opts.timeoutMs / 1000)}s).`
+    ? `Allow \`${opts.event.tool}\`${child}? Reply *allow*, *deny*, or *skip*.`
+    : `Allow \`${opts.event.tool}\`${child}? Reply *allow*, *deny*, or *skip* (${Math.round(opts.timeoutMs / 1000)}s).`
 
   let settle!: (answer: SlackPermissionAnswer) => void
   let fail!: (error: Error) => void
@@ -456,6 +462,12 @@ export function permissionBlocks(callId: string, tool: string, prompt: string): 
           action_id: 'raven_deny',
           value: callId,
           style: 'danger',
+        },
+        {
+          type: 'button',
+          text: { type: 'plain_text', text: 'Skip' },
+          action_id: 'raven_skip',
+          value: callId,
         },
       ],
     },

@@ -446,6 +446,50 @@ describe('runDiscordAdapter', () => {
     await running
   })
 
+  test('DM leftover-ask skip / ignore / ignored settles ignored and prompt mentions skip', async () => {
+    for (const text of ['skip', 'ignore', 'ignored'] as const) {
+      const store = createMemoryStore()
+      const api = new FakeDiscordApi()
+      const gateway = new FakeDiscordGateway()
+      let answered: string | undefined
+      let askStarted!: () => void
+      const sawAsk = new Promise<void>((resolve) => {
+        askStarted = resolve
+      })
+      const running = runDiscordAdapter({
+        config: cfg({ allowFrom: ['U1'] }),
+        pairingHome: home(),
+        ledger: createMemoryDeliveries(),
+        store,
+        openSession: async (req) => ({
+          sessionId: `sess_skip_${text}`,
+          async *submitMessage() {
+            const ac = new AbortController()
+            askStarted()
+            answered = await req.askUser(
+              { id: 'call_1', tool: 'Bash', message: 'Allow Bash?' },
+              ac.signal,
+            )
+          },
+        }),
+        gateway,
+        api,
+      })
+      gateway.push(dmPayload({ id: `m-please-${text}`, authorId: 'U1', content: 'please' }))
+      await sawAsk
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      const prompt = api.posts.find((post) => post.content.includes('Allow'))
+      expect(prompt?.content).toContain('skip')
+      expect(prompt?.content).toContain('allow')
+      expect(prompt?.content).toContain('deny')
+      expect(prompt?.content.includes('*skip*')).toBe(false)
+      gateway.push(dmPayload({ id: `m-${text}`, authorId: 'U1', content: text }))
+      gateway.end()
+      await running
+      expect(answered).toBe('ignored')
+    }
+  })
+
   test('failed discord permission post does not auto-deny the next ask', async () => {
     const store = createMemoryStore()
     const gateway = new FakeDiscordGateway()
@@ -709,6 +753,50 @@ describe('runDiscordAdapter', () => {
     gateway.end()
     await running
     expect(applied).toEqual([{ callId: 'call_1', answer: 'allow' }])
+    expect(submitted).toEqual([])
+    expect(await store.listPendingAsks(sessionId)).toHaveLength(0)
+  })
+
+  test('crash-resume skip text calls applyAskAnswer ignored and does not submitMessage', async () => {
+    const store = createMemoryStore()
+    const sessionId = 'sess_resume_skip'
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Allow Bash?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    const applied: Array<{ callId: string; answer: string }> = []
+    const submitted: string[] = []
+    const gateway = new FakeDiscordGateway()
+    const running = runDiscordAdapter({
+      config: cfg({ allowFrom: ['U1'] }),
+      pairingHome: home(),
+      ledger: createMemoryDeliveries(),
+      store,
+      openSession: async () => ({
+        sessionId,
+        async *submitMessage(input: UserSubmitInput) {
+          submitted.push(submitText(input))
+        },
+        async applyAskAnswer(callId, answer) {
+          applied.push({ callId, answer })
+          await store.deletePendingAsk(callId)
+          return 'matched'
+        },
+        listPendingAsks: () => store.listPendingAsks(sessionId),
+        getPendingAsk: (callId) => store.getPendingAsk(callId),
+      }),
+      gateway,
+      api: new FakeDiscordApi(),
+    })
+    gateway.push(dmPayload({ id: 'm-skip', authorId: 'U1', content: 'skip' }))
+    gateway.end()
+    await running
+    expect(applied).toEqual([{ callId: 'call_1', answer: 'ignored' }])
     expect(submitted).toEqual([])
     expect(await store.listPendingAsks(sessionId)).toHaveLength(0)
   })

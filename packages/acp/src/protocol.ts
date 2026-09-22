@@ -99,7 +99,7 @@ export interface SessionNewParams {
   model?: string
 }
 
-export type AcpPermissionAnswer = 'allow' | 'deny' | 'allow_always'
+export type AcpPermissionAnswer = 'allow' | 'deny' | 'allow_always' | 'ignored'
 
 export type PermissionOptionKind = 'allow_once' | 'allow_always' | 'reject_once' | 'reject_always'
 
@@ -113,6 +113,7 @@ export const PERMISSION_OPTIONS: PermissionOption[] = [
   { optionId: 'allow', name: 'Allow', kind: 'allow_once' },
   { optionId: 'allow_always', name: 'Allow always', kind: 'allow_always' },
   { optionId: 'deny', name: 'Deny', kind: 'reject_once' },
+  { optionId: 'ignored', name: 'Skip', kind: 'reject_once' },
 ]
 
 export interface SessionRequestPermissionParams {
@@ -349,7 +350,9 @@ export function isJsonRpcResponse(message: unknown): message is JsonRpcResponse 
 }
 
 export function permissionOutcome(result: unknown): AcpPermissionAnswer {
-  if (result === 'allow' || result === 'deny' || result === 'allow_always') return result
+  if (result === 'allow' || result === 'deny' || result === 'allow_always' || result === 'ignored') {
+    return result
+  }
   if (typeof result === 'string') return mapPermissionOptionId(result)
   if (!result || typeof result !== 'object') return 'deny'
   const obj = result as Record<string, unknown>
@@ -377,6 +380,10 @@ function mapPermissionOptionId(id: string): AcpPermissionAnswer {
     case 'allow-always':
     case 'allowAlways':
       return 'allow_always'
+    case 'ignored':
+    case 'skip':
+    case 'ignore':
+      return 'ignored'
     default:
       // Unknown outcomes are not approval (ACP: do not treat as selected allow).
       return 'deny'

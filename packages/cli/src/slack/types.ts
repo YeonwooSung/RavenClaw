@@ -2,7 +2,7 @@ import type { RavenClawConfig, UserSubmitInput } from '@ravenclaw/core'
 
 export type SlackConfig = NonNullable<RavenClawConfig['slack']>
 
-export type SlackPermissionAnswer = 'allow' | 'deny' | 'allow_always'
+export type SlackPermissionAnswer = 'allow' | 'deny' | 'allow_always' | 'ignored'
 
 export interface SlackSocketEnvelope {
   envelope_id?: string

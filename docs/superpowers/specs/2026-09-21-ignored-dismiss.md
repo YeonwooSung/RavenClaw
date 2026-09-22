@@ -122,7 +122,7 @@ These lock underspecification. The implementation plan may only add detail, not 
 
 12. **Ink + OpenTUI skip key this door.** Ink `i`. OpenTUI `i` / `skip` / `ignored`. Esc stays abort. `y`/`n`/`a` unchanged.
 
-13. **Slack / Discord / ACP stay 3-way.** They cannot emit `'ignored'` until a later door. Timeout/cancel mappings stay. Unmatched leftover responses still re-queue.
+13. **Slack / Discord / ACP skip UI.** Amended by [`2026-09-22-hitl-skip-hosts.md`](2026-09-22-hitl-skip-hosts.md). Those hosts emit `'ignored'` via Skip / skip text / Skip option. Timeout/cancel mappings stay. Unmatched leftover responses still re-queue.
 
 14. **`dontAsk` leftover stays deny.** `decidePermission` must not emit ignored.
 

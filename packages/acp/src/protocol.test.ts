@@ -15,6 +15,7 @@ import {
   jsonRpcResult,
   parseIncoming,
   permissionOutcome,
+  PERMISSION_OPTIONS,
   promptToSubmit,
   roundEndToStopReason,
   toSessionUpdate,
@@ -135,9 +136,30 @@ describe('permissionOutcome', () => {
       'allow_always',
     )
     expect(permissionOutcome({ outcome: { outcome: 'selected', optionId: 'deny' } })).toBe('deny')
+    expect(permissionOutcome({ outcome: { outcome: 'selected', optionId: 'ignored' } })).toBe(
+      'ignored',
+    )
+    expect(permissionOutcome({ outcome: { outcome: 'selected', optionId: 'skip' } })).toBe('ignored')
+    expect(permissionOutcome({ outcome: { outcome: 'selected', optionId: 'ignore' } })).toBe(
+      'ignored',
+    )
+    expect(permissionOutcome('ignored')).toBe('ignored')
     expect(permissionOutcome({ outcome: { outcome: 'cancelled' } })).toBe('deny')
     expect(permissionOutcome({ outcome: { outcome: 'selected', optionId: 'mystery' } })).toBe('deny')
     expect(ACP_METHODS.sessionRequestPermission).toBe('session/request_permission')
+  })
+
+  test('PERMISSION_OPTIONS appends Skip as ignored reject_once', () => {
+    expect(PERMISSION_OPTIONS).toContainEqual({
+      optionId: 'ignored',
+      name: 'Skip',
+      kind: 'reject_once',
+    })
+    expect(PERMISSION_OPTIONS[PERMISSION_OPTIONS.length - 1]).toEqual({
+      optionId: 'ignored',
+      name: 'Skip',
+      kind: 'reject_once',
+    })
   })
 })
 
