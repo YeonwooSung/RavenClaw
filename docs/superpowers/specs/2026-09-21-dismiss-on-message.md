@@ -2,6 +2,7 @@
 
 Date: 2026-09-21  
 Status: **implemented**  
+Shipped sha: `061d23c` on `main`.  
 Reviewed against tree at `0a1176f` (`origin/main`, instructionFiles + three doors landed).  
 Successor to `2026-09-21-ignored-dismiss.md` (Status: implemented). Amends prior OUT for **dismiss-on-message** only. Does not reopen abort-pair I2, Slack/ACP skip UI, timeout→ignored, WorkspaceFs docker, or NotebookEdit docker.
 
@@ -114,7 +115,7 @@ New user text means the operator moved on. Every parked owned ask is paired as i
 
 ## Per-slice board
 
-Board as of this worktree (done). Leave Shipped sha empty until it lands on `main`.
+Board done on `main` at `061d23c`.
 
 | ID | Status vs tree |
 |---|---|

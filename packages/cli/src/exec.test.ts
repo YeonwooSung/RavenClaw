@@ -18,6 +18,7 @@ import {
   globTool,
   grepTool,
   listDirTool,
+  memoryTool,
   notebookEditTool,
   readSubtreeTool,
   readTool,
@@ -167,6 +168,19 @@ describe('createRootTools', () => {
     expect(tools.find((tool) => tool.name === 'ListDir')).toBe(listDirTool)
     expect(tools.find((tool) => tool.name === 'ReadSubtree')).toBe(readSubtreeTool)
     expect(tools.find((tool) => tool.name === 'NotebookEdit')).toBe(notebookEditTool)
+  })
+
+  test('createRootTools with a backend does not reuse the Memory singleton', () => {
+    const backend = createLocalTerminalBackend()
+    const tools = createRootTools(createMemoryStore(), bashTool, askUserTool, false, backend)
+    const memory = tools.find((tool) => tool.name === 'Memory')
+    expect(memory).toBeDefined()
+    expect(memory).not.toBe(memoryTool)
+  })
+
+  test('createRootTools without a backend keeps the Memory singleton', () => {
+    const tools = createRootTools(createMemoryStore())
+    expect(tools.find((tool) => tool.name === 'Memory')).toBe(memoryTool)
   })
 
   test('filterToolsForTurn hides gated builtins without lsp.json, git, or cron jobs', () => {

@@ -9,6 +9,7 @@ import type {
   SlackBoundSession,
   SlackConfig,
   SlackOpenSession,
+  SlackPermissionAnswer,
   SlackPostMessageOpts,
   SlackSocket,
   SlackSocketEnvelope,
@@ -509,9 +510,9 @@ describe('runSlackAdapter', () => {
     const enqueueSteer = mock(() => {})
     const permits = new Map<
       string,
-      Array<{ resolve: (answer: 'allow' | 'deny' | 'allow_always') => void; callId: string }>
+      Array<{ resolve: (answer: SlackPermissionAnswer) => void; callId: string }>
     >()
-    let answered: 'allow' | 'deny' | 'allow_always' | undefined
+    let answered: SlackPermissionAnswer | undefined
     permits.set('T1:D1:U1', [
       {
         callId: 'call_1',
@@ -542,6 +543,195 @@ describe('runSlackAdapter', () => {
     const actions = (blocks[1] as { elements: Array<{ value: string; action_id: string }> }).elements
     expect(actions[0]?.value).toBe('call_1')
     expect(actions[0]?.action_id).toBe('raven_allow')
+  })
+
+  test('slack permission blocks include Skip without danger style', () => {
+    const blocks = permissionBlocks('call_1', 'Bash', 'Allow Bash?')
+    const actions = (
+      blocks[1] as {
+        elements: Array<{
+          value: string
+          action_id: string
+          style?: string
+          text: { type: string; text: string }
+        }>
+      }
+    ).elements
+    expect(actions).toHaveLength(3)
+    expect(actions[0]).toMatchObject({
+      action_id: 'raven_allow',
+      value: 'call_1',
+      text: { type: 'plain_text', text: 'Allow' },
+    })
+    expect(actions[1]).toMatchObject({
+      action_id: 'raven_deny',
+      value: 'call_1',
+      style: 'danger',
+      text: { type: 'plain_text', text: 'Deny' },
+    })
+    expect(actions[2]).toMatchObject({
+      action_id: 'raven_skip',
+      value: 'call_1',
+      text: { type: 'plain_text', text: 'Skip' },
+    })
+    expect(actions[2]?.style).toBeUndefined()
+  })
+
+  test('tryResolvePermit raven_skip and skip text settle ignored', () => {
+    const cases: Array<{ inbound: Parameters<typeof tryResolvePermit>[1]; answer: SlackPermissionAnswer }> = [
+      {
+        inbound: {
+          kind: 'block_actions',
+          team: 'T1',
+          channel: 'D1',
+          userId: 'U1',
+          text: '',
+          ts: '1.0',
+          mentioned: false,
+          actionId: 'raven_skip',
+          actionValue: 'call_1',
+        },
+        answer: 'ignored',
+      },
+      {
+        inbound: {
+          kind: 'message',
+          team: 'T1',
+          channel: 'D1',
+          userId: 'U1',
+          text: 'skip',
+          ts: '1.0',
+          mentioned: false,
+        },
+        answer: 'ignored',
+      },
+      {
+        inbound: {
+          kind: 'message',
+          team: 'T1',
+          channel: 'D1',
+          userId: 'U1',
+          text: 'Ignore',
+          ts: '1.0',
+          mentioned: false,
+        },
+        answer: 'ignored',
+      },
+      {
+        inbound: {
+          kind: 'message',
+          team: 'T1',
+          channel: 'D1',
+          userId: 'U1',
+          text: 'ignored',
+          ts: '1.0',
+          mentioned: false,
+        },
+        answer: 'ignored',
+      },
+    ]
+    for (const row of cases) {
+      const permits = new Map<
+        string,
+        Array<{ resolve: (answer: SlackPermissionAnswer) => void; callId: string }>
+      >()
+      let answered: SlackPermissionAnswer | undefined
+      permits.set('T1:D1:U1', [
+        {
+          callId: 'call_1',
+          resolve: (answer) => {
+            answered = answer
+          },
+        },
+      ])
+      expect(tryResolvePermit(permits, row.inbound)).toBe(true)
+      expect(answered).toBe(row.answer)
+    }
+  })
+
+  test('tryResolvePermit unknown action_id and always text do not settle', () => {
+    const permits = new Map<
+      string,
+      Array<{ resolve: (answer: SlackPermissionAnswer) => void; callId: string }>
+    >()
+    let answered: SlackPermissionAnswer | undefined
+    permits.set('T1:D1:U1', [
+      {
+        callId: 'call_1',
+        resolve: (answer) => {
+          answered = answer
+        },
+      },
+    ])
+    expect(
+      tryResolvePermit(permits, {
+        kind: 'block_actions',
+        team: 'T1',
+        channel: 'D1',
+        userId: 'U1',
+        text: '',
+        ts: '1.0',
+        mentioned: false,
+        actionId: 'raven_mystery',
+        actionValue: 'call_1',
+      }),
+    ).toBe(false)
+    expect(answered).toBeUndefined()
+    expect(
+      tryResolvePermit(permits, {
+        kind: 'message',
+        team: 'T1',
+        channel: 'D1',
+        userId: 'U1',
+        text: 'always',
+        ts: '1.0',
+        mentioned: false,
+      }),
+    ).toBe(false)
+    expect(answered).toBeUndefined()
+  })
+
+  test('live askUser Skip button returns ignored and prompt mentions skip', async () => {
+    const api = new FakeSlackApi()
+    const socket = new FakeSlackSocket()
+    let answered: SlackPermissionAnswer | undefined
+    let askStarted!: () => void
+    const sawAsk = new Promise<void>((resolve) => {
+      askStarted = resolve
+    })
+    const origPost = api.postMessage.bind(api)
+    api.postMessage = async (opts) => {
+      const result = await origPost(opts)
+      if (typeof opts.text === 'string' && opts.text.includes('Allow')) askStarted()
+      return result
+    }
+    const running = runSlackAdapter({
+      config: slackConfig(),
+      socket,
+      api,
+      store: createMemoryStore(),
+      openSession: async (req) => ({
+        sessionId: 'sess_skip',
+        async *submitMessage() {
+          const ac = new AbortController()
+          answered = await req.askUser(
+            { id: 'call_1', tool: 'Bash', message: 'Allow Bash?' },
+            ac.signal,
+          )
+        },
+      }),
+    })
+    socket.push(dmMessage({ text: 'please', ts: '400.0' }))
+    await sawAsk
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const prompt = api.posts.find((post) => typeof post.text === 'string' && post.text.includes('Allow'))
+    expect(prompt?.text).toContain('skip')
+    expect(prompt?.text).toContain('*allow*')
+    expect(prompt?.text).toContain('*deny*')
+    socket.push(blockActions({ actionId: 'raven_skip', value: 'call_1', envelopeId: 'env-skip' }))
+    socket.end()
+    await running
+    expect(answered).toBe('ignored')
   })
 
   test('slack leftover-ask labels childSessionId', async () => {
@@ -881,6 +1071,48 @@ describe('runSlackAdapter', () => {
     socket.end()
     await running
     expect(applied).toEqual([{ callId: 'call_1', answer: 'allow' }])
+    expect(submitted).toEqual([])
+    expect(await store.listPendingAsks(sessionId)).toHaveLength(0)
+  })
+
+  test('crash-resume skip button calls applyAskAnswer ignored and does not submitMessage', async () => {
+    const store = createMemoryStore()
+    const sessionId = 'sess_resume_skip'
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Allow Bash?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    const applied: Array<{ callId: string; answer: string }> = []
+    const submitted: string[] = []
+    const socket = new FakeSlackSocket()
+    const running = runSlackAdapter({
+      config: slackConfig(),
+      socket,
+      api: new FakeSlackApi(),
+      store,
+      openSession: async () => ({
+        sessionId,
+        async *submitMessage(input: UserSubmitInput) {
+          submitted.push(submitText(input))
+        },
+        async applyAskAnswer(callId, answer) {
+          applied.push({ callId, answer })
+          await store.deletePendingAsk(callId)
+          return 'matched'
+        },
+        listPendingAsks: () => store.listPendingAsks(sessionId),
+        getPendingAsk: (callId) => store.getPendingAsk(callId),
+      }),
+    })
+    socket.push(blockActions({ actionId: 'raven_skip', value: 'call_1' }))
+    socket.end()
+    await running
+    expect(applied).toEqual([{ callId: 'call_1', answer: 'ignored' }])
     expect(submitted).toEqual([])
     expect(await store.listPendingAsks(sessionId)).toHaveLength(0)
   })

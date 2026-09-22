@@ -12,6 +12,7 @@ import {
   globTool,
   grepTool,
   listDirTool,
+  memoryTool,
   readSubtreeTool,
   readTool,
   writeTool,
@@ -253,6 +254,33 @@ describe('createRootTools', () => {
       false,
       createLocalTerminalBackend(),
     ).map((tool) => tool.name)
+    expect(named).not.toContain('NotebookEdit')
+  })
+
+  test('createRootTools with a backend does not reuse the Memory singleton', () => {
+    const backend = createLocalTerminalBackend()
+    const tools = createRootTools(createMemoryStore(), bashTool, false, backend)
+    const memory = tools.find((tool) => tool.name === 'Memory')
+    expect(memory).toBeDefined()
+    expect(memory).not.toBe(memoryTool)
+  })
+
+  test('createRootTools without a backend keeps the Memory singleton', () => {
+    const tools = createRootTools(createMemoryStore())
+    expect(tools.find((tool) => tool.name === 'Memory')).toBe(memoryTool)
+  })
+
+  test('includes Memory with and without a backend', () => {
+    const unnamed = createRootTools(createMemoryStore()).map((tool) => tool.name)
+    expect(unnamed).toContain('Memory')
+    expect(unnamed).not.toContain('NotebookEdit')
+    const named = createRootTools(
+      createMemoryStore(),
+      bashTool,
+      false,
+      createLocalTerminalBackend(),
+    ).map((tool) => tool.name)
+    expect(named).toContain('Memory')
     expect(named).not.toContain('NotebookEdit')
   })
 })

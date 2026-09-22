@@ -2,7 +2,7 @@
 
 Date: 2026-09-21  
 Status: implemented  
-Shipped sha: `0bd239a` on `docs/workspacefs-docker`.  
+Shipped sha: `9c8d9db` on `main`.  
 Reviewed against tree at `0a1176f` (`origin/main`, instructionFiles + three doors landed).  
 Successor to `2026-09-21-grep-glob-docker-exec.md` (Status: implemented). Amends prior OUT for **WorkspaceFs docker I/O** only. Does not reopen NotebookEdit docker, sandbox network policy, session-long containers, `ignored`, dismiss-on-message, or the LSP museum.
 
@@ -105,7 +105,7 @@ These lock underspecification. The implementation plan may only add detail, not 
 
 17. **`dontAsk` unchanged.** Docker-exec is not a leftover-ask and not a permission promotion. Write/Edit still leftover-ask; `acceptEdits` still promotes in-tree Edit/Write/ApplyPatch the same way.
 
-18. **Docs honesty.** `headless.md` / `ARCHITECTURE.md` / `.ko.md`: when Bash is actually docker (backend **and** image), Read/Write/Edit/ApplyPatch/ListDir/ReadSubtree exec in that container; omit/local/image-less docker stays host jail. Do not claim NotebookEdit, Memory, or file-history writers are docker-exec.
+18. **Docs honesty.** `headless.md` / `ARCHITECTURE.md` / `.ko.md`: when Bash is actually docker (backend **and** image), Read/Write/Edit/ApplyPatch/ListDir/ReadSubtree exec in that container; omit/local/image-less docker stays host jail. Memory docker I/O is a successor ([`2026-09-22-memory-docker.md`](2026-09-22-memory-docker.md)). Do not claim TodoWrite, Skill, or file-history writers are docker-exec.
 
 ---
 
@@ -188,7 +188,7 @@ Goal: the chokepoint can exec; local behavior matches today.
 
 ### W2.2 Docs
 
-**Contract.** `docs/headless.md`, `ARCHITECTURE.md` / `.ko.md`. Historical E2.1 pointer: WorkspaceFs docker unparked by this spec; NotebookEdit docker still parked.
+**Contract.** `docs/headless.md`, `ARCHITECTURE.md` / `.ko.md`. Historical E2.1 pointer: WorkspaceFs docker unparked by this spec; NotebookEdit docker still parked. Amended by [`2026-09-21-notebookedit-docker.md`](2026-09-21-notebookedit-docker.md) (on `main` at `6d439b6`). Dismiss-on-message amended by [`2026-09-21-dismiss-on-message.md`](2026-09-21-dismiss-on-message.md) (on `main` at `061d23c`).
 
 ---
 
@@ -232,7 +232,7 @@ Do not touch: `notebook-edit.ts`, `memory.ts`, `file-history.ts` writers, `loop/
 
 ## Out of this closeout
 
-Web UI, Prisma Task, Socket.IO, wiki, Workflow loop, agent compiler, NotebookEdit docker, Memory in container, file-history docker, sandbox network policy, Kata, isolation-trust, `dontAsk` as isolation, yaml `extraArgs` as a new key, session-long container, dismiss-on-message, LSP museum.
+Web UI, Prisma Task, Socket.IO, wiki, Workflow loop, agent compiler, NotebookEdit docker (amended by [`2026-09-21-notebookedit-docker.md`](2026-09-21-notebookedit-docker.md) at `6d439b6`), Memory docker I/O ([`2026-09-22-memory-docker.md`](2026-09-22-memory-docker.md)), file-history docker, sandbox network policy, Kata, isolation-trust, `dontAsk` as isolation, yaml `extraArgs` as a new key, session-long container, dismiss-on-message (amended by [`2026-09-21-dismiss-on-message.md`](2026-09-21-dismiss-on-message.md) at `061d23c`), LSP museum.
 
 ---
 

@@ -10,7 +10,7 @@ English: [ARCHITECTURE.md](ARCHITECTURE.md)
 - [SLASH_COMMANDS.ko.md](SLASH_COMMANDS.ko.md)
 - [CONTRIBUTING.md](CONTRIBUTING.md)
 - [docs/headless.md](docs/headless.md)
-- 구현됨: [2026-09-16-session-as-job-roadmap.md](docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md) (`ea56edd`, closeout `0ef1554`); [job-host state](docs/superpowers/specs/2026-09-17-job-host-state-roadmap.md) (`6e56764`); [rewind persist-before-reset](docs/superpowers/specs/2026-09-18-rewind-persist-and-todo-projection.md) (`048deff`); [cancel abort-pair / reset-on-resume / follow-up persist](docs/superpowers/specs/2026-09-18-cancel-reset-followup.md) (`5eefdde`); [no-job todo revert](docs/superpowers/specs/2026-09-18-no-job-todo-revert.md) (`be5a4a7`); [stream version / continuationToken](docs/superpowers/specs/2026-09-18-stream-version-token.md) (`c9c4871`); [keep-id `/clear`](docs/superpowers/specs/2026-09-18-keep-id-clear.md) (`edeb611`); [parent tree-stop](docs/superpowers/specs/2026-09-18-parent-tree-stop.md) (`9901d0e`); [rewind recovery / schema v11 / async `createSessionEngine`](docs/superpowers/specs/2026-09-20-rewind-recovery-v11.md) (이전: [eve-inspired](docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md), implemented)
+- 구현됨: [2026-09-16-session-as-job-roadmap.md](docs/superpowers/specs/2026-09-16-session-as-job-roadmap.md) (`ea56edd`, closeout `0ef1554`); [job-host state](docs/superpowers/specs/2026-09-17-job-host-state-roadmap.md) (`6e56764`); [rewind persist-before-reset](docs/superpowers/specs/2026-09-18-rewind-persist-and-todo-projection.md) (`048deff`); [cancel abort-pair / reset-on-resume / follow-up persist](docs/superpowers/specs/2026-09-18-cancel-reset-followup.md) (`5eefdde`); [no-job todo revert](docs/superpowers/specs/2026-09-18-no-job-todo-revert.md) (`be5a4a7`); [stream version / continuationToken](docs/superpowers/specs/2026-09-18-stream-version-token.md) (`c9c4871`); [keep-id `/clear`](docs/superpowers/specs/2026-09-18-keep-id-clear.md) (`edeb611`); [parent tree-stop](docs/superpowers/specs/2026-09-18-parent-tree-stop.md) (`9901d0e`); [rewind recovery / schema v11 / async `createSessionEngine`](docs/superpowers/specs/2026-09-20-rewind-recovery-v11.md) (`dc45aec`); [leftover-ask abort-pair](docs/superpowers/specs/2026-09-20-leftover-ask-abort-pair.md) (`067bfba`); [HTTP POST clear](docs/superpowers/specs/2026-09-20-http-post-clear.md) (`a53be93`); [Grep/Glob docker-exec](docs/superpowers/specs/2026-09-21-grep-glob-docker-exec.md) (`a52eab1`); [ignored dismiss](docs/superpowers/specs/2026-09-21-ignored-dismiss.md) (`22a55c1`); [bounded LSP depth](docs/superpowers/specs/2026-09-21-lsp-depth.md) (`6c797d1`); [instruction files `/config`](docs/superpowers/specs/2026-09-21-instruction-files-config.md) (`0a1176f`); [WorkspaceFs docker](docs/superpowers/specs/2026-09-21-workspacefs-docker.md) (`9c8d9db`); [NotebookEdit docker](docs/superpowers/specs/2026-09-21-notebookedit-docker.md) (`6d439b6`); [dismiss-on-message](docs/superpowers/specs/2026-09-21-dismiss-on-message.md) (`061d23c`) (이전: [eve-inspired](docs/superpowers/specs/2026-09-15-eve-inspired-roadmap.md), implemented)
 - 선행 분석: [eve-analysis.ko.md](docs/research/eve-analysis.ko.md), [y0-analysis.ko.md](docs/research/y0-analysis.ko.md)
 
 ---
@@ -123,7 +123,7 @@ flowchart TD
 - `$RAVENCLAW_HOME/state.db`에 SQLite WAL 스토어를 연다.
 - included gateway를 probe한다. `--provider`가 있으면 BYOK를 선호한다. headless 표면에서 gateway가 `placementRequired`를 주면 신규 세션은 BYOK로 남는다.
 - `createProvider`로 Provider를 만든다.
-- `createSession !== false`이면 `openEngine`이 세션, 락, 시스템 파트, 툴 풀, MCP, 훅, `SessionEngine`을 만든다. `TerminalBackend`는 한 번만 만들고 Bash, Grep/Glob, 그리고 여섯 파일 툴 팩토리(`createReadTool` / `createWriteTool` / `createEditTool` / `createApplyPatchTool` / `createListDirTool` / `createReadSubtreeTool`)에 같은 객체를 넘긴다.
+- `createSession !== false`이면 `openEngine`이 세션, 락, 시스템 파트, 툴 풀, MCP, 훅, `SessionEngine`을 만든다. `TerminalBackend`는 한 번만 만들고 Bash, Grep/Glob, 여섯 파일 툴 팩토리(`createReadTool` / `createWriteTool` / `createEditTool` / `createApplyPatchTool` / `createListDirTool` / `createReadSubtreeTool`), NotebookEdit, Memory (`createMemoryTool`)에 같은 객체를 넘긴다.
 
 기본 대화형 경로는 `lockHolder: 'tui'`로 Ink `App`을 render한다. `--tui opentui`면 `runOpenTuiApp`이다.
 
@@ -168,7 +168,7 @@ flowchart TD
 
 `packages/cli/src/acp-stdio.ts`가 stdin/stdout JSON-RPC를 `@ravenclaw/acp`의 `createAcpServer`에 넘긴다. `bootCli({ createSession: false, surface: 'headless', lockHolder: 'acp' })` 후 에디터의 `session/new` / `session/load`마다 `openNewSession` / `resumeRuntime`을 연다.
 
-`--dont-ask`가 없으면 `askUserHost: true`다. leftover-ask는 에디터 permission 요청으로 간다. `--dont-ask`면 leftover는 거절이다. 어느 쪽이든 bypass가 아니다. permission timeout은 in-process waiter만 끊고 **deny를 persist하지 않는다** (Slack/Discord durable row와 같은 법칙).
+`--dont-ask`가 없으면 `askUserHost: true`다. leftover-ask는 에디터 permission 요청으로 간다. 에디터 Skip → `'ignored'`. `cancelled`는 여전히 deny. `--dont-ask`면 leftover는 거절이다. 어느 쪽이든 bypass가 아니다. permission timeout은 in-process waiter만 끊고 **deny를 persist하지 않는다** (Slack/Discord durable row와 같은 법칙).
 
 ACP `session/new`는 cwd, model, MCP 서버 목록을 overlay할 수 있다. 이미지 블록은 `UserSubmitInput.images`로 매핑한다.
 
@@ -205,7 +205,7 @@ Socket Mode 봇이다. 공개 URL이 필요 없다. `config.yaml`의 `slack.enab
 - 채널은 `channels`에 있어야 한다. 비어 있으면 채널 메시지를 무시한다. DM은 allowlist만 통과하면 된다.
 - `mentionOnly` 기본값은 true다.
 - DM은 `default`(leftover-ask), 채널/스레드는 `dontAsk`다.
-- DM leftover-ask는 채널에 allow/deny를 묻고 120초 안에 답이 없으면 deny다. 채널 메시지의 leftover는 묻지 않고 deny다.
+- DM leftover-ask는 Allow / Deny / Skip. Skip은 `'ignored'`. 120초 durable timeout은 행을 남긴다. 비-DM은 묻지 않고 deny다.
 - 세션 키: DM은 `raven:slack:<team>:<userId>`. 비-DM은 어댑터가 항상 `threadId`를 넘기므로 `raven:slack:<team>:<channel>:<threadTs||messageTs>`다. 3파트 채널 키 헬퍼는 있지만 라이브 경로에서는 쓰이지 않는다.
 - 인메모리 dedupe는 `team:channel:ts`다. Discord처럼 SQLite ledger를 쓰지 않는다.
 - `createChatSessionHost`로 serve와 같은 세션 맵/mailbox를 재사용한다. serve HTTP를 경유하지 않는다.
@@ -217,7 +217,7 @@ Gateway 봇이다. `discord.enabled: true`와 `DISCORD_BOT_TOKEN`이 필요하�
 - `lockHolder`는 `discord`다.
 - allowlist + DM pairing. `allowFrom`에 없거나 pairing되지 않은 DM은 `pair-dm`이 된다. 봇이 `pair with: raven pairing approve <code>`를 보낸다.
 - 길드 채널은 `channels`에 있어야 하고, `mentionOnly`면 멘션이 필요하다.
-- DM은 `default`, 길드/스레드는 `dontAsk`다. durable DM은 timer-deny하지 않는다. `pending_asks` 행이 남는다 (timeout은 in-process waiter만 끊음). 길드 메시지의 leftover는 묻지 않고 deny다.
+- DM은 `default`, 길드/스레드는 `dontAsk`다. durable DM은 timer-deny하지 않는다. `pending_asks` 행이 남는다 (timeout은 in-process waiter만 끊음). DM leftover-ask 텍스트 `skip`/`ignore`/`ignored`는 `'ignored'`다. 길드 메시지의 leftover는 묻지 않고 deny다.
 - 세션 키: DM은 `raven:discord:dm:<channelId>`, 길드는 `raven:discord:<guildId>:<channelId>`, 스레드는 `raven:discord:<guildId>:<channelId>:<thread>`.
 - inbound ledger는 `state.db`의 `deliveries` 테이블이다. 키는 `discord:<messageId>`. TTL 24시간. 같은 메시지를 두 번 돌리지 않는다.
 
@@ -407,7 +407,7 @@ CLI `createRootTools` (`packages/cli/src/engine.ts`)가 실제로 조립하는 �
 | `SetOutput` | 자식 structured 출력 |
 | `AddDir` | 세션 permission root 추가 |
 | `SessionSearch` | FTS5 |
-| `Memory` | `USER.md` / `MEMORY.md` 읽기·쓰기 |
+| `Memory` | leftover-ask. SDK에 있다. docker(+image)이고 파일이 `turn.cwd` 안이면 WorkspaceFs exec (`stat`/`readFile`, `mkdir`, `tee`+stdin); 실패는 `Memory failed:`(호스트 `writeFileSync` 없음). `projectCwd`가 cwd 밖인 docker는 `Memory failed: outside workspace`, exec 없음. omit/local/이미지 없는 docker는 호스트 `node:fs`(`projectCwd` 사이드카 포함). 턴 abort는 `AbortError` / `ABORTED_TEXT`. FileHistory snapshot 없음 |
 | `LSP` | hover/definition/references/implementation/typeDefinition/diagnostic. `.ravenclaw/lsp.json`이 있을 때만 `isEnabled` |
 | `EnterWorktree` `ExitWorktree` | 세션 git worktree. cwd는 persist. dirty worktree는 **report-only**. `remove`는 dirty면 `discard_changes` 없이는 실패하고, 강제 삭제하지 않는다 |
 | `CronCreate` `CronList` `CronDelete` `CronSetEnabled` | 루트만. 자식에게는 nesting deny |
@@ -713,7 +713,7 @@ fire는 새 `dontAsk` 세션을 연다. `lockHolder`는 `cron`이다. surface는
 | `<cwd>/.ravenclaw/` | 프로젝트 스킬, 에이전트, 플러그인, hooks, permissions, `plan.md`, `tasks.json`, `lsp.json`, `MEMORY.md`/`USER.md`, worktrees |
 | `<cwd>/AGENTS.md` 등 | 프로젝트 지시. `raven init`이 없으면 작성 |
 
-이 프로세스는 사용자와 같은 OS 유저다. 네트워크 샌드박스는 없다. Docker terminal backend(kind+image)는 허용된 Bash, Grep/Glob, Read/Write/Edit/ApplyPatch/ListDir/ReadSubtree, NotebookEdit, file-history undo restore/remove가 어디서 도는지 바꿀 뿐, 권한 결정을 바꾸지 않는다. omit/local/이미지 없는 docker는 Grep/Glob가 호스트 `rg`/walk, 파일 툴은 호스트 WorkspaceFs jail, NotebookEdit는 호스트 I/O(jail 후), file-history undo는 호스트. snapshot은 호스트. Memory·TodoWrite는 호스트다. `dontAsk` 대체가 아니다.
+이 프로세스는 사용자와 같은 OS 유저다. 네트워크 샌드박스는 없다. Docker terminal backend(kind+image)는 허용된 Bash, Grep/Glob, Read/Write/Edit/ApplyPatch/ListDir/ReadSubtree, NotebookEdit, in-tree Memory, file-history undo restore/remove가 어디서 도는지 바꿀 뿐, 권한 결정을 바꾸지 않는다. omit/local/이미지 없는 docker는 Grep/Glob가 호스트 `rg`/walk, 파일 툴은 호스트 WorkspaceFs jail, NotebookEdit는 호스트 I/O(jail 후), Memory는 호스트 `node:fs`, file-history undo는 호스트. docker에서 `projectCwd`가 cwd 밖이면 Memory는 `Memory failed: outside workspace`. snapshot은 호스트. TodoWrite·Skill은 호스트다. `dontAsk` 대체가 아니다.
 
 ---
 
@@ -729,7 +729,7 @@ fire는 새 `dontAsk` 세션을 연다. `lockHolder`는 `cron`이다. surface는
 - **스킬** — agentskills.io frontmatter. builtin 8개를 키친싱크로 키우지 않는다.
 - **훅** — `hooks.json` 라이프사이클 / `pre_tool`.
 - **권한 규칙** — session / user / project JSON.
-- **terminal backend** — `local` | `docker`. Bash, Grep/Glob, Read/Write/Edit/ApplyPatch/ListDir/ReadSubtree, NotebookEdit, file-history undo restore/remove가 같은 객체를 쓴다. snapshot은 호스트. Memory·TodoWrite는 호스트. `dontAsk` 대체가 아니다.
+- **terminal backend** — `local` | `docker`. Bash, Grep/Glob, 파일 툴, NotebookEdit, in-tree Memory, file-history undo restore/remove가 같은 객체를 쓴다. docker에서 `projectCwd`가 cwd 밖이면 Memory는 `Memory failed: outside workspace`. snapshot은 호스트. TodoWrite·Skill은 호스트다. `dontAsk` 대체가 아니다.
 - **TUI 표면** — Ink 또는 OpenTUI. 루프는 공유.
 - **SDK** — `createRavenSession`.
 - **chat host** — Slack/Discord처럼 `createChatSessionHost` + admit 함수.
