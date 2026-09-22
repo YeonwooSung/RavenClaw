@@ -25,4 +25,6 @@ jobs:
           tmp=$(mktemp -d)
           (cd "$tmp" && bun "$GITHUB_WORKSPACE/packages/cli/src/index.ts" init)
           test -f "$tmp/AGENTS.md"
-          bun packages/cli/src/index.ts doctor || true
+          code=0
+          bun packages/cli/src/index.ts doctor || code=$?
+          test "$code" -eq 1

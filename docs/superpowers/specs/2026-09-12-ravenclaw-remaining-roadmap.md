@@ -357,7 +357,7 @@ slack:
 - `packages/cli/package.json`: remove `"private": true` only for the CLI package that users install; workspace root may stay private.
 - GitHub Actions `release.yml`: on tag `v*`, `bun publish` / npm with provenance if available.
 - Optional Homebrew formula in a later PR (`brew tap`); not blocking.
-- Nightly: workflow `cron: '0 7 * * *'` that runs `bun test` on `packages/core` + `packages/cli` targeted suites (never full-repo `bun test` — Docker hang). Optional live smoke job **manual** (`workflow_dispatch`) with a repo secret; default nightly is unit-only.
+- Nightly: workflow `cron: '0 7 * * *'` that runs `scripts/ci-unit.sh` (every workspace package; never full-repo `bun test` — Docker hang). Amended by `2026-09-22-ci-unit-packages.md`. Optional live smoke job **manual** (`workflow_dispatch`) with a repo secret; default nightly is unit-only.
 
 ### R4.2 GitHub Action (H2.5)
 
