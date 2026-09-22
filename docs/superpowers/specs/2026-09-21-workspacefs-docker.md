@@ -2,7 +2,7 @@
 
 Date: 2026-09-21  
 Status: implemented  
-Shipped sha: (recorded after this commit on `docs/workspacefs-docker`).  
+Shipped sha: `0bd239a` on `docs/workspacefs-docker`.  
 Reviewed against tree at `0a1176f` (`origin/main`, instructionFiles + three doors landed).  
 Successor to `2026-09-21-grep-glob-docker-exec.md` (Status: implemented). Amends prior OUT for **WorkspaceFs docker I/O** only. Does not reopen NotebookEdit docker, sandbox network policy, session-long containers, `ignored`, dismiss-on-message, or the LSP museum.
 
@@ -117,7 +117,7 @@ When `terminal.backend: docker` actually constructs a docker Bash backend, **the
 
 ## Per-slice board
 
-Board as of this worktree (`docs/workspacefs-docker`). W0–W2 done.
+Board as of `0bd239a` on `docs/workspacefs-docker`. W0–W2 done.
 
 | ID | Status vs tree |
 |---|---|
