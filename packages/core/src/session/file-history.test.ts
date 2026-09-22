@@ -2,7 +2,22 @@ import { describe, expect, test } from 'bun:test'
 import { existsSync, mkdtempSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import {
+  createDockerTerminalBackend,
+  createTerminalBackend,
+  type TerminalRunRequest,
+} from '../tools/terminal-backend'
 import { createFileHistory, formatUndoNotice } from './file-history'
+
+function fakeDocker(
+  runCommand: (req: TerminalRunRequest) => Promise<{
+    stdout: string
+    stderr: string
+    exitCode: number
+  }>,
+) {
+  return createDockerTerminalBackend({ image: 'bash:5', runCommand })
+}
 
 describe('createFileHistory', () => {
   test('undo returns a Promise and still restores the last turn', async () => {
@@ -155,5 +170,160 @@ describe('createFileHistory', () => {
     expect(history.pendingCount()).toBe(0)
     expect(await history.undo()).toEqual({ restored: [], removed: [] })
     expect(readFileSync(path, 'utf8')).toBe('new\n')
+  })
+})
+
+describe('createFileHistory docker undo', () => {
+  test('restore/remove go through exec and do not host-write workspace bytes', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'raven-fh-dock-'))
+    const cwd = mkdtempSync(join(tmpdir(), 'raven-fh-dock-cwd-'))
+    const existing = join(cwd, 'a.txt')
+    const created = join(cwd, 'b.txt')
+    writeFileSync(existing, 'old\n')
+    const calls: TerminalRunRequest[] = []
+    const backend = fakeDocker(async (req) => {
+      calls.push(req)
+      return { stdout: '', stderr: '', exitCode: 0 }
+    })
+    const history = createFileHistory('sess_dock', home, { backend, cwd })
+    history.beginTurn()
+    history.snapshot(existing)
+    writeFileSync(existing, 'new\n')
+    history.snapshot(created)
+    writeFileSync(created, 'fresh\n')
+    history.endTurn()
+
+    const first = await history.undo()
+    expect(first.restored).toEqual([existing])
+    expect(first.removed).toEqual([created])
+    expect(readFileSync(existing, 'utf8')).toBe('new\n')
+    expect(existsSync(created)).toBe(true)
+    expect(calls.length).toBe(2)
+    const tee = calls.find((req) => String(req.args.at(-1) ?? '').includes('tee'))
+    const rm = calls.find((req) => String(req.args.at(-1) ?? '').includes('rm'))
+    expect(tee).toBeDefined()
+    expect(rm).toBeDefined()
+    expect(String(tee?.stdin ?? '')).toBe('old\n')
+    expect(String(tee?.args.at(-1) ?? '')).not.toContain('old\n')
+    expect(tee?.timeoutMs).toBe(30_000)
+    expect(rm?.timeoutMs).toBe(30_000)
+    expect(calls.every((req) => req.command === 'docker')).toBe(true)
+  })
+
+  test('snapshot stays host copyFileSync with zero exec', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'raven-fh-snap-'))
+    const cwd = mkdtempSync(join(tmpdir(), 'raven-fh-snap-cwd-'))
+    const path = join(cwd, 'a.txt')
+    writeFileSync(path, 'old\n')
+    const calls: TerminalRunRequest[] = []
+    const backend = fakeDocker(async (req) => {
+      calls.push(req)
+      return { stdout: '', stderr: '', exitCode: 0 }
+    })
+    const history = createFileHistory('sess_snap', home, { backend, cwd })
+    history.beginTurn()
+    history.snapshot(path)
+    expect(existsSync(join(home, 'file-history', 'sess_snap', '0001'))).toBe(true)
+    expect(calls).toHaveLength(0)
+  })
+
+  test('outside-cwd leftover with zero exec and no host write', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'raven-fh-out-'))
+    const cwd = mkdtempSync(join(tmpdir(), 'raven-fh-out-cwd-'))
+    const outsideRoot = mkdtempSync(join(tmpdir(), 'raven-fh-out-else-'))
+    const outside = join(outsideRoot, 'secret.txt')
+    writeFileSync(outside, 'old\n')
+    const calls: TerminalRunRequest[] = []
+    const backend = fakeDocker(async (req) => {
+      calls.push(req)
+      return { stdout: '', stderr: '', exitCode: 0 }
+    })
+    const history = createFileHistory('sess_out', home, { backend, cwd })
+    history.beginTurn()
+    history.snapshot(outside)
+    writeFileSync(outside, 'new\n')
+    history.endTurn()
+    const first = await history.undo()
+    expect(first.restored).toEqual([])
+    expect(first.removed).toEqual([])
+    expect(history.pendingCount()).toBe(1)
+    expect(calls).toHaveLength(0)
+    expect(readFileSync(outside, 'utf8')).toBe('new\n')
+  })
+
+  test('exec fail leftovers the row and does not host-write', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'raven-fh-fail-dock-'))
+    const cwd = mkdtempSync(join(tmpdir(), 'raven-fh-fail-dock-cwd-'))
+    const path = join(cwd, 'keep.txt')
+    writeFileSync(path, 'old\n')
+    const backend = fakeDocker(async () => {
+      throw new Error('Cannot connect to the Docker daemon')
+    })
+    const history = createFileHistory('sess_fail_dock', home, { backend, cwd })
+    history.beginTurn()
+    history.snapshot(path)
+    writeFileSync(path, 'new\n')
+    history.endTurn()
+    const failed = await history.undo()
+    expect(failed.restored).toEqual([])
+    expect(history.pendingCount()).toBe(1)
+    expect(readFileSync(path, 'utf8')).toBe('new\n')
+  })
+
+  test('AbortError leftovers the row and does not host-write', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'raven-fh-abort-'))
+    const cwd = mkdtempSync(join(tmpdir(), 'raven-fh-abort-cwd-'))
+    const path = join(cwd, 'keep.txt')
+    writeFileSync(path, 'old\n')
+    const backend = fakeDocker(async () => {
+      throw Object.assign(new Error('aborted'), { name: 'AbortError' })
+    })
+    const history = createFileHistory('sess_abort', home, { backend, cwd })
+    history.beginTurn()
+    history.snapshot(path)
+    writeFileSync(path, 'new\n')
+    history.endTurn()
+    const failed = await history.undo()
+    expect(failed.restored).toEqual([])
+    expect(history.pendingCount()).toBe(1)
+    expect(readFileSync(path, 'utf8')).toBe('new\n')
+  })
+
+  test('missing cwd on docker uses host undo', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'raven-fh-nocwd-'))
+    const cwd = mkdtempSync(join(tmpdir(), 'raven-fh-nocwd-cwd-'))
+    const path = join(cwd, 'a.txt')
+    writeFileSync(path, 'old\n')
+    const calls: TerminalRunRequest[] = []
+    const backend = fakeDocker(async (req) => {
+      calls.push(req)
+      return { stdout: '', stderr: '', exitCode: 0 }
+    })
+    const history = createFileHistory('sess_nocwd', home, { backend })
+    history.beginTurn()
+    history.snapshot(path)
+    writeFileSync(path, 'new\n')
+    history.endTurn()
+    const first = await history.undo()
+    expect(first.restored).toEqual([path])
+    expect(readFileSync(path, 'utf8')).toBe('old\n')
+    expect(calls).toHaveLength(0)
+  })
+
+  test('image-less docker constructor stays host undo', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'raven-fh-localish-'))
+    const cwd = mkdtempSync(join(tmpdir(), 'raven-fh-localish-cwd-'))
+    const path = join(cwd, 'a.txt')
+    writeFileSync(path, 'old\n')
+    const backend = createTerminalBackend('docker')
+    expect(backend.kind).toBe('local')
+    const history = createFileHistory('sess_localish', home, { backend, cwd })
+    history.beginTurn()
+    history.snapshot(path)
+    writeFileSync(path, 'new\n')
+    history.endTurn()
+    const first = await history.undo()
+    expect(first.restored).toEqual([path])
+    expect(readFileSync(path, 'utf8')).toBe('old\n')
   })
 })
