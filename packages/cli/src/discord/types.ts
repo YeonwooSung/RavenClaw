@@ -30,7 +30,7 @@ export interface DiscordGateway {
   close(): Promise<void>
 }
 
-export type DiscordPermissionAnswer = 'allow' | 'deny' | 'allow_always'
+export type DiscordPermissionAnswer = 'allow' | 'deny' | 'allow_always' | 'ignored'
 
 export interface DiscordBoundSession {
   sessionId: string
