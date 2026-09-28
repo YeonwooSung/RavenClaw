@@ -148,6 +148,59 @@ export function parseCrewArg(arg: string | undefined):
   return { ok: true, preset: preset as CrewPreset, goal }
 }
 
+function crewBody(lines: readonly string[]): string {
+  return lines.join('\n')
+}
+
+export const CREW_SHARED = crewBody([
+  'Call the Agent tool. /crew does not spawn agents.',
+  'You are the root. You still do the work. Do not only delegate.',
+  'Do not tell a child to call Agent. Copy that rule into every child prompt.',
+  'Do not set run_in_background.',
+  'Do not set isolation.',
+  'At most 6 children in one agents[] batch.',
+  'The next wave is a later Agent call in this same turn.',
+  'command-runner is not in this preset.',
+  'Do not call a disk agent unless the user named that agent.',
+  'If Agent returns an error, report that result and stop. Do not retry.',
+  "If the tool result contains Agent failed:, Subagent ', Unknown subagent:, aborted:, or permission_denied:, report that result and stop. Do not retry.",
+])
+
+export const CREW_PRESET_TEXT: Record<CrewPreset, string> = {
+  review: crewBody([
+    'Preset: review. Read-only.',
+    'Wave 1 is one file-finder. No agents[].',
+    'You may Read and Grep.',
+    'Do not Edit, Write, ApplyPatch, or mutate with Bash.',
+    'Wave 2 is one reviewer given the findings.',
+    'Do not assign the reviewer Edit, Write, ApplyPatch, or Bash.',
+    'No implement follow-up.',
+    'Then answer and stop.',
+  ]),
+  research: crewBody([
+    'Preset: research. Default no repo writes.',
+    'If the goal refers to this repository, wave 1 is one agents[] batch with researcher-web and file-finder.',
+    'Otherwise wave 1 is researcher-web only. No agents[].',
+    'No reviewer unless the goal asks for critique.',
+    'You synthesize the answer.',
+    'Then answer and stop.',
+  ]),
+  implement: crewBody([
+    'Preset: implement.',
+    'You may inspect first.',
+    'Wave 1 is agents[] of general, 1 through 6, each prompt listing exclusive paths.',
+    'Unsplittable work is one general.',
+    'Wave 2 is one reviewer on the summary you collected.',
+    'Do not assign the reviewer Edit, Write, ApplyPatch, or Bash.',
+    'At most one fix-up wave after that, by you or one general. No agents[].',
+    'Then answer and stop. No standing crew.',
+  ]),
+}
+
+export function formatCrewTurn(preset: CrewPreset, goal: string): string {
+  return `${CREW_SHARED}\n${CREW_PRESET_TEXT[preset]}\nGoal:\n${goal}`
+}
+
 export const TASKS_NOTICE = 'no background tasks'
 export const UNDO_NOTHING_NOTICE = 'nothing to undo'
 export const RELOAD_NOTICE = 'skills reloaded'

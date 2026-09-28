@@ -4,6 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
   CREW_LIST_NOTICE,
+  CREW_PRESET_TEXT,
+  CREW_SHARED,
   LEARN_PROMPT,
   NO_EXTRA_RULES_NOTICE,
   ONBOARDING_PROMPT,
@@ -12,6 +14,7 @@ import {
   SLASH_HELP,
   TASKS_NOTICE,
   formatContextNotice,
+  formatCrewTurn,
   formatOnboardingTurn,
   formatPermissionsNotice,
   handleSlashCommand,
@@ -255,6 +258,100 @@ describe('parseCrewArg', () => {
   test('a valid call lowercases the preset and keeps the goal verbatim', () => {
     expect(parseCrewArg('REVIEW ship it')).toEqual({ ok: true, preset: 'review', goal: 'ship it' })
     expect(parseCrewArg('research Keep  THIS')).toEqual({ ok: true, preset: 'research', goal: 'Keep  THIS' })
+  })
+})
+
+const CREW_SHARED_SENTENCES = [
+  'Call the Agent tool. /crew does not spawn agents.',
+  'You are the root. You still do the work. Do not only delegate.',
+  'Do not tell a child to call Agent. Copy that rule into every child prompt.',
+  'Do not set run_in_background.',
+  'Do not set isolation.',
+  'At most 6 children in one agents[] batch.',
+  'The next wave is a later Agent call in this same turn.',
+  'command-runner is not in this preset.',
+  'Do not call a disk agent unless the user named that agent.',
+  'If Agent returns an error, report that result and stop. Do not retry.',
+  "If the tool result contains Agent failed:, Subagent ', Unknown subagent:, aborted:, or permission_denied:, report that result and stop. Do not retry.",
+] as const
+
+const CREW_PRESET_SENTENCES = {
+  review: [
+    'Preset: review. Read-only.',
+    'Wave 1 is one file-finder. No agents[].',
+    'You may Read and Grep.',
+    'Do not Edit, Write, ApplyPatch, or mutate with Bash.',
+    'Wave 2 is one reviewer given the findings.',
+    'Do not assign the reviewer Edit, Write, ApplyPatch, or Bash.',
+    'No implement follow-up.',
+    'Then answer and stop.',
+  ],
+  research: [
+    'Preset: research. Default no repo writes.',
+    'If the goal refers to this repository, wave 1 is one agents[] batch with researcher-web and file-finder.',
+    'Otherwise wave 1 is researcher-web only. No agents[].',
+    'No reviewer unless the goal asks for critique.',
+    'You synthesize the answer.',
+    'Then answer and stop.',
+  ],
+  implement: [
+    'Preset: implement.',
+    'You may inspect first.',
+    'Wave 1 is agents[] of general, 1 through 6, each prompt listing exclusive paths.',
+    'Unsplittable work is one general.',
+    'Wave 2 is one reviewer on the summary you collected.',
+    'Do not assign the reviewer Edit, Write, ApplyPatch, or Bash.',
+    'At most one fix-up wave after that, by you or one general. No agents[].',
+    'Then answer and stop. No standing crew.',
+  ],
+} as const
+
+describe('formatCrewTurn', () => {
+  test.each(['review', 'research', 'implement'] as const)(
+    '%s contains every shared sentence and that preset sentences',
+    (preset) => {
+      const goal = 'Keep  THIS'
+      const text = formatCrewTurn(preset, goal)
+      for (const sentence of CREW_SHARED_SENTENCES) expect(text).toContain(sentence)
+      for (const sentence of CREW_PRESET_SENTENCES[preset]) expect(text).toContain(sentence)
+      const head = `${CREW_SHARED}\n${CREW_PRESET_TEXT[preset]}\nGoal:\n`
+      expect(text.startsWith(head)).toBe(true)
+      expect(text.slice(head.length)).toBe(goal)
+    },
+  )
+
+  test('research goal is byte-identical and is not lowercased', () => {
+    const goal = 'Keep  THIS'
+    const text = formatCrewTurn('research', goal)
+    expect(text).toContain('Keep  THIS')
+    expect(text).not.toContain('keep  this')
+    const head = `${CREW_SHARED}\n${CREW_PRESET_TEXT.research}\nGoal:\n`
+    expect(text.startsWith(head)).toBe(true)
+    expect(text.slice(head.length)).toBe(goal)
+  })
+
+  test('a goal with edge whitespace is not trimmed and nothing follows it', () => {
+    const goal = ' Keep  THIS \n'
+    const text = formatCrewTurn('implement', goal)
+    const head = `${CREW_SHARED}\n${CREW_PRESET_TEXT.implement}\nGoal:\n`
+    expect(text.startsWith(CREW_SHARED)).toBe(true)
+    expect(text.startsWith(`${CREW_SHARED}\n${CREW_PRESET_TEXT.implement}\nGoal:\n`)).toBe(true)
+    expect(text.slice(head.length)).toBe(goal)
+    expect(text.endsWith(goal)).toBe(true)
+    expect(text.slice(head.length + goal.length)).toBe('')
+  })
+
+  test('no preset body contains a permission bypass', () => {
+    for (const preset of ['review', 'research', 'implement'] as const) {
+      const body = CREW_PRESET_TEXT[preset]
+      expect(body).not.toContain('auto-allow')
+      expect(body).not.toContain('allow_always')
+      expect(body).not.toContain('skip the permission')
+      const text = formatCrewTurn(preset, 'Keep  THIS')
+      expect(text).not.toContain('auto-allow')
+      expect(text).not.toContain('allow_always')
+      expect(text).not.toContain('skip the permission')
+    }
   })
 })
 
