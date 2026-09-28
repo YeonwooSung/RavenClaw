@@ -250,6 +250,7 @@ Ink is the default. OpenTUI is `--tui opentui`.
 | `/learn` | Ask the model to write a skill from this session |
 | `/review` | Append a read-only review to `.ravenclaw/MEMORY.md` |
 | `/interview` | Ask clarifying questions (`AskUser`) before coding |
+| `/crew [<preset> <goal>]` | List presets, or start one frozen crew turn |
 | `/undo` | Restore files from the last closed edit checkpoint |
 | `/rewind` | Job: persist compact then checkpoint `git reset --hard` + re-project todos; no-job: undo files, drop last user turn, restore `session.todos` / `todo.json` |
 | `/job [name]` | Enter a named `raven/*` job worktree; `/job commit on\|off` flips opt-in turn-end commit |
