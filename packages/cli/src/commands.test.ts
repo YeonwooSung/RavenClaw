@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import {
+  CREW_LIST_NOTICE,
   LEARN_PROMPT,
   NO_EXTRA_RULES_NOTICE,
   ONBOARDING_PROMPT,
@@ -14,6 +15,7 @@ import {
   formatOnboardingTurn,
   formatPermissionsNotice,
   handleSlashCommand,
+  parseCrewArg,
 } from './commands'
 
 describe('handleSlashCommand', () => {
@@ -83,6 +85,9 @@ describe('handleSlashCommand', () => {
     ['/interview', { type: 'command', name: 'interview' }],
     ['/team-onboarding', { type: 'command', name: 'team-onboarding' }],
     ['/onboard', { type: 'command', name: 'team-onboarding' }],
+    ['/crew', { type: 'command', name: 'crew' }],
+    ['/CREW research', { type: 'command', name: 'crew', arg: 'research' }],
+    ['/crew REVIEW ship  it', { type: 'command', name: 'crew', arg: 'REVIEW ship  it' }],
     ['/bash echo hi', { type: 'command', name: 'bash', arg: 'echo hi' }],
     ['/skill:foo', { type: 'command', name: 'skill', arg: 'foo' }],
     ['/config', { type: 'command', name: 'config' }],
@@ -93,6 +98,10 @@ describe('handleSlashCommand', () => {
 
   test('unknown slash stays a command so the app can reject it', () => {
     expect(handleSlashCommand('/nope')).toEqual({ type: 'command', name: 'nope' })
+  })
+
+  test('/team is not an alias of /crew', () => {
+    expect(handleSlashCommand('/team')).toEqual({ type: 'command', name: 'team' })
   })
 
   test('SLASH_HELP is generated from the command table', () => {
@@ -131,6 +140,8 @@ describe('handleSlashCommand', () => {
     expect(SLASH_HELP).toContain('/copy')
     expect(SLASH_HELP).toContain('/interview')
     expect(SLASH_HELP).toContain('/team-onboarding')
+    expect(SLASH_HELP).toContain('/crew [<preset> <goal>]')
+    expect(SLASH_HELP).toContain('list presets, or start one frozen crew turn')
     expect(SLASH_HELP).toContain('/bash')
     expect(SLASH_HELP).toContain('/skill:')
     expect(SLASH_HELP).toContain('/config')
@@ -174,6 +185,7 @@ describe('handleSlashCommand', () => {
       'copy',
       'interview',
       'team-onboarding',
+      'crew',
       'bash',
       'skill',
       'config',
@@ -183,6 +195,7 @@ describe('handleSlashCommand', () => {
     ])
     expect(SLASH_COMMANDS.find((command) => command.name === 'clear')?.aliases).toContain('new')
     expect(SLASH_COMMANDS.find((command) => command.name === 'help')?.aliases).toContain('?')
+    expect(SLASH_COMMANDS.find((command) => command.name === 'crew')?.aliases).toBe(undefined)
   })
 
   test('onboarding prompt is frozen and formatOnboardingTurn seeds the scan', () => {
@@ -213,6 +226,35 @@ describe('handleSlashCommand', () => {
     expect(LEARN_PROMPT.toLowerCase()).toContain('do not retype')
     expect(LEARN_PROMPT).toContain('.ravenclaw/skills/<name>/')
     expect(LEARN_PROMPT).toContain('~/.ravenclaw/skills/<name>/')
+  })
+})
+
+describe('parseCrewArg', () => {
+  test('CREW_LIST_NOTICE is the preset list and the generic usage line', () => {
+    expect(CREW_LIST_NOTICE).toBe(
+      ['crew presets: review, research, implement', 'usage: /crew <preset> <goal>'].join('\n'),
+    )
+  })
+
+  test('missing or whitespace-only arg is the list notice', () => {
+    expect(parseCrewArg(undefined)).toEqual({ ok: false, notice: CREW_LIST_NOTICE })
+    expect(parseCrewArg('   ')).toEqual({ ok: false, notice: CREW_LIST_NOTICE })
+  })
+
+  test('a known preset with an empty goal notices usage with that preset', () => {
+    expect(parseCrewArg('review')).toEqual({ ok: false, notice: 'usage: /crew review <goal>' })
+    expect(parseCrewArg('research')).toEqual({ ok: false, notice: 'usage: /crew research <goal>' })
+    expect(parseCrewArg('implement')).toEqual({ ok: false, notice: 'usage: /crew implement <goal>' })
+  })
+
+  test('an unknown preset wins and is lowercased in the notice', () => {
+    expect(parseCrewArg('startup')).toEqual({ ok: false, notice: 'unknown crew preset: startup' })
+    expect(parseCrewArg('Startup ship it')).toEqual({ ok: false, notice: 'unknown crew preset: startup' })
+  })
+
+  test('a valid call lowercases the preset and keeps the goal verbatim', () => {
+    expect(parseCrewArg('REVIEW ship it')).toEqual({ ok: true, preset: 'review', goal: 'ship it' })
+    expect(parseCrewArg('research Keep  THIS')).toEqual({ ok: true, preset: 'research', goal: 'Keep  THIS' })
   })
 })
 

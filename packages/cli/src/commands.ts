@@ -77,6 +77,7 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     usage: '/team-onboarding',
     summary: 'walk a new teammate through this workspace',
   },
+  { name: 'crew', usage: '/crew [<preset> <goal>]', summary: 'list presets, or start one frozen crew turn' },
   { name: 'bash', usage: '/bash <cmd>', summary: 'run a local shell command (also !cmd)' },
   { name: 'skill', usage: '/skill:<name>', summary: 'invoke a skill by name' },
   { name: 'config', usage: '/config [instructions [claude|agents-fallback|both]]', summary: 'show resolved config; set instruction file mode' },
@@ -122,6 +123,29 @@ export const ONBOARDING_PROMPT = [
 
 export function formatOnboardingTurn(scan: OnboardingScan): string {
   return `${ONBOARDING_PROMPT}\n\nscan:\n\`\`\`json\n${JSON.stringify(scan)}\n\`\`\``
+}
+
+export const CREW_PRESETS = ['review', 'research', 'implement'] as const
+export type CrewPreset = (typeof CREW_PRESETS)[number]
+
+export const CREW_LIST_NOTICE = [
+  'crew presets: review, research, implement',
+  'usage: /crew <preset> <goal>',
+].join('\n')
+
+export function parseCrewArg(arg: string | undefined):
+  | { ok: false; notice: string }
+  | { ok: true; preset: CrewPreset; goal: string } {
+  const trimmed = arg?.trim() ?? ''
+  if (trimmed === '') return { ok: false, notice: CREW_LIST_NOTICE }
+  const match = /^(\S+)(?:\s+([\s\S]+))?$/.exec(trimmed)
+  const preset = (match?.[1] ?? '').toLowerCase()
+  const goal = match?.[2] ?? ''
+  if (!(CREW_PRESETS as readonly string[]).includes(preset)) {
+    return { ok: false, notice: `unknown crew preset: ${preset}` }
+  }
+  if (goal === '') return { ok: false, notice: `usage: /crew ${preset} <goal>` }
+  return { ok: true, preset: preset as CrewPreset, goal }
 }
 
 export const TASKS_NOTICE = 'no background tasks'
