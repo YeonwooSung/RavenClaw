@@ -129,11 +129,11 @@ Shared dispatch and host-only handlers run even while a turn is live. They do **
 | Behavior | Commands |
 |---|---|
 | Abort the live turn | `/stop`, `/cancel`; Ink Escape |
-| Enqueue a **new** turn if busy (`queued (n)`) | Any `host.runTurn`: `/learn`, `/interview`, `/skill:<name>`, `/team-onboarding`; also `/loop`’s first prompt; leftover steering / mailbox |
+| Enqueue a **new** turn if busy (`queued (n)`) | Any `host.runTurn`: `/learn`, `/interview`, `/skill:<name>`, `/team-onboarding`, valid `/crew <preset> <goal>`; also `/loop`’s first prompt; leftover steering / mailbox |
 | Inject into the **live** turn (next tool round) | `/steer <text>`; `/queue` items via `drainQueued`; `/tasks steer <id> <text>` (child agent) |
 | Refuse if a turn (or running agent task) is live | `/rewind`, `/retry` → `a turn is in progress` (also pending unpaired asks → `pending permission ask`) |
 | Refuse file undo of the **open** generation | `/undo` → `undo after the turn finishes` (a **closed** previous generation can still undo) |
-| Run immediately (notice / store / panel) | `/help`, `/cost`, `/search`, `/mode`, `/model`, `/title`, `/permissions`, `/tasks`, `/diff`, `/retry` (no-arg composer restore), `/queue`, `/follow`, `/cron`, `/copy`, `/mcp`, `/skills`, `/reload`, `/agents`, `/hooks`, `/config`, `/context`, `/add-dir`, `/effort`, `/compact`, `/review`, `/bash`, `/quit`, `/clear`, `/resume` |
+| Run immediately (notice / store / panel) | `/help`, `/cost`, `/search`, `/mode`, `/model`, `/title`, `/permissions`, `/tasks`, `/diff`, `/retry` (no-arg composer restore), `/queue`, `/follow`, `/cron`, `/copy`, `/mcp`, `/skills`, `/reload`, `/agents`, `/crew` (no-arg, unknown preset, or empty goal), `/hooks`, `/config`, `/context`, `/add-dir`, `/effort`, `/compact`, `/review`, `/bash`, `/quit`, `/clear`, `/resume` |
 | `/compact` mid-turn | sets a one-slot flag; runs after `liveTurn` is null |
 | `/mode` mid-turn | Writes `liveTurn.permissionMode` as well as the session |
 | `/model` mid-turn | Updates session + `config.profile` for the **next** `queryLoop`. Does not mutate the in-flight loop’s captured profile |
@@ -963,6 +963,27 @@ Related: project files, `/skills`, `/mcp`, `/hooks`.
 
 ---
 
+### `/crew [<preset> <goal>]`
+
+- **Aliases:** none
+- **Kind:** shared
+- **When:** no-arg, whitespace-only, unknown preset, or empty goal: notice only, no turn. Valid `/crew <preset> <goal>`: `runTurn(formatCrewTurn(preset, goal))` (queued if busy, `queued (n)`)
+
+Presets are `review`, `research`, and `implement`. The goal is included verbatim (not lowercased; internal whitespace stays). `/crew review <goal>` is not `/review`.
+
+No-arg or whitespace-only notice (no turn):
+
+> crew presets: review, research, implement
+> usage: /crew <preset> <goal>
+
+Unknown preset (no turn): `unknown crew preset: <preset>` (for example `unknown crew preset: nope`).
+
+Empty goal (no turn): `usage: /crew review <goal>`, `usage: /crew research <goal>`, or `usage: /crew implement <goal>`.
+
+The prompt body is not copied here. Sentences live in `formatCrewTurn` in `packages/cli/src/commands.ts`, locked by tests in `commands.test.ts`, and specified in [`docs/superpowers/specs/2026-09-28-crew.md`](docs/superpowers/specs/2026-09-28-crew.md).
+
+---
+
 ### `/bash <cmd>`
 
 - **Aliases:** none as a slash; `!cmd` is the bang shortcut
@@ -1062,7 +1083,7 @@ A line that does not match `^/(\S+)(?:\s+([\s\S]+))?$` (for example `/` or `/mod
 
 ## Frozen prompt commands
 
-These four slashes ask the model (or a review fork) to follow a **string constant** in `commands.ts`. Do not invent extra rules beyond those strings.
+These five slashes ask the model (or a review fork) to follow a **string constant** in `commands.ts`. Do not invent extra rules beyond those strings.
 
 | Slash | Mechanism | Prompt constant |
 |---|---|---|
@@ -1070,8 +1091,9 @@ These four slashes ask the model (or a review fork) to follow a **string constan
 | `/interview` | `runTurn(INTERVIEW_PROMPT)` | AskUser multiple-choice (≥2 options); pin the spec; summarize and wait |
 | `/review` | `forkMemoryReview` with `REVIEW_PROMPT` (or a custom arg) | Durable bullets; no tools; no secrets; append `.ravenclaw/MEMORY.md` |
 | `/team-onboarding` | scan JSON + `runTurn(formatOnboardingTurn)` | Use only scan facts; greet `teamName`; checklist from `missing`; quote `projectFiles` only; AskUser at most one missing item when `askUserHost` is true; do not write `ONBOARDING.md` unless asked |
+| `/crew` | `runTurn(formatCrewTurn(preset, goal))` | Goal verbatim. Sentences live in `commands.ts`, locked by tests in `commands.test.ts`, specified in [`docs/superpowers/specs/2026-09-28-crew.md`](docs/superpowers/specs/2026-09-28-crew.md). Not pasted here |
 
-Full prompt text is quoted in the catalog sections above.
+Full prompt text for `/learn`, `/interview`, `/review`, and `/team-onboarding` is quoted in the catalog sections above. `/crew` sentences are not pasted here.
 
 ---
 

@@ -54,7 +54,7 @@ flowchart TD
   H -->|HOST_ONLY| I["host switch: quit/stop/clear/resume/diff/retry/queue/loop/bash"]
   H -->|handled| J{"notice / runTurn / engine API"}
   J -->|help cost model ...| K["host.notice"]
-  J -->|learn interview team-onboarding skill| L["host.runTurn frozen prompt"]
+  J -->|learn interview team-onboarding crew skill| L["host.runTurn frozen prompt"]
   G --> M["queryLoop"]
   L --> M
 ```
@@ -107,6 +107,7 @@ Ink의 frozen prompt는 `void runTurn(...)`이라 fire-and-forget이다. OpenTUI
 | `copy` | shared | 클립보드 | 동일 | text 블록만 markdown |
 | `interview` | shared | frozen turn | busy면 enqueue | `INTERVIEW_PROMPT` |
 | `team-onboarding` | shared | scan + frozen turn | busy면 enqueue | alias `/onboard` |
+| `crew` | shared | 유효한 preset+goal만 frozen turn. 그 외 notice | valid만 busy면 enqueue. no-arg·unknown·빈 goal은 즉시 notice | `formatCrewTurn`; goal verbatim |
 | `bash` | host | 로컬 셸 | 모델에 안 감 | `!cmd`와 동일 backend |
 | `skill` | shared | Skill 툴 로드 프롬프트 | busy면 enqueue | `/skill:<name>` |
 | `config` | shared | 공개 설정 | 동일 | 시크릿은 `set (N chars)` |
@@ -472,6 +473,25 @@ Ink status line은 모델·mode·usage·`shortSessionId`·funding·near-compact�
 - `missing` 고정 문자열: `no AGENTS.md/RAVEN.md/CLAUDE.md in cwd`, `no MCP servers in config`, `no project skills`
 - `askUserHost`가 false이거나 `dontAsk`이면 가이드만. `ONBOARDING.md`는 사람이 명시하기 전에는 쓰지 말 것(프롬프트 지시)
 
+### `/crew [<preset> <goal>]`
+
+- alias 없음
+- 분류: shared
+- 인자 없음, 공백만, 알 수 없는 preset, 빈 goal: notice만. 턴을 시작하지 않음
+- 유효한 `/crew <preset> <goal>`: `host.runTurn(formatCrewTurn(preset, goal))`. busy면 enqueue (`queued (n)`)
+- goal은 그대로 들어간다 (소문자로 바꾸지 않음. 내부 공백 유지)
+- 프롬프트 본문은 여기에 붙이지 않는다. 문장은 `packages/cli/src/commands.ts`의 `formatCrewTurn`. `commands.test.ts`가 문장을 고정한다. 스펙: [`docs/superpowers/specs/2026-09-28-crew.md`](docs/superpowers/specs/2026-09-28-crew.md)
+
+notice (영어, 코드 그대로):
+
+- 인자 없음 / 공백만:
+
+> crew presets: review, research, implement
+> usage: /crew <preset> <goal>
+
+- 알 수 없는 preset: `unknown crew preset: <preset>` (예: `unknown crew preset: nope`)
+- 빈 goal: `usage: /crew review <goal>`, `usage: /crew research <goal>`, `usage: /crew implement <goal>`
+
 ### `/bash <cmd>`
 
 - 분류: host-only
@@ -539,6 +559,19 @@ Walk this human through onboarding for this RavenClaw workspace. Use only the JS
 ```
 
 호스트가 뒤에 붙이는 것 (`formatOnboardingTurn`): 빈 줄, `scan:`, 그다음 펜스된 JSON (` ```json ` + `JSON.stringify(scan)` + 닫는 펜스). 시크릿·메시지 본문·MCP args는 stringify 대상에 없다.
+
+### `formatCrewTurn` (`/crew`)
+
+본문은 여기 복사하지 않는다. 유효한 호출만 `runTurn(formatCrewTurn(preset, goal))` 한 번이고, goal은 그대로다. 문장은 `commands.ts`에 있으며 `commands.test.ts`가 고정한다. 스펙: [`docs/superpowers/specs/2026-09-28-crew.md`](docs/superpowers/specs/2026-09-28-crew.md).
+
+인자 없음·공백만 (턴 없음):
+
+> crew presets: review, research, implement
+> usage: /crew <preset> <goal>
+
+알 수 없는 preset (턴 없음): `unknown crew preset: <preset>`
+
+빈 goal (턴 없음): `usage: /crew review <goal>`, `usage: /crew research <goal>`, `usage: /crew implement <goal>`
 
 ### `/skill:<name>`
 

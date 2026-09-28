@@ -10,7 +10,7 @@ import {
   type SessionJob,
   type SessionRecord,
 } from '@ravenclaw/core'
-import { SLASH_HELP, type SlashResult } from '../commands'
+import { CREW_LIST_NOTICE, formatCrewTurn, SLASH_HELP, type SlashResult } from '../commands'
 import { type CliRuntime } from '../engine'
 import { dispatchSharedSlash, type SlashHost } from './dispatch'
 
@@ -462,6 +462,110 @@ describe('dispatchSharedSlash', () => {
     const host = fakeHost(runtime)
     expect(await dispatchSharedSlash(cmd('config', 'instructions claude'), host)).toBe('handled')
     expect(host.notices).toEqual(['no home directory'])
+  })
+
+  test('/crew with no arg notices the preset list and does not run a turn', async () => {
+    const engine = fakeEngine(makeSession())
+    let submitCalls = 0
+    engine.submitMessage = async function* () {
+      submitCalls += 1
+      return { reason: 'completed' as const }
+    }
+    const host = fakeHost(fakeRuntime(engine))
+    expect(await dispatchSharedSlash(cmd('crew'), host)).toBe('handled')
+    expect(host.notices).toEqual([CREW_LIST_NOTICE])
+    expect(host.turns).toHaveLength(0)
+    expect(submitCalls).toBe(0)
+  })
+
+  test('/crew with whitespace notices the preset list and does not run a turn', async () => {
+    const engine = fakeEngine(makeSession())
+    let submitCalls = 0
+    engine.submitMessage = async function* () {
+      submitCalls += 1
+      return { reason: 'completed' as const }
+    }
+    const host = fakeHost(fakeRuntime(engine))
+    expect(await dispatchSharedSlash(cmd('crew', '   '), host)).toBe('handled')
+    expect(host.notices).toEqual([CREW_LIST_NOTICE])
+    expect(host.turns).toHaveLength(0)
+    expect(submitCalls).toBe(0)
+  })
+
+  test('/crew implement with an empty goal notices usage and does not run a turn', async () => {
+    const engine = fakeEngine(makeSession())
+    let submitCalls = 0
+    engine.submitMessage = async function* () {
+      submitCalls += 1
+      return { reason: 'completed' as const }
+    }
+    const host = fakeHost(fakeRuntime(engine))
+    expect(await dispatchSharedSlash(cmd('crew', 'implement'), host)).toBe('handled')
+    expect(host.notices).toEqual(['usage: /crew implement <goal>'])
+    expect(host.turns).toHaveLength(0)
+    expect(submitCalls).toBe(0)
+  })
+
+  test('/crew startup ship it notices an unknown preset and does not run a turn', async () => {
+    const engine = fakeEngine(makeSession())
+    let submitCalls = 0
+    engine.submitMessage = async function* () {
+      submitCalls += 1
+      return { reason: 'completed' as const }
+    }
+    const host = fakeHost(fakeRuntime(engine))
+    expect(await dispatchSharedSlash(cmd('crew', 'startup ship it'), host)).toBe('handled')
+    expect(host.notices).toEqual(['unknown crew preset: startup'])
+    expect(host.turns).toHaveLength(0)
+    expect(submitCalls).toBe(0)
+  })
+
+  test('/crew nope is an unknown preset, not an unknown command', async () => {
+    const engine = fakeEngine(makeSession())
+    let submitCalls = 0
+    engine.submitMessage = async function* () {
+      submitCalls += 1
+      return { reason: 'completed' as const }
+    }
+    const host = fakeHost(fakeRuntime(engine))
+    expect(await dispatchSharedSlash(cmd('crew', 'nope'), host)).toBe('handled')
+    expect(host.notices).toEqual(['unknown crew preset: nope'])
+    expect(host.notices).not.toContain('unknown command: /crew')
+    expect(host.notices).not.toContain('unknown command: /nope')
+    expect(host.turns).toHaveLength(0)
+    expect(submitCalls).toBe(0)
+  })
+
+  test('/crew review Keep  THIS runs one frozen turn and does not notice', async () => {
+    const engine = fakeEngine(makeSession())
+    let submitCalls = 0
+    engine.submitMessage = async function* () {
+      submitCalls += 1
+      return { reason: 'completed' as const }
+    }
+    const host = fakeHost(fakeRuntime(engine))
+    expect(await dispatchSharedSlash(cmd('crew', 'review Keep  THIS'), host)).toBe('handled')
+    expect(host.notices).toHaveLength(0)
+    expect(host.turns).toEqual([formatCrewTurn('review', 'Keep  THIS')])
+    expect(submitCalls).toBe(0)
+  })
+
+  test('/crew research and implement each run one frozen turn', async () => {
+    const engine = fakeEngine(makeSession())
+    let submitCalls = 0
+    engine.submitMessage = async function* () {
+      submitCalls += 1
+      return { reason: 'completed' as const }
+    }
+    const host = fakeHost(fakeRuntime(engine))
+    expect(await dispatchSharedSlash(cmd('crew', 'research Keep  THIS'), host)).toBe('handled')
+    expect(await dispatchSharedSlash(cmd('crew', 'implement Keep  THIS'), host)).toBe('handled')
+    expect(host.notices).toEqual([])
+    expect(host.turns).toEqual([
+      formatCrewTurn('research', 'Keep  THIS'),
+      formatCrewTurn('implement', 'Keep  THIS'),
+    ])
+    expect(submitCalls).toBe(0)
   })
 })
 

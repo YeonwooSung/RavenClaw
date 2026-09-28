@@ -29,8 +29,10 @@ import {
   SLASH_HELP,
   TASKS_NOTICE,
   formatContextNotice,
+  formatCrewTurn,
   formatOnboardingTurn,
   formatPermissionsNotice,
+  parseCrewArg,
   type SlashResult,
 } from '../commands'
 import { formatPublicConfig } from '../config-print'
@@ -293,6 +295,15 @@ export async function dispatchSharedSlash(
     case 'interview':
       await host.runTurn(INTERVIEW_PROMPT)
       return 'handled'
+    case 'crew': {
+      const parsedCrew = parseCrewArg(parsed.arg)
+      if (!parsedCrew.ok) {
+        host.notice(parsedCrew.notice)
+        return 'handled'
+      }
+      await host.runTurn(formatCrewTurn(parsedCrew.preset, parsedCrew.goal))
+      return 'handled'
+    }
     case 'team-onboarding': {
       const scan = await scanTeamOnboarding({
         cwd: runtime.cwd,
