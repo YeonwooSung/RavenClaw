@@ -335,7 +335,7 @@ Load order (later wins): **builtin → user → project**.
 
 Frontmatter: `name`, `description`, `allowed-tools` (intersects the live pool for the rest of the turn). Disabled names live in `~/.ravenclaw/skills-disabled.json`.
 
-Builtin skills:
+Nine builtins. `gamedev` is a vendored Apache-2.0 pack (74 catalog skills behind one router). The other eight remain original RavenClaw prose. The official Anthropic 19-skill set is still not copied.
 
 | Name | Use |
 |---|---|
@@ -347,6 +347,7 @@ Builtin skills:
 | `plan` | Write a plan before editing |
 | `frontend-design` | Pick one aesthetic before building or reshaping UI |
 | `mcp-builder` | Write a local MCP server this CLI can load (`raven mcp tools` to verify) |
+| `gamedev` | Game-dev router for the vendored Apache-2.0 pack (74 catalog skills behind this one skill) |
 
 ```bash
 bun run raven skills

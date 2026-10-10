@@ -4,6 +4,8 @@ Date: 2026-09-13
 Status: implemented (optionals added)
 Source: https://github.com/anthropics/skills (`main` @ `34040c9`, 2026-09-10)
 
+Amendment: builtin count is 9 after `gamedev`, and this pack is third-party Apache-2.0, not part of the official 19.
+
 ## Finding
 
 **Name overlap is 2/19 (`frontend-design`, `mcp-builder`).** Both are clean-room RavenClaw prose, not copies of official skill bodies. The other 17 official names are not RavenClaw builtins.

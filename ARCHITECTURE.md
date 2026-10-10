@@ -51,7 +51,7 @@ packages/
     agent/          root + catalog specialists + disk load
     compact/        policy, prune, summarize
     mcp/            stdio/http/sse transports, tools, resources, oauth (per-server)
-    skills/builtin/ eight SKILL.md trees
+    skills/builtin/ nine SKILL.md trees (gamedev nests a 74-skill catalog)
     cost/models.ts  CURRENT / BUILT_INS / ALIASES
     schedule/       cron parse + jobs.json store + claim-before-execute
     gateway/        loopback HTTP helpers + HMAC webhook (used by raven serve)
@@ -579,7 +579,7 @@ Discovery (`discoverSkills` in `packages/core/src/tools/skill.ts`), later source
 2. **user** — `~/.ravenclaw/skills/<name>/SKILL.md`
 3. **project** — `<cwd>/.ravenclaw/skills/<name>/SKILL.md`
 
-Eight builtins (pinned by `builtin.test.ts`): `review`, `test`, `commit`, `debug`, `tdd`, `plan`, `frontend-design`, `mcp-builder`. Frontmatter `name` + `description` (index clips at 60 chars). `allowed-tools` becomes `turn.skillAllowedTools` for the rest of the turn.
+Nine builtins (pinned by `builtin.test.ts`): `review`, `test`, `commit`, `debug`, `tdd`, `plan`, `frontend-design`, `mcp-builder`, `gamedev`. Frontmatter `name` + `description` (index clips at 60 chars). `allowed-tools` becomes `turn.skillAllowedTools` for the rest of the turn. `gamedev` sets no `allowed-tools`.
 
 **`mcp-builder` verify path is `raven mcp tools`, not `/mcp` after `/reload`.** The skill text says so: in-session `/mcp` and `/reload` do not spawn a newly registered server. `raven mcp tools` re-reads `config.yaml` and probes.
 
@@ -587,7 +587,7 @@ Disabled list: `$RAVENCLAW_HOME/skills-disabled.json` (`packages/core/src/skills
 
 `raven skills [new|rm|prune] [--project]` manages user/project skill trees without a model.
 
-These eight are original RavenClaw prose. The official Anthropic 19-skill set is **not** copied (license + kitchen-sink). Name overlap with that set is 0/19 except two clean-room skills that share names (`frontend-design`, `mcp-builder`) — see `docs/superpowers/specs/2026-09-13-official-claude-skills-gap.md`.
+`gamedev` (`packages/core/src/skills/builtin/gamedev/`) is a vendored Apache-2.0 pack: 74 catalog skills behind one router, loaded through the Skill tool at `catalog/<name>/SKILL.md`. The other eight remain original RavenClaw prose. The official Anthropic 19-skill set is **not** copied (license + kitchen-sink). Name overlap with that set is 0/19 except two clean-room skills that share names (`frontend-design`, `mcp-builder`) — see `docs/superpowers/specs/2026-09-13-official-claude-skills-gap.md`.
 
 ## Prompt assembly
 
@@ -804,7 +804,7 @@ These are closed doors, not a backlog.
 - **No computer-use.**
 - **No “Pro = no ads”.** `hasPaidCapacityPlan` raises included caps. Ads still fund the compute floor. BYOK never shows ads.
 - **No `execute_code` / child kernel RPC.** Highest cost-curve idea in the roadmap; not started. Skills + Bash + MCP cover the job.
-- **No official 19-skill copy** from `anthropics/skills`. License and kitchen-sink. RavenClaw ships eight original coding-loop skills.
+- **No official 19-skill copy** from `anthropics/skills`. License and kitchen-sink. Nine builtins: eight original RavenClaw prose skills, plus vendored Apache-2.0 `gamedev` (74 catalog skills behind one router). The official 19 are still not copied.
 - **No `bypass` / yolo / auto-allow-all-Bash.** `dontAsk` is leftover-deny.
 - **No host-local query loop.** If a host needs a new turn behavior, it belongs in `phases.ts`.
 - **No silent BYOK fallback** for an included session.

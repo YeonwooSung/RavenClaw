@@ -464,7 +464,7 @@ CLI `createRootTools` (`packages/cli/src/engine.ts`)가 실제로 조립하는 �
 
 frontmatter는 `name`, `description`, 선택적 `allowed-tools`다. `allowed-tools`는 나머지 턴 동안 라이브 풀과 교집합한다. 비활성 이름은 `~/.ravenclaw/skills-disabled.json`이다.
 
-builtin 8개:
+builtin 9개. `gamedev`는 vendor한 Apache-2.0 팩이다(라우터 하나 뒤의 카탈로그 스킬 74개). 나머지 8개는 원래 RavenClaw 문장이다. 공식 19-skill 세트는 여전히 복사하지 않는다.
 
 | 이름 | 용도 |
 |---|---|
@@ -476,6 +476,7 @@ builtin 8개:
 | `plan` | 편집 전 계획 |
 | `frontend-design` | UI를 만들거나 고치기 전에 미학 하나를 고른다 |
 | `mcp-builder` | 이 CLI가 로드할 로컬 MCP 서버를 작성한다. 검증은 `raven mcp tools` |
+| `gamedev` | 게임 개발 라우터. 카탈로그 74개는 이 스킬 뒤에 있다 |
 
 `mcp-builder`는 세션 안 `/mcp` + `/reload`로 새 서버가 뜬다고 말하지 않는다. `/mcp`는 `config.yaml`에 적힌 서버 목록만 보여 준다. `/reload`는 시스템 파트(스킬, 메모리)를 다시 만들고 공지는 `skills reloaded`다. MCP 프로세스를 다시 spawn하지 않는다. 새 서버를 확인하려면 프로세스를 재시작하거나 `raven mcp tools`로 spawn/list한다.
 
@@ -726,7 +727,7 @@ fire는 새 `dontAsk` 세션을 연다. `lockHolder`는 `cron`이다. surface는
 - **MCP** — `config.yaml`에 서버를 적는다. 빌트인 이름과 충돌하면 빌트인이 이긴다.
 - **플러그인** — `plugin.json`의 command 툴. leftover-ask.
 - **디스크 에이전트** — `.ravenclaw/agents/*.md`.
-- **스킬** — agentskills.io frontmatter. builtin 8개를 키친싱크로 키우지 않는다.
+- **스킬** — agentskills.io frontmatter. builtin은 9개다. `gamedev`는 라우터 하나 뒤의 vendor 카탈로그(74)이며, 74개를 최상위 builtin으로 두지 않는다.
 - **훅** — `hooks.json` 라이프사이클 / `pre_tool`.
 - **권한 규칙** — session / user / project JSON.
 - **terminal backend** — `local` | `docker`. Bash, Grep/Glob, 파일 툴, NotebookEdit, in-tree Memory, file-history undo restore/remove가 같은 객체를 쓴다. docker에서 `projectCwd`가 cwd 밖이면 Memory는 `Memory failed: outside workspace`. snapshot은 호스트. TodoWrite·Skill은 호스트다. `dontAsk` 대체가 아니다.
@@ -748,7 +749,7 @@ fire는 새 `dontAsk` 세션을 연다. `lockHolder`는 `cron`이다. surface는
 - **computer-use / 브라우저 조종 / Playwright 기본 풀.**
 - **Pro = no-ads.** 유료는 included cap이다. 광고 침묵 SKU가 핵심 스토리가 아니다.
 - **`execute_code` 샌드박스 툴.** `Bash`와 권한 규칙으로 충분하다.
-- **공식 19-skill 복사.** `anthropics/skills`의 문서/예제/프로덕트 스킬을 vendor하지 않는다. builtin은 8개다. 이름만 겹치는 `frontend-design` / `mcp-builder`도 원문 프롬프트를 베끼지 않는다.
+- **공식 19-skill 복사.** `anthropics/skills`의 문서/예제/프로덕트 스킬을 vendor하지 않는다. builtin은 9개다. 그중 8개는 원래 RavenClaw 문장이고, `gamedev`는 서드파티 Apache-2.0 팩(카탈로그 74개, 라우터 하나)이다. 이름만 겹치는 `frontend-design` / `mcp-builder`도 원문 프롬프트를 베끼지 않는다.
 - **bypass / yolo / auto-allow-all-Bash.**
 - **회사 RavenClaw 백엔드 필수.** BYOK가 완전하다.
 - **pets / buddy / grove / voice / kanban / mixture-of-agents.**
