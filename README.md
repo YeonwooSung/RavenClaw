@@ -179,6 +179,7 @@ After setup, `bun run smoke` does one live text-only turn and expects `pong`. CI
 | `export <id>` | no | Markdown transcript |
 | `title <id> <name>` | no | Set session title |
 | `doctor` | no | Home, `.env`, config, local LLM reachability (secrets redacted) |
+| `play` | no | Serve a web game on `127.0.0.1` and open the OS browser |
 | `config` | no | Resolved settings, secrets redacted |
 | `init` | no | Write `AGENTS.md` if missing |
 | `completions bash\|zsh` | no | Shell completion script |
@@ -335,7 +336,7 @@ Load order (later wins): **builtin → user → project**.
 
 Frontmatter: `name`, `description`, `allowed-tools` (intersects the live pool for the rest of the turn). Disabled names live in `~/.ravenclaw/skills-disabled.json`.
 
-Nine builtins. `gamedev` is a vendored Apache-2.0 pack (74 catalog skills behind one router). The other eight remain original RavenClaw prose. The official Anthropic 19-skill set is still not copied.
+Ten builtins. `gamedev` is a vendored Apache-2.0 pack (74 catalog skills behind one router). `game-design` is original prose for a one-page design before code. The other eight remain original RavenClaw prose. The official Anthropic 19-skill set is still not copied.
 
 | Name | Use |
 |---|---|
@@ -348,6 +349,7 @@ Nine builtins. `gamedev` is a vendored Apache-2.0 pack (74 catalog skills behind
 | `frontend-design` | Pick one aesthetic before building or reshaping UI |
 | `mcp-builder` | Write a local MCP server this CLI can load (`raven mcp tools` to verify) |
 | `gamedev` | Game-dev router for the vendored Apache-2.0 pack (74 catalog skills behind this one skill) |
+| `game-design` | One-page game design before code: loop, pillars, scope |
 
 ```bash
 bun run raven skills

@@ -11,6 +11,7 @@ export const COMPLETION_COMMANDS = [
   'export',
   'title',
   'doctor',
+  'play',
   'config',
   'init',
   'completions',

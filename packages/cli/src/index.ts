@@ -29,6 +29,7 @@ import { createSkill, deleteSkill } from './skill-new'
 import { formatSkillsList, runSkillsPrune } from './skills-list'
 import { initProject } from './init'
 import { doctorFailed, formatDoctorReport, probeLocalLlm, runDoctor } from './doctor'
+import { runPlay } from './play'
 import { searchCliSessions } from './search'
 import { SMOKE_PROMPT, evaluateSmoke } from './smoke'
 import { handleCronCli, runCronTick } from './cron-cmd'
@@ -221,6 +222,10 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
     if (local) checks.push(local)
     process.stdout.write(`${formatDoctorReport(checks)}\n`)
     return doctorFailed(checks) ? 1 : 0
+  }
+
+  if (parsed.cmd === 'play') {
+    return runPlay({ positional: parsed.prompt })
   }
 
   if (parsed.cmd === 'title') {

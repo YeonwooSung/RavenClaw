@@ -4,7 +4,7 @@ Date: 2026-09-13
 Status: implemented (optionals added)
 Source: https://github.com/anthropics/skills (`main` @ `34040c9`, 2026-09-10)
 
-Amendment: builtin count is 9 after `gamedev`, and this pack is third-party Apache-2.0, not part of the official 19.
+Amendment: builtin count is 10 after `gamedev` (third-party Apache-2.0, not part of the official 19) and original `game-design`.
 
 ## Finding
 

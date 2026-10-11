@@ -108,6 +108,7 @@ Ink의 frozen prompt는 `void runTurn(...)`이라 fire-and-forget이다. OpenTUI
 | `interview` | shared | frozen turn | busy면 enqueue | `INTERVIEW_PROMPT` |
 | `team-onboarding` | shared | scan + frozen turn | busy면 enqueue | alias `/onboard` |
 | `crew` | shared | 유효한 preset+goal만 frozen turn. 그 외 notice | valid만 busy면 enqueue. no-arg·unknown·빈 goal은 즉시 notice | `formatCrewTurn`; goal verbatim |
+| `play` | shared | 세션 cwd의 웹 게임을 `127.0.0.1`에 열고 OS 브라우저를 연다 | 같은 URL을 다시 찍음. `/play stop`이 닫음 | `runBangCommand`를 부르지 않음. Slack/Discord에는 없음 |
 | `bash` | host | 로컬 셸 | 모델에 안 감 | `!cmd`와 동일 backend |
 | `skill` | shared | Skill 툴 로드 프롬프트 | busy면 enqueue | `/skill:<name>` |
 | `config` | shared | 공개 설정 | 동일 | 시크릿은 `set (N chars)` |
@@ -491,6 +492,15 @@ notice (영어, 코드 그대로):
 
 - 알 수 없는 preset: `unknown crew preset: <preset>` (예: `unknown crew preset: nope`)
 - 빈 goal: `usage: /crew review <goal>`, `usage: /crew research <goal>`, `usage: /crew implement <goal>`
+
+### `/play [stop]`
+
+- 분류: shared. `HOST_ONLY`가 아니다. Ink와 OpenTUI는 `dispatch.ts` 한 case로 받는다
+- 인자 없음: 세션 cwd에서 웹 엔트리를 찾아 `127.0.0.1`에 띄우고 notice에 `http://127.0.0.1:<port>/`를 찍고 OS 브라우저를 연다
+- 이미 떠 있으면 포트를 더 열지 않고 같은 URL을 다시 찍는다
+- `/play stop`: 그 서버를 닫는다. 없으면 `raven play: nothing running`
+- 그 외 인자: `usage: /play [stop]`
+- `runTurn`과 `runBangCommand`를 부르지 않는다. Slack/Discord에는 없다
 
 ### `/bash <cmd>`
 

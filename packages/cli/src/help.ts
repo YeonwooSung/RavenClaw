@@ -21,6 +21,7 @@ Usage:
   raven export <id>
   raven title <id> <name>
   raven doctor
+  raven play
   raven config
   raven init
   raven completions bash|zsh
@@ -49,6 +50,7 @@ Commands:
   export <id>   Print a session as Markdown (full tool bodies; no API key)
   title <id>    Set a session title (no API key)
   doctor        Check home, .env, config.yaml, Bun, and local LLM reachability
+  play          Serve a web game on 127.0.0.1 and open the OS browser (no API key)
   config        Print resolved settings with secrets redacted
   init          Write AGENTS.md in this directory if missing
   completions   Print bash or zsh completion script to stdout

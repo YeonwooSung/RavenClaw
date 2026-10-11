@@ -242,6 +242,7 @@ describe('parseArgv', () => {
 
   test('doctor selects the doctor command', () => {
     expect(parseArgv(['doctor'])).toEqual({ cmd: 'doctor', flags: {} })
+    expect(parseArgv(['play'])).toEqual({ cmd: 'play', flags: {} })
   })
 
   test('title takes id and the rest as the title', () => {

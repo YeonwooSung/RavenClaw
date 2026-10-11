@@ -57,7 +57,7 @@ bun test packages/cli/src/doctor.test.ts
 3. Update `HELP_TEXT` and `COMPLETION_COMMANDS`.
 4. Add parse + behavior tests.
 
-Commands that must not require a key: `help`, `version`, `sessions`, `show`, `rm`, `search`, `export`, `title`, `doctor`, `config`, `init`, `completions`, `mcp`, `skills`, `cron` (list/add/rm/on/off; `tick`/`watch` need a key if a job fires).
+Commands that must not require a key: `help`, `version`, `sessions`, `show`, `rm`, `search`, `export`, `title`, `doctor`, `play`, `config`, `init`, `completions`, `mcp`, `skills`, `cron` (list/add/rm/on/off; `tick`/`watch` need a key if a job fires).
 
 In-session slash commands live in `packages/cli/src/commands.ts` (`SLASH_COMMANDS`). Add `/loop` and `/skills` subcommands there, then handle them in `app.tsx` and `opentui-app.ts`. Builtin skills are `packages/core/src/skills/builtin/<name>/SKILL.md` — keep frontmatter `name` + `description`, no vendor brand strings. `bun test packages/core/src/skills/` checks that.
 

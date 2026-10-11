@@ -133,7 +133,7 @@ Shared dispatch and host-only handlers run even while a turn is live. They do **
 | Inject into the **live** turn (next tool round) | `/steer <text>`; `/queue` items via `drainQueued`; `/tasks steer <id> <text>` (child agent) |
 | Refuse if a turn (or running agent task) is live | `/rewind`, `/retry` → `a turn is in progress` (also pending unpaired asks → `pending permission ask`) |
 | Refuse file undo of the **open** generation | `/undo` → `undo after the turn finishes` (a **closed** previous generation can still undo) |
-| Run immediately (notice / store / panel) | `/help`, `/cost`, `/search`, `/mode`, `/model`, `/title`, `/permissions`, `/tasks`, `/diff`, `/retry` (no-arg composer restore), `/queue`, `/follow`, `/cron`, `/copy`, `/mcp`, `/skills`, `/reload`, `/agents`, `/crew` (no-arg, unknown preset, or empty goal), `/hooks`, `/config`, `/context`, `/add-dir`, `/effort`, `/compact`, `/review`, `/bash`, `/quit`, `/clear`, `/resume` |
+| Run immediately (notice / store / panel) | `/help`, `/cost`, `/search`, `/mode`, `/model`, `/title`, `/permissions`, `/tasks`, `/diff`, `/retry` (no-arg composer restore), `/queue`, `/follow`, `/cron`, `/copy`, `/mcp`, `/skills`, `/reload`, `/agents`, `/crew` (no-arg, unknown preset, or empty goal), `/play`, `/hooks`, `/config`, `/context`, `/add-dir`, `/effort`, `/compact`, `/review`, `/bash`, `/quit`, `/clear`, `/resume` |
 | `/compact` mid-turn | sets a one-slot flag; runs after `liveTurn` is null |
 | `/mode` mid-turn | Writes `liveTurn.permissionMode` as well as the session |
 | `/model` mid-turn | Updates session + `config.profile` for the **next** `queryLoop`. Does not mutate the in-flight loop’s captured profile |
@@ -981,6 +981,16 @@ Unknown preset (no turn): `unknown crew preset: <preset>` (for example `unknown 
 Empty goal (no turn): `usage: /crew review <goal>`, `usage: /crew research <goal>`, or `usage: /crew implement <goal>`.
 
 The prompt body is not copied here. Sentences live in `formatCrewTurn` in `packages/cli/src/commands.ts`, locked by tests in `commands.test.ts`, and specified in [`docs/superpowers/specs/2026-09-28-crew.md`](docs/superpowers/specs/2026-09-28-crew.md).
+
+---
+
+### `/play [stop]`
+
+- **Aliases:** none
+- **Kind:** shared (`dispatch.ts`). Not host-only, so Ink and OpenTUI both get it without their own `switch` arm.
+- **When:** any. Does not call `runTurn` or `runBangCommand`.
+
+No arg: detect a web entry in the session cwd, serve it on `127.0.0.1` (or spawn `dev`/`start` when `package.json` has `phaser`, `pixi.js`, `three`, or `vite`), notice `http://127.0.0.1:<port>/`, and open the OS browser. A second `/play` notices the same URL and does not bind another port. `/play stop` closes that server. Nothing running: `raven play: nothing running`. Any other arg: `usage: /play [stop]`. Slack and Discord do not dispatch this command.
 
 ---
 

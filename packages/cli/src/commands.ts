@@ -78,6 +78,7 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
     summary: 'walk a new teammate through this workspace',
   },
   { name: 'crew', usage: '/crew [<preset> <goal>]', summary: 'list presets, or start one frozen crew turn' },
+  { name: 'play', usage: '/play [stop]', summary: 'serve the web game on 127.0.0.1 and open the OS browser' },
   { name: 'bash', usage: '/bash <cmd>', summary: 'run a local shell command (also !cmd)' },
   { name: 'skill', usage: '/skill:<name>', summary: 'invoke a skill by name' },
   { name: 'config', usage: '/config [instructions [claude|agents-fallback|both]]', summary: 'show resolved config; set instruction file mode' },

@@ -189,6 +189,7 @@ describe('handleSlashCommand', () => {
       'interview',
       'team-onboarding',
       'crew',
+      'play',
       'bash',
       'skill',
       'config',

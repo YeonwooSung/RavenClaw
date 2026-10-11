@@ -26,6 +26,7 @@ export interface ParsedArgv {
     | 'export'
     | 'title'
     | 'doctor'
+    | 'play'
     | 'config'
     | 'init'
     | 'completions'
@@ -178,6 +179,7 @@ export function parseArgv(argv: string[]): ParsedArgv {
         arg === 'export' ||
         arg === 'title' ||
         arg === 'doctor' ||
+        arg === 'play' ||
         arg === 'config' ||
         arg === 'init' ||
         arg === 'completions' ||

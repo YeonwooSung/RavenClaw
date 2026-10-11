@@ -1,6 +1,6 @@
 # 게임 개발 편의 로드맵 (gamedev 팩 이후)
 
-Status: **draft**. Date: 2026-10-10.  
+Status: **draft**. Door 1, Door 2, Door 3, and Door 5 are implemented on `feat/gamedev-convenience`. Door 4 stays parked. Date: 2026-10-10.  
 Reviewed against worktree `feat/gamedev-skills`, base `16d706f` (`16d706fb490faaf034ec73cc28bd114af02c69a4`, Merge pull request #26).  
 구현 계획 파일 없음. `docs/superpowers/plans/`에 대응하는 계획을 만들지 않는다. 문은 독립이다. 사용자가 나중에 문 하나를 고른다. 고르지 않은 문을 그 구현에 끼워 넣지 않는다.
 

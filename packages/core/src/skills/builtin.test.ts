@@ -3,7 +3,18 @@ import { readdirSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { builtinSkillsRoot, parseSkillFrontmatter } from '../tools/skill'
 
-const REQUIRED = ['review', 'test', 'commit', 'debug', 'tdd', 'plan', 'frontend-design', 'mcp-builder', 'gamedev']
+const REQUIRED = [
+  'review',
+  'test',
+  'commit',
+  'debug',
+  'tdd',
+  'plan',
+  'frontend-design',
+  'mcp-builder',
+  'gamedev',
+  'game-design',
+]
 
 describe('builtin skills', () => {
   test('each bundled skill has name, description, and a body', () => {
@@ -77,5 +88,31 @@ describe('builtin skills', () => {
     expect(router).toContain(
       'description: Game-dev router: Godot, Unity, Unreal, web, and genres.',
     )
+    expect(router).toContain(
+      'After a web page exists, run `raven play` and do not claim the scene works until the browser has been looked at.',
+    )
+  })
+
+  test('game-design is a one-page original skill with no tool narrow', () => {
+    const markdown = readFileSync(join(builtinSkillsRoot(), 'game-design', 'SKILL.md'), 'utf8')
+    const fm = parseSkillFrontmatter(markdown)
+    expect(fm.name).toBe('game-design')
+    expect(fm.description).toBe('One-page game design before code: loop, pillars, scope.')
+    expect(fm.allowedTools).toBeUndefined()
+    expect(markdown).not.toContain('allowed-tools')
+    expect(markdown).toContain('fantasy')
+    expect(markdown).toContain('player verb')
+    expect(markdown).toContain('core loop')
+    expect(markdown).toContain('pillars')
+    expect(markdown).toContain('scope box')
+    expect(markdown).toContain('session length')
+    expect(markdown).toContain('riskiest assumption')
+    expect(markdown).toContain('playtest question')
+    expect(markdown).toContain('Do not implement until the user accepts')
+    expect(markdown).toContain('name `gamedev`')
+    expect(markdown).toContain('catalog/level-design/SKILL.md')
+    expect(markdown).toContain('catalog/game-feel/SKILL.md')
+    expect(markdown).toContain('catalog/game-jam/SKILL.md')
+    expect(markdown).toContain('catalog/prototype-fast/SKILL.md')
   })
 })

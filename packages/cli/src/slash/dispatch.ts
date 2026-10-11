@@ -45,6 +45,7 @@ import { applySessionTitle } from '../resume'
 import { runSessionReview } from '../review'
 import { searchNotice } from '../search'
 import { formatSkillShow, formatSkillsList, parseSkillsSlashArg, runSkillsPrune } from '../skills-list'
+import { startSessionPlay, stopSessionPlay } from '../play'
 
 const HOST_ONLY = new Set([
   'quit',
@@ -66,6 +67,7 @@ export interface SlashHost {
   onModeChanged?(mode: string): void
   writeOsc52?(text: string): void
   gh?: (args: string[], cwd: string) => { ok: boolean; stdout: string; stderr: string }
+  openPlay?: (argv: string[]) => { ok: boolean } | Promise<{ ok: boolean }>
 }
 
 export async function dispatchSharedSlash(
@@ -360,6 +362,24 @@ export async function dispatchSharedSlash(
       await runtime.engine.setPermissionMode(next)
       host.onModeChanged?.(next)
       host.notice(`mode ${next}`)
+      return 'handled'
+    }
+    case 'play': {
+      const arg = (parsed.arg ?? '').trim()
+      if (arg !== '' && arg !== 'stop') {
+        host.notice('usage: /play [stop]')
+        return 'handled'
+      }
+      const sessionId = runtime.engine.session.id
+      if (arg === 'stop') {
+        host.notice(await stopSessionPlay(sessionId))
+        return 'handled'
+      }
+      host.notice(
+        await startSessionPlay(sessionId, runtime.engine.session.cwd, {
+          ...(host.openPlay ? { open: host.openPlay } : {}),
+        }),
+      )
       return 'handled'
     }
     default:

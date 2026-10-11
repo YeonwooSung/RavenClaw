@@ -567,5 +567,35 @@ describe('dispatchSharedSlash', () => {
     ])
     expect(submitCalls).toBe(0)
   })
+
+  test('/play serves the session cwd, reuses the port, and stop closes it', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ravenclaw-dispatch-play-'))
+    tempDirs.push(dir)
+    writeFileSync(join(dir, 'index.html'), 'HOME')
+    const host = fakeHost(fakeRuntime(fakeEngine(makeSession({ id: 'sess_play', cwd: dir }))), {
+      openPlay: () => ({ ok: true }),
+    })
+    try {
+      expect(await dispatchSharedSlash(cmd('play'), host)).toBe('handled')
+      const url = host.notices[0] ?? ''
+      expect(url.startsWith('http://127.0.0.1:')).toBe(true)
+      expect(url).not.toContain('unknown command')
+      expect(await (await fetch(url)).text()).toBe('HOME')
+      expect(await dispatchSharedSlash(cmd('play'), host)).toBe('handled')
+      expect(host.notices[1]).toBe(url)
+      expect(await dispatchSharedSlash(cmd('play', 'stop'), host)).toBe('handled')
+      expect(host.notices[2]).toBe(`stopped ${url}`)
+      let closed = false
+      try {
+        await fetch(url)
+      } catch {
+        closed = true
+      }
+      expect(closed).toBe(true)
+      expect(host.turns).toEqual([])
+    } finally {
+      await dispatchSharedSlash(cmd('play', 'stop'), host)
+    }
+  })
 })
 

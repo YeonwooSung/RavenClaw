@@ -100,6 +100,7 @@ File signals sharpen this: `*.yarn`/`*.ink` → `dialogue-systems`/`visual-novel
   `unreal-niagara`; ship `unreal-packaging`.
 - **Web** (`catalog/`): `phaser-core`, `phaser-arcade-physics`; `pixijs-rendering`;
   `threejs-scene-setup`, `threejs-gltf-loading`, `threejs-materials-lighting`.
+  After a web page exists, run `raven play` and do not claim the scene works until the browser has been looked at.
 - **Other** (`catalog/`): `bevy-ecs`, `pygame-core`, `love2d-core`; Roblox foundation
   `roblox-luau`, persistence `roblox-datastores`, UI `roblox-ui`, remotes/security
   `roblox-networking`, character lifecycle `roblox-characters`, simulation/queries
