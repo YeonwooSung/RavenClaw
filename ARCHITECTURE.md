@@ -51,7 +51,7 @@ packages/
     agent/          root + catalog specialists + disk load
     compact/        policy, prune, summarize
     mcp/            stdio/http/sse transports, tools, resources, oauth (per-server)
-    skills/builtin/ ten SKILL.md trees (gamedev nests a 74-skill catalog)
+    skills/builtin/ eleven SKILL.md trees (gamedev nests a 74-skill catalog)
     cost/models.ts  CURRENT / BUILT_INS / ALIASES
     schedule/       cron parse + jobs.json store + claim-before-execute
     gateway/        loopback HTTP helpers + HMAC webhook (used by raven serve)
