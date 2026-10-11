@@ -4,7 +4,7 @@ Date: 2026-09-13
 Status: implemented (optionals added)
 Source: https://github.com/anthropics/skills (`main` @ `34040c9`, 2026-09-10)
 
-Amendment: builtin count is 10 after `gamedev` (third-party Apache-2.0, not part of the official 19) and original `game-design`.
+Amendment: builtin count is 11 after `gamedev` (third-party Apache-2.0, not part of the official 19), original `game-design`, and `team-design` (original RavenClaw prose, not one of the official 19). Name overlap stays 2/19 (`frontend-design`, `mcp-builder`).
 
 ## Finding
 

@@ -336,7 +336,7 @@ Load order (later wins): **builtin → user → project**.
 
 Frontmatter: `name`, `description`, `allowed-tools` (intersects the live pool for the rest of the turn). Disabled names live in `~/.ravenclaw/skills-disabled.json`.
 
-Ten builtins. `gamedev` is a vendored Apache-2.0 pack (74 catalog skills behind one router). `game-design` is original prose for a one-page design before code. The other eight remain original RavenClaw prose. The official Anthropic 19-skill set is still not copied.
+Eleven builtins. `gamedev` is a vendored Apache-2.0 pack (74 catalog skills behind one router). `game-design` is original prose for a one-page design before code. `team-design` is original prose for designing project agents and skills. The other eight remain original RavenClaw prose. The official Anthropic 19-skill set is still not copied.
 
 | Name | Use |
 |---|---|
@@ -350,6 +350,7 @@ Ten builtins. `gamedev` is a vendored Apache-2.0 pack (74 catalog skills behind 
 | `mcp-builder` | Write a local MCP server this CLI can load (`raven mcp tools` to verify) |
 | `gamedev` | Game-dev router for the vendored Apache-2.0 pack (74 catalog skills behind this one skill) |
 | `game-design` | One-page game design before code: loop, pillars, scope |
+| `team-design` | Design project agents and skills under .ravenclaw/. |
 
 ```bash
 bun run raven skills
