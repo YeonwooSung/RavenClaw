@@ -22,6 +22,8 @@ const ENV_KEYS = [
   'OLLAMA_API_KEY',
   'VLLM_BASE_URL',
   'VLLM_API_KEY',
+  'ORCAROUTER_API_KEY',
+  'ORCAROUTER_BASE_URL',
 ] as const
 
 let savedEnv: Record<string, string | undefined>
@@ -271,6 +273,45 @@ describe('loadConfig', () => {
     expect(cfg.provider).toBe('openai_compat')
     expect(cfg.model).toBe(defaultModelId('openai'))
     expect(cfg.env.OPENAI_API_KEY).toBe('sk-openai-only')
+  })
+
+  test('ORCAROUTER_API_KEY alone infers orcarouter and model orcarouter/auto', () => {
+    process.env.ORCAROUTER_API_KEY = 'sk-orca-only'
+    const cfg = loadConfig({ home: tempHome() })
+    expect(cfg.provider).toBe('orcarouter')
+    expect(cfg.model).toBe('orcarouter/auto')
+    expect(cfg.env.ORCAROUTER_API_KEY).toBe('sk-orca-only')
+  })
+
+  test('ANTHROPIC_API_KEY still wins when ORCAROUTER_API_KEY is also set', () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-also'
+    process.env.ORCAROUTER_API_KEY = 'sk-orca-also'
+    const cfg = loadConfig({ home: tempHome() })
+    expect(cfg.provider).toBe('anthropic')
+    expect(cfg.model).toBe(defaultModelId('anthropic'))
+  })
+
+  test('OPENAI_API_KEY still wins when ORCAROUTER_API_KEY is also set', () => {
+    process.env.OPENAI_API_KEY = 'sk-openai-also'
+    process.env.ORCAROUTER_API_KEY = 'sk-orca-also'
+    const cfg = loadConfig({ home: tempHome() })
+    expect(cfg.provider).toBe('openai_compat')
+  })
+
+  test('yaml provider orcarouter wins over an Anthropic key and defaults the model', () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-also'
+    process.env.ORCAROUTER_API_KEY = 'sk-orca-yaml'
+    const home = tempHome()
+    writeFileSync(join(home, 'config.yaml'), 'provider: orcarouter\n')
+    const cfg = loadConfig({ home })
+    expect(cfg.provider).toBe('orcarouter')
+    expect(cfg.model).toBe('orcarouter/auto')
+    expect(cfg.env.ORCAROUTER_BASE_URL).toBeUndefined()
+  })
+
+  test('ORCAROUTER_BASE_URL alone does not infer a provider', () => {
+    process.env.ORCAROUTER_BASE_URL = 'https://api.orcarouter.ai/v1'
+    expect(() => loadConfig({ home: tempHome() })).toThrow(/No provider configured/)
   })
 
   test('no flags, no yaml, only ANTHROPIC_API_KEY → anthropic', () => {

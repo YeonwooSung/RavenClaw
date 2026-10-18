@@ -5,7 +5,13 @@ import {
   type HeadlessToolsPreset,
 } from './headless-permissions'
 
-const PROVIDERS = new Set<ProviderKind>(['anthropic', 'openai_compat', 'ollama', 'vllm'])
+const PROVIDERS = new Set<ProviderKind>([
+  'anthropic',
+  'openai_compat',
+  'ollama',
+  'vllm',
+  'orcarouter',
+])
 
 export type TuiKind = 'ink' | 'opentui'
 
@@ -230,7 +236,7 @@ function applyFlag(flags: ConfigFlags, key: string, value: string): void {
   if (key === 'provider') {
     if (!PROVIDERS.has(value as ProviderKind)) {
       throw new Error(
-        `unknown provider: ${value} (expected anthropic, openai_compat, ollama, or vllm)`,
+        `unknown provider: ${value} (expected anthropic, openai_compat, ollama, vllm, or orcarouter)`,
       )
     }
     flags.provider = value as ProviderKind

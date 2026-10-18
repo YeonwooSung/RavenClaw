@@ -64,7 +64,7 @@ Commands:
   eval          In-process fixture gates (no model; default core fixtures)
 
 Options:
-  --provider <anthropic|openai_compat|ollama|vllm>
+  --provider <anthropic|openai_compat|ollama|vllm|orcarouter>
   --model <id>
   --tui <ink|opentui>
   --dont-ask

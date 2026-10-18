@@ -113,6 +113,58 @@ function walk(dir: string): string[] {
 }
 
 describe('createRavenSession', () => {
+  test('orcarouter does not borrow OPENAI_API_KEY', async () => {
+    const home = tempHome()
+    writeFileSync(join(home, 'config.yaml'), 'provider: orcarouter\n')
+    writeFileSync(join(home, '.env'), 'OPENAI_API_KEY=sk-oai\n')
+    await expect(createRavenSession({ cwd: home, home, store: 'memory' })).rejects.toThrow(
+      /ORCAROUTER_API_KEY/,
+    )
+  })
+
+  test('orcarouter session calls api.orcarouter.ai with the Orca key', async () => {
+    const home = tempHome()
+    writeFileSync(join(home, 'config.yaml'), 'provider: orcarouter\nmodel: orcarouter/auto\n')
+    writeFileSync(join(home, '.env'), 'ORCAROUTER_API_KEY=sk-orca-sdk\nOPENAI_API_KEY=sk-oai\n')
+    const session = await createRavenSession({ cwd: home, home, store: 'memory' })
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = []
+    const original = globalThis.fetch
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      calls.push({ url, init })
+      return new Response('data: [DONE]\n\n', {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      })
+    }) as typeof fetch
+    try {
+      expect(session.provider.id).toBe('orcarouter')
+      expect(session.config.provider).toBe('orcarouter')
+      expect(session.config.model).toBe('orcarouter/auto')
+      for await (const _chunk of session.provider.stream(
+        {
+          model: '',
+          system: [],
+          messages: [
+            { id: 'u1', role: 'user', blocks: [{ type: 'text', text: 'hi' }], createdAt: 1 },
+          ],
+          tools: [],
+          maxTokens: 16,
+        },
+        new AbortController().signal,
+      )) {
+        // drain
+      }
+      expect(calls[0]?.url).toBe('https://api.orcarouter.ai/v1/chat/completions')
+      const headers = calls[0]?.init?.headers as Record<string, string>
+      expect(headers.Authorization).toBe('Bearer sk-orca-sdk')
+      expect(headers['X-Title']).toBe('RavenClaw')
+    } finally {
+      globalThis.fetch = original
+      await session.close()
+    }
+  })
+
   test('memory store + fake provider submits hi and collects text', async () => {
     const home = tempHome()
     const provider = createFakeProvider([

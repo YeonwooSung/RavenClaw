@@ -5,7 +5,7 @@ import { ravenclawHome } from './home'
 import type { ModelProfile, PermissionMode } from './types'
 import { parseYamlMap, stripWrappingQuotes, upsertYamlTopLevelScalar } from './config/yaml'
 
-export type ProviderKind = 'anthropic' | 'openai_compat' | 'ollama' | 'vllm'
+export type ProviderKind = 'anthropic' | 'openai_compat' | 'ollama' | 'vllm' | 'orcarouter'
 
 export type TerminalBackendKind = 'local' | 'docker'
 
@@ -136,6 +136,8 @@ export interface ResolvedEnv {
   OPENAI_API_KEY?: string
   ANTHROPIC_API_KEY?: string
   OPENAI_BASE_URL?: string
+  ORCAROUTER_API_KEY?: string
+  ORCAROUTER_BASE_URL?: string
   OLLAMA_HOST?: string
   OLLAMA_API_KEY?: string
   VLLM_BASE_URL?: string
@@ -156,12 +158,20 @@ export interface ResolvedConfig extends RavenClawConfig {
   effort?: string
 }
 
-const PROVIDERS = new Set<ProviderKind>(['anthropic', 'openai_compat', 'ollama', 'vllm'])
+const PROVIDERS = new Set<ProviderKind>([
+  'anthropic',
+  'openai_compat',
+  'ollama',
+  'vllm',
+  'orcarouter',
+])
 
 export const OLLAMA_DEFAULT_HOST = 'http://127.0.0.1:11434'
 export const OLLAMA_DEFAULT_MODEL = 'llama3.2'
 export const VLLM_DEFAULT_BASE_URL = 'http://127.0.0.1:8000/v1'
 export const VLLM_DEFAULT_MODEL = 'local-model'
+export const ORCAROUTER_DEFAULT_BASE_URL = 'https://api.orcarouter.ai/v1'
+export const ORCAROUTER_DEFAULT_MODEL = 'orcarouter/auto'
 const PERMISSION_MODES = new Set<PermissionMode>([
   'default',
   'acceptEdits',
@@ -185,6 +195,8 @@ const ENV_KEYS = [
   'OLLAMA_API_KEY',
   'VLLM_BASE_URL',
   'VLLM_API_KEY',
+  'ORCAROUTER_API_KEY',
+  'ORCAROUTER_BASE_URL',
   'RAVENCLAW_INCLUDED_TOKEN',
 ] as const
 
@@ -367,7 +379,7 @@ export function resolveProviderModel(opts: {
     opts.flags?.provider ?? opts.config.provider ?? inferProviderFromEnv(opts.env)
   if (provider === undefined) {
     throw new Error(
-      'No provider configured. Set provider in config.yaml (anthropic | openai_compat | ollama | vllm) or export ANTHROPIC_API_KEY / OPENAI_API_KEY / OLLAMA_HOST / VLLM_BASE_URL.',
+      'No provider configured. Set provider in config.yaml (anthropic | openai_compat | ollama | vllm | orcarouter) or export ANTHROPIC_API_KEY / OPENAI_API_KEY / OLLAMA_HOST / VLLM_BASE_URL / ORCAROUTER_API_KEY.',
     )
   }
   const model =
@@ -378,6 +390,7 @@ export function resolveProviderModel(opts: {
 export function defaultModelForProvider(provider: ProviderKind): string {
   if (provider === 'ollama') return OLLAMA_DEFAULT_MODEL
   if (provider === 'vllm') return VLLM_DEFAULT_MODEL
+  if (provider === 'orcarouter') return ORCAROUTER_DEFAULT_MODEL
   if (provider === 'openai_compat') return defaultModelId('openai')
   return defaultModelId('anthropic')
 }
@@ -503,6 +516,7 @@ function inferProviderFromEnv(env: ResolvedEnv): ProviderKind | undefined {
   ) {
     return 'openai_compat'
   }
+  if (firstNonEmpty(env.ORCAROUTER_API_KEY) !== undefined) return 'orcarouter'
   return undefined
 }
 

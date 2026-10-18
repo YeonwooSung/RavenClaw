@@ -667,6 +667,21 @@ function byokProviderFromConfig(config: ResolvedConfig): Provider {
       defaultModel: config.model,
     })
   }
+  if (config.provider === 'orcarouter') {
+    const apiKey = firstNonEmpty(config.env.ORCAROUTER_API_KEY)
+    if (apiKey === undefined) {
+      throw new Error('Set ORCAROUTER_API_KEY in $RAVENCLAW_HOME/.env or the environment.')
+    }
+    const ctor: Parameters<typeof createProvider>[0] = {
+      provider: 'orcarouter',
+      apiKey,
+      defaultModel: config.model,
+    }
+    if (config.env.ORCAROUTER_BASE_URL) {
+      ctor.baseUrl = normalizeOpenAiBaseUrl(config.env.ORCAROUTER_BASE_URL)
+    }
+    return createProvider(ctor)
+  }
   const apiKey =
     config.provider === 'anthropic'
       ? config.env.ANTHROPIC_API_KEY

@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'bun:test'
 import {
   defaultCompactPolicy,
   defaultConfig,
@@ -13,6 +13,12 @@ import {
   providerKindFromModelId,
   tryBuildAuxProvider,
 } from './aux'
+
+const originalFetch = globalThis.fetch
+
+afterEach(() => {
+  globalThis.fetch = originalFetch
+})
 
 function profile(id = 'anthropic/claude-sonnet-4'): ModelProfile {
   return {
@@ -61,6 +67,7 @@ describe('providerKindFromModelId', () => {
     expect(providerKindFromModelId(defaultModelId('openai'))).toBe('openai_compat')
     expect(providerKindFromModelId('ollama/qwen')).toBe('ollama')
     expect(providerKindFromModelId('vllm/local-model')).toBe('vllm')
+    expect(providerKindFromModelId('orcarouter/auto')).toBe('orcarouter')
     expect(providerKindFromModelId('llama3.2')).toBeUndefined()
   })
 })
@@ -101,6 +108,64 @@ describe('tryBuildAuxProvider', () => {
       liveProvider: liveProvider('anthropic'),
     })
     expect(built).toBeUndefined()
+  })
+
+  test('orcarouter aux model uses ORCAROUTER_API_KEY', async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = []
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      calls.push({ url, init })
+      return new Response('data: [DONE]\n\n', {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      })
+    }) as typeof fetch
+    const built = tryBuildAuxProvider({
+      modelId: 'orcarouter/auto',
+      config: config({
+        provider: 'anthropic',
+        env: {
+          ANTHROPIC_API_KEY: 'sk-ant',
+          OPENAI_API_KEY: 'sk-oai',
+          ORCAROUTER_API_KEY: 'sk-orca-aux',
+        },
+      }),
+      funding: 'byok',
+      sessionModel: 'anthropic/claude-sonnet-4',
+      liveProvider: liveProvider('anthropic'),
+    })
+    expect(built?.provider.id).toBe('orcarouter')
+    for await (const _chunk of built!.provider.stream(
+      {
+        model: 'orcarouter/auto',
+        system: [],
+        messages: [
+          { id: 'u1', role: 'user', blocks: [{ type: 'text', text: 'hi' }], createdAt: 1 },
+        ],
+        tools: [],
+        maxTokens: 16,
+      },
+      new AbortController().signal,
+    )) {
+      // drain
+    }
+    const headers = calls[0]?.init?.headers as Record<string, string>
+    expect(headers.Authorization).toBe('Bearer sk-orca-aux')
+    expect(calls[0]?.url).toBe('https://api.orcarouter.ai/v1/chat/completions')
+  })
+
+  test('openai model prefix stays openai_compat during an orcarouter session', () => {
+    const built = tryBuildAuxProvider({
+      modelId: 'openai/gpt-4o-mini',
+      config: config({
+        provider: 'orcarouter',
+        env: { OPENAI_API_KEY: 'sk-oai', ORCAROUTER_API_KEY: 'sk-orca-aux' },
+      }),
+      funding: 'byok',
+      sessionModel: 'orcarouter/auto',
+      liveProvider: liveProvider('orcarouter'),
+    })
+    expect(built?.provider.id).toBe('openai_compat')
   })
 
   test('BYOK with keys builds a distinct provider', () => {

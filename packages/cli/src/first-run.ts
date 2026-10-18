@@ -3,10 +3,11 @@ import { join } from 'node:path'
 import { loadConfig, type ConfigFlags } from '@ravenclaw/core'
 
 export const SETUP_HINT =
-  'No provider configured. Run `raven` in a terminal, or set ANTHROPIC_API_KEY / OPENAI_API_KEY / OLLAMA_HOST / VLLM_BASE_URL.'
+  'No provider configured. Run `raven` in a terminal, or set ANTHROPIC_API_KEY / OPENAI_API_KEY / OLLAMA_HOST / VLLM_BASE_URL / ORCAROUTER_API_KEY.'
 
 const ANTHROPIC_KEY = 'ANTHROPIC_API_KEY'
 const OPENAI_KEY = 'OPENAI_API_KEY'
+const ORCA_KEY = 'ORCAROUTER_API_KEY'
 
 export function providerConfigured(home: string, flags?: ConfigFlags): boolean {
   try {
@@ -25,11 +26,11 @@ export async function runFirstRun(opts: {
 }): Promise<boolean> {
   const read = lineReader(opts.input)
   opts.write('No API key found. Set one up to use RavenClaw.\n')
-  opts.write('Provider [1] Anthropic  [2] OpenAI  [3] Ollama  [4] vLLM: ')
+  opts.write('Provider [1] Anthropic  [2] OpenAI  [3] Ollama  [4] vLLM  [5] OrcaRouter: ')
   const choice = (await read())?.trim() ?? ''
   const kind = parseProviderChoice(choice)
   if (!kind) {
-    opts.write('Cancelled. Expected 1, 2, 3, or 4.\n')
+    opts.write('Cancelled. Expected 1, 2, 3, 4, or 5.\n')
     return false
   }
 
@@ -45,7 +46,7 @@ export async function runFirstRun(opts: {
     return true
   }
 
-  const envName = kind === 'anthropic' ? ANTHROPIC_KEY : OPENAI_KEY
+  const envName = kind === 'anthropic' ? ANTHROPIC_KEY : kind === 'orcarouter' ? ORCA_KEY : OPENAI_KEY
   opts.write(`${envName}: `)
   const raw = opts.readSecret ? await opts.readSecret() : await read()
   const key = raw?.trim() ?? ''
@@ -61,7 +62,7 @@ export async function runFirstRun(opts: {
 
 export function parseProviderChoice(
   raw: string,
-): 'anthropic' | 'openai_compat' | 'ollama' | 'vllm' | undefined {
+): 'anthropic' | 'openai_compat' | 'ollama' | 'vllm' | 'orcarouter' | undefined {
   const key = raw.trim().toLowerCase()
   if (key === '1' || key === 'anthropic' || key === 'a') return 'anthropic'
   if (key === '2' || key === 'openai' || key === 'openai_compat' || key === 'o') {
@@ -69,6 +70,7 @@ export function parseProviderChoice(
   }
   if (key === '3' || key === 'ollama') return 'ollama'
   if (key === '4' || key === 'vllm') return 'vllm'
+  if (key === '5' || key === 'orcarouter') return 'orcarouter'
   return undefined
 }
 

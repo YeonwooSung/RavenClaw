@@ -43,6 +43,17 @@ describe('runDoctor', () => {
     expect(doctorFailed(checks)).toBe(false)
   })
 
+  test('ORCAROUTER_API_KEY alone satisfies env without a local probe', async () => {
+    const home = tempHome('orca')
+    writeFileSync(join(home, '.env'), 'ORCAROUTER_API_KEY=sk-orca-secret\n', { mode: 0o600 })
+    const checks = runDoctor({ home })
+    const env = checks.find((c) => c.name === 'env')
+    expect(env?.ok).toBe(true)
+    expect(env?.detail).toContain('ORCAROUTER_API_KEY is set')
+    expect(formatDoctorReport(checks)).not.toContain('sk-orca-secret')
+    expect(await probeLocalLlm({ home, fetch: async () => { throw new Error('no fetch') } })).toBeUndefined()
+  })
+
   test('skips local probe when no ollama/vllm is configured', async () => {
     const home = tempHome('no-local')
     writeFileSync(join(home, '.env'), 'ANTHROPIC_API_KEY=sk-test\n')

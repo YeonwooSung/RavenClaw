@@ -65,6 +65,7 @@ function checkEnv(home: string): DoctorCheck {
     'OPENAI_API_KEY',
     'OLLAMA_HOST',
     'VLLM_BASE_URL',
+    'ORCAROUTER_API_KEY',
   ] as const
   for (const key of keys) {
     const value = envValue(text, key)

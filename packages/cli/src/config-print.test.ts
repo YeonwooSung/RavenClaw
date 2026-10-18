@@ -33,4 +33,14 @@ describe('formatPublicConfig', () => {
     expect(text).toContain('instructionFiles: claude')
     expect(text).not.toContain('sk-ant-secret-value')
   })
+
+  test('ORCAROUTER_API_KEY alone prints provider orcarouter and hides the secret', () => {
+    const home = join(tmpdir(), `raven-cfg-orca-${Date.now()}`)
+    mkdirSync(home, { recursive: true })
+    writeFileSync(join(home, '.env'), 'ORCAROUTER_API_KEY=sk-orca-secret-value\n')
+    const text = formatPublicConfig({ home })
+    expect(text).toContain('provider: orcarouter')
+    expect(text).toContain('ORCAROUTER_API_KEY: set (20 chars)')
+    expect(text).not.toContain('sk-orca-secret-value')
+  })
 })

@@ -581,6 +581,7 @@ Provider 포트는 `packages/core/src/types.ts`의 `Provider`다. `stream(req, s
 | `openai_compat` | `OpenAICompatProvider` | `OPENAI_BASE_URL` 또는 OpenAI |
 | `ollama` | `OpenAICompatProvider` (`id: ollama`) | `http://127.0.0.1:11434/v1`, 모델 `llama3.2` |
 | `vllm` | `OpenAICompatProvider` (`id: vllm`) | `http://127.0.0.1:8000/v1`, 모델 `local-model` |
+| `orcarouter` | `OpenAICompatProvider` (`id: orcarouter`) | `https://api.orcarouter.ai/v1`, 모델 `orcarouter/auto`. 호스트가 `api.orcarouter.ai`일 때만 `HTTP-Referer`와 `X-Title: RavenClaw` |
 | `openai_responses` | `OpenAIResponsesProvider` | Responses API. `createProvider`가 테스트/내부용으로 만들 수 있다. `--provider` / `config.yaml` `provider:` 값은 아니다. |
 | `included` | included gateway | `included.gatewayUrl`. CLI만 |
 
@@ -679,7 +680,7 @@ fire는 새 `dontAsk` 세션을 연다. `lockHolder`는 `cron`이다. surface는
 1. `RAVENCLAW_HOME`이 있으면 그 디렉터리, 없으면 `~/.ravenclaw`.
 2. `config.yaml`을 읽는다. 없으면 빈 객체.
 3. `.env`를 읽고, process env가 같은 키를 이긴다. 시크릿은 env가 공급한다.
-4. provider 선택: `--provider` > `config.yaml` `provider:` > env 추론(`ANTHROPIC_API_KEY` → anthropic, `OLLAMA_HOST` → ollama, `VLLM_BASE_URL` → vllm, `OPENAI_API_KEY`/`OPENAI_BASE_URL` → openai_compat). 없으면 에러.
+4. provider 선택: `--provider` > `config.yaml` `provider:` > env 추론(`ANTHROPIC_API_KEY` → anthropic, `OLLAMA_HOST` → ollama, `VLLM_BASE_URL` → vllm, `OPENAI_API_KEY`/`OPENAI_BASE_URL` → openai_compat, 그다음 `ORCAROUTER_API_KEY` → orcarouter). `ORCAROUTER_BASE_URL`만으로는 고르지 않는다. 없으면 에러.
 5. model: `--model` > `config.yaml` `model:` > `defaultModelForProvider(provider)`.
 6. permission: `--dont-ask`면 `dontAsk`, 아니면 `--permissionMode` / yaml / `default`.
 7. `exec` / `smoke` / `serve`는 argv 단계에서 이미 `dontAsk`다.

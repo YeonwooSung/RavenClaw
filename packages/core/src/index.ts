@@ -60,6 +60,8 @@ export {
   OLLAMA_DEFAULT_MODEL,
   VLLM_DEFAULT_BASE_URL,
   VLLM_DEFAULT_MODEL,
+  ORCAROUTER_DEFAULT_BASE_URL,
+  ORCAROUTER_DEFAULT_MODEL,
 } from './config'
 export type {
   ConfigFlags,

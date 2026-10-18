@@ -26,6 +26,7 @@ export function formatPublicConfig(opts?: { home?: string; flags?: ConfigFlags }
     (fileEnv.OLLAMA_HOST || fileEnv.OLLAMA_API_KEY ? 'ollama' : undefined) ??
     (fileEnv.VLLM_BASE_URL || fileEnv.VLLM_API_KEY ? 'vllm' : undefined) ??
     (fileEnv.OPENAI_API_KEY || fileEnv.OPENAI_BASE_URL ? 'openai_compat' : undefined) ??
+    (fileEnv.ORCAROUTER_API_KEY ? 'orcarouter' : undefined) ??
     '(unset)'
   const model = flags?.model ?? parsed.model ?? base.model
   const permissionMode = flags?.dontAsk
@@ -58,6 +59,7 @@ export function formatPublicConfig(opts?: { home?: string; flags?: ConfigFlags }
     `OPENAI_BASE_URL: ${present(fileEnv.OPENAI_BASE_URL)}`,
     `OLLAMA_HOST: ${present(fileEnv.OLLAMA_HOST)}`,
     `VLLM_BASE_URL: ${present(fileEnv.VLLM_BASE_URL)}`,
+    `ORCAROUTER_API_KEY: ${present(fileEnv.ORCAROUTER_API_KEY)}`,
   ].join('\n')
 }
 

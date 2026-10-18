@@ -43,7 +43,7 @@ export function bashCompletions(): string {
     '    return 0',
     '  fi',
     '  case "${prev}" in',
-    '    --provider) COMPREPLY=( $(compgen -W "anthropic openai_compat ollama vllm" -- "${cur}") ) ;;',
+    '    --provider) COMPREPLY=( $(compgen -W "anthropic openai_compat ollama vllm orcarouter" -- "${cur}") ) ;;',
     '    --tui) COMPREPLY=( $(compgen -W "ink opentui" -- "${cur}") ) ;;',
     '    completions) COMPREPLY=( $(compgen -W "bash zsh" -- "${cur}") ) ;;',
     '    *) COMPREPLY=( $(compgen -W "${opts}" -- "${cur}") ) ;;',
@@ -59,7 +59,7 @@ export function zshCompletions(): string {
   return `#compdef raven
 _arguments -C \\
   '1:command:(${cmds})' \\
-  '--provider[provider]:provider:(anthropic openai_compat ollama vllm)' \\
+  '--provider[provider]:provider:(anthropic openai_compat ollama vllm orcarouter)' \\
   '--model[model id]' \\
   '--tui[ui]:ui:(ink opentui)' \\
   '--dont-ask[skip permission prompts]' \\

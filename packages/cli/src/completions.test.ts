@@ -7,7 +7,7 @@ describe('completionsScript', () => {
     expect(result).toHaveProperty('text')
     if (!('text' in result)) throw new Error('expected text')
     expect(result.text).toContain('complete -F _raven raven')
-    expect(result.text).toContain('anthropic openai_compat ollama vllm')
+    expect(result.text).toContain('anthropic openai_compat ollama vllm orcarouter')
     for (const cmd of COMPLETION_COMMANDS) {
       expect(result.text).toContain(cmd)
     }
@@ -18,6 +18,7 @@ describe('completionsScript', () => {
     expect(result).toHaveProperty('text')
     if (!('text' in result)) throw new Error('expected text')
     expect(result.text.startsWith('#compdef raven')).toBe(true)
+    expect(result.text).toContain('anthropic openai_compat ollama vllm orcarouter')
     expect(result.text).toContain('ink opentui')
     expect(result.text).toContain('init')
   })

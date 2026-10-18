@@ -7,7 +7,7 @@ Licensed under Apache-2.0.
 ## Requirements
 
 - [Bun](https://bun.sh) 1.x
-- An `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, or a local server: [Ollama](https://ollama.com) / [vLLM](https://docs.vllm.ai)
+- An `ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `ORCAROUTER_API_KEY`, or a local server: [Ollama](https://ollama.com) / [vLLM](https://docs.vllm.ai)
 
 ## Install
 
@@ -35,6 +35,8 @@ ANTHROPIC_API_KEY=sk-ant-...
 # or:
 # OPENAI_API_KEY=sk-...
 # OPENAI_BASE_URL=https://api.openai.com/v1
+# ORCAROUTER_API_KEY=sk-orca-...   # optional gateway; keeps every other provider
+# ORCAROUTER_BASE_URL=https://api.orcarouter.ai/v1
 # BRAVE_API_KEY=...          # optional WebSearch
 # SERPER_API_KEY=...         # optional WebSearch
 EOF
@@ -45,7 +47,7 @@ Optional `~/.ravenclaw/config.yaml`:
 
 ```yaml
 model: claude-sonnet-5       # official API id; omit to use the provider default
-provider: anthropic          # anthropic | openai_compat | ollama | vllm
+provider: anthropic          # anthropic | openai_compat | ollama | vllm | orcarouter
 permissionMode: default      # default | acceptEdits | plan | dontAsk
 instructionFiles: both     # claude | agents-fallback | both
 maxRounds: 80
@@ -72,7 +74,7 @@ A server that fails to spawn or list tools is skipped; RavenClaw still boots. Bu
 
 Optional memory files (context snapshot, 8k/file, 16k total): `~/.ravenclaw/USER.md`, `~/.ravenclaw/MEMORY.md`, and the same names under the project root or `.ravenclaw/`.
 
-Resolution: `--provider` / `--model` flags beat `config.yaml`, which beats env for the *choice* of provider. Env still supplies the secret (except Ollama/vLLM, which do not need a cloud key).
+Resolution: `--provider` / `--model` flags beat `config.yaml`, which beats env for the *choice* of provider. Env still supplies the secret (except Ollama/vLLM, which do not need a cloud key). `ORCAROUTER_API_KEY` is chosen only when no earlier provider key is set. Requests to `api.orcarouter.ai` send `HTTP-Referer: https://github.com/YeonwooSung/RavenClaw` and `X-Title: RavenClaw`. A custom `ORCAROUTER_BASE_URL` does not get those headers.
 
 ## Models
 
@@ -86,6 +88,7 @@ When `model:` is omitted, the provider's **default role** is used:
 | `openai_compat` | `gpt-5.6-terra` | `gpt-6-astra` | `gpt-5.6-luna` |
 | `ollama` | `llama3.2` | — | — |
 | `vllm` | `local-model` | — | — |
+| `orcarouter` | `orcarouter/auto` | — | — |
 
 Roles (`default` / `strong` / `fast`) exist only in code (`defaultModelId` in `packages/core/src/cost/models.ts`). They are not `config.yaml` keys. Put the official API id in config:
 
@@ -198,7 +201,7 @@ Prefix session ids are ok.
 
 | Flag | Meaning |
 |---|---|
-| `--provider` | `anthropic` \| `openai_compat` \| `ollama` \| `vllm` |
+| `--provider` | `anthropic` \| `openai_compat` \| `ollama` \| `vllm` \| `orcarouter` |
 | `--model <id>` | Official API model id (see [Models](#models)) |
 | `--tui ink\|opentui` | TUI host (default Ink) |
 | `--dont-ask` | Leftover asks become denials (except in-tree Edit/Write/ApplyPatch and read-only tools; Fetch and AskUser stay denied) |

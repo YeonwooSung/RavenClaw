@@ -167,6 +167,68 @@ describe('included gateway access', () => {
     expect(probed).toEqual([])
   })
 
+  test('orcarouter without its own key does not borrow OPENAI_API_KEY', async () => {
+    const cfg = config({
+      provider: 'orcarouter',
+      env: { OPENAI_API_KEY: 'sk-oai' },
+    })
+    await expect(providerFromConfig(cfg)).rejects.toThrow(/ORCAROUTER_API_KEY/)
+  })
+
+  test('orcarouter sends the Orca key to the normalized base URL', async () => {
+    const calls: Array<{ url: string; init: RequestInit | undefined }> = []
+    const original = globalThis.fetch
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url
+      calls.push({ url, init })
+      return new Response('data: [DONE]\n\n', {
+        status: 200,
+        headers: { 'Content-Type': 'text/event-stream' },
+      })
+    }) as typeof fetch
+    try {
+      const cfg = config({
+        provider: 'orcarouter',
+        model: 'anthropic/claude-sonnet-4.6',
+        env: {
+          ORCAROUTER_API_KEY: 'sk-orca-live',
+          OPENAI_API_KEY: 'sk-oai',
+          ORCAROUTER_BASE_URL: 'https://api.orcarouter.ai',
+        },
+      })
+      const provider = await providerFromConfig(cfg)
+      expect(provider.id).toBe('orcarouter')
+      for await (const _chunk of provider.stream(
+        {
+          model: cfg.model,
+          system: [],
+          messages: [
+            {
+              id: 'u1',
+              role: 'user',
+              blocks: [{ type: 'text', text: 'hi' }],
+              createdAt: 1,
+            },
+          ],
+          tools: [],
+          maxTokens: 16,
+        },
+        new AbortController().signal,
+      )) {
+        // drain
+      }
+      expect(calls[0]?.url).toBe('https://api.orcarouter.ai/v1/chat/completions')
+      const headers = calls[0]?.init?.headers as Record<string, string>
+      expect(headers.Authorization).toBe('Bearer sk-orca-live')
+      expect(headers['HTTP-Referer']).toBe('https://github.com/YeonwooSung/RavenClaw')
+      expect(headers['X-Title']).toBe('RavenClaw')
+      const payload = JSON.parse(String(calls[0]?.init?.body)) as { model: string }
+      expect(payload.model).toBe('anthropic/claude-sonnet-4.6')
+    } finally {
+      globalThis.fetch = original
+    }
+  })
+
   test('enabled + denied probe stays BYOK', async () => {
     const cfg = config({
       provider: 'openai_compat',

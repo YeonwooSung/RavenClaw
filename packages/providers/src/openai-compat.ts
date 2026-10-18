@@ -66,6 +66,7 @@ export class OpenAICompatProvider implements Provider {
           Authorization: `Bearer ${this.apiKey}`,
           'Content-Type': 'application/json',
           Accept: 'text/event-stream',
+          ...orcaAttributionHeaders(this.id, this.baseUrl),
         },
         body: JSON.stringify(payload),
         signal,
@@ -149,6 +150,19 @@ interface PendingToolCall {
   name: string
   arguments: string
   emitted: boolean
+}
+
+function orcaAttributionHeaders(id: string, baseUrl: string): Record<string, string> {
+  if (id !== 'orcarouter') return {}
+  try {
+    if (new URL(baseUrl).host !== 'api.orcarouter.ai') return {}
+  } catch {
+    return {}
+  }
+  return {
+    'HTTP-Referer': 'https://github.com/YeonwooSung/RavenClaw',
+    'X-Title': 'RavenClaw',
+  }
 }
 
 function abortLike(): DOMException {

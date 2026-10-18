@@ -19,6 +19,7 @@ export function providerKindFromModelId(modelId: string): ProviderKind | undefin
   if (prefix === 'openai' || prefix.startsWith('gpt-')) return 'openai_compat'
   if (prefix === 'ollama') return 'ollama'
   if (prefix === 'vllm') return 'vllm'
+  if (prefix === 'orcarouter') return 'orcarouter'
   return undefined
 }
 
@@ -98,6 +99,19 @@ function createByokProviderForModel(config: ResolvedConfig, modelId: string): Pr
       baseUrl: normalizeOpenAiBaseUrl(config.env.VLLM_BASE_URL ?? VLLM_DEFAULT_BASE_URL),
       defaultModel: modelId,
     })
+  }
+  if (kind === 'orcarouter') {
+    const apiKey = firstNonEmpty(config.env.ORCAROUTER_API_KEY)
+    if (apiKey === undefined) throw new Error('missing ORCAROUTER_API_KEY')
+    const ctor: Parameters<typeof createProvider>[0] = {
+      provider: 'orcarouter',
+      apiKey,
+      defaultModel: modelId,
+    }
+    if (config.env.ORCAROUTER_BASE_URL) {
+      ctor.baseUrl = normalizeOpenAiBaseUrl(config.env.ORCAROUTER_BASE_URL)
+    }
+    return createProvider(ctor)
   }
   const apiKey = kind === 'anthropic' ? config.env.ANTHROPIC_API_KEY : config.env.OPENAI_API_KEY
   if (apiKey === undefined || apiKey === '') {

@@ -112,8 +112,21 @@ describe('runFirstRun', () => {
     expect(providerConfigured(home)).toBe(false)
   })
 
+  test('OrcaRouter writes ORCAROUTER_API_KEY and nothing else', async () => {
+    const home = tempHome('orca')
+    const ok = await runFirstRun({
+      home,
+      input: lines('5', 'sk-orca-test'),
+      write: () => {},
+    })
+    expect(ok).toBe(true)
+    expect(readFileSync(join(home, '.env'), 'utf8')).toBe('ORCAROUTER_API_KEY=sk-orca-test\n')
+    expect(providerConfigured(home)).toBe(true)
+  })
+
   test('setup hint mentions raven and env vars', () => {
     expect(SETUP_HINT).toContain('raven')
     expect(SETUP_HINT).toContain('ANTHROPIC_API_KEY')
+    expect(SETUP_HINT).toContain('ORCAROUTER_API_KEY')
   })
 })

@@ -670,6 +670,7 @@ File history copies pre-images under `$RAVENCLAW_HOME/file-history/<sessionId>/0
 | `openai_compat` | `OpenAICompatProvider` | `OPENAI_BASE_URL` or OpenAI | `OPENAI_API_KEY` |
 | `ollama` | `OpenAICompatProvider` id=`ollama` | `http://127.0.0.1:11434/v1` | optional `OLLAMA_API_KEY` (defaults `ollama`) |
 | `vllm` | `OpenAICompatProvider` id=`vllm` | `http://127.0.0.1:8000/v1` | `VLLM_API_KEY` or `OPENAI_API_KEY` (defaults `vllm`) |
+| `orcarouter` | `OpenAICompatProvider` id=`orcarouter` | `https://api.orcarouter.ai/v1` (`ORCAROUTER_BASE_URL` optional) | `ORCAROUTER_API_KEY` |
 | `openai_responses` | `OpenAIResponsesProvider` | OpenAI Responses | used internally / tests |
 | `included` | `createIncludedGatewayProvider` | `included.gatewayUrl` | `RAVENCLAW_INCLUDED_TOKEN` |
 
@@ -694,7 +695,7 @@ Snapshot as of 2026-09 (this tree):
 
 Also in `BUILT_INS`: `claude-fable-5-1`; `gpt-5.6-sol` (alias `gpt-5.6` / `openai/gpt-5.6`). Legacy rows kept: `anthropic/claude-sonnet-4`, `anthropic/claude-opus-4`, `openai/gpt-4o`, `openai/gpt-4o-mini`. Dated/prefixed aliases (`claude-haiku-4-5-20251001`, `anthropic/claude-sonnet-5`, …) resolve to the same profile.
 
-Ollama default model `llama3.2`; vLLM `local-model`.
+Ollama default model `llama3.2`; vLLM `local-model`. OrcaRouter default model `orcarouter/auto`. Calls whose host is `api.orcarouter.ai` also send `HTTP-Referer: https://github.com/YeonwooSung/RavenClaw` and `X-Title: RavenClaw`. Other hosts do not. `ORCAROUTER_API_KEY` does not override Anthropic, Ollama, vLLM, or OpenAI during env inference.
 
 `/model <id>` → `setModel(getModelProfile(id))`. Live in-flight `queryLoop` is not mutated.
 
@@ -748,7 +749,7 @@ Ads dock (`packages/cli/src/ad-dock.tsx`, `included-ads.ts`) mounts only when `f
 
 `loadConfig` (`packages/core/src/config.ts`):
 
-**Provider / model choice:** flags > `config.yaml` > env inference (`ANTHROPIC_API_KEY` → anthropic, `OLLAMA_HOST` → ollama, `VLLM_BASE_URL` → vllm, `OPENAI_API_KEY`/`OPENAI_BASE_URL` → openai_compat). Env still supplies the secret. `--provider` also sets `preferByok` so an included gateway is not used when the user named a BYOK provider.
+**Provider / model choice:** flags > `config.yaml` > env inference (`ANTHROPIC_API_KEY` → anthropic, `OLLAMA_HOST` → ollama, `VLLM_BASE_URL` → vllm, `OPENAI_API_KEY`/`OPENAI_BASE_URL` → openai_compat, else `ORCAROUTER_API_KEY` → orcarouter). `ORCAROUTER_BASE_URL` alone does not select a provider. Env still supplies the secret. `--provider` also sets `preferByok` so an included gateway is not used when the user named a BYOK provider.
 
 **Permission mode:** `--dont-ask` wins, else `--permission-mode`, else yaml, else `default`.
 

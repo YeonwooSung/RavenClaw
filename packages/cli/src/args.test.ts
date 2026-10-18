@@ -353,6 +353,7 @@ describe('parseArgv', () => {
     expect(parseArgv(['--provider', 'vllm', '--model', 'local-model']).flags.provider).toBe(
       'vllm',
     )
+    expect(parseArgv(['--provider', 'orcarouter']).flags.provider).toBe('orcarouter')
   })
 
   test('--tui opentui is recorded on ParsedArgv, not flags', () => {

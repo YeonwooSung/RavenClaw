@@ -1,11 +1,18 @@
-import type { Provider } from '@ravenclaw/core'
+import { ORCAROUTER_DEFAULT_BASE_URL, ORCAROUTER_DEFAULT_MODEL, type Provider } from '@ravenclaw/core'
 import { AnthropicMessagesProvider } from './anthropic'
 import { createIncludedGatewayProvider } from './gateway'
 import { OpenAICompatProvider } from './openai-compat'
 import { OpenAIResponsesProvider } from './responses'
 
 export function createProvider(opts: {
-  provider: 'anthropic' | 'openai_compat' | 'openai_responses' | 'included' | 'ollama' | 'vllm'
+  provider:
+    | 'anthropic'
+    | 'openai_compat'
+    | 'openai_responses'
+    | 'included'
+    | 'ollama'
+    | 'vllm'
+    | 'orcarouter'
   apiKey: string
   baseUrl?: string
   gatewayUrl?: string
@@ -26,6 +33,12 @@ export function createProvider(opts: {
     ctor.id = 'vllm'
     ctor.apiKey = opts.apiKey === '' ? 'vllm' : opts.apiKey
     ctor.baseUrl = opts.baseUrl ?? 'http://127.0.0.1:8000/v1'
+    return new OpenAICompatProvider(ctor)
+  }
+  if (opts.provider === 'orcarouter') {
+    ctor.id = 'orcarouter'
+    ctor.baseUrl = opts.baseUrl ?? ORCAROUTER_DEFAULT_BASE_URL
+    ctor.defaultModel = opts.defaultModel ?? ORCAROUTER_DEFAULT_MODEL
     return new OpenAICompatProvider(ctor)
   }
   if (opts.provider === 'anthropic') return new AnthropicMessagesProvider(ctor)
