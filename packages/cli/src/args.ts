@@ -44,10 +44,12 @@ export interface ParsedArgv {
     | 'discord'
     | 'pairing'
     | 'eval'
+    | 'durable'
   prompt?: string
   json?: boolean
   all?: boolean
   project?: boolean
+  path?: string
   flags: ConfigFlags
   tui?: TuiKind
 }
@@ -59,6 +61,7 @@ export function parseArgv(argv: string[]): ParsedArgv {
   let project = false
   let tui: TuiKind | undefined
   let toolsPreset: HeadlessToolsPreset | undefined
+  let path: string | undefined
   const flags: ConfigFlags = {}
   const positional: string[] = []
 
@@ -109,6 +112,11 @@ export function parseArgv(argv: string[]): ParsedArgv {
         toolsPreset = parseHeadlessToolsPreset(eq.value)
         continue
       }
+      if (eq.key === 'path') {
+        if (eq.value === '') throw new Error('--path requires a value')
+        path = eq.value
+        continue
+      }
       applyFlag(flags, eq.key, eq.value)
       continue
     }
@@ -137,6 +145,15 @@ export function parseArgv(argv: string[]): ParsedArgv {
         throw new Error('--tools-preset requires a value')
       }
       toolsPreset = parseHeadlessToolsPreset(value)
+      i++
+      continue
+    }
+    if (arg === '--path') {
+      const value = argv[i + 1]
+      if (value === undefined || value.startsWith('-')) {
+        throw new Error('--path requires a value')
+      }
+      path = value
       i++
       continue
     }
@@ -172,6 +189,7 @@ export function parseArgv(argv: string[]): ParsedArgv {
     }
     if (
       (arg === 'exec' ||
+        arg === 'durable' ||
         arg === 'acp' ||
         arg === 'help' ||
         arg === 'version' ||
@@ -206,7 +224,11 @@ export function parseArgv(argv: string[]): ParsedArgv {
     positional.push(arg)
   }
 
-  if (cmd === 'exec' || cmd === 'smoke' || cmd === 'serve') flags.dontAsk = true
+  if (path !== undefined && cmd !== 'durable') {
+    throw new Error('unknown flag: --path')
+  }
+
+  if (cmd === 'exec' || cmd === 'durable' || cmd === 'smoke' || cmd === 'serve') flags.dontAsk = true
   if (flags.allowedTools === undefined && toolsPreset !== undefined) {
     flags.allowedTools = headlessAllowedTools(toolsPreset)
   }
@@ -216,6 +238,7 @@ export function parseArgv(argv: string[]): ParsedArgv {
   if (all) out.all = true
   if (project) out.project = true
   if (tui !== undefined) out.tui = tui
+  if (path !== undefined) out.path = path
   if (positional.length > 0) out.prompt = positional.join(' ')
   return out
 }
