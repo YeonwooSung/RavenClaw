@@ -1,5 +1,6 @@
 export const COMPLETION_COMMANDS = [
   'exec',
+  'durable',
   'acp',
   'setup',
   'smoke',

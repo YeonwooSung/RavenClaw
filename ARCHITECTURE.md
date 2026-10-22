@@ -37,9 +37,9 @@ Bun workspaces (`package.json` `"workspaces": ["packages/*"]`). Version is read 
 | `@ravenclaw/cli` | `packages/cli` | `raven` bin: Ink TUI, OpenTUI host, exec/acp/serve/slack/discord/pairing/cron |
 | `@ravenclaw/tui-opentui` | `packages/tui-opentui` | Line-oriented StreamEvent view (`createOpenTuiView`) |
 | `@ravenclaw/acp` | `packages/acp` | Agent Client Protocol JSON-RPC types + `createAcpServer` |
-| `@ravenclaw/durable` | `packages/durable` | Opt-in sibling runtime. Own store. Not `queryLoop`, and no host imports it in v1 |
+| `@ravenclaw/durable` | `packages/durable` | Opt-in sibling runtime. Own store. Not `queryLoop`. The SDK host imports it. CLI reaches it only through `createDurableSession`. |
 
-CLI depends on core, providers, ads, acp, and tui-opentui. SDK depends on core and providers only. Ads depends on nothing in the monorepo.
+CLI depends on core, providers, ads, acp, and tui-opentui, and depends on `@ravenclaw/sdk` only for `raven durable`. SDK depends on core, providers, and durable. SDK does not depend on CLI. Ads depends on nothing in the monorepo.
 
 ```
 packages/
@@ -808,7 +808,7 @@ These are closed doors, not a backlog.
 - **No `execute_code` / child kernel RPC.** Highest cost-curve idea in the roadmap; not started. Skills + Bash + MCP cover the job.
 - **No official 19-skill copy** from `anthropics/skills`. License and kitchen-sink. Eleven builtins: eight original RavenClaw prose skills, plus `game-design` and `team-design` as original prose, plus vendored Apache-2.0 `gamedev` (74 catalog skills behind one router). The official 19 are still not copied.
 - **No `bypass` / yolo / auto-allow-all-Bash.** `dontAsk` is leftover-deny.
-- **No host-local query loop.** If a host needs a new turn behavior, it belongs in `phases.ts`. `@ravenclaw/durable` (`packages/durable`) is an opt-in sibling runtime with its own store. CLI, SDK, ACP, and HTTP still enter turns only through `queryLoop`. This package is not a host-local query loop.
+- **No host-local query loop.** If a host needs a new turn behavior, it belongs in `phases.ts`. `@ravenclaw/durable` (`packages/durable`) is an opt-in sibling runtime with its own store. Default CLI sessions, `createRavenSession`, ACP, and HTTP still enter turns only through `queryLoop`. `raven durable` calls `createDurableSession` and does not call `queryLoop` or open `state.db`. This package is not a host-local query loop.
 - **No silent BYOK fallback** for an included session.
 
 Parked / honest-notice (exist, but are not the product waist): `/add-dir` and `/effort` slashes (notice-only), Sleep / ThinkDeeply / SuggestFollowups / Task v2 (in tree, not default prefix), SDK smaller tool pool, included gateway (opt-in, disabled by default), background review (off unless `review.background: true`).

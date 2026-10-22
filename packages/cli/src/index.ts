@@ -30,6 +30,7 @@ import { formatSkillsList, runSkillsPrune } from './skills-list'
 import { initProject } from './init'
 import { doctorFailed, formatDoctorReport, probeLocalLlm, runDoctor } from './doctor'
 import { runPlay } from './play'
+import { runDurableCommand } from './durable-cmd'
 import { searchCliSessions } from './search'
 import { SMOKE_PROMPT, evaluateSmoke } from './smoke'
 import { handleCronCli, runCronTick } from './cron-cmd'
@@ -226,6 +227,14 @@ export async function main(argv = process.argv.slice(2)): Promise<number> {
 
   if (parsed.cmd === 'play') {
     return runPlay({ positional: parsed.prompt })
+  }
+
+  if (parsed.cmd === 'durable') {
+    return runDurableCommand({
+      path: parsed.path,
+      prompt: parsed.prompt,
+      flags: parsed.flags,
+    })
   }
 
   if (parsed.cmd === 'title') {
