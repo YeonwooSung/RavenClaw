@@ -1,5 +1,5 @@
-import { describe, expect, test } from 'bun:test'
-import { mkdtempSync, writeFileSync } from 'node:fs'
+import { afterEach, describe, expect, test } from 'bun:test'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { loadConfig, type Provider } from '@ravenclaw/core'
@@ -34,18 +34,46 @@ describe('parseArgv durable', () => {
   test('rejects --path= on resume', () => {
     expect(() => parseArgv(['resume', '--path=sess.sqlite'])).toThrow('unknown flag: --path')
   })
+
+  test('rejects a valueless --path on exec', () => {
+    expect(() => parseArgv(['exec', '--path'])).toThrow('unknown flag: --path')
+  })
+
+  test('rejects an empty --path= on resume', () => {
+    expect(() => parseArgv(['resume', '--path='])).toThrow('unknown flag: --path')
+  })
+
+  test('durable with a missing --path value requires a value', () => {
+    expect(() => parseArgv(['durable', '--path'])).toThrow('--path requires a value')
+  })
+
+  test('rejects --path that appears before a non-durable command', () => {
+    expect(() => parseArgv(['--path', 'sess.sqlite', 'exec', 'hi'])).toThrow('unknown flag: --path')
+  })
+})
+
+const tempDirs: string[] = []
+
+afterEach(() => {
+  while (tempDirs.length > 0) {
+    const dir = tempDirs.pop()
+    if (dir) rmSync(dir, { recursive: true, force: true })
+  }
 })
 
 const fakeProvider = {} as Provider
 
 function configuredHome(): string {
   const home = mkdtempSync(join(tmpdir(), 'raven-durable-home-'))
+  tempDirs.push(home)
   writeFileSync(join(home, '.env'), 'ANTHROPIC_API_KEY=test-key\n', { mode: 0o600 })
   return home
 }
 
 function emptyHome(): string {
-  return mkdtempSync(join(tmpdir(), 'raven-durable-empty-'))
+  const home = mkdtempSync(join(tmpdir(), 'raven-durable-empty-'))
+  tempDirs.push(home)
+  return home
 }
 
 function captureIo() {
@@ -121,6 +149,51 @@ describe('runDurableCommand', () => {
       expect(opened).toBe(0)
       expect(resolved).toBe(0)
     }
+  })
+
+  test('a throwing ensureHome returns 1 and does not open a session', async () => {
+    let opened = 0
+    const { captured, io } = captureIo()
+    const code = await runDurableCommand({
+      path: 'sess.sqlite',
+      prompt: 'hi',
+      flags: {},
+      io,
+      ensureHome: async () => {
+        throw new Error('home failed')
+      },
+      createSession: () => {
+        opened += 1
+        throw new Error('factory should not be called')
+      },
+      resolveProvider: async () => fakeProvider,
+    })
+    expect(code).toBe(1)
+    expect(captured.stderr).toBe('home failed\n')
+    expect(captured.stdout).toBe('')
+    expect(opened).toBe(0)
+  })
+
+  test('a provided home does not call ensureHome', async () => {
+    let ensured = 0
+    const { captured, io } = captureIo()
+    const code = await runDurableCommand({
+      path: 'sess.sqlite',
+      prompt: 'hi',
+      flags: {},
+      home: configuredHome(),
+      io,
+      ensureHome: async () => {
+        ensured += 1
+        throw new Error('ensureHome should not be called')
+      },
+      createSession: async () => sessionWith({ status: 'done', text: 'ok' }),
+      resolveProvider: async () => fakeProvider,
+    })
+    expect(code).toBe(0)
+    expect(captured.stdout).toBe('ok\n')
+    expect(captured.stderr).toBe('')
+    expect(ensured).toBe(0)
   })
 
   test('unconfigured home returns the setup hint and does not open a session', async () => {

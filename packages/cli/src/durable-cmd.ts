@@ -40,6 +40,7 @@ export async function runDurableCommand(input: {
   flags: ConfigFlags
   cwd?: string
   home?: string
+  ensureHome?: () => Promise<string>
   io?: {
     stdout?: { write(chunk: string): void }
     stderr?: { write(chunk: string): void }
@@ -54,37 +55,37 @@ export async function runDurableCommand(input: {
     return 2
   }
 
-  const home = input.home ?? (await ensureHomeDir())
-  if (!providerConfigured(home, input.flags)) {
-    stderr.write(`${SETUP_HINT}\n`)
-    return 1
-  }
-
   const createSession = input.createSession ?? createDurableSession
   const resolveProvider = input.resolveProvider ?? providerFromConfig
   let code = 1
   let session: DurableCommandSession | undefined
   try {
-    const config = loadConfig({ home, flags: input.flags })
-    const provider = await resolveProvider(config)
-    const cwd = input.cwd ?? input.flags.cwd ?? process.cwd()
-    session = await createSession({
-      path: input.path,
-      cwd,
-      provider,
-      model: config.model,
-      permissionMode: 'dontAsk',
-    })
-    const submission = await session.submit({
-      content: input.prompt,
-      requestId: durableRequestId(input.path, input.prompt),
-    })
-    const result = await submission.wait()
-    if (result.status === 'done') {
-      stdout.write(`${result.text}\n`)
-      code = 0
+    const home = input.home ?? (await (input.ensureHome ?? ensureHomeDir)())
+    if (!providerConfigured(home, input.flags)) {
+      stderr.write(`${SETUP_HINT}\n`)
+      code = 1
     } else {
-      stderr.write(`${result.reason}\n`)
+      const config = loadConfig({ home, flags: input.flags })
+      const provider = await resolveProvider(config)
+      const cwd = input.cwd ?? input.flags.cwd ?? process.cwd()
+      session = await createSession({
+        path: input.path,
+        cwd,
+        provider,
+        model: config.model,
+        permissionMode: 'dontAsk',
+      })
+      const submission = await session.submit({
+        content: input.prompt,
+        requestId: durableRequestId(input.path, input.prompt),
+      })
+      const result = await submission.wait()
+      if (result.status === 'done') {
+        stdout.write(`${result.text}\n`)
+        code = 0
+      } else {
+        stderr.write(`${result.reason}\n`)
+      }
     }
   } catch (error) {
     stderr.write(`${errorMessage(error)}\n`)

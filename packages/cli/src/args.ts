@@ -62,6 +62,7 @@ export function parseArgv(argv: string[]): ParsedArgv {
   let tui: TuiKind | undefined
   let toolsPreset: HeadlessToolsPreset | undefined
   let path: string | undefined
+  let sawPath = false
   const flags: ConfigFlags = {}
   const positional: string[] = []
 
@@ -113,7 +114,7 @@ export function parseArgv(argv: string[]): ParsedArgv {
         continue
       }
       if (eq.key === 'path') {
-        if (eq.value === '') throw new Error('--path requires a value')
+        sawPath = true
         path = eq.value
         continue
       }
@@ -149,12 +150,14 @@ export function parseArgv(argv: string[]): ParsedArgv {
       continue
     }
     if (arg === '--path') {
+      sawPath = true
       const value = argv[i + 1]
-      if (value === undefined || value.startsWith('-')) {
-        throw new Error('--path requires a value')
+      if (value !== undefined && !value.startsWith('-')) {
+        path = value
+        i++
+      } else {
+        path = undefined
       }
-      path = value
-      i++
       continue
     }
     if (
@@ -224,8 +227,11 @@ export function parseArgv(argv: string[]): ParsedArgv {
     positional.push(arg)
   }
 
-  if (path !== undefined && cmd !== 'durable') {
+  if (sawPath && cmd !== 'durable') {
     throw new Error('unknown flag: --path')
+  }
+  if (sawPath && (path === undefined || path === '')) {
+    throw new Error('--path requires a value')
   }
 
   if (cmd === 'exec' || cmd === 'durable' || cmd === 'smoke' || cmd === 'serve') flags.dontAsk = true
