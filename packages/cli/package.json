@@ -21,6 +21,7 @@
     "@ravenclaw/acp": "workspace:*",
     "@ravenclaw/core": "workspace:*",
     "@ravenclaw/providers": "workspace:*",
+    "@ravenclaw/sdk": "workspace:*",
     "@ravenclaw/ads": "workspace:*",
     "@ravenclaw/tui-opentui": "workspace:*",
     "@types/react": "^18.3.18",
