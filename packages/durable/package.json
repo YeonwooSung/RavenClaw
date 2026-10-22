@@ -1,0 +1,11 @@
+{
+  "name": "@ravenclaw/durable",
+  "version": "0.1.33",
+  "description": "Opt-in durable turn runtime with its own store",
+  "license": "Apache-2.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  }
+}

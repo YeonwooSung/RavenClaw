@@ -1,0 +1,7 @@
+Resume rules in this package follow the public contract of @earendil-works/pi-durable 1.4.0
+(MIT, Earendil Works, https://github.com/earendil-works/pi, directory packages/durable):
+an intent checkpoint is committed before an external effect, a phase reruns from the top,
+and a tool execute runs again only when both the stored replay policy and the current
+declaration are "safe".
+
+This package is a clean-room implementation. It does not contain pi source code.
