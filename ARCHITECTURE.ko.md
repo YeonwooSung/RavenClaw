@@ -48,6 +48,7 @@ English: [ARCHITECTURE.md](ARCHITECTURE.md)
 | `@ravenclaw/tui-opentui` | `packages/tui-opentui` | StreamEvent 줄 단위 뷰. Ink를 대체하는 호스트 표면만 담당 |
 | `@ravenclaw/acp` | `packages/acp` | Agent Client Protocol JSON-RPC. 에디터가 leftover-ask에 답할 수 있게 한다 |
 | `@ravenclaw/sdk` | `packages/sdk` | `createRavenSession`. Ink, 광고, CLI 없이 루프를 임베드한다 |
+| `@ravenclaw/durable` | `packages/durable` | 고르면 쓰는 형제 런타임. 자기 저장소만 쓴다. `queryLoop`가 아니고 v1 호스트는 import하지 않는다 |
 
 `core`는 `@ravenclaw/providers`를 import하지 않는다. 호스트가 `createProvider`로 구현체를 만들어 엔진에 넘긴다. `ads`는 CLI가 included 세션일 때만 붙인다.
 

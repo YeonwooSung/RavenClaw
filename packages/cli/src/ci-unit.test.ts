@@ -26,6 +26,7 @@ describe('ci-unit.sh', () => {
       'bun test packages/sdk',
       'bun test packages/acp',
       'bun test packages/tui-opentui',
+      'bun test packages/durable',
     ])
   })
 
@@ -50,5 +51,6 @@ describe('ci-unit.sh', () => {
     expect(contributing).toContain('packages/sdk')
     expect(contributing).toContain('packages/acp')
     expect(contributing).toContain('packages/tui-opentui')
+    expect(contributing).toContain('packages/durable')
   })
 })

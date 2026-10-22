@@ -33,6 +33,7 @@ bun run smoke
 | `packages/cli` | `raven` Ink TUI and commands |
 | `packages/tui-opentui` | StreamEvent line view |
 | `packages/acp` | editor JSON-RPC adapter |
+| `packages/durable` | opt-in durable runtime (own store; not the query loop) |
 
 Architecture: [ARCHITECTURE.md](ARCHITECTURE.md) ([한국어](ARCHITECTURE.ko.md)). Slash commands: [SLASH_COMMANDS.md](SLASH_COMMANDS.md) ([한국어](SLASH_COMMANDS.ko.md)). Design notes live in `docs/superpowers/specs/`. Prior-art research is in `docs/research/`. Do not copy Claude Code source or prompts.
 
@@ -47,7 +48,7 @@ bun test packages/cli/src/doctor.test.ts
 - Pairing invariant tests in `packages/core/src/loop/` must stay green.
 - Ads isolation test must stay green: `@ravenclaw/ads` has no core/ink/react import.
 - Env-gated live provider tests skip unless `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` / `OLLAMA_HOST` / `VLLM_BASE_URL` is set. Optional `OLLAMA_MODEL` / `VLLM_MODEL`.
-- CI (`scripts/ci-unit.sh`) runs `bun test packages/<name>` for every workspace package (`core`, `cli`, `providers`, `ads`, `sdk`, `acp`, `tui-opentui`). Never `bun test` with no args (full-repo Docker hang).
+- CI (`scripts/ci-unit.sh`) runs `bun test packages/<name>` for every workspace package (`core`, `cli`, `providers`, `ads`, `sdk`, `acp`, `tui-opentui`, `durable`). Never `bun test` with no args (full-repo Docker hang).
 - CI also runs no-key CLI commands (`--help`, `sessions`, `config`, `init`, `completions`). `raven smoke` is not run in CI.
 
 ## Adding a CLI command

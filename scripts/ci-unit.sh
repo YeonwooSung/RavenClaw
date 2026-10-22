@@ -9,3 +9,4 @@ bun test packages/ads
 bun test packages/sdk
 bun test packages/acp
 bun test packages/tui-opentui
+bun test packages/durable
