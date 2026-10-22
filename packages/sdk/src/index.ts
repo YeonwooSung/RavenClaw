@@ -68,6 +68,9 @@ import {
 } from '@ravenclaw/core'
 import { createProvider } from '@ravenclaw/providers'
 
+export { createDurableSession } from './durable.ts'
+export type { CreateDurableSessionOptions, DurableRavenSession } from './durable.ts'
+
 export type {
   ConfigFlags,
   Message,
