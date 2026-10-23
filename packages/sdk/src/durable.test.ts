@@ -369,6 +369,11 @@ describe('createDurableSession', () => {
 
   test('git push --force stays denied and a push without force runs', async () => {
     const dir = tempDir()
+    const prevDir = process.env.GIT_DIR
+    const prevWorkTree = process.env.GIT_WORK_TREE
+    // An inherited git env can commit or push a real repository.
+    process.env.GIT_DIR = dir
+    delete process.env.GIT_WORK_TREE
     try {
       const denied = await runRealBash({ dir, command: 'git push --force origin main' })
       expect(denied.ok).toBe(false)
@@ -378,12 +383,21 @@ describe('createDurableSession', () => {
       expect(ran.text).toContain('exit_code=')
       expect(ran.text).not.toContain('permission_denied')
     } finally {
+      if (prevDir === undefined) delete process.env.GIT_DIR
+      else process.env.GIT_DIR = prevDir
+      if (prevWorkTree === undefined) delete process.env.GIT_WORK_TREE
+      else process.env.GIT_WORK_TREE = prevWorkTree
       rmSync(dir, { recursive: true, force: true })
     }
   })
 
   test('git commit --no-verify stays denied and a plain commit runs', async () => {
     const dir = tempDir()
+    const prevDir = process.env.GIT_DIR
+    const prevWorkTree = process.env.GIT_WORK_TREE
+    // An inherited git env can commit or push a real repository.
+    process.env.GIT_DIR = dir
+    delete process.env.GIT_WORK_TREE
     try {
       const denied = await runRealBash({ dir, command: 'git commit --no-verify -m x' })
       expect(denied.ok).toBe(false)
@@ -393,6 +407,10 @@ describe('createDurableSession', () => {
       expect(ran.text).toContain('exit_code=')
       expect(ran.text).not.toContain('permission_denied')
     } finally {
+      if (prevDir === undefined) delete process.env.GIT_DIR
+      else process.env.GIT_DIR = prevDir
+      if (prevWorkTree === undefined) delete process.env.GIT_WORK_TREE
+      else process.env.GIT_WORK_TREE = prevWorkTree
       rmSync(dir, { recursive: true, force: true })
     }
   })
