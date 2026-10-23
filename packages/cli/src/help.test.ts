@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { join } from 'node:path'
 import { describe, expect, test } from 'bun:test'
 import { CLI_VERSION, HELP_TEXT, formatVersion } from './help'
 
@@ -43,5 +45,19 @@ describe('help text', () => {
   test('formatVersion is a single line', () => {
     expect(formatVersion()).toBe(`raven ${CLI_VERSION}`)
     expect(formatVersion()).not.toContain('\n')
+  })
+
+  test('durable help and architecture name ordinary bash', () => {
+    expect(HELP_TEXT).toContain(
+      'durable       Resume a sqlite session file; forces --dont-ask and runs ordinary Bash',
+    )
+    const root = join(import.meta.dir, '../../..')
+    const english = readFileSync(join(root, 'ARCHITECTURE.md'), 'utf8')
+    const korean = readFileSync(join(root, 'ARCHITECTURE.ko.md'), 'utf8')
+    expect(english).toContain("this host's `dontAsk` runs ordinary leftover Bash")
+    expect(korean).toContain('이 호스트의 `dontAsk`는 일반 leftover Bash를 실행한다')
+    expect(english).toContain('No `bypass` / yolo / auto-allow-all-Bash')
+    expect(english).toContain('deny unless allow rule or `isReadOnlyBashCommand`')
+    expect(korean).toContain('헤드리스에서 Bash를 돌리려면 `.ravenclaw/permissions.json`에 allow rule을 심는다')
   })
 })

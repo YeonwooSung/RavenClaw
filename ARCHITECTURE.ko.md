@@ -52,7 +52,7 @@ English: [ARCHITECTURE.md](ARCHITECTURE.md)
 
 `core`는 `@ravenclaw/providers`를 import하지 않는다. 호스트가 `createProvider`로 구현체를 만들어 엔진에 넘긴다. `ads`는 CLI가 included 세션일 때만 붙인다.
 
-CLI는 `raven durable`을 위해 `@ravenclaw/sdk`를 의존한다. SDK는 CLI를 의존하지 않는다. `raven durable`은 `queryLoop`와 `state.db`를 열지 않는다.
+CLI는 `raven durable`을 위해 `@ravenclaw/sdk`를 의존한다. SDK는 CLI를 의존하지 않는다. `raven durable`은 `queryLoop`와 `state.db`를 열지 않는다. `decidePermission`은 Bash를 승격하지 않는다. 그 호출 뒤에 이 호스트의 `dontAsk`는 일반 leftover Bash를 실행한다. `matchesDangerousPattern`이나 `matchesDestructiveGit`에 맞는 명령은 `permission_denied`다. `queryLoop` 호스트는 그대로다.
 
 설계 메모는 `docs/superpowers/specs/`에 있다. 선행 연구 노트는 `docs/research/`다. 그 노트는 계약 참고용이며 복제 대상이 아니다.
 
