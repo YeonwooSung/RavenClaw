@@ -371,6 +371,11 @@ export function sessionLockedMessage(holderName: string | undefined, expiresAt: 
   return `session locked by ${who} until ${new Date(expiresAt).toISOString()}`
 }
 
+export interface SessionBranchNode {
+  message: Message
+  parentId: string | null
+}
+
 export interface SessionStore {
   createSession(session: SessionRecord): Promise<void>
   upsertSession(session: SessionRecord): Promise<void>
@@ -388,6 +393,11 @@ export interface SessionStore {
   loadMessages?(sessionId: string): Promise<Message[]>
   /** Every active message id in the session. Order is not significant. */
   listActiveMessageIds(sessionId: string): Promise<string[]>
+  /**
+   * Active messages and their parents, ordered by createdAt then id.
+   * Does not attach parentId to the message, and does not write the leaf or active.
+   */
+  listBranchNodes(sessionId: string): Promise<SessionBranchNode[]>
   /**
    * Point the leaf at an active message in this session.
    * Does not change `active` or any parent. Returns the leaf path.

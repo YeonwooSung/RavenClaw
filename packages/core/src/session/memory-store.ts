@@ -326,6 +326,22 @@ export function createMemoryStore(): SessionStore {
       return rowsOf(sessionId).filter((row) => row.active).map((row) => row.message.id)
     },
 
+    async listBranchNodes(sessionId) {
+      if (!sessions.has(sessionId)) {
+        throw new PersistError('unknown', `session not found: ${sessionId}`)
+      }
+      const rows = rowsOf(sessionId).filter((row) => row.active)
+      rows.sort((a, b) => {
+        if (a.message.createdAt !== b.message.createdAt) {
+          return a.message.createdAt - b.message.createdAt
+        }
+        if (a.message.id < b.message.id) return -1
+        if (a.message.id > b.message.id) return 1
+        return 0
+      })
+      return rows.map((row) => ({ message: row.message, parentId: row.parentId }))
+    },
+
     async branchAt(sessionId, messageId) {
       await withWrite(async () => {
         const sess = sessions.get(sessionId)

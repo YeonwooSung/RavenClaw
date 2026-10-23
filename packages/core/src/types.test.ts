@@ -207,6 +207,9 @@ describe('port shapes', () => {
       async listActiveMessageIds() {
         return []
       },
+      async listBranchNodes() {
+        return []
+      },
       async branchAt() {
         return []
       },

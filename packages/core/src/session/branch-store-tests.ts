@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import type { Message, SessionRecord, SessionStore } from '../types'
+import { PersistError, type Message, type SessionRecord, type SessionStore } from '../types'
 
 function session(over: Partial<SessionRecord> = {}): SessionRecord {
   return {
@@ -148,6 +148,48 @@ export function registerBranchStoreTests(open: () => SessionStore): void {
       expect(await ids(store, 's1')).toEqual([])
       expect(await store.listActiveMessageIds('s1')).toEqual([])
       expect((await store.loadSession('s1')).session.leafId).toBeUndefined()
+    })
+
+    test('lists active nodes with parents and skips inactive rows', async () => {
+      const store = open()
+      await store.createSession(session())
+      await store.persistUser('s1', user('a', 1))
+      await store.persistUser('s1', user('b', 2))
+      await store.persistUser('s1', user('c', 3))
+      await store.branchAt('s1', 'a')
+      await store.persistUser('s1', user('d', 4))
+      await store.recordCompact('s1', 1, 'sum', ['c'])
+      const nodes = await store.listBranchNodes('s1')
+      expect(
+        nodes.map((node) => ({
+          id: node.message.id,
+          parentId: node.parentId,
+          role: node.message.role,
+        })),
+      ).toEqual([
+        { id: 'a', parentId: null, role: 'user' },
+        { id: 'b', parentId: 'a', role: 'user' },
+        { id: 'd', parentId: 'a', role: 'user' },
+      ])
+      for (const node of nodes) {
+        expect('parentId' in node.message).toBe(false)
+      }
+    })
+
+    test('orders equal createdAt by id', async () => {
+      const store = open()
+      await store.createSession(session())
+      await store.persistUser('s1', user('m', 5))
+      await store.persistUser('s1', user('a', 5))
+      const nodes = await store.listBranchNodes('s1')
+      expect(nodes.map((node) => node.message.id)).toEqual(['a', 'm'])
+    })
+
+    test('missing session', async () => {
+      const store = open()
+      const error = await store.listBranchNodes('missing').catch((err: unknown) => err)
+      expect(error).toBeInstanceOf(PersistError)
+      expect(error).toMatchObject({ message: 'session not found: missing' })
     })
   })
 }

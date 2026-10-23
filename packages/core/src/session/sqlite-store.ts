@@ -897,6 +897,28 @@ export function createSqliteStore(dbPath: string): SessionStore {
       }
     },
 
+    async listBranchNodes(sessionId) {
+      try {
+        const row = selectSession.get(sessionId) as SessionRow | null
+        if (!row) throw new PersistError('unknown', `session not found: ${sessionId}`)
+        const rows = (selectMessagesBySession.all(sessionId) as MessageRow[]).filter(
+          (item) => item.active === 1,
+        )
+        rows.sort((a, b) => {
+          if (a.created_at !== b.created_at) return a.created_at - b.created_at
+          if (a.id < b.id) return -1
+          if (a.id > b.id) return 1
+          return 0
+        })
+        return rows.map((item) => ({
+          message: messageFromRow(item),
+          parentId: item.parent_id,
+        }))
+      } catch (error) {
+        throw toPersistError(error)
+      }
+    },
+
     async branchAt(sessionId, messageId) {
       await withWrite(async () => {
         beginImmediate(() => {
