@@ -61,6 +61,7 @@ type SessionRow = {
   job_error: string | null
   followup_text: string | null
   pending_reset_sha: string | null
+  leaf_id: string | null
 }
 
 type MessageRow = {
@@ -77,6 +78,7 @@ type MessageRow = {
   checkpoint_json: string | null
   active: number
   generation: number
+  parent_id: string | null
 }
 
 type RuleRow = {
@@ -175,6 +177,7 @@ function sessionFromRow(row: SessionRow): SessionRecord {
   if (lastEnd !== undefined) session.lastEnd = lastEnd
   if (row.job_error != null && row.job_error !== '') session.jobError = row.job_error
   if (row.followup_text != null && row.followup_text !== '') session.followup = row.followup_text
+  if (row.leaf_id != null && row.leaf_id !== '') session.leafId = row.leaf_id
   return session
 }
 
@@ -448,10 +451,12 @@ export function createSqliteStore(dbPath: string): SessionStore {
   const insertMessage = db.query(
     `INSERT INTO messages (
        id, session_id, created_at, role, blocks_json, tool_use_id, ok,
-       persist_path, usage_json, read_mtime_ms, checkpoint_json, active, generation
+       persist_path, usage_json, read_mtime_ms, checkpoint_json, active, generation,
+       parent_id
      ) VALUES (
        $id, $session_id, $created_at, $role, $blocks_json, $tool_use_id, $ok,
-       $persist_path, $usage_json, $read_mtime_ms, $checkpoint_json, 1, 0
+       $persist_path, $usage_json, $read_mtime_ms, $checkpoint_json, 1, 0,
+       $parent_id
      )`,
   )
   const selectMessageById = db.query(`SELECT * FROM messages WHERE id = ?`)
@@ -489,9 +494,11 @@ export function createSqliteStore(dbPath: string): SessionStore {
        read_mtime_ms = excluded.read_mtime_ms,
        active = 1`,
   )
-  const selectActiveMessages = db.query(
-    `SELECT * FROM messages WHERE session_id = ? AND active = 1 ORDER BY created_at`,
+  const selectMessagesBySession = db.query(`SELECT * FROM messages WHERE session_id = ?`)
+  const selectActiveIds = db.query(
+    `SELECT id FROM messages WHERE session_id = ? AND active = 1`,
   )
+  const updateLeaf = db.query(`UPDATE sessions SET leaf_id = ? WHERE id = ?`)
   const inactivateMessage = db.query(`UPDATE messages SET active = 0 WHERE id = ?`)
   const insertBoundary = db.query(
     `INSERT INTO compact_boundaries (session_id, generation, created_at, summary)
@@ -597,17 +604,87 @@ export function createSqliteStore(dbPath: string): SessionStore {
     }
   }
 
+  function sessionLeafId(sessionId: string): string | null {
+    const row = selectSession.get(sessionId) as SessionRow | null
+    if (!row) throw new PersistError('unknown', `session not found: ${sessionId}`)
+    return row.leaf_id
+  }
+
   function insertMessageRow(sessionId: string, message: Message): void {
-    const bind = messageBind(sessionId, message)
-    try {
-      insertMessage.run(bind)
-    } catch (error) {
-      if (isUniqueConstraint(error)) {
-        throw new PersistError('unknown', `duplicate message id ${message.id}`)
+    beginImmediate(() => {
+      const parentId = sessionLeafId(sessionId)
+      const bind = messageBind(sessionId, message)
+      try {
+        insertMessage.run({ ...bind, $parent_id: parentId })
+      } catch (error) {
+        if (isUniqueConstraint(error)) {
+          throw new PersistError('unknown', `duplicate message id ${message.id}`)
+        }
+        throw error
       }
-      throw error
+      updateLeaf.run(message.id, sessionId)
+      indexMessageFts(db, sessionId, message, bind.$blocks_json)
+    })
+  }
+
+  function repairLeaf(sessionId: string): void {
+    const session = selectSession.get(sessionId) as SessionRow | null
+    if (!session || session.leaf_id == null) return
+    const seen = new Set<string>()
+    let id: string | null = session.leaf_id
+    while (id) {
+      if (seen.has(id)) throw new PersistError('unknown', 'message cycle')
+      seen.add(id)
+      const row = selectMessageById.get(id) as MessageRow | null
+      if (!row) {
+        updateLeaf.run(null, sessionId)
+        return
+      }
+      if (row.active === 1) {
+        if (id !== session.leaf_id) updateLeaf.run(id, sessionId)
+        return
+      }
+      id = row.parent_id
     }
-    indexMessageFts(db, sessionId, message, bind.$blocks_json)
+    updateLeaf.run(null, sessionId)
+  }
+
+  function readLeafPath(sessionId: string): Message[] {
+    const session = selectSession.get(sessionId) as SessionRow | null
+    if (!session) throw new PersistError('unknown', `session not found: ${sessionId}`)
+    if (session.leaf_id == null) return []
+    const byId = new Map(
+      (selectMessagesBySession.all(sessionId) as MessageRow[]).map((row) => [row.id, row]),
+    )
+    const leaf = byId.get(session.leaf_id)
+    if (!leaf) throw new PersistError('unknown', `leaf not found: ${session.leaf_id}`)
+
+    let start: MessageRow | undefined = leaf
+    const guard = new Set<string>()
+    while (start && start.active !== 1) {
+      if (guard.has(start.id)) throw new PersistError('unknown', 'message cycle')
+      guard.add(start.id)
+      if (start.parent_id == null) return []
+      const parent = byId.get(start.parent_id)
+      if (!parent) return []
+      start = parent
+    }
+    if (!start || start.active !== 1) return []
+
+    const chain: MessageRow[] = []
+    const seen = new Set<string>()
+    let node: MessageRow | undefined = start
+    while (node && node.active === 1) {
+      if (seen.has(node.id)) throw new PersistError('unknown', 'message cycle')
+      seen.add(node.id)
+      chain.push(node)
+      if (node.parent_id == null) break
+      const parent = byId.get(node.parent_id)
+      if (!parent || parent.active !== 1) break
+      node = parent
+    }
+    chain.reverse()
+    return chain.map(messageFromRow)
   }
 
   function assistantPersistKind(
@@ -655,8 +732,15 @@ export function createSqliteStore(dbPath: string): SessionStore {
   const persistToolsTx = db.transaction(
     (sessionId: string, msgs: Array<Extract<Message, { role: 'tool' }>>) => {
       for (const msg of msgs) {
+        const existing = selectMessageById.get(msg.id) as MessageRow | null
         const bind = messageBind(sessionId, msg)
-        upsertTool.run(bind)
+        if (existing) {
+          upsertTool.run(bind)
+        } else {
+          const parentId = sessionLeafId(sessionId)
+          insertMessage.run({ ...bind, $parent_id: parentId })
+          updateLeaf.run(msg.id, sessionId)
+        }
         indexMessageFts(db, sessionId, msg, bind.$blocks_json)
       }
     },
@@ -680,13 +764,14 @@ export function createSqliteStore(dbPath: string): SessionStore {
       for (const id of inactivatedIds) {
         inactivateMessage.run(id)
       }
+      repairLeaf(sessionId)
       insertBoundary.run(sessionId, generation, Date.now(), summary)
       bumpCompact.run(generation, Date.now(), sessionId)
     },
   )
 
   function readActiveMessages(sessionId: string): Message[] {
-    return (selectActiveMessages.all(sessionId) as MessageRow[]).map(messageFromRow)
+    return readLeafPath(sessionId)
   }
 
   const store: SessionStore & { close(): void } = {
@@ -800,6 +885,31 @@ export function createSqliteStore(dbPath: string): SessionStore {
       } catch (error) {
         throw toPersistError(error)
       }
+    },
+
+    async listActiveMessageIds(sessionId) {
+      try {
+        const row = selectSession.get(sessionId) as SessionRow | null
+        if (!row) throw new PersistError('unknown', `session not found: ${sessionId}`)
+        return (selectActiveIds.all(sessionId) as Array<{ id: string }>).map((item) => item.id)
+      } catch (error) {
+        throw toPersistError(error)
+      }
+    },
+
+    async branchAt(sessionId, messageId) {
+      await withWrite(async () => {
+        beginImmediate(() => {
+          const session = selectSession.get(sessionId) as SessionRow | null
+          if (!session) throw new PersistError('unknown', `session not found: ${sessionId}`)
+          const row = selectMessageById.get(messageId) as MessageRow | null
+          if (!row || row.session_id !== sessionId || row.active !== 1) {
+            throw new PersistError('unknown', 'message is not on this session')
+          }
+          updateLeaf.run(messageId, sessionId)
+        })
+      })
+      return readLeafPath(sessionId)
     },
 
     async deleteSession(sessionId) {

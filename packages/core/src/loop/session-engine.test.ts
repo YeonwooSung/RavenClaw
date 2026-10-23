@@ -19,6 +19,7 @@ import type {
 import { memoryTool } from '../tools/memory'
 import { enterSessionWorktree, exitSessionWorktree } from '../tools/session-worktree'
 import { todoJsonPath } from '../tools/todo'
+import type { FileHistory } from '../session/file-history'
 import { createSessionEngine } from './session-engine'
 import { ABORTED_TEXT, IGNORED_TEXT } from './pairing'
 import { drainAgentMail, enqueueAgentMail } from '../tasks/mailbox'
@@ -3871,5 +3872,171 @@ describe('dismiss-on-message', () => {
         (m) => m.role === 'user' && m.blocks.some((b) => b.type === 'text' && b.text === 'go on'),
       ),
     ).toBe(true)
+  })
+})
+
+describe('branchAt', () => {
+  async function drain(gen: AsyncGenerator<StreamEvent, import('../types').RoundEnd>) {
+    while (true) {
+      const next = await gen.next()
+      if (next.done) return next.value
+    }
+  }
+
+  function history(): FileHistory & { calls: string[] } {
+    const calls: string[] = []
+    return {
+      calls,
+      beginTurn() {
+        calls.push('begin')
+      },
+      endTurn() {
+        calls.push('end')
+      },
+      snapshot() {
+        calls.push('snap')
+      },
+      async undo() {
+        calls.push('undo')
+        return { restored: [], removed: [] }
+      },
+      pendingCount() {
+        return 0
+      },
+      turnWriteCount() {
+        return 0
+      },
+      reset() {
+        calls.push('reset')
+      },
+    }
+  }
+
+  test('refuses while a turn is in progress and leaves the leaf', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_branch_live' })
+    await store.createSession(session)
+    await store.persistUser(session.id, user('u1', 'one', 1))
+    await store.persistUser(session.id, user('u2', 'two', 2))
+    let enteredStream: () => void
+    const streamEntered = new Promise<void>((resolve) => {
+      enteredStream = resolve
+    })
+    const provider: Provider = {
+      id: 'fake',
+      apiMode: 'openai_compat',
+      profile(model: string) {
+        return defaultModel(model)
+      },
+      async *stream(_req, signal) {
+        enteredStream()
+        await new Promise<void>((resolve) => {
+          if (signal.aborted) {
+            resolve()
+            return
+          }
+          signal.addEventListener('abort', () => resolve(), { once: true })
+        })
+      },
+    }
+    const engine = await createSessionEngine({
+      ...engineOpts({ provider, store, session }),
+      messages: (await store.loadMessages!(session.id)),
+      bare: true,
+    })
+    const pending = drain(engine.submitMessage('hi'))
+    await streamEntered
+    const result = await engine.branchAt('u1')
+    expect(result).toEqual({ ok: false, notice: 'a turn is in progress' })
+    const loaded = (await store.loadMessages!(session.id)).map((msg) => msg.id)
+    expect(loaded.slice(0, 2)).toEqual(['u1', 'u2'])
+    expect(loaded).toHaveLength(3)
+    engine.abort()
+    await pending
+  })
+
+  test('refuses an unpaired pending ask', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_branch_ask' })
+    await store.createSession(session)
+    await store.persistUser(session.id, user('u1', 'one', 1))
+    await store.upsertPendingAsk({
+      callId: 'call_1',
+      sessionId: session.id,
+      kind: 'leftover',
+      tool: 'Bash',
+      message: 'Run?',
+      input: { command: 'ls' },
+      createdAt: 1,
+    })
+    const engine = await createSessionEngine({
+      ...engineOpts({ provider: createFakeProvider([]), store, session }),
+      messages: await store.loadMessages!(session.id),
+      bare: true,
+    })
+    expect(await engine.branchAt('u1')).toEqual({ ok: false, notice: 'pending permission ask' })
+    expect((await store.loadMessages!(session.id)).map((msg) => msg.id)).toEqual(['u1'])
+    expect(await store.listPendingAsks(session.id)).toHaveLength(1)
+  })
+
+  test('moves the leaf and the next submit follows only that path', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_branch_path' })
+    await store.createSession(session)
+    await store.persistUser(session.id, user('u1', 'one', 1))
+    await store.persistUser(session.id, user('u2', 'two', 2))
+    const seen: string[][] = []
+    const provider = createFakeProvider([
+      [
+        { type: 'text_delta', text: 'ok' },
+        { type: 'stop', reason: 'end' },
+      ],
+    ])
+    const orig = provider.stream.bind(provider)
+    provider.stream = async function* (req, signal) {
+      seen.push(req.messages.map((msg) => msg.id))
+      yield* orig(req, signal)
+    }
+    const fileHistory = history()
+    const engine = await createSessionEngine({
+      ...engineOpts({ provider, store, session }),
+      messages: await store.loadMessages!(session.id),
+      fileHistory,
+      bare: true,
+    })
+    const branched = await engine.branchAt('u1')
+    expect(branched.ok).toBe(true)
+    if (branched.ok && 'messages' in branched) {
+      expect(branched.messages.map((msg) => msg.id)).toEqual(['u1'])
+    }
+    expect(fileHistory.calls).toEqual([])
+    await drain(engine.submitMessage('other'))
+    expect(seen[0]).not.toContain('u2')
+    const path = await store.loadMessages!(session.id)
+    expect(path.map((msg) => msg.id)).not.toContain('u2')
+    expect(path.some((msg) => msg.blocks.some((block) => block.type === 'text' && block.text.includes('other')))).toBe(
+      true,
+    )
+    expect((await store.branchAt(session.id, 'u2')).map((msg) => msg.id)).toEqual(['u1', 'u2'])
+  })
+
+  test('clearKeepId inactivates the other branch', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_branch_clear' })
+    await store.createSession(session)
+    await store.persistUser(session.id, user('u1', 'one', 1))
+    await store.persistUser(session.id, user('u2', 'two', 2))
+    const engine = await createSessionEngine({
+      ...engineOpts({ provider: createFakeProvider([]), store, session }),
+      messages: await store.loadMessages!(session.id),
+      bare: true,
+    })
+    await engine.branchAt('u1')
+    await store.persistUser(session.id, user('u3', 'three', 3))
+    const cleared = await engine.clearKeepId()
+    expect(cleared.ok).toBe(true)
+    expect(await store.loadMessages!(session.id)).toEqual([])
+    expect(await store.listActiveMessageIds(session.id)).toEqual([])
+    expect((await store.loadSession(session.id)).session.leafId).toBeUndefined()
   })
 })

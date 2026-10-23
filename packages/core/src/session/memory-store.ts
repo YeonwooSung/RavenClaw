@@ -20,6 +20,7 @@ import { streamEventAskCallId, toSequencedStreamEvent } from './stream-events'
 type Stored = {
   message: Message
   active: boolean
+  parentId: string | null
 }
 
 type MemoryLock = {
@@ -112,11 +113,71 @@ export function createMemoryStore(): SessionStore {
     return rows
   }
 
+  function rowsOf(sessionId: string): Stored[] {
+    return messages.get(sessionId) ?? []
+  }
+
+  function repairLeaf(sessionId: string): void {
+    const sess = sessions.get(sessionId)
+    if (!sess || sess.leafId === undefined) return
+    const byId = new Map(rowsOf(sessionId).map((row) => [row.message.id, row]))
+    const seen = new Set<string>()
+    let id: string | null = sess.leafId
+    while (id) {
+      if (seen.has(id)) throw new PersistError('unknown', 'message cycle')
+      seen.add(id)
+      const row = byId.get(id)
+      if (!row) {
+        delete sess.leafId
+        return
+      }
+      if (row.active) {
+        sess.leafId = id
+        return
+      }
+      id = row.parentId
+    }
+    delete sess.leafId
+  }
+
+  function readLeafPath(sessionId: string): Message[] {
+    const sess = sessions.get(sessionId)
+    if (!sess) throw new PersistError('unknown', `session not found: ${sessionId}`)
+    if (sess.leafId === undefined) return []
+    const byId = new Map(rowsOf(sessionId).map((row) => [row.message.id, row]))
+    const leaf = byId.get(sess.leafId)
+    if (!leaf) throw new PersistError('unknown', `leaf not found: ${sess.leafId}`)
+
+    let start: Stored | undefined = leaf
+    const guard = new Set<string>()
+    while (start && !start.active) {
+      if (guard.has(start.message.id)) throw new PersistError('unknown', 'message cycle')
+      guard.add(start.message.id)
+      if (start.parentId == null) return []
+      const parent = byId.get(start.parentId)
+      if (!parent) return []
+      start = parent
+    }
+    if (!start?.active) return []
+
+    const chain: Stored[] = []
+    const seen = new Set<string>()
+    let node: Stored | undefined = start
+    while (node?.active) {
+      if (seen.has(node.message.id)) throw new PersistError('unknown', 'message cycle')
+      seen.add(node.message.id)
+      chain.push(node)
+      if (node.parentId == null) break
+      const parent = byId.get(node.parentId)
+      if (!parent || !parent.active) break
+      node = parent
+    }
+    chain.reverse()
+    return chain.map((row) => row.message)
+  }
+
   function readActiveMessages(sessionId: string): Message[] {
-    return (messages.get(sessionId) ?? [])
-      .filter((row) => row.active)
-      .map((row) => row.message)
-      .sort((a, b) => a.createdAt - b.createdAt)
+    return readLeafPath(sessionId)
   }
 
   function pushMessage(sessionId: string, message: Message): void {
@@ -124,7 +185,16 @@ export function createMemoryStore(): SessionStore {
     if (rows.some((row) => row.message.id === message.id)) {
       throw new PersistError('unknown', `duplicate message id ${message.id}`)
     }
-    rows.push({ message, active: true })
+    const sess = sessions.get(sessionId)
+    rows.push({ message, active: true, parentId: sess?.leafId ?? null })
+    if (sess) sess.leafId = message.id
+  }
+
+  function keepLeaf(next: SessionRecord, leafId: string | undefined): SessionRecord {
+    const copy = { ...next }
+    if (leafId !== undefined) copy.leafId = leafId
+    else delete copy.leafId
+    return copy
   }
 
   function hasToolUse(message: Extract<Message, { role: 'assistant' }>): boolean {
@@ -156,13 +226,14 @@ export function createMemoryStore(): SessionStore {
         if (sessions.has(session.id)) {
           throw new PersistError('unknown', `session exists: ${session.id}`)
         }
-        sessions.set(session.id, { ...session })
+        sessions.set(session.id, keepLeaf(session, undefined))
       })
     },
 
     async upsertSession(session) {
       await withWrite(async () => {
-        sessions.set(session.id, { ...session })
+        const prev = sessions.get(session.id)
+        sessions.set(session.id, keepLeaf(session, prev?.leafId))
       })
     },
 
@@ -248,6 +319,24 @@ export function createMemoryStore(): SessionStore {
       return readActiveMessages(sessionId)
     },
 
+    async listActiveMessageIds(sessionId) {
+      if (!sessions.has(sessionId)) {
+        throw new PersistError('unknown', `session not found: ${sessionId}`)
+      }
+      return rowsOf(sessionId).filter((row) => row.active).map((row) => row.message.id)
+    },
+
+    async branchAt(sessionId, messageId) {
+      await withWrite(async () => {
+        const sess = sessions.get(sessionId)
+        if (!sess) throw new PersistError('unknown', `session not found: ${sessionId}`)
+        const row = rowsOf(sessionId).find((item) => item.message.id === messageId)
+        if (!row?.active) throw new PersistError('unknown', 'message is not on this session')
+        sess.leafId = messageId
+      })
+      return readLeafPath(sessionId)
+    },
+
     async deleteSession(sessionId) {
       await withWrite(async () => {
         if (!sessions.has(sessionId)) {
@@ -329,7 +418,7 @@ export function createMemoryStore(): SessionStore {
             existing.message = msg
             existing.active = true
           } else {
-            rows.push({ message: msg, active: true })
+            pushMessage(sessionId, msg)
           }
         }
       })
@@ -359,6 +448,7 @@ export function createMemoryStore(): SessionStore {
         for (const row of bucket(sessionId)) {
           if (ids.has(row.message.id)) row.active = false
         }
+        repairLeaf(sessionId)
       })
     },
 
@@ -369,8 +459,10 @@ export function createMemoryStore(): SessionStore {
         const prevMessages = bucket(sessionId).map((row) => ({
           message: row.message,
           active: row.active,
+          parentId: row.parentId,
         }))
         try {
+          const keptLeaf = prevSession?.leafId
           if (opts.inactivatedIds.length > 0) {
             const sess = sessions.get(sessionId)
             if (sess) {
@@ -382,7 +474,8 @@ export function createMemoryStore(): SessionStore {
               if (ids.has(row.message.id)) row.active = false
             }
           }
-          sessions.set(sessionId, { ...opts.session })
+          sessions.set(sessionId, keepLeaf(opts.session, keptLeaf))
+          if (opts.inactivatedIds.length > 0) repairLeaf(sessionId)
         } catch (error) {
           if (prevSession) sessions.set(sessionId, prevSession)
           else sessions.delete(sessionId)
@@ -401,6 +494,7 @@ export function createMemoryStore(): SessionStore {
         const prevMessages = bucket(sessionId).map((row) => ({
           message: row.message,
           active: row.active,
+          parentId: row.parentId,
         }))
         const prevAsks = [...pendingAsks.entries()]
           .filter(([, row]) => row.sessionId === sessionId)
@@ -408,6 +502,7 @@ export function createMemoryStore(): SessionStore {
         const prevStream = (streamEvents.get(sessionId) ?? []).map((row) => ({ ...row }))
         const prevMail = (mail.get(sessionId) ?? []).map((row) => ({ ...row }))
         try {
+          const keptLeaf = prevSession?.leafId
           if (opts.inactivatedIds.length > 0) {
             const ids = new Set(opts.inactivatedIds)
             for (const row of bucket(sessionId)) {
@@ -419,7 +514,8 @@ export function createMemoryStore(): SessionStore {
           }
           streamEvents.delete(sessionId)
           await store.drainAgentMail(sessionId)
-          sessions.set(sessionId, { ...opts.session })
+          sessions.set(sessionId, keepLeaf(opts.session, keptLeaf))
+          if (opts.inactivatedIds.length > 0) repairLeaf(sessionId)
         } catch (error) {
           if (prevSession) sessions.set(sessionId, prevSession)
           else sessions.delete(sessionId)

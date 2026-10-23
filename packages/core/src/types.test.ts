@@ -204,6 +204,12 @@ describe('port shapes', () => {
       async listSessions() {
         return []
       },
+      async listActiveMessageIds() {
+        return []
+      },
+      async branchAt() {
+        return []
+      },
       async loadSession() {
         return {
           session: {
