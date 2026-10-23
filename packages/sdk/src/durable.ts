@@ -5,6 +5,7 @@ import {
   editTool,
   globTool,
   grepTool,
+  matchesDangerousPattern,
   readTool,
   writeTool,
   type PermissionMode,
@@ -15,6 +16,8 @@ import {
   type ToolContext,
   type Turn,
 } from '@ravenclaw/core'
+import { formatSettledOutput } from '../../core/src/loop/format-output.ts'
+import { matchesDestructiveGit } from '../../core/src/tools/bash.ts'
 import { markReadPath } from '../../core/src/tools/read-files.ts'
 import {
   DurableClosed,
@@ -214,9 +217,20 @@ function toDurableTool(tool: Tool, turn: Turn, mode: PermissionMode): DurableToo
         mode,
         rules: EMPTY_RULES,
       })
-      if (decision.behavior !== 'allow') return { content: 'permission_denied', isError: true }
+      const command = commandOf(parsed.value)
+      const ordinaryBash =
+        tool.name === 'Bash' &&
+        mode === 'dontAsk' &&
+        decision.behavior === 'deny' &&
+        decision.reason === 'mode' &&
+        command !== undefined &&
+        !matchesDangerousPattern(command) &&
+        !matchesDestructiveGit(command)
+      if (decision.behavior !== 'allow' && !ordinaryBash) {
+        return { content: 'permission_denied', isError: true }
+      }
       const value = await tool.execute(parsed.value, toolContext(turn, ctx.signal))
-      const content = typeof value === 'string' ? value : String(value)
+      const content = formatSettledOutput(tool, value).content
       if (tool.name === 'Read' && typeof args.path === 'string' && args.path.length > 0) {
         markReadPath(turn, args.path)
       }
@@ -268,6 +282,12 @@ function makeTurn(cwd: string, model: string, permissionMode: PermissionMode): T
 
 function defaultTools(): Tool[] {
   return [readTool, writeTool, editTool, globTool, grepTool, bashTool] as Tool[]
+}
+
+function commandOf(value: unknown): string | undefined {
+  if (value === null || typeof value !== 'object') return undefined
+  const command = (value as { command?: unknown }).command
+  return typeof command === 'string' && command.length > 0 ? command : undefined
 }
 
 function isJsonObject(value: unknown): value is JsonObject {
