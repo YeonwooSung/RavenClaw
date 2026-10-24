@@ -131,7 +131,7 @@ Shared dispatch and host-only handlers run even while a turn is live. They do **
 | Abort the live turn | `/stop`, `/cancel`; Ink Escape |
 | Enqueue a **new** turn if busy (`queued (n)`) | Any `host.runTurn`: `/learn`, `/interview`, `/skill:<name>`, `/team-onboarding`, valid `/crew <preset> <goal>`; also `/loop`’s first prompt; leftover steering / mailbox |
 | Inject into the **live** turn (next tool round) | `/steer <text>`; `/queue` items via `drainQueued`; `/tasks steer <id> <text>` (child agent) |
-| Refuse if a turn (or running agent task) is live | `/rewind`, `/retry`, `/branch` → `a turn is in progress` (also pending unpaired asks → `pending permission ask`) |
+| Refuse if a turn (or running agent task) is live | `/rewind`, `/retry`, a numbered `/branch` → `a turn is in progress` (also pending unpaired asks → `pending permission ask`). A numberless `/branch` only lists |
 | Refuse file undo of the **open** generation | `/undo` → `undo after the turn finishes` (a **closed** previous generation can still undo) |
 | Run immediately (notice / store / panel) | `/help`, `/cost`, `/search`, `/mode`, `/model`, `/title`, `/permissions`, `/tasks`, `/diff`, `/retry` (no-arg composer restore), `/queue`, `/follow`, `/cron`, `/copy`, `/mcp`, `/skills`, `/reload`, `/agents`, `/crew` (no-arg, unknown preset, or empty goal), `/play`, `/hooks`, `/config`, `/context`, `/add-dir`, `/effort`, `/compact`, `/review`, `/bash`, `/quit`, `/clear`, `/resume` |
 | `/compact` mid-turn | sets a one-slot flag; runs after `liveTurn` is null |
@@ -1182,7 +1182,7 @@ Discovery order (later wins on name): builtin → `~/.ravenclaw/skills` → `<cw
 | `/clear` / `/new` | Unchanged (job/files stay) | Empty transcript (inactivated) | **Same** (`clearKeepId`) |
 | `/resume [id]` | Unchanged | Load stored messages | **Other** (or list) |
 
-`/rewind`, `/branch`, and open-generation `/undo` are the commands that **refuse** a live turn. `/clear` abort-then-wipes the same id. `/resume` replaces the engine.
+`/rewind`, a numbered `/branch`, and open-generation `/undo` are the commands that **refuse** a live turn. `/clear` abort-then-wipes the same id. `/resume` replaces the engine.
 
 ---
 
