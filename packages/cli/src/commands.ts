@@ -33,6 +33,7 @@ export const SLASH_COMMANDS: readonly SlashCommandSpec[] = [
   { name: 'tasks', usage: '/tasks [kill <id>|steer <id> <text>]', summary: 'list, stop, or steer background tasks' },
   { name: 'undo', usage: '/undo', summary: 'restore files from the last edit checkpoint' },
   { name: 'rewind', usage: '/rewind', summary: 'undo last turn files and drop that conversation turn' },
+  { name: 'branch', usage: '/branch [n]', summary: 'list this path, or branch at a numbered message' },
   {
     name: 'diff',
     usage: '/diff [n|close]',

@@ -6,10 +6,14 @@ import { spawnSync } from 'node:child_process'
 import {
   createFileHistory,
   createTaskRegistry,
+  type Message,
+  type SessionBranchNode,
   type SessionEngine,
   type SessionJob,
   type SessionRecord,
+  type SessionStore,
 } from '@ravenclaw/core'
+import { formatBranchNotice } from '../branch-cmd'
 import { CREW_LIST_NOTICE, formatCrewTurn, SLASH_HELP, type SlashResult } from '../commands'
 import { type CliRuntime } from '../engine'
 import { dispatchSharedSlash, type SlashHost } from './dispatch'
@@ -87,7 +91,7 @@ function fakeEngine(session: SessionRecord): SessionEngine & { reloads: number }
   return engine as SessionEngine & { reloads: number }
 }
 
-function fakeRuntime(engine: SessionEngine): CliRuntime {
+function fakeRuntime(engine: SessionEngine, store: Partial<SessionStore> = {}): CliRuntime {
   return {
     engine,
     store: {
@@ -111,6 +115,7 @@ function fakeRuntime(engine: SessionEngine): CliRuntime {
       async acquireSessionLock() {},
       async renewSessionLock() {},
       async releaseSessionLock() {},
+      ...store,
     },
     cwd: '/proj',
     config: {
@@ -155,6 +160,75 @@ function fakeHost(
     },
     ...over,
   }
+}
+
+function textMessage(id: string, role: 'user' | 'assistant', text: string): Message {
+  return { id, role, blocks: [{ type: 'text', text }], createdAt: 1 }
+}
+
+const branchU1 = textMessage('u1', 'user', 'one')
+const branchA1 = textMessage('a1', 'assistant', 'two')
+const branchU2 = textMessage('u2', 'user', 'three')
+const branchOld = textMessage('old', 'user', 'tip')
+const branchPath = [branchU1, branchA1, branchU2]
+
+function pathNodes(path: Message[], extras: SessionBranchNode[] = []): SessionBranchNode[] {
+  const nodes: SessionBranchNode[] = []
+  for (let index = 0; index < path.length; index += 1) {
+    const message = path[index]
+    if (message === undefined) continue
+    const prev = path[index - 1]
+    nodes.push({ message, parentId: prev === undefined ? null : prev.id })
+  }
+  return nodes.concat(extras)
+}
+
+const branchNodes: SessionBranchNode[] = [
+  { message: branchU1, parentId: null },
+  { message: branchA1, parentId: 'u1' },
+  { message: branchU2, parentId: 'inactive' },
+  { message: branchOld, parentId: 'u1' },
+]
+
+function branchHarness(
+  opts: {
+    path?: Message[]
+    nodes?: SessionBranchNode[]
+    loadMessages?: (sessionId: string) => Promise<Message[]>
+    listBranchNodes?: (sessionId: string) => Promise<SessionBranchNode[]>
+    branchAt?: SessionEngine['branchAt']
+  } = {},
+) {
+  const path = opts.path ?? branchPath
+  const nodes = opts.nodes ?? (opts.path === undefined ? branchNodes : pathNodes(path))
+  const ids: string[] = []
+  const branched: Message[][] = []
+  const counts = { loads: 0, lists: 0, sessionIds: [] as string[] }
+  const engine = fakeEngine(makeSession())
+  engine.branchAt = async (id: string) => {
+    ids.push(id)
+    if (opts.branchAt) return opts.branchAt(id)
+    return { ok: true as const, messages: path }
+  }
+  const runtime = fakeRuntime(engine, {
+    async loadMessages(sessionId: string) {
+      counts.loads += 1
+      counts.sessionIds.push(sessionId)
+      if (opts.loadMessages) return opts.loadMessages(sessionId)
+      return path
+    },
+    async listBranchNodes(sessionId: string) {
+      counts.lists += 1
+      if (opts.listBranchNodes) return opts.listBranchNodes(sessionId)
+      return nodes
+    },
+  })
+  const host = fakeHost(runtime, {
+    onBranched(messages) {
+      branched.push(messages)
+    },
+  })
+  return { runtime, host, ids, branched, counts, engine }
 }
 
 const tempDirs: string[] = []
@@ -596,6 +670,148 @@ describe('dispatchSharedSlash', () => {
     } finally {
       await dispatchSharedSlash(cmd('play', 'stop'), host)
     }
+  })
+
+  test('/branch with no number lists the path and stays handled', async () => {
+    const { host, ids, branched, counts } = branchHarness()
+    const notice = formatBranchNotice(branchPath, [branchOld])
+    for (const arg of [undefined, '', '   '] as const) {
+      const result = await dispatchSharedSlash(cmd('branch', arg), host)
+      expect(result).toBe('handled')
+      expect(result).not.toBe('host')
+    }
+    expect(host.notices).toEqual([notice, notice, notice])
+    expect(ids).toEqual([])
+    expect(branched).toEqual([])
+    expect(host.turns).toEqual([])
+    expect(counts.loads).toBe(3)
+    expect(counts.lists).toBe(3)
+    expect(counts.sessionIds).toEqual(['sess_dispatch', 'sess_dispatch', 'sess_dispatch'])
+  })
+
+  test('/branch 3 moves the leaf to the previous assistant and does not run a turn', async () => {
+    const returned = [branchU1, branchA1]
+    const { host, ids, branched } = branchHarness({
+      branchAt: async () => ({ ok: true, messages: returned }),
+    })
+    expect(await dispatchSharedSlash(cmd('branch', '3'), host)).toBe('handled')
+    expect(ids).toEqual(['a1'])
+    expect(host.notices).toEqual(['branched at 2 assistant'])
+    expect(branched).toHaveLength(1)
+    expect(branched[0]).toBe(returned)
+    expect(host.turns).toEqual([])
+  })
+
+  test('/branch 1 on a user row is already at the start', async () => {
+    const { host, ids, branched } = branchHarness()
+    expect(await dispatchSharedSlash(cmd('branch', '1'), host)).toBe('handled')
+    expect(host.notices).toEqual(['already at the start'])
+    expect(ids).toEqual([])
+    expect(branched).toEqual([])
+  })
+
+  test('/branch 2 on an assistant leaf is already at this point', async () => {
+    const path = [branchU1, branchA1]
+    const { host, ids, branched } = branchHarness({ path, nodes: pathNodes(path) })
+    expect(await dispatchSharedSlash(cmd('branch', '2'), host)).toBe('handled')
+    expect(host.notices).toEqual(['already at this point'])
+    expect(ids).toEqual([])
+    expect(branched).toEqual([])
+  })
+
+  test('/branch 1 on an assistant row branches at that id', async () => {
+    const assistantFirst = textMessage('aLead', 'assistant', 'lead')
+    const later = textMessage('uLater', 'user', 'later')
+    const path = [assistantFirst, later]
+    const { host, ids, branched } = branchHarness({ path, nodes: pathNodes(path) })
+    expect(await dispatchSharedSlash(cmd('branch', '1'), host)).toBe('handled')
+    expect(ids).toEqual(['aLead'])
+    expect(host.notices).toEqual(['branched at 2 user'])
+    expect(host.notices).not.toContain('already at the start')
+    expect(branched).toEqual([path])
+  })
+
+  test('/branch 4 branches at the other tip, not its parent', async () => {
+    const { host, ids } = branchHarness()
+    expect(await dispatchSharedSlash(cmd('branch', '4'), host)).toBe('handled')
+    expect(ids).toEqual(['old'])
+    expect(ids).not.toContain('u1')
+  })
+
+  test('/branch rejects a missing number and a non-integer without branching', async () => {
+    const { host, ids, counts } = branchHarness()
+    expect(await dispatchSharedSlash(cmd('branch', '9'), host)).toBe('handled')
+    expect(await dispatchSharedSlash(cmd('branch', 'foo'), host)).toBe('handled')
+    expect(host.notices).toEqual(['no message 9', 'usage: /branch [n]'])
+    expect(ids).toEqual([])
+    expect(counts.loads).toBe(1)
+    expect(counts.lists).toBe(1)
+  })
+
+  test('/branch with an empty path and no other tips notices nothing to branch', async () => {
+    const { host, ids, branched } = branchHarness({ path: [], nodes: [] })
+    expect(await dispatchSharedSlash(cmd('branch'), host)).toBe('handled')
+    expect(host.notices).toEqual(['nothing to branch'])
+    expect(ids).toEqual([])
+    expect(branched).toEqual([])
+  })
+
+  test('/branch passes engine notices through and skips onBranched', async () => {
+    const refusals = [
+      { ok: false as const, notice: 'pending permission ask' },
+      { ok: false as const, notice: 'a turn is in progress' },
+      { ok: true as const, notice: 'nothing to rewind' },
+    ]
+    for (const result of refusals) {
+      const { host, ids, branched } = branchHarness({
+        branchAt: async () => result,
+      })
+      expect(await dispatchSharedSlash(cmd('branch', '3'), host)).toBe('handled')
+      expect(ids).toEqual(['a1'])
+      expect(host.notices).toEqual([result.notice])
+      expect(branched).toEqual([])
+    }
+  })
+
+  test('/branch notices a loadMessages failure and does not list or branch', async () => {
+    const { host, ids, counts } = branchHarness({
+      loadMessages: async () => {
+        throw new Error('leaf not found: x')
+      },
+    })
+    expect(await dispatchSharedSlash(cmd('branch'), host)).toBe('handled')
+    expect(host.notices).toEqual(['leaf not found: x'])
+    expect(counts.loads).toBe(1)
+    expect(counts.lists).toBe(0)
+    expect(ids).toEqual([])
+  })
+
+  test('/branch notices when the store cannot list a path', async () => {
+    const engine = fakeEngine(makeSession())
+    const ids: string[] = []
+    engine.branchAt = async (id: string) => {
+      ids.push(id)
+      return { ok: true, messages: [] }
+    }
+    const host = fakeHost(fakeRuntime(engine))
+    expect(typeof host.runtime().store.loadMessages).not.toBe('function')
+    expect(typeof host.runtime().store.listBranchNodes).not.toBe('function')
+    expect(await dispatchSharedSlash(cmd('branch'), host)).toBe('handled')
+    expect(host.notices).toEqual(['branch unavailable'])
+    expect(ids).toEqual([])
+  })
+
+  test('/branch notices a listBranchNodes failure and does not branch', async () => {
+    const { host, ids, counts } = branchHarness({
+      listBranchNodes: async () => {
+        throw new Error('session not found: s1')
+      },
+    })
+    expect(await dispatchSharedSlash(cmd('branch', '3'), host)).toBe('handled')
+    expect(host.notices).toEqual(['session not found: s1'])
+    expect(counts.loads).toBe(1)
+    expect(counts.lists).toBe(1)
+    expect(ids).toEqual([])
   })
 })
 

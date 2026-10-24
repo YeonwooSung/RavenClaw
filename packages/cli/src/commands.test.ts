@@ -169,6 +169,7 @@ describe('handleSlashCommand', () => {
       'tasks',
       'undo',
       'rewind',
+      'branch',
       'diff',
       'job',
       'pr',
@@ -200,6 +201,7 @@ describe('handleSlashCommand', () => {
     expect(SLASH_COMMANDS.find((command) => command.name === 'clear')?.aliases).toContain('new')
     expect(SLASH_COMMANDS.find((command) => command.name === 'help')?.aliases).toContain('?')
     expect(SLASH_COMMANDS.find((command) => command.name === 'crew')?.aliases).toBe(undefined)
+    expect(SLASH_COMMANDS.find((command) => command.name === 'branch')?.aliases).toBe(undefined)
   })
 
   test('onboarding prompt is frozen and formatOnboardingTurn seeds the scan', () => {
