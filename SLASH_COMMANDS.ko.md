@@ -88,6 +88,7 @@ Ink의 frozen prompt는 `void runTurn(...)`이라 fire-and-forget이다. OpenTUI
 | `tasks` | shared | list/kill/steer | 백그라운드 레지스트리 | `no background tasks` 등 |
 | `undo` | shared | 마지막 체크포인트 | 턴이 열려 있으면 block | `formatUndoNotice` |
 | `rewind` | shared | 파일 + 마지막 user turn | live turn / running agent / pending ask면 거부 | `a turn is in progress` 등 |
+| `branch` | shared | 현재 잎 경로를 목록하거나 번호로 잎을 옮김 | 엔진 거부 notice를 그대로 전달 | `branched at <k> <role>` |
 | `diff` | host | git 패널 토글 | 패널만 | working-tree + staged |
 | `job` | shared | `raven/*` job worktree 진입 / commit on\|off | 동일 | `session.job`, cwd → worktree |
 | `pr` | shared | shadow draft PR | 동일 | job 없거나 dirty면 notice만 |
@@ -295,6 +296,19 @@ Ink status line은 모델·mode·usage·`shortSessionId`·funding·near-compact�
 - notice: `nothing to rewind` / `dropped 1 message` / `dropped N messages` / 파일 부분과 `; `로 결합
 - compact 세대에 `rewind`로 기록
 - 관련: `/undo`, `/retry`, `/job`
+
+### `/branch [n]`
+
+- 분류: shared. alias 없음
+- 번호 없는 `/branch`는 `loadMessages`로 현재 잎 경로를 목록한다. `branchAt`을 부르지 않는다. 잎 줄은 `* `로 시작한다. 다른 active tip은 글자가 `other`인 줄 다음에 온다. 경로가 비면 `other` 줄은 없다. 경로와 tip이 둘 다 없으면 `nothing to branch`
+- 빈 값이 아니고 양의 정수가 아니면 `usage: /branch [n]`. store 메서드가 없으면 `branch unavailable`
+- 현재 경로의 user 번호는 이전 path id를 넘긴다. user 번호 1은 `already at the start`
+- 경로의 assistant 또는 tool은 그 id를 넘긴다. other tip 번호는 그 tip id를 넘기고, 부모는 넘기지 않는다
+- 범위를 넘으면 `no message <n>`. 고른 id가 이미 잎이면 `already at this point`
+- 성공 notice는 `branched at <k> <role>`. Ink는 돌아온 메시지로 transcript 행을 갈아끼운다. OpenTUI는 notice 아래에 그 경로의 `formatBranchList`를 찍고 스크롤백을 지우지 않는다
+- `branchAt` 거부는 그대로 출력한다. `a turn is in progress`와 `pending permission ask`를 포함한다 (`message is not on this session`, `branch persist failed`도 그대로). 이미 끝난 rewind reset도 그대로 찍고 transcript를 갈아끼우지 않는다 (`nothing to rewind` 또는 `rewind reset failed`)
+- 파일, git, todo를 rewind하지 않고 composer를 채우지 않는다
+- 스펙: [`docs/superpowers/specs/2026-10-23-session-branch-ui.md`](docs/superpowers/specs/2026-10-23-session-branch-ui.md)
 
 ### `/retry [text]`
 
@@ -643,6 +657,7 @@ disable 목록: `~/.ravenclaw/skills-disabled.json`. `/reload`와 disable/enable
 |---|---|---|---|---|
 | `/undo` | 마지막 닫힌 generation 복원/삭제 | 유지 | 유지 | 열려 있으면 block |
 | `/rewind` | job: compact persist 후 `git reset --hard` + todo 스냅샷 + 프로젝트 `todo.json`. no-job: file-history undo + 남은 `todoSnapshot`으로 todos/`todo.json` 복원 | 마지막 user부터 drop | 유지 | `a turn is in progress` / `pending permission ask` |
+| `/branch [n]` | 그대로 | 선택한 leaf 경로. 다른 tip은 active | 유지 | `a turn is in progress` / `pending permission ask` |
 | `/retry` | `/rewind`와 동일 | drop 후 composer 복원 또는 새 text로 `runTurn` | 유지 | `/rewind`와 동일 |
 | `/job` | `raven/*` worktree + job 기록; `commit on\|off` | 유지 | 유지 (cwd → worktree) | 모델 턴 아님 |
 | `/pr` | shadow draft PR (없거나 dirty면 notice) | 마지막 assistant annotation 가능 | 유지 | 모델 턴 아님 |
