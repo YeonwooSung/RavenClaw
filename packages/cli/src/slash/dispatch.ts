@@ -87,7 +87,19 @@ export async function dispatchSharedSlash(
       host.notice(SLASH_HELP)
       return 'handled'
     case 'compact':
-      await runtime.engine.compactNow()
+      try {
+        await runtime.engine.compactNow()
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (
+          message === 'compact would move another branch' ||
+          message === 'compact boundary is not on this path'
+        ) {
+          host.notice(message)
+          return 'handled'
+        }
+        throw error
+      }
       host.notice('compact requested')
       return 'handled'
     case 'cost':

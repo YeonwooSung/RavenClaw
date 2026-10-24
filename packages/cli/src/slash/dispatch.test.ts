@@ -6,6 +6,7 @@ import { spawnSync } from 'node:child_process'
 import {
   createFileHistory,
   createTaskRegistry,
+  PersistError,
   type Message,
   type SessionBranchNode,
   type SessionEngine,
@@ -287,6 +288,62 @@ describe('dispatchSharedSlash', () => {
     const result = await dispatchSharedSlash(cmd('help'), host)
     expect(result).toBe('handled')
     expect(host.notices[0]).toBe(SLASH_HELP)
+  })
+
+  test('/compact notices when compact would move another branch', async () => {
+    const engine = fakeEngine(makeSession())
+    engine.compactNow = async () => {
+      throw new PersistError('unknown', 'compact would move another branch')
+    }
+    const host = fakeHost(fakeRuntime(engine))
+    expect(await dispatchSharedSlash(cmd('compact'), host)).toBe('handled')
+    expect(host.notices).toEqual(['compact would move another branch'])
+    expect(host.notices).not.toContain('compact requested')
+  })
+
+  test('/compact notices when the compact boundary is not on this path', async () => {
+    const engine = fakeEngine(makeSession())
+    engine.compactNow = async () => {
+      throw new PersistError('unknown', 'compact boundary is not on this path')
+    }
+    const host = fakeHost(fakeRuntime(engine))
+    expect(await dispatchSharedSlash(cmd('compact'), host)).toBe('handled')
+    expect(host.notices).toEqual(['compact boundary is not on this path'])
+  })
+
+  test('/compact notices a plain Error with a refusal message', async () => {
+    const engine = fakeEngine(makeSession())
+    engine.compactNow = async () => {
+      throw new Error('compact would move another branch')
+    }
+    const host = fakeHost(fakeRuntime(engine))
+    expect(await dispatchSharedSlash(cmd('compact'), host)).toBe('handled')
+    expect(host.notices).toEqual(['compact would move another branch'])
+    expect(host.notices).not.toContain('compact requested')
+  })
+
+  test('/compact notices compact requested', async () => {
+    const engine = fakeEngine(makeSession())
+    let called = false
+    engine.compactNow = async () => {
+      called = true
+    }
+    const host = fakeHost(fakeRuntime(engine))
+    expect(await dispatchSharedSlash(cmd('compact'), host)).toBe('handled')
+    expect(called).toBe(true)
+    expect(host.notices).toEqual(['compact requested'])
+  })
+
+  test('/compact rethrows an error that is not a refusal', async () => {
+    const engine = fakeEngine(makeSession())
+    engine.compactNow = async () => {
+      throw new PersistError('unknown', 'compact generation already used')
+    }
+    const host = fakeHost(fakeRuntime(engine))
+    await expect(dispatchSharedSlash(cmd('compact'), host)).rejects.toThrow(
+      'compact generation already used',
+    )
+    expect(host.notices).toEqual([])
   })
 
   test('model with an id reloads config.profile for the next turn', async () => {
