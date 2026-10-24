@@ -428,6 +428,20 @@ export interface SessionStore {
     inactivatedIds: string[],
   ): Promise<void>
   /**
+   * Insert the summary (and assistant stub, when present) as a new root.
+   * Reparent only `boundaryId`, or move the leaf when it is null.
+   * Does not inactivate or unindex the prefix.
+   */
+  spliceCompactPath(
+    sessionId: string,
+    opts: {
+      generation: number
+      summaryText: string
+      inserted: Message[]
+      boundaryId: string | null
+    },
+  ): Promise<void>
+  /**
    * One write: inactivate ids (summary default 'rewind') when nonempty, then
    * upsert the session row. Throw leaves the pre-call row.
    */

@@ -31,6 +31,15 @@ type MemoryLock = {
   expiresAt: number
 }
 
+function assertCompactSpliceInserted(inserted: Message[]): void {
+  const oneUser = inserted.length === 1 && inserted[0]?.role === 'user'
+  const stubThenUser =
+    inserted.length === 2 && inserted[0]?.role === 'assistant' && inserted[1]?.role === 'user'
+  if (!oneUser && !stubThenUser) {
+    throw new PersistError('unknown', 'invalid compact splice')
+  }
+}
+
 function claimMemoryLock(
   locks: Map<string, MemoryLock>,
   sessionId: string,
@@ -64,6 +73,7 @@ export function createMemoryStore(): SessionStore {
   const locks = new Map<string, MemoryLock>()
   const pendingAsks = new Map<string, PendingAsk>()
   const streamEvents = new Map<string, SequencedStreamEvent[]>()
+  const spliceGenerations = new Map<string, Set<number>>()
   let mailSeq = 0
 
   let tail: Promise<void> = Promise.resolve()
@@ -364,6 +374,7 @@ export function createMemoryStore(): SessionStore {
         }
         sessions.delete(sessionId)
         messages.delete(sessionId)
+        spliceGenerations.delete(sessionId)
         rules.delete(sessionId)
         mail.delete(sessionId)
         locks.delete(sessionId)
@@ -465,6 +476,86 @@ export function createMemoryStore(): SessionStore {
           if (ids.has(row.message.id)) row.active = false
         }
         repairLeaf(sessionId)
+      })
+    },
+
+    async spliceCompactPath(sessionId, opts) {
+      await withWrite(async () => {
+        const sess = sessions.get(sessionId)
+        if (!sess) throw new PersistError('unknown', `session not found: ${sessionId}`)
+        assertCompactSpliceInserted(opts.inserted)
+        const seen = new Set<string>()
+        const existing = new Set(rowsOf(sessionId).map((row) => row.message.id))
+        for (const message of opts.inserted) {
+          if (seen.has(message.id) || existing.has(message.id)) {
+            throw new PersistError('unknown', `duplicate message id ${message.id}`)
+          }
+          seen.add(message.id)
+        }
+        const pathIds = new Set(readLeafPath(sessionId).map((message) => message.id))
+        if (opts.boundaryId !== null && !pathIds.has(opts.boundaryId)) {
+          throw new PersistError('unknown', 'compact boundary is not on this path')
+        }
+        if (opts.boundaryId !== null) {
+          const byId = new Map(rowsOf(sessionId).map((row) => [row.message.id, row]))
+          for (const row of byId.values()) {
+            if (!row.active || pathIds.has(row.message.id)) continue
+            const walked = new Set<string>()
+            let id: string | null = row.message.id
+            while (id !== null) {
+              if (walked.has(id)) throw new PersistError('unknown', 'message cycle')
+              walked.add(id)
+              if (id === opts.boundaryId) {
+                throw new PersistError('unknown', 'compact would move another branch')
+              }
+              id = byId.get(id)?.parentId ?? null
+            }
+          }
+        }
+
+        const rows = bucket(sessionId)
+        const snapshot = rows.map((row) => ({
+          message: row.message,
+          active: row.active,
+          parentId: row.parentId,
+        }))
+        const prevLeaf = sess.leafId
+        const prevGeneration = sess.compactGeneration
+        const prevUpdatedAt = sess.updatedAt
+        const prevUsed = new Set(spliceGenerations.get(sessionId) ?? [])
+        try {
+          let parentId: string | null = null
+          for (const message of opts.inserted) {
+            rows.push({ message, active: true, parentId })
+            parentId = message.id
+          }
+          const last = opts.inserted[opts.inserted.length - 1]
+          if (!last) throw new PersistError('unknown', 'invalid compact splice')
+          if (opts.boundaryId !== null) {
+            const boundary = rows.find((row) => row.message.id === opts.boundaryId)
+            if (boundary) boundary.parentId = last.id
+          } else {
+            sess.leafId = last.id
+          }
+          if (prevUsed.has(opts.generation)) {
+            throw new PersistError('unknown', 'compact generation already used')
+          }
+          const nextUsed = new Set(prevUsed)
+          nextUsed.add(opts.generation)
+          spliceGenerations.set(sessionId, nextUsed)
+          sess.compactGeneration = opts.generation
+          sess.updatedAt = Date.now()
+        } catch (error) {
+          rows.length = 0
+          rows.push(...snapshot)
+          if (prevLeaf === undefined) delete sess.leafId
+          else sess.leafId = prevLeaf
+          sess.compactGeneration = prevGeneration
+          sess.updatedAt = prevUpdatedAt
+          if (prevUsed.size === 0) spliceGenerations.delete(sessionId)
+          else spliceGenerations.set(sessionId, prevUsed)
+          throw error
+        }
       })
     },
 

@@ -148,6 +148,46 @@ function isUniqueConstraint(error: unknown): boolean {
   )
 }
 
+function assertCompactSpliceInserted(inserted: Message[]): void {
+  const oneUser = inserted.length === 1 && inserted[0]?.role === 'user'
+  const stubThenUser =
+    inserted.length === 2 && inserted[0]?.role === 'assistant' && inserted[1]?.role === 'user'
+  if (!oneUser && !stubThenUser) {
+    throw new PersistError('unknown', 'invalid compact splice')
+  }
+}
+
+function assertNewMessageIds(inserted: Message[], exists: (id: string) => boolean): void {
+  const seen = new Set<string>()
+  for (const message of inserted) {
+    if (seen.has(message.id) || exists(message.id)) {
+      throw new PersistError('unknown', `duplicate message id ${message.id}`)
+    }
+    seen.add(message.id)
+  }
+}
+
+function throwIfCompactMovesBranch(
+  boundaryId: string,
+  pathIds: Set<string>,
+  rows: MessageRow[],
+): void {
+  const byId = new Map(rows.map((row) => [row.id, row]))
+  for (const row of rows) {
+    if (row.active !== 1 || pathIds.has(row.id)) continue
+    const seen = new Set<string>()
+    let id: string | null = row.id
+    while (id !== null) {
+      if (seen.has(id)) throw new PersistError('unknown', 'message cycle')
+      seen.add(id)
+      if (id === boundaryId) {
+        throw new PersistError('unknown', 'compact would move another branch')
+      }
+      id = byId.get(id)?.parent_id ?? null
+    }
+  }
+}
+
 function sessionFromRow(row: SessionRow): SessionRecord {
   const session: SessionRecord = {
     id: row.id,
@@ -499,6 +539,7 @@ export function createSqliteStore(dbPath: string): SessionStore {
     `SELECT id FROM messages WHERE session_id = ? AND active = 1`,
   )
   const updateLeaf = db.query(`UPDATE sessions SET leaf_id = ? WHERE id = ?`)
+  const updateParent = db.query(`UPDATE messages SET parent_id = ? WHERE id = ?`)
   const inactivateMessage = db.query(`UPDATE messages SET active = 0 WHERE id = ?`)
   const insertBoundary = db.query(
     `INSERT INTO compact_boundaries (session_id, generation, created_at, summary)
@@ -770,6 +811,64 @@ export function createSqliteStore(dbPath: string): SessionStore {
     },
   )
 
+  const spliceCompactTx = db.transaction(
+    (
+      sessionId: string,
+      opts: {
+        generation: number
+        summaryText: string
+        inserted: Message[]
+        boundaryId: string | null
+      },
+    ) => {
+      const session = selectSession.get(sessionId) as SessionRow | null
+      if (!session) throw new PersistError('unknown', `session not found: ${sessionId}`)
+      assertCompactSpliceInserted(opts.inserted)
+      assertNewMessageIds(opts.inserted, (id) => selectMessageById.get(id) != null)
+      const pathIds = new Set(readLeafPath(sessionId).map((message) => message.id))
+      if (opts.boundaryId !== null && !pathIds.has(opts.boundaryId)) {
+        throw new PersistError('unknown', 'compact boundary is not on this path')
+      }
+      if (opts.boundaryId !== null) {
+        throwIfCompactMovesBranch(
+          opts.boundaryId,
+          pathIds,
+          selectMessagesBySession.all(sessionId) as MessageRow[],
+        )
+      }
+      let parentId: string | null = null
+      for (const message of opts.inserted) {
+        const bind = messageBind(sessionId, message)
+        try {
+          insertMessage.run({ ...bind, $parent_id: parentId })
+        } catch (error) {
+          if (isUniqueConstraint(error)) {
+            throw new PersistError('unknown', `duplicate message id ${message.id}`)
+          }
+          throw error
+        }
+        indexMessageFts(db, sessionId, message, bind.$blocks_json)
+        parentId = message.id
+      }
+      const last = opts.inserted[opts.inserted.length - 1]
+      if (!last) throw new PersistError('unknown', 'invalid compact splice')
+      if (opts.boundaryId !== null) {
+        updateParent.run(last.id, opts.boundaryId)
+      } else {
+        updateLeaf.run(last.id, sessionId)
+      }
+      try {
+        insertBoundary.run(sessionId, opts.generation, Date.now(), opts.summaryText)
+      } catch (error) {
+        if (isUniqueConstraint(error)) {
+          throw new PersistError('unknown', 'compact generation already used')
+        }
+        throw error
+      }
+      bumpCompact.run(opts.generation, Date.now(), sessionId)
+    },
+  )
+
   function readActiveMessages(sessionId: string): Message[] {
     return readLeafPath(sessionId)
   }
@@ -1023,6 +1122,12 @@ export function createSqliteStore(dbPath: string): SessionStore {
       await withWrite(async () => {
         recordCompactTx(sessionId, generation, summary, inactivatedIds)
         unindexMessagesFts(db, inactivatedIds)
+      })
+    },
+
+    async spliceCompactPath(sessionId, opts) {
+      await withWrite(async () => {
+        spliceCompactTx(sessionId, opts)
       })
     },
 
