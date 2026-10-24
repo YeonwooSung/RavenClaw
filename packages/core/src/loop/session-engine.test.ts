@@ -269,10 +269,10 @@ describe('compactNow', () => {
       ],
     ])
     let recorded = ''
-    const orig = store.recordCompact.bind(store)
-    store.recordCompact = async (sessionId, generation, summary, inactivatedIds) => {
-      recorded = summary
-      return orig(sessionId, generation, summary, inactivatedIds)
+    const orig = store.spliceCompactPath.bind(store)
+    store.spliceCompactPath = async (sessionId, opts) => {
+      recorded = opts.summaryText
+      return orig(sessionId, opts)
     }
 
     const engine = await createSessionEngine({
@@ -314,10 +314,10 @@ describe('compactNow', () => {
       ],
     ])
     let recorded = ''
-    const orig = store.recordCompact.bind(store)
-    store.recordCompact = async (sessionId, generation, summary, inactivatedIds) => {
-      recorded = summary
-      return orig(sessionId, generation, summary, inactivatedIds)
+    const orig = store.spliceCompactPath.bind(store)
+    store.spliceCompactPath = async (sessionId, opts) => {
+      recorded = opts.summaryText
+      return orig(sessionId, opts)
     }
 
     const engine = await createSessionEngine({
@@ -365,10 +365,10 @@ describe('compactNow', () => {
       },
     }
     let recorded = ''
-    const orig = store.recordCompact.bind(store)
-    store.recordCompact = async (sessionId, generation, summary, inactivatedIds) => {
-      recorded = summary
-      return orig(sessionId, generation, summary, inactivatedIds)
+    const orig = store.spliceCompactPath.bind(store)
+    store.spliceCompactPath = async (sessionId, opts) => {
+      recorded = opts.summaryText
+      return orig(sessionId, opts)
     }
 
     const engine = await createSessionEngine({
@@ -403,10 +403,10 @@ describe('compactNow', () => {
     await persistAll(store, session.id, history)
 
     let compactCalls = 0
-    const orig = store.recordCompact.bind(store)
-    store.recordCompact = async (sessionId, generation, summary, inactivatedIds) => {
+    const orig = store.spliceCompactPath.bind(store)
+    store.spliceCompactPath = async (sessionId, opts) => {
       compactCalls += 1
-      return orig(sessionId, generation, summary, inactivatedIds)
+      return orig(sessionId, opts)
     }
 
     const provider = createFakeProvider([

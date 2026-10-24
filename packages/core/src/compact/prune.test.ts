@@ -243,7 +243,7 @@ describe('restore caps', () => {
 })
 
 describe('runAutocompact', () => {
-  test('calls store.recordCompact with middle ids; load omits inactivated', async () => {
+  test('calls store.spliceCompactPath at the tail boundary; prefix stays active', async () => {
     const store = createMemoryStore()
     await store.createSession(session())
     const messages = [
@@ -254,11 +254,19 @@ describe('runAutocompact', () => {
     ]
     await persistAll(store, 's1', messages)
 
-    const recorded: Array<{ generation: number; ids: string[] }> = []
-    const orig = store.recordCompact.bind(store)
-    store.recordCompact = async (sessionId, generation, summary, inactivatedIds) => {
-      recorded.push({ generation, ids: [...inactivatedIds] })
-      return orig(sessionId, generation, summary, inactivatedIds)
+    const recorded: Array<{
+      generation: number
+      summaryText: string
+      boundaryId: string | null
+    }> = []
+    const orig = store.spliceCompactPath.bind(store)
+    store.spliceCompactPath = async (sessionId, opts) => {
+      recorded.push({
+        generation: opts.generation,
+        summaryText: opts.summaryText,
+        boundaryId: opts.boundaryId,
+      })
+      return orig(sessionId, opts)
     }
 
     const result = await runAutocompact({
@@ -273,16 +281,29 @@ describe('runAutocompact', () => {
 
     expect(recorded).toHaveLength(1)
     expect(recorded[0]?.generation).toBe(1)
-    expect(recorded[0]?.ids).toEqual(['u0', 'a0'])
-    expect(result.inactivatedIds).toEqual(['u0', 'a0'])
+    expect(recorded[0]?.summaryText).toBe('SUMMARY')
+    expect(recorded[0]?.boundaryId).toBe('u1')
+    expect(result.inactivatedIds).toEqual([])
     expect(result.generation).toBe(1)
+    expect(result.messages[0]?.role).toBe('assistant')
+    if (result.messages[0]?.role === 'assistant') {
+      expect(result.messages[0].blocks[0]).toEqual({
+        type: 'text',
+        text: ASSISTANT_STUB_TEXT,
+      })
+    }
+    expect(result.messages[1]?.role).toBe('user')
+    if (result.messages[1]?.role === 'user') {
+      expect(textOf(result.messages[1])).toBe('SUMMARY')
+    }
+    expect(result.messages.slice(2).map((msg) => msg.id)).toEqual(['u1', 'a1'])
     expect(result.messages.some((msg) => msg.id === 'u0' || msg.id === 'a0')).toBe(false)
-    expect(result.messages.map((msg) => msg.id)).toContain('u1')
-    expect(result.messages.map((msg) => msg.id)).toContain('a1')
 
-    const loaded = await store.loadSession('s1')
-    expect(loaded.session.compactGeneration).toBe(1)
-    expect(loaded.messages.map((msg) => msg.id)).toEqual(['u1', 'a1'])
+    const loaded = await store.loadMessages!('s1')
+    expect(loaded.map((msg) => msg.id)).toEqual(result.messages.map((msg) => msg.id))
+    const active = await store.listActiveMessageIds('s1')
+    expect(active).toContain('u0')
+    expect(active).toContain('a0')
   })
 
   test('tail starting on user uses assistant stub via buildPostCompactMessages', async () => {
@@ -342,7 +363,7 @@ describe('runAutocompact', () => {
       summary: 'SUMMARY',
     })
 
-    expect(result.inactivatedIds).toEqual(['u1', 'a1', 'u2'])
+    expect(result.inactivatedIds).toEqual([])
     expect(result.messages[0]?.role).toBe('user')
     if (result.messages[0]?.role === 'user') {
       expect(textOf(result.messages[0])).toBe('SUMMARY')
@@ -350,8 +371,12 @@ describe('runAutocompact', () => {
     expect(result.messages.slice(1).map((msg) => msg.id)).toEqual(['a2', 't1'])
     expect(pairingHolds(result.messages)).toBe(true)
 
-    const loaded = await store.loadSession('s1')
-    expect(loaded.messages.map((msg) => msg.id)).toEqual(['a2', 't1'])
+    const loaded = await store.loadMessages!('s1')
+    expect(loaded.map((msg) => msg.id)).toEqual(result.messages.map((msg) => msg.id))
+    const active = await store.listActiveMessageIds('s1')
+    expect(active).toContain('u1')
+    expect(active).toContain('a1')
+    expect(active).toContain('u2')
   })
 
   test('restores capped Read notes from outside the tail', async () => {
@@ -503,7 +528,7 @@ describe('runAutocompact', () => {
         model: model(),
         store,
         sessionId: 's1',
-        generation: 0,
+        generation: 1,
         summary: 'sum',
         cwd: root,
       })
@@ -519,7 +544,7 @@ describe('runAutocompact', () => {
         model: model(),
         store,
         sessionId: 's1',
-        generation: 0,
+        generation: 2,
         summary: 'sum',
         cwd: root,
         todos: [],
