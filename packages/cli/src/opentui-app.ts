@@ -19,6 +19,7 @@ import {
   type PendingAskAnswer,
   type StreamEvent,
 } from '@ravenclaw/core'
+import { formatBranchList } from './branch-cmd'
 import { handleSlashCommand } from './commands'
 import { fireCronJob } from './cron-fire'
 import { formatSkillPruneResult } from './skills-list'
@@ -316,6 +317,9 @@ export async function runOpenTuiApp(
         runtime: () => current,
         notice: (text) => {
           write(`${text}\n`)
+        },
+        onBranched(messages) {
+          write(`${formatBranchList(messages)}\n`)
         },
         runTurn,
         writeOsc52: (text) => {
