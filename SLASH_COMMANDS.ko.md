@@ -657,7 +657,7 @@ disable 목록: `~/.ravenclaw/skills-disabled.json`. `/reload`와 disable/enable
 |---|---|---|---|---|
 | `/undo` | 마지막 닫힌 generation 복원/삭제 | 유지 | 유지 | 열려 있으면 block |
 | `/rewind` | job: compact persist 후 `git reset --hard` + todo 스냅샷 + 프로젝트 `todo.json`. no-job: file-history undo + 남은 `todoSnapshot`으로 todos/`todo.json` 복원 | 마지막 user부터 drop | 유지 | `a turn is in progress` / `pending permission ask` |
-| `/branch [n]` | 그대로 | 선택한 leaf 경로. 다른 tip은 active | 유지 | `a turn is in progress` / `pending permission ask` |
+| `/branch [n]` | 그대로 | 선택한 leaf 경로. 다른 tip은 active | 유지 | 번호가 `branchAt`에 닿을 때만 `a turn is in progress` / `pending permission ask`. 번호 없는 `/branch`는 목록만 |
 | `/retry` | `/rewind`와 동일 | drop 후 composer 복원 또는 새 text로 `runTurn` | 유지 | `/rewind`와 동일 |
 | `/job` | `raven/*` worktree + job 기록; `commit on\|off` | 유지 | 유지 (cwd → worktree) | 모델 턴 아님 |
 | `/pr` | shadow draft PR (없거나 dirty면 notice) | 마지막 assistant annotation 가능 | 유지 | 모델 턴 아님 |
