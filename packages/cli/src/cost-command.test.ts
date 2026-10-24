@@ -162,10 +162,10 @@ describe('/compact', () => {
     await persistAll(store, sess.id, messages)
 
     const recorded: number[] = []
-    const orig = store.recordCompact.bind(store)
-    store.recordCompact = async (sessionId, generation, summary, inactivatedIds) => {
-      recorded.push(generation)
-      return orig(sessionId, generation, summary, inactivatedIds)
+    const orig = store.spliceCompactPath.bind(store)
+    store.spliceCompactPath = async (sessionId, opts) => {
+      recorded.push(opts.generation)
+      return orig(sessionId, opts)
     }
 
     const engine = await createSessionEngine({
@@ -186,10 +186,11 @@ describe('/compact', () => {
     expect(recorded).toEqual([1])
     expect(engine.session.compactGeneration).toBe(1)
 
-    const loaded = await store.loadSession(sess.id)
-    expect(loaded.session.compactGeneration).toBe(1)
-    expect(loaded.messages.map((msg) => msg.id)).not.toContain('u0')
-    expect(loaded.messages.map((msg) => msg.id)).toContain('u1')
+    const persisted = await store.loadSession(sess.id)
+    expect(persisted.session.compactGeneration).toBe(1)
+    const loaded = await store.loadMessages!(sess.id)
+    expect(loaded.map((msg) => msg.id)).not.toContain('u0')
+    expect(loaded.map((msg) => msg.id)).toContain('u1')
   })
 
   test('compactNow resolves without throwing when nothing to compact', async () => {
