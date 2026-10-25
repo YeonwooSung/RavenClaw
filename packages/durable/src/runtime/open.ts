@@ -116,6 +116,7 @@ export async function openDurable(
     stopped: () => abandoned || closing || closedFlag,
     now,
     ...(options.hooks !== undefined ? { hooks: options.hooks } : {}),
+    spawn: (parentTaskId, content) => spawnChild(parentTaskId, content),
   })
 
   await reconcile()
@@ -246,6 +247,67 @@ export async function openDurable(
       })
     }
     return loop
+  }
+
+  async function spawnChild(
+    parentTaskId: number,
+    content: string,
+  ): Promise<{ status: 'done'; text: string } | { status: 'unanswered'; reason: string }> {
+    const parent = await line.run((tx) => tx.readTask(parentTaskId))
+    if (!parent) return { status: 'unanswered', reason: 'subagent depth' }
+    const parentRow = await line.run((tx) => tx.readConversation(parent.conversationId))
+    if (parentRow?.ownerTaskId !== undefined) return { status: 'unanswered', reason: 'subagent depth' }
+    const storedChild = parent.checkpoint?.childConversationId
+    let childId = typeof storedChild === 'number' ? storedChild : undefined
+    if (childId === undefined) {
+      childId = await line.run((tx) => {
+        const current = tx.readTask(parentTaskId)
+        if (!current) throw new DurableFault(`unknown task ${parentTaskId}`)
+        const id = tx.mintId()
+        const agent = tx.readDocument(agentKey(current.conversationId))
+        const checkpoint: JsonObject = { ...(current.checkpoint ?? {}), childConversationId: id }
+        tx.stage({
+          conversations: [{ id, ownerTaskId: parentTaskId }],
+          tasks: [evolveTask(current, { status: current.status, checkpoint })],
+          ...(agent !== undefined ? { documents: [{ key: agentKey(id), value: agent }] } : {}),
+        })
+        return id
+      })
+    }
+    const submission = await submit(childId, {
+      content,
+      requestId: `subagent:${parentTaskId}`,
+      whenBusy: 'followUp',
+    })
+    while (!isDead() && !controller.signal.aborted) {
+      const row = storage.readSubmission(submission.id)
+      if (!row || row.status !== 'queued') {
+        if (row?.status === 'done') return { status: 'done', text: row.answer ?? '' }
+        return { status: 'unanswered', reason: row?.reason ?? 'model_error' }
+      }
+      const selected = await line.run((tx) =>
+        select(tx.readTasks().filter((task) => task.conversationId === childId && task.nested !== true)),
+      )
+      const first = selected[0]
+      if (!first) return { status: 'unanswered', reason: 'model_error' }
+      if (first.name === 'tool') await Promise.all(selected.map((task) => phases.runTool(task.id)))
+      else if (first.name === 'compaction') await phases.runCompaction(first.id)
+      else await phases.runGeneration(first.id)
+    }
+    await line.run((tx) => {
+      const row = tx.readSubmission(submission.id)
+      if (!row || row.status !== 'queued') return
+      const next: DurableSubmissionRow = {
+        id: row.id,
+        conversationId: row.conversationId,
+        status: 'unanswered',
+        reason: 'aborted',
+      }
+      if (row.requestId !== undefined) next.requestId = row.requestId
+      if (row.entryId !== undefined) next.entryId = row.entryId
+      tx.stage({ submissions: [next] })
+    })
+    return { status: 'unanswered', reason: 'aborted' }
   }
 
   function handleFor(row: DurableSubmissionRow): DurableSubmission {

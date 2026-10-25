@@ -24,6 +24,9 @@ export type PhaseHost = {
   stopped(): boolean
   now(): number
   hooks?: DurableHooks
+  spawn(parentTaskId: number, content: string): Promise<
+    { status: 'done'; text: string } | { status: 'unanswered'; reason: string }
+  >
 }
 
 type LiveSlot = { taskId: number; status: 'running' | 'done'; entryId?: number }
@@ -729,7 +732,7 @@ async function executeBody(host: PhaseHost, taskId: number, intent: ExecuteInten
       signal: host.signal,
       taskId,
       call: (name, callArgs) => callNested(host, taskId, name, callArgs),
-      spawn: () => Promise.resolve({ status: 'unanswered', reason: 'subagent depth' }),
+      spawn: (input) => host.spawn(taskId, input.content),
     })
   } catch (error) {
     if (host.stopped()) return

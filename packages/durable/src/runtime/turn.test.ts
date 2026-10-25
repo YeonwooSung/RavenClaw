@@ -2018,8 +2018,7 @@ describe('durable turns', () => {
           async execute(_args, ctx) {
             const nested = await ctx.call('child', { n: 1 })
             const missing = await ctx.call('missing', {})
-            const spawned = await ctx.spawn({ content: 'nope' })
-            return { content: `${nested.content}|${missing.content}|${spawned.reason}` }
+            return { content: `${nested.content}|${missing.content}` }
           },
         },
         {
@@ -2038,7 +2037,7 @@ describe('durable turns', () => {
     expect(childExecs).toBe(1)
     const parentTool = storage.readEntries(1).find((entry) => entry.message.role === 'tool' && entry.message.name === 'parent')
     expect(parentTool?.message.role === 'tool' ? parentTool.message.content : '').toBe(
-      'child:nested tool depth|tool_unavailable|subagent depth',
+      'child:nested tool depth|tool_unavailable',
     )
     const nested = storage.readEntries(1).find(
       (entry) => entry.message.role === 'tool' && entry.message.toolCallId.startsWith('nested:'),
@@ -2047,13 +2046,6 @@ describe('durable turns', () => {
     const follow = requests[1] ?? []
     expect(follow.some((message) => message.role === 'tool' && message.toolCallId.startsWith('nested:'))).toBe(false)
     expect(follow.some((message) => message.role === 'tool' && message.name === 'parent')).toBe(true)
-    let missingConversation = false
-    try {
-      await rt.conversation(2)
-    } catch (error) {
-      missingConversation = error instanceof DurableFault && error.message === 'unknown conversation 2'
-    }
-    expect(missingConversation).toBe(true)
   })
 
   test('a nested tool left running is aborted on open and not executed again', async () => {
@@ -2089,5 +2081,107 @@ describe('durable turns', () => {
     await second.resume()
     expect(execs).toBe(1)
     expect(storage.readTasks().some((task) => task.nested === true && task.outcome === 'aborted')).toBe(true)
+  })
+
+  test('spawn runs a child conversation and keeps its transcript off the parent', async () => {
+    const storage = openMemoryStorage()
+    const rt = await openDurable(storage, {
+      model: {
+        async complete(input) {
+          const last = lastUserContent(input.messages)
+          if (input.messages.some((message) => message.role === 'tool')) {
+            return { content: 'done', stopReason: 'stop' }
+          }
+          if (last === 'ask') return { content: 'child-answer', stopReason: 'stop' }
+          return {
+            content: '',
+            stopReason: 'toolUse',
+            toolCalls: [{ id: 'c1', name: 'echo', arguments: {} }],
+          }
+        },
+      },
+      tools: [
+        {
+          name: 'echo',
+          async execute(_args, ctx) {
+            const result = await ctx.spawn({ content: 'ask' })
+            return { content: result.status === 'done' ? result.text : result.reason }
+          },
+        },
+      ],
+      modelId: 'm',
+    })
+    const conversation = await rt.root()
+    expect(await (await conversation.submit({ content: 'go' })).wait()).toEqual({ status: 'done', text: 'done' })
+    expect(storage.readEntries(1).some((entry) => entry.message.role === 'user' && entry.message.content === 'ask')).toBe(false)
+    const owned = []
+    for (let id = 1; id < 20; id++) {
+      const row = storage.readConversation(id)
+      if (row?.ownerTaskId !== undefined) owned.push(row)
+    }
+    expect(owned).toHaveLength(1)
+    const child = owned[0]
+    if (!child) throw new Error('missing child')
+    expect(storage.readEntries(child.id).some((entry) => entry.message.role === 'user' && entry.message.content === 'ask')).toBe(true)
+    expect(storage.readEntries(child.id).some((entry) => entry.message.role === 'assistant' && entry.message.content === 'child-answer')).toBe(true)
+    const submission = storage.readTasks().find((task) => task.ownerTaskId !== undefined)
+    expect(submission).toBeUndefined()
+    const childSubmission = []
+    for (let id = 1; id < 40; id++) {
+      const row = storage.readSubmission(id)
+      if (row?.requestId?.startsWith('subagent:')) childSubmission.push(row)
+    }
+    expect(childSubmission).toHaveLength(1)
+    expect(childSubmission[0]?.status).toBe('done')
+  })
+
+  test('a child tool cannot spawn another conversation', async () => {
+    const storage = openMemoryStorage()
+    const rt = await openDurable(storage, {
+      model: {
+        async complete(input) {
+          const last = lastUserContent(input.messages)
+          let lastUser = -1
+          for (let i = 0; i < input.messages.length; i++) {
+            if (input.messages[i]?.role === 'user') lastUser = i
+          }
+          const after = input.messages.slice(lastUser + 1)
+          if (after.some((message) => message.role === 'tool')) return { content: 'done', stopReason: 'stop' }
+          if (last === 'ask') {
+            return {
+              content: '',
+              stopReason: 'toolUse',
+              toolCalls: [{ id: 'child-call', name: 'echo', arguments: {} }],
+            }
+          }
+          return {
+            content: '',
+            stopReason: 'toolUse',
+            toolCalls: [{ id: 'c1', name: 'echo', arguments: {} }],
+          }
+        },
+      },
+      tools: [
+        {
+          name: 'echo',
+          async execute(_args, ctx) {
+            const spawned = await ctx.spawn({ content: 'ask' })
+            if (spawned.status === 'unanswered') return { content: spawned.reason }
+            return { content: spawned.text }
+          },
+        },
+      ],
+      modelId: 'm',
+    })
+    const conversation = await rt.root()
+    expect(await (await conversation.submit({ content: 'go' })).wait()).toEqual({ status: 'done', text: 'done' })
+    const owned = []
+    for (let id = 1; id < 20; id++) {
+      const row = storage.readConversation(id)
+      if (row?.ownerTaskId !== undefined) owned.push(row)
+    }
+    expect(owned).toHaveLength(1)
+    const parentTool = storage.readEntries(1).find((entry) => entry.message.role === 'tool' && entry.message.name === 'echo')
+    expect(parentTool?.message.role === 'tool' ? parentTool.message.content : '').toBe('done')
   })
 })
