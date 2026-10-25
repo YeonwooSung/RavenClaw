@@ -52,7 +52,7 @@ Commands:
   title <id>    Set a session title (no API key)
   doctor        Check home, .env, config.yaml, Bun, and local LLM reachability
   play          Serve a web game on 127.0.0.1 and open the OS browser (no API key)
-  durable       Resume a sqlite session file; forces --dont-ask
+  durable       Resume a sqlite session file; forces --dont-ask and runs ordinary Bash
   config        Print resolved settings with secrets redacted
   init          Write AGENTS.md in this directory if missing
   completions   Print bash or zsh completion script to stdout

@@ -433,6 +433,11 @@ export function App(props: AppProps) {
       void dispatchSharedSlash(parsed, {
         runtime: () => runtimeRef.current,
         notice: setNotice,
+        onBranched(messages) {
+          setRows(rowsFromMessages(messages))
+          setSelectedIndex(undefined)
+          setExpandedIds(new Set())
+        },
         runTurn: (prompt) => {
           void runTurn(prompt)
         },

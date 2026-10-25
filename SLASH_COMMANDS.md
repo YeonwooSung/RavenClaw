@@ -131,7 +131,7 @@ Shared dispatch and host-only handlers run even while a turn is live. They do **
 | Abort the live turn | `/stop`, `/cancel`; Ink Escape |
 | Enqueue a **new** turn if busy (`queued (n)`) | Any `host.runTurn`: `/learn`, `/interview`, `/skill:<name>`, `/team-onboarding`, valid `/crew <preset> <goal>`; also `/loop`’s first prompt; leftover steering / mailbox |
 | Inject into the **live** turn (next tool round) | `/steer <text>`; `/queue` items via `drainQueued`; `/tasks steer <id> <text>` (child agent) |
-| Refuse if a turn (or running agent task) is live | `/rewind`, `/retry` → `a turn is in progress` (also pending unpaired asks → `pending permission ask`) |
+| Refuse if a turn (or running agent task) is live | `/rewind`, `/retry`, a numbered `/branch` → `a turn is in progress` (also pending unpaired asks → `pending permission ask`). A numberless `/branch` only lists |
 | Refuse file undo of the **open** generation | `/undo` → `undo after the turn finishes` (a **closed** previous generation can still undo) |
 | Run immediately (notice / store / panel) | `/help`, `/cost`, `/search`, `/mode`, `/model`, `/title`, `/permissions`, `/tasks`, `/diff`, `/retry` (no-arg composer restore), `/queue`, `/follow`, `/cron`, `/copy`, `/mcp`, `/skills`, `/reload`, `/agents`, `/crew` (no-arg, unknown preset, or empty goal), `/play`, `/hooks`, `/config`, `/context`, `/add-dir`, `/effort`, `/compact`, `/review`, `/bash`, `/quit`, `/clear`, `/resume` |
 | `/compact` mid-turn | sets a one-slot flag; runs after `liveTurn` is null |
@@ -471,6 +471,32 @@ Does **not** drop conversation messages. That is `/rewind`.
    - both: `undo: …; dropped N messages`
 
 Related: `/undo` (files only), `/retry` (rewind then composer or resubmit), `/job` (enters a job so rewind becomes checkpoint-based), `/clear` (same id, empty conversation).
+
+---
+
+### `/branch [n]`
+
+- **Aliases:** none
+- **Kind:** shared
+- **When:** a numberless `/branch` lists immediately and does not call `branchAt`. A numbered move calls `engine.branchAt` only when the slash accepts that number
+
+`/branch` lists `loadMessages` (the current leaf path). The leaf line starts with `* `. Other active tips follow a line whose text is `other`. That `other` line is omitted when the path is empty. Path and tips both empty: `nothing to branch`. Anything other than empty or a positive integer notices `usage: /branch [n]`. Missing store methods notice `branch unavailable`.
+
+| Pick | Passed to `branchAt` |
+|---|---|
+| User number 1 | no call — notice `already at the start` |
+| Other current-path user number | the previous path id |
+| Assistant or tool on the path | that id |
+| Other-tip number | that tip id, not its parent |
+| Past the list, or the chosen id is already the leaf | no call — `no message <n>` or `already at this point` |
+
+Success notice is `branched at <k> <role>`. Ink replaces transcript rows from the returned messages. OpenTUI prints `formatBranchList` of that path under the notice and does not clear scrollback.
+
+Refusals from `branchAt` are printed unchanged, including `a turn is in progress` and `pending permission ask` (also `message is not on this session` and `branch persist failed`). A rewind reset that already ran is printed unchanged too (`nothing to rewind` or `rewind reset failed`) and does not replace the transcript.
+
+Does not rewind files, git, or todos, and does not fill the composer.
+
+Spec: [`docs/superpowers/specs/2026-10-23-session-branch-ui.md`](docs/superpowers/specs/2026-10-23-session-branch-ui.md).
 
 ---
 
@@ -1149,13 +1175,14 @@ Discovery order (later wins on name): builtin → `~/.ravenclaw/skills` → `<cw
 |---|---|---|---|
 | `/undo` | Restore last **closed** edit checkpoint | Unchanged | Same |
 | `/rewind` | Job: persist compact then `git reset --hard` + todo snapshot + project `todo.json`. No-job: file-history undo + drop last user turn + restore `session.todos` / `todo.json` from remaining `todoSnapshot` | Truncated | Same |
+| `/branch [n]` | Unchanged | Selected leaf path; other tips stay active | Same |
 | `/job` | Enter `raven/*` worktree + job record; `/job commit on\|off` flips auto-commit | Unchanged | Same (cwd → worktree) |
 | `/pr` | Draft PR from shadow (notice-only if no job / dirty) | May annotate last assistant | Same |
 | `/compact` | Unchanged | Prefix summarized; `compactGeneration++` | Same |
 | `/clear` / `/new` | Unchanged (job/files stay) | Empty transcript (inactivated) | **Same** (`clearKeepId`) |
 | `/resume [id]` | Unchanged | Load stored messages | **Other** (or list) |
 
-`/rewind` and open-generation `/undo` are the commands that **refuse** a live turn. `/clear` abort-then-wipes the same id. `/resume` replaces the engine.
+`/rewind`, a numbered `/branch`, and open-generation `/undo` are the commands that **refuse** a live turn. `/clear` abort-then-wipes the same id. `/resume` replaces the engine.
 
 ---
 

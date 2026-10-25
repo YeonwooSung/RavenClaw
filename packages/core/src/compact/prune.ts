@@ -237,7 +237,6 @@ export async function runAutocompact(opts: {
   const tail = selectProtectedTail(opts.messages, opts.compact.protectLastMessages)
   const cut = opts.messages.length - tail.length
   const middle = opts.messages.slice(0, cut)
-  const inactivatedIds = middle.map((msg) => msg.id)
   const tailIds = new Set(tail.map((msg) => msg.id))
   const summary = await resolveCompactSummary(opts, middle)
   const restored = collectRestoredNotes(
@@ -247,10 +246,17 @@ export async function runAutocompact(opts: {
     opts.cwd,
     opts.todos,
   )
-  const messages = appendUserNotes(buildPostCompactMessages(summary, tail), restored)
+  const built = buildPostCompactMessages(summary, tail)
+  const messages = appendUserNotes(built, restored)
   const generation = opts.generation + 1
-  await opts.store.recordCompact(opts.sessionId, generation, summary, inactivatedIds)
-  return { messages, generation, inactivatedIds }
+  const inserted = built.filter((msg) => !tailIds.has(msg.id))
+  await opts.store.spliceCompactPath(opts.sessionId, {
+    generation,
+    summaryText: summary,
+    inserted,
+    boundaryId: tail[0]?.id ?? null,
+  })
+  return { messages, generation, inactivatedIds: [] }
 }
 
 async function resolveCompactSummary(

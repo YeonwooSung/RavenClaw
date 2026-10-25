@@ -328,6 +328,8 @@ export interface SessionRecord {
   lastEnd?: RoundEnd
   jobError?: string
   followup?: string
+  /** Active tip. Unset when the session has no active message. Store writes this; session upserts do not. */
+  leafId?: string
 }
 
 export interface SessionListFilter {
@@ -369,6 +371,11 @@ export function sessionLockedMessage(holderName: string | undefined, expiresAt: 
   return `session locked by ${who} until ${new Date(expiresAt).toISOString()}`
 }
 
+export interface SessionBranchNode {
+  message: Message
+  parentId: string | null
+}
+
 export interface SessionStore {
   createSession(session: SessionRecord): Promise<void>
   upsertSession(session: SessionRecord): Promise<void>
@@ -384,6 +391,18 @@ export interface SessionStore {
    * loadSession may synthesize incomplete tool rows and write them.
    */
   loadMessages?(sessionId: string): Promise<Message[]>
+  /** Every active message id in the session. Order is not significant. */
+  listActiveMessageIds(sessionId: string): Promise<string[]>
+  /**
+   * Active messages and their parents, ordered by createdAt then id.
+   * Does not attach parentId to the message, and does not write the leaf or active.
+   */
+  listBranchNodes(sessionId: string): Promise<SessionBranchNode[]>
+  /**
+   * Point the leaf at an active message in this session.
+   * Does not change `active` or any parent. Returns the leaf path.
+   */
+  branchAt(sessionId: string, messageId: string): Promise<Message[]>
   deleteSession(sessionId: string): Promise<void>
   upsertPendingAsk(row: PendingAsk): Promise<void>
   listPendingAsks(sessionId: string): Promise<PendingAsk[]>
@@ -407,6 +426,20 @@ export interface SessionStore {
     generation: number,
     summary: string,
     inactivatedIds: string[],
+  ): Promise<void>
+  /**
+   * Insert the summary (and assistant stub, when present) as a new root.
+   * Reparent only `boundaryId`, or move the leaf when it is null.
+   * Does not inactivate or unindex the prefix.
+   */
+  spliceCompactPath(
+    sessionId: string,
+    opts: {
+      generation: number
+      summaryText: string
+      inserted: Message[]
+      boundaryId: string | null
+    },
   ): Promise<void>
   /**
    * One write: inactivate ids (summary default 'rewind') when nonempty, then
@@ -506,6 +539,9 @@ export interface SessionEngine {
   /** Host `/queue` drain. Called after each tool round; one item per batch. */
   bindDrainQueued(fn: (() => string | undefined) | undefined): void
   rewindLast(): Promise<{ ok: boolean; notice: string; droppedText?: string }>
+  branchAt(
+    messageId: string,
+  ): Promise<{ ok: true; messages: Message[] } | { ok: true; notice: string } | { ok: false; notice: string }>
   maybeFinishRewindReset(): Promise<{ ran: boolean; ok: boolean; notice?: string }>
   clearKeepId(): Promise<{ ok: true; notice: string } | { ok: false; notice: string }>
   whenTreeStop(): Promise<{ descendantWork: boolean; thisSessionWork: boolean }>

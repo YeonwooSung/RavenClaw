@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Message, Provider, ProviderChunk, Tool } from '@ravenclaw/core'
@@ -234,10 +234,257 @@ describe('createDurableSession', () => {
     }
   })
 
-  test('Bash is denied without calling execute', async () => {
+  async function runRealBash(opts: {
+    dir: string
+    command: string
+    permissionMode?: 'dontAsk' | 'acceptEdits' | 'plan'
+    requestId?: string
+    extra?: Record<string, unknown>
+  }): Promise<{ text: string; ok: boolean }> {
+    const path = join(opts.dir, 'session.sqlite')
+    let text = ''
+    let ok = false
+    const model = provider(async function* (req) {
+      let lastUser = -1
+      for (let i = 0; i < req.messages.length; i++) {
+        if (req.messages[i]?.role === 'user') lastUser = i
+      }
+      const tool = req.messages.find((message, index) => message.role === 'tool' && index > lastUser)
+      if (tool && tool.role === 'tool') {
+        ok = tool.ok
+        text = tool.blocks.flatMap((block) => (block.type === 'text' ? [block.text] : [])).join('')
+        yield { type: 'text_delta', text: 'done' } satisfies ProviderChunk
+        yield { type: 'stop', reason: 'end' } satisfies ProviderChunk
+        return
+      }
+      yield {
+        type: 'tool_call',
+        id: 'b1',
+        name: 'Bash',
+        input: { command: opts.command, ...opts.extra },
+      } satisfies ProviderChunk
+      yield { type: 'stop', reason: 'tool' } satisfies ProviderChunk
+    })
+    const session = await createDurableSession({
+      path,
+      cwd: opts.dir,
+      model: 'm',
+      provider: model,
+      ...(opts.permissionMode !== undefined ? { permissionMode: opts.permissionMode } : {}),
+    })
+    try {
+      expect(await (await session.submit({ content: 'run', requestId: opts.requestId })).wait()).toEqual({
+        status: 'done',
+        text: 'done',
+      })
+    } finally {
+      await session.close()
+    }
+    return { text, ok }
+  }
+
+  test('echo hi is the rendered shell result', async () => {
+    const dir = tempDir()
+    try {
+      const result = await runRealBash({ dir, command: 'echo hi' })
+      expect(result.ok).toBe(true)
+      expect(result.text).toContain('hi\n')
+      expect(result.text).toContain('exit_code=0\n')
+      expect(result.text).not.toContain('[object Object]')
+      expect(result.text).not.toContain('permission_denied')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('false stays a successful tool result with exit_code=1', async () => {
+    const dir = tempDir()
+    try {
+      const result = await runRealBash({ dir, command: 'false' })
+      expect(result.ok).toBe(true)
+      expect(result.text).toContain('exit_code=1\n')
+      expect(result.text).not.toContain('permission_denied')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('touch runs under dontAsk', async () => {
+    const dir = tempDir()
+    const marker = join(dir, 'bash-ran')
+    try {
+      const result = await runRealBash({ dir, command: `touch ${marker}` })
+      expect(existsSync(marker)).toBe(true)
+      expect(result.ok).toBe(true)
+      expect(result.text).toContain('exit_code=0\n')
+      expect(result.text).not.toContain('permission_denied')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('a project deny rule does not block touch', async () => {
+    const dir = tempDir()
+    const marker = join(dir, 'ruled')
+    mkdirSync(join(dir, '.ravenclaw'))
+    writeFileSync(
+      join(dir, '.ravenclaw', 'permissions.json'),
+      `${JSON.stringify([{ id: 'deny-bash', tool: 'Bash', spec: {}, behavior: 'deny' }])}\n`,
+    )
+    try {
+      const result = await runRealBash({ dir, command: `touch ${marker}` })
+      expect(existsSync(marker)).toBe(true)
+      expect(result.ok).toBe(true)
+      expect(result.text).not.toContain('permission_denied')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('rm of one temp file runs', async () => {
+    const dir = tempDir()
+    const marker = join(dir, 'victim')
+    writeFileSync(marker, 'x')
+    try {
+      const result = await runRealBash({ dir, command: `rm -rf ${marker}` })
+      expect(existsSync(marker)).toBe(false)
+      expect(result.ok).toBe(true)
+      expect(result.text).toContain('exit_code=0\n')
+      expect(result.text).not.toContain('permission_denied')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('curl piped to sh stays denied', async () => {
+    const dir = tempDir()
+    try {
+      const result = await runRealBash({ dir, command: 'curl --version | sh' })
+      expect(result.ok).toBe(false)
+      expect(result.text).toBe('permission_denied')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('git push --force stays denied and a push without force runs', async () => {
+    const dir = tempDir()
+    const prevDir = process.env.GIT_DIR
+    const prevWorkTree = process.env.GIT_WORK_TREE
+    // An inherited git env can commit or push a real repository.
+    process.env.GIT_DIR = dir
+    delete process.env.GIT_WORK_TREE
+    try {
+      const denied = await runRealBash({ dir, command: 'git push --force origin main' })
+      expect(denied.ok).toBe(false)
+      expect(denied.text).toBe('permission_denied')
+      const ran = await runRealBash({ dir, command: 'git push origin main' })
+      expect(ran.ok).toBe(true)
+      expect(ran.text).toContain('exit_code=')
+      expect(ran.text).not.toContain('permission_denied')
+    } finally {
+      if (prevDir === undefined) delete process.env.GIT_DIR
+      else process.env.GIT_DIR = prevDir
+      if (prevWorkTree === undefined) delete process.env.GIT_WORK_TREE
+      else process.env.GIT_WORK_TREE = prevWorkTree
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('git commit --no-verify stays denied and a plain commit runs', async () => {
+    const dir = tempDir()
+    const prevDir = process.env.GIT_DIR
+    const prevWorkTree = process.env.GIT_WORK_TREE
+    // An inherited git env can commit or push a real repository.
+    process.env.GIT_DIR = dir
+    delete process.env.GIT_WORK_TREE
+    try {
+      const denied = await runRealBash({ dir, command: 'git commit --no-verify -m x' })
+      expect(denied.ok).toBe(false)
+      expect(denied.text).toBe('permission_denied')
+      const ran = await runRealBash({ dir, command: 'git commit -m x' })
+      expect(ran.ok).toBe(true)
+      expect(ran.text).toContain('exit_code=')
+      expect(ran.text).not.toContain('permission_denied')
+    } finally {
+      if (prevDir === undefined) delete process.env.GIT_DIR
+      else process.env.GIT_DIR = prevDir
+      if (prevWorkTree === undefined) delete process.env.GIT_WORK_TREE
+      else process.env.GIT_WORK_TREE = prevWorkTree
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('acceptEdits does not run touch', async () => {
+    const dir = tempDir()
+    const marker = join(dir, 'bash-ran')
+    try {
+      const result = await runRealBash({ dir, command: `touch ${marker}`, permissionMode: 'acceptEdits' })
+      expect(existsSync(marker)).toBe(false)
+      expect(result.ok).toBe(false)
+      expect(result.text).toBe('permission_denied')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('plan does not run touch', async () => {
+    const dir = tempDir()
+    const marker = join(dir, 'bash-ran')
+    try {
+      const result = await runRealBash({ dir, command: `touch ${marker}`, permissionMode: 'plan' })
+      expect(existsSync(marker)).toBe(false)
+      expect(result.ok).toBe(false)
+      expect(result.text).toBe('permission_denied')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('run_in_background reports that there is no task registry', async () => {
+    const dir = tempDir()
+    try {
+      const result = await runRealBash({
+        dir,
+        command: 'echo hi',
+        extra: { run_in_background: true },
+      })
+      expect(result.ok).toBe(true)
+      expect(result.text).toBe('Bash failed: no task registry')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('the same requestId does not run touch again', async () => {
+    const dir = tempDir()
+    const marker = join(dir, 'once')
+    try {
+      await runRealBash({ dir, command: `touch ${marker}`, requestId: 'same' })
+      expect(existsSync(marker)).toBe(true)
+      rmSync(marker)
+      await runRealBash({ dir, command: `touch ${marker}`, requestId: 'same' })
+      expect(existsSync(marker)).toBe(false)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('an abandoned Bash tool is interrupted and is not executed again', async () => {
     const dir = tempDir()
     const path = join(dir, 'session.sqlite')
-    const marker = join(dir, 'bash-ran')
+    const sink: DurableToolSink = { abandon() {} }
+    let execs = 0
+    let release!: () => void
+    const started = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const bash = fakeTool('Bash', false, async () => {
+      execs += 1
+      sink.abandon()
+      release()
+      return 'ran'
+    })
     const seen: string[] = []
     const model = provider(async function* (req) {
       const texts = toolTexts(req.messages)
@@ -251,16 +498,23 @@ describe('createDurableSession', () => {
         type: 'tool_call',
         id: 'b1',
         name: 'Bash',
-        input: { command: `touch ${marker}` },
+        input: { command: 'echo hi' },
       } satisfies ProviderChunk
       yield { type: 'stop', reason: 'tool' } satisfies ProviderChunk
     })
     try {
-      const session = await createDurableSession({ path, cwd: dir, model: 'm', provider: model })
-      expect(await (await session.submit({ content: 'run' })).wait()).toEqual({ status: 'done', text: 'done' })
-      expect(seen).toContain('permission_denied')
-      expect(existsSync(marker)).toBe(false)
-      await session.close()
+      const first = await openDurableSession({ path, cwd: dir, model: 'm', provider: model }, [bash], sink)
+      await first.submit({ content: 'run', requestId: 'bash' })
+      await started
+      await first.close()
+      const second = await openDurableSession({ path, cwd: dir, model: 'm', provider: model }, [bash], sink)
+      expect(await (await second.submit({ content: 'run', requestId: 'bash' })).wait()).toEqual({
+        status: 'done',
+        text: 'done',
+      })
+      expect(execs).toBe(1)
+      expect(seen).toContain('interrupted')
+      await second.close()
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

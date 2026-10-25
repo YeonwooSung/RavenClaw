@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { PersistError, type Message, type SessionRecord } from '../types'
+import { registerBranchStoreTests } from './branch-store-tests'
 import { createMemoryStore } from './memory-store'
 
 const INCOMPLETE_TEXT =
@@ -515,3 +516,5 @@ describe('createMemoryStore', () => {
     expect(loaded.session.job?.pendingResetSha).toBeUndefined()
   })
 })
+
+registerBranchStoreTests(() => createMemoryStore())

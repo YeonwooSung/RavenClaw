@@ -204,6 +204,15 @@ describe('port shapes', () => {
       async listSessions() {
         return []
       },
+      async listActiveMessageIds() {
+        return []
+      },
+      async listBranchNodes() {
+        return []
+      },
+      async branchAt() {
+        return []
+      },
       async loadSession() {
         return {
           session: {
@@ -246,6 +255,7 @@ describe('port shapes', () => {
         return []
       },
       async recordCompact() {},
+      async spliceCompactPath() {},
       async recordCompactAndUpsertSession() {},
       async clearConversation() {},
       async enqueueAgentMail() {},

@@ -257,6 +257,7 @@ Ink is the default. OpenTUI is `--tui opentui`.
 | `/crew [<preset> <goal>]` | List presets, or start one frozen crew turn |
 | `/undo` | Restore files from the last closed edit checkpoint |
 | `/rewind` | Job: persist compact then checkpoint `git reset --hard` + re-project todos; no-job: undo files, drop last user turn, restore `session.todos` / `todo.json` |
+| `/branch [n]` | List the current leaf path, or move the leaf to a numbered message |
 | `/job [name]` | Enter a named `raven/*` job worktree; `/job commit on\|off` flips opt-in turn-end commit |
 | `/pr [title]` | Open or update a draft PR from the session shadow (default off) |
 | `/diff` | Uncommitted + staged git diff |

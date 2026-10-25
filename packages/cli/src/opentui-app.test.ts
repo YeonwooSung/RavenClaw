@@ -5,6 +5,7 @@ import {
   type Message,
   type PermissionRule,
   type RoundEnd,
+  type SessionBranchNode,
   type SessionEngine,
   type SessionListFilter,
   type SessionRecord,
@@ -72,6 +73,7 @@ function fakeStore(
   extras: {
     messages?: Record<string, Message[]>
     rules?: Record<string, PermissionRule[]>
+    branchNodes?: Record<string, SessionBranchNode[]>
   } = {},
 ): SessionStore & {
   filters: SessionListFilter[]
@@ -97,6 +99,12 @@ function fakeStore(
     async loadSession(sessionId: string) {
       const session = sessions.find((row) => row.id === sessionId) ?? makeSession({ id: sessionId })
       return { session, messages: extras.messages?.[sessionId] ?? [] }
+    },
+    async loadMessages(sessionId: string) {
+      return extras.messages?.[sessionId] ?? []
+    },
+    async listBranchNodes(sessionId: string) {
+      return extras.branchNodes?.[sessionId] ?? []
     },
     async listPermissionRules(sessionId: string) {
       return extras.rules?.[sessionId] ?? []
@@ -131,6 +139,9 @@ function fakeEngine(
     bindDrainQueued() {},
     async rewindLast() {
       return { ok: false, notice: 'nothing to rewind' }
+    },
+    async branchAt() {
+      return { ok: false, notice: 'branch unavailable' }
     },
     async maybeFinishRewindReset() {
       return { ran: false, ok: true }
@@ -926,6 +937,65 @@ describe('runOpenTuiApp', () => {
     })
     expect(code).toBe(0)
     expect(submitted).toEqual(['new prompt'])
+  })
+
+  test('/branch 3 reprints the path under the notice and does not submit again', async () => {
+    const submitted: string[] = []
+    const branched: string[] = []
+    const u1: Message = {
+      id: 'u1',
+      role: 'user',
+      blocks: [{ type: 'text', text: 'one' }],
+      createdAt: 1,
+    }
+    const a1: Message = {
+      id: 'a1',
+      role: 'assistant',
+      blocks: [{ type: 'text', text: 'two' }],
+      createdAt: 2,
+    }
+    const u2: Message = {
+      id: 'u2',
+      role: 'user',
+      blocks: [{ type: 'text', text: 'three' }],
+      createdAt: 3,
+    }
+    const session = makeSession()
+    const engine = fakeEngine(session, async function* (text) {
+      submitted.push(text)
+      return { reason: 'completed' }
+    })
+    engine.branchAt = async (id: string) => {
+      branched.push(id)
+      return { ok: true, messages: [u1, a1] }
+    }
+    const store = fakeStore([session], {
+      messages: { [session.id]: [u1, a1, u2] },
+      branchNodes: {
+        [session.id]: [
+          { message: u1, parentId: null },
+          { message: a1, parentId: 'u1' },
+          { message: u2, parentId: 'a1' },
+        ],
+      },
+    })
+    const written: string[] = []
+    const code = await runOpenTuiApp(fakeRuntime(engine, { store }), {
+      input: asyncLines('hello', '/branch 3', '/quit'),
+      write: (chunk) => {
+        written.push(chunk)
+      },
+    })
+    expect(code).toBe(0)
+    const out = written.join('')
+    expect(out).toContain('you  hello')
+    expect(out).toContain('branched at 2 assistant')
+    expect(out).toContain('* 2 assistant  two')
+    const noticeAt = out.indexOf('branched at 2 assistant')
+    expect(out.slice(0, noticeAt)).toContain('you  hello')
+    expect(out.slice(noticeAt)).toContain('* 2 assistant  two')
+    expect(branched).toEqual(['a1'])
+    expect(submitted).toEqual(['hello'])
   })
 
   test('/add-dir /effort /agents /hooks are not unknown', async () => {

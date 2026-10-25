@@ -7,6 +7,7 @@ import { PersistError, type Message, type SessionRecord, type SessionStore } fro
 import { INCOMPLETE_TEXT } from '../loop/pairing'
 import { createMemoryStore } from './memory-store'
 import { searchMessages } from './search'
+import { registerBranchStoreTests } from './branch-store-tests'
 import { createSqliteStore, searchSessionStore, sqliteStoreDatabase } from './sqlite-store'
 
 type ClosableStore = SessionStore & { close(): void }
@@ -57,7 +58,7 @@ function session(over: Partial<SessionRecord> = {}): SessionRecord {
 }
 
 describe('createSqliteStore', () => {
-  test('fresh install uses WAL and schema_version 11', () => {
+  test('fresh install uses WAL and schema_version 12', () => {
     const path = tempDbPath()
     openStore(path)
     const db = new Database(path, { readonly: true })
@@ -67,7 +68,7 @@ describe('createSqliteStore', () => {
       const version = db
         .query("SELECT value FROM meta WHERE key = 'schema_version'")
         .get() as { value: string }
-      expect(version.value).toBe('11')
+      expect(version.value).toBe('12')
       expect(
         db
           .query("SELECT 1 AS ok FROM sqlite_master WHERE name = 'messages_fts'")
@@ -916,3 +917,39 @@ describe('createSqliteStore', () => {
     expect(col.pending_reset_sha).toBeNull()
   })
 })
+
+registerBranchStoreTests(() => openStore())
+
+describe('sqlite leaf guards', () => {
+  test('a missing leaf throws and a cycle throws', async () => {
+    const store = openStore()
+    await store.createSession(session())
+    await store.persistUser('s1', userRow('a', 1))
+    await store.persistUser('s1', userRow('b', 2))
+    const db = sqliteStoreDatabase(store)!
+    db.query('UPDATE sessions SET leaf_id = ? WHERE id = ?').run('missing', 's1')
+    await expect(store.loadMessages!('s1')).rejects.toThrow('leaf not found: missing')
+    db.query('UPDATE sessions SET leaf_id = ? WHERE id = ?').run('a', 's1')
+    db.query('UPDATE messages SET parent_id = ? WHERE id = ?').run('b', 'a')
+    db.query('UPDATE messages SET parent_id = ? WHERE id = ?').run('a', 'b')
+    await expect(store.loadMessages!('s1')).rejects.toThrow('message cycle')
+  })
+
+  test('an inactive leaf is walked without writing', async () => {
+    const store = openStore()
+    await store.createSession(session())
+    await store.persistUser('s1', userRow('a', 1))
+    await store.persistUser('s1', userRow('b', 2))
+    const db = sqliteStoreDatabase(store)!
+    db.query('UPDATE messages SET active = 0 WHERE id = ?').run('b')
+    expect((await store.loadMessages!('s1')).map((msg) => msg.id)).toEqual(['a'])
+    const leaf = db.query('SELECT leaf_id FROM sessions WHERE id = ?').get('s1') as {
+      leaf_id: string | null
+    }
+    expect(leaf.leaf_id).toBe('b')
+  })
+})
+
+function userRow(id: string, createdAt: number): Extract<Message, { role: 'user' }> {
+  return { id, role: 'user', blocks: [{ type: 'text', text: id }], createdAt }
+}

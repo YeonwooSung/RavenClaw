@@ -20,6 +20,8 @@ import {
   setJobAutoCommit,
   setSessionJobError,
   type InstructionFilesMode,
+  type Message,
+  type SessionBranchNode,
 } from '@ravenclaw/core'
 import {
   INTERVIEW_PROMPT,
@@ -35,6 +37,7 @@ import {
   parseCrewArg,
   type SlashResult,
 } from '../commands'
+import { formatBranchNotice, parseBranchArg } from '../branch-cmd'
 import { formatPublicConfig } from '../config-print'
 import { copyConversationToClipboard, formatConversationMarkdown } from '../copy-conversation'
 import { formatCostNotice } from '../cost-format'
@@ -65,6 +68,7 @@ export interface SlashHost {
   runTurn(prompt: string): void | Promise<void>
   onModelChanged?(model: string): void
   onModeChanged?(mode: string): void
+  onBranched?(messages: Message[]): void
   writeOsc52?(text: string): void
   gh?: (args: string[], cwd: string) => { ok: boolean; stdout: string; stderr: string }
   openPlay?: (argv: string[]) => { ok: boolean } | Promise<{ ok: boolean }>
@@ -83,7 +87,19 @@ export async function dispatchSharedSlash(
       host.notice(SLASH_HELP)
       return 'handled'
     case 'compact':
-      await runtime.engine.compactNow()
+      try {
+        await runtime.engine.compactNow()
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (
+          message === 'compact would move another branch' ||
+          message === 'compact boundary is not on this path'
+        ) {
+          host.notice(message)
+          return 'handled'
+        }
+        throw error
+      }
       host.notice('compact requested')
       return 'handled'
     case 'cost':
@@ -382,10 +398,103 @@ export async function dispatchSharedSlash(
       )
       return 'handled'
     }
+    case 'branch':
+      await dispatchBranch(parsed.arg, host, runtime)
+      return 'handled'
     default:
       host.notice(`unknown command: /${parsed.name}`)
       return 'handled'
   }
+}
+
+async function dispatchBranch(arg: string | undefined, host: SlashHost, runtime: CliRuntime): Promise<void> {
+  const parsed = parseBranchArg(arg)
+  if (parsed.action === 'error') {
+    host.notice('usage: /branch [n]')
+    return
+  }
+  const loadMessages = runtime.store.loadMessages
+  const listBranchNodes = runtime.store.listBranchNodes
+  if (typeof loadMessages !== 'function' || typeof listBranchNodes !== 'function') {
+    host.notice('branch unavailable')
+    return
+  }
+  const sessionId = runtime.engine.session.id
+  let path: Message[]
+  try {
+    path = await loadMessages(sessionId)
+  } catch (error) {
+    host.notice(error instanceof Error ? error.message : String(error))
+    return
+  }
+  let nodes: SessionBranchNode[]
+  try {
+    nodes = await listBranchNodes(sessionId)
+  } catch (error) {
+    host.notice(error instanceof Error ? error.message : String(error))
+    return
+  }
+  const pathIds = new Set(path.map((message) => message.id))
+  const parentIds = new Set<string>()
+  for (const node of nodes) {
+    if (node.parentId !== null) parentIds.add(node.parentId)
+  }
+  const others: Message[] = []
+  for (const node of nodes) {
+    if (pathIds.has(node.message.id) || parentIds.has(node.message.id)) continue
+    others.push(node.message)
+  }
+  if (parsed.action === 'list') {
+    if (path.length === 0 && others.length === 0) {
+      host.notice('nothing to branch')
+      return
+    }
+    host.notice(formatBranchNotice(path, others))
+    return
+  }
+  const n = parsed.n
+  const length = path.length + others.length
+  if (n > length) {
+    host.notice(`no message ${n}`)
+    return
+  }
+  const row = n <= path.length ? path[n - 1] : undefined
+  if (row !== undefined && row.role === 'user' && n === 1) {
+    host.notice('already at the start')
+    return
+  }
+  let target: string
+  if (row !== undefined && row.role === 'user') {
+    const prev = path[n - 2]
+    if (prev === undefined) {
+      host.notice(`no message ${n}`)
+      return
+    }
+    target = prev.id
+  } else if (row !== undefined) {
+    target = row.id
+  } else {
+    const other = others[n - path.length - 1]
+    if (other === undefined) {
+      host.notice(`no message ${n}`)
+      return
+    }
+    target = other.id
+  }
+  const leaf = path[path.length - 1]
+  if (path.length > 0 && leaf !== undefined && target === leaf.id) {
+    host.notice('already at this point')
+    return
+  }
+  const result = await runtime.engine.branchAt(target)
+  if (result.ok && 'messages' in result) {
+    const last = result.messages[result.messages.length - 1]
+    if (last === undefined) return
+    host.notice(`branched at ${result.messages.length} ${last.role}`)
+    host.onBranched?.(result.messages)
+    return
+  }
+  host.notice(result.notice)
 }
 
 const CONFIG_INSTRUCTIONS_USAGE = 'usage: /config instructions claude|agents-fallback|both'

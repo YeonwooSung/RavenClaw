@@ -6,6 +6,7 @@ import { createFileHistory } from '../session/file-history'
 import { createTaskRegistry } from '../tasks/registry'
 import {
   SESSION_LOCK_RENEW_MS,
+  PersistError,
   type Message,
   type PermissionMode,
   type QueryLoopOptions,
@@ -733,6 +734,36 @@ export async function createSessionEngine(opts: SessionEngineOptions): Promise<S
       }
     },
 
+    async branchAt(messageId: string) {
+      const finished = await this.maybeFinishRewindReset()
+      if (finished.ran) {
+        return finished.ok
+          ? { ok: true as const, notice: finished.notice ?? 'nothing to rewind' }
+          : { ok: false as const, notice: finished.notice ?? 'rewind reset failed' }
+      }
+      await this.whenTreeStop()
+      const pending = await listOwnedPendingAsks()
+      for (const row of pending) {
+        if (!(await isCallPaired(row.callId, row.sessionId))) {
+          return { ok: false as const, notice: 'pending permission ask' }
+        }
+      }
+      if (liveTurn) return { ok: false as const, notice: 'a turn is in progress' }
+      if (tasks.list().some((task) => task.status === 'running' && task.type === 'agent')) {
+        return { ok: false as const, notice: 'a turn is in progress' }
+      }
+      try {
+        const path = await opts.store.branchAt(session.id, messageId)
+        messages = path
+        return { ok: true as const, messages: path }
+      } catch (error) {
+        if (error instanceof PersistError && error.message === 'message is not on this session') {
+          return { ok: false as const, notice: 'message is not on this session' }
+        }
+        return { ok: false as const, notice: 'branch persist failed' }
+      }
+    },
+
     maybeFinishRewindReset() {
       if (liveTurn !== null) return Promise.resolve({ ran: false, ok: true })
       return maybeFinishRewindReset({ session, store: opts.store, messages })
@@ -757,15 +788,12 @@ export async function createSessionEngine(opts: SessionEngineOptions): Promise<S
         if (await hasUnpairedChildAsk()) {
           return { ok: false as const, notice: 'pending permission ask' }
         }
-        let rows: Message[]
+        let ids: string[]
         try {
-          rows = opts.store.loadMessages
-            ? await opts.store.loadMessages(session.id)
-            : messages
+          ids = await opts.store.listActiveMessageIds(session.id)
         } catch {
           return { ok: false as const, notice: 'clear persist failed' }
         }
-        const ids = rows.map((msg) => msg.id)
         const generation = ids.length > 0 ? session.compactGeneration + 1 : session.compactGeneration
         const next = wipedSessionRecord(generation)
         try {
