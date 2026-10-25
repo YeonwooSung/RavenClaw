@@ -400,6 +400,114 @@ describe('durable turns', () => {
     expect(storage.readEntries(conversation.id).filter((entry) => entry.kind === 'user')).toHaveLength(2)
   })
 
+  test('two queued followUps run in order after the blocked answer', async () => {
+    const storage = openMemoryStorage()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let mark!: () => void
+    const entered = new Promise<void>((resolve) => {
+      mark = resolve
+    })
+    let blocked = true
+    const model: DurableModel = {
+      async complete(input) {
+        const lastUser = [...input.messages].reverse().find((message) => message.role === 'user')
+        const text = lastUser?.role === 'user' ? lastUser.content : ''
+        if (blocked) {
+          blocked = false
+          mark()
+          await gate
+          if (input.signal.aborted) throw new Error('aborted')
+        }
+        return { content: 'answer:' + text, stopReason: 'stop' }
+      },
+    }
+    const rt = await openDurable(storage, { model, modelId: 'm' })
+    const conversation = await rt.root()
+    const first = await conversation.submit({ content: 'first' })
+    await entered
+    const second = await conversation.submit({ content: 'second', whenBusy: 'followUp' })
+    const third = await conversation.submit({ content: 'third', whenBusy: 'followUp' })
+    const order: number[] = []
+    const secondDone = second.wait().then((result) => {
+      order.push(second.id)
+      return result
+    })
+    const thirdDone = third.wait().then((result) => {
+      order.push(third.id)
+      return result
+    })
+    release()
+    const firstResult = await first.wait()
+    expect(firstResult).toEqual({ status: 'done', text: 'answer:first' })
+    expect(firstResult.text).not.toBe('answer:second')
+    const secondResult = await secondDone
+    const thirdResult = await thirdDone
+    expect(order).toEqual([second.id, third.id])
+    expect(secondResult).toEqual({ status: 'done', text: 'answer:second' })
+    expect(thirdResult).toEqual({ status: 'done', text: 'answer:third' })
+    expect(secondResult.text).not.toBe(thirdResult.text)
+    expect(storage.readDocument(`inbox:${conversation.id}`)).toEqual({ items: [] })
+  })
+
+  test('a model error leaves the queued followUp in inbox:1', async () => {
+    const storage = openMemoryStorage()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let mark!: () => void
+    const entered = new Promise<void>((resolve) => {
+      mark = resolve
+    })
+    const model: DurableModel = {
+      async complete(input) {
+        mark()
+        await gate
+        if (input.signal.aborted) throw new Error('aborted')
+        return { content: 'boom', stopReason: 'error' }
+      },
+    }
+    const rt = await openDurable(storage, { model, modelId: 'm' })
+    const conversation = await rt.root()
+    expect(conversation.id).toBe(1)
+    const first = await conversation.submit({ content: 'q' })
+    await entered
+    const queued = await conversation.submit({ content: 'later', whenBusy: 'followUp' })
+    release()
+    expect(await first.wait()).toEqual({ status: 'unanswered', reason: 'model_error' })
+    expect(storage.readSubmission(queued.id)).toEqual({
+      id: queued.id,
+      conversationId: conversation.id,
+      status: 'queued',
+    })
+    expect(storage.readDocument('inbox:1')).toEqual({
+      items: [{ id: queued.id, mode: 'followUp', content: 'later' }],
+    })
+  })
+
+  test('submit without whenBusy throws DurableBusy while the inbox is non-empty', async () => {
+    const storage = openMemoryStorage()
+    const held = holdModel()
+    const rt = await openDurable(storage, { model: held.model, modelId: 'm' })
+    const conversation = await rt.root()
+    const first = await conversation.submit({ content: 'a' })
+    await held.entered
+    await conversation.submit({ content: 'old', whenBusy: 'followUp' })
+    const inbox = storage.readDocument(`inbox:${conversation.id}`)
+    const count =
+      inbox && typeof inbox === 'object' && !Array.isArray(inbox) && Array.isArray(inbox.items)
+        ? inbox.items.length
+        : 0
+    expect(count).toBeGreaterThan(0)
+    await expect(conversation.submit({ content: 'c' })).rejects.toBeInstanceOf(DurableBusy)
+    expect(storage.readDocument(`inbox:${conversation.id}`)).toEqual(inbox)
+    held.release()
+    expect(await first.wait()).toEqual({ status: 'done', text: 'one' })
+  })
+
   test('the sixth observed cutoff parks a safe tool without executing it', async () => {
     const storage = openMemoryStorage()
     let execs = 0

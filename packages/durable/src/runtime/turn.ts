@@ -8,6 +8,7 @@ import {
   type DurableSubmissionRow,
   type DurableTaskRow,
   type DurableTool,
+  type InboxItem,
   type JsonObject,
   type JsonValue,
 } from '../storage/types.ts'
@@ -187,6 +188,10 @@ async function settleStop(host: PhaseHost, taskId: number, content: string): Pro
     const task = tx.readTask(taskId)
     if (!task) return
     const entryId = tx.mintId()
+    const items = readInbox(tx.readDocument(inboxKey(ROOT_CONVERSATION_ID)))
+    const submissions = doneSubmissions(tx, content)
+    const documents: { key: string; value: JsonValue }[] = []
+    if (!items.some((item) => item.mode === 'followUp')) documents.push({ key: 'live', value: {} })
     tx.stage({
       entries: [
         {
@@ -197,9 +202,10 @@ async function settleStop(host: PhaseHost, taskId: number, content: string): Pro
         },
       ],
       tasks: [evolveTask(task, { status: 'terminal', outcome: 'completed' })],
-      submissions: doneSubmissions(tx, content),
-      documents: [{ key: 'live', value: {} }],
+      submissions,
+      ...(documents.length > 0 ? { documents } : {}),
     })
+    placeFirstFollowUp(tx, items)
   })
 }
 
@@ -552,6 +558,85 @@ function parseLive(value: JsonValue | undefined): LiveDoc {
     doc.tools = tools
   }
   return doc
+}
+
+export function inboxKey(conversationId: number): string {
+  return `inbox:${conversationId}`
+}
+
+export function inboxDocument(items: readonly InboxItem[]): JsonObject {
+  const list: JsonValue[] = items.map((item) => {
+    const stored: JsonObject = { id: item.id, mode: item.mode, content: item.content }
+    if (item.requestId !== undefined) stored.requestId = item.requestId
+    return stored
+  })
+  return { items: list }
+}
+
+export function readInbox(value: JsonValue | undefined): InboxItem[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return []
+  const raw = value.items
+  if (!Array.isArray(raw)) return []
+  const items: InboxItem[] = []
+  for (const entry of raw) {
+    const item = inboxItem(entry)
+    if (item) items.push(item)
+  }
+  return items
+}
+
+function inboxItem(value: JsonValue): InboxItem | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  if (typeof value.id !== 'number' || typeof value.content !== 'string') return undefined
+  if (value.mode !== 'followUp' && value.mode !== 'steer') return undefined
+  const item: InboxItem = { id: value.id, mode: value.mode, content: value.content }
+  if (typeof value.requestId === 'string') item.requestId = value.requestId
+  return item
+}
+
+export function placeFirstFollowUp(tx: CommitTx, items: readonly InboxItem[]): DurableSubmissionRow | undefined {
+  const index = items.findIndex((item) => item.mode === 'followUp')
+  if (index < 0) return undefined
+  const item = items[index]
+  if (!item) return undefined
+  const rest = items.filter((_, at) => at !== index)
+  const entryId = tx.mintId()
+  const taskId = tx.mintId()
+  const row = tx.readSubmission(item.id)
+  const submission: DurableSubmissionRow = {
+    id: item.id,
+    conversationId: row?.conversationId ?? ROOT_CONVERSATION_ID,
+    status: 'queued',
+    entryId,
+  }
+  const requestId = row?.requestId ?? item.requestId
+  if (requestId !== undefined) submission.requestId = requestId
+  const task: DurableTaskRow = {
+    id: taskId,
+    name: 'generation',
+    conversationId: ROOT_CONVERSATION_ID,
+    status: 'pending',
+    checkpoint: { phase: 'prepare' },
+    restarts: 0,
+    parked: false,
+  }
+  tx.stage({
+    entries: [
+      {
+        id: entryId,
+        conversationId: ROOT_CONVERSATION_ID,
+        kind: 'user',
+        message: { role: 'user', content: item.content },
+      },
+    ],
+    submissions: [submission],
+    tasks: [task],
+    documents: [
+      { key: 'live', value: { run: { submissionId: item.id, generationTaskId: taskId } } },
+      { key: inboxKey(ROOT_CONVERSATION_ID), value: inboxDocument(rest) },
+    ],
+  })
+  return submission
 }
 
 function isJsonObject(value: unknown): value is JsonObject {
