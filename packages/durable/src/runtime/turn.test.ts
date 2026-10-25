@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { DurableBusy } from '../errors.ts'
+import { DurableBusy, DurableFault } from '../errors.ts'
 import { openMemoryStorage } from '../storage/memory.ts'
 import type {
   DurableMessage,
@@ -52,6 +52,10 @@ function toolUntilSteer(steerText: string): DurableModel {
       return { content: 'after-steer', stopReason: 'stop' }
     },
   }
+}
+
+function entryContents(storage: DurableStorage, conversationId: number): string[] {
+  return storage.readEntries(conversationId).map((entry) => entry.message.content)
 }
 
 function toolMessage(storage: DurableStorage, content: string): DurableMessage | undefined {
@@ -1378,5 +1382,301 @@ describe('durable turns', () => {
     expect(seen[1]?.some((message) => message.role === 'assistant' && message.content === 'HALF')).toBe(false)
     expect(await second.submission(submission.id).wait()).toEqual({ status: 'done', text: 'done' })
     expect(second.partial(1)).toBeUndefined()
+  })
+
+  test('fork copies entries through one id and leaves later parent entries in place', async () => {
+    const storage = openMemoryStorage()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let mark!: () => void
+    const entered = new Promise<void>((resolve) => {
+      mark = resolve
+    })
+    let calls = 0
+    const rt = await openDurable(storage, {
+      model: {
+        async complete() {
+          calls += 1
+          if (calls === 1) return { content: 'b', stopReason: 'stop' }
+          mark()
+          await gate
+          return { content: 'later', stopReason: 'stop' }
+        },
+      },
+      modelId: 'm',
+    })
+    const parent = await rt.root()
+    expect(await (await parent.submit({ content: 'a' })).wait()).toEqual({ status: 'done', text: 'b' })
+    const pending = await parent.submit({ content: 'c' })
+    await entered
+    const entryB = storage.readEntries(1).find((entry) => entry.message.content === 'b')
+    if (!entryB) throw new Error('missing b')
+    const child = await parent.fork(entryB.id)
+    expect(entryContents(storage, child.id)).toEqual(['a', 'b'])
+    expect(entryContents(storage, 1)).toEqual(['a', 'b', 'c'])
+    expect(child.id).not.toBe(1)
+    expect(storage.readConversation(child.id)).toEqual({
+      id: child.id,
+      parentConversationId: 1,
+      atEntryId: entryB.id,
+    })
+    expect(storage.readDocument(`live:${child.id}`)).toBeUndefined()
+    expect(storage.readDocument(`inbox:${child.id}`)).toBeUndefined()
+    expect(storage.readTasks().every((task) => task.conversationId === 1)).toBe(true)
+    release()
+    expect(await pending.wait()).toEqual({ status: 'done', text: 'later' })
+    expect(entryContents(storage, child.id)).toEqual(['a', 'b'])
+  })
+
+  test('fork of a missing entry throws and writes nothing', async () => {
+    const inner = openMemoryStorage()
+    let commits = 0
+    let mints = 0
+    const storage: DurableStorage = {
+      mintId() {
+        mints += 1
+        return inner.mintId()
+      },
+      commit(batch) {
+        commits += 1
+        inner.commit(batch)
+      },
+      readConversation: (id) => inner.readConversation(id),
+      readEntries: (id) => inner.readEntries(id),
+      readTask: (id) => inner.readTask(id),
+      readTasks: () => inner.readTasks(),
+      readSubmission: (id) => inner.readSubmission(id),
+      readSubmissionByRequest: (conversationId, requestId) =>
+        inner.readSubmissionByRequest(conversationId, requestId),
+      readDocument: (key) => inner.readDocument(key),
+      close: () => inner.close(),
+    }
+    const rt = await openDurable(storage, {
+      model: {
+        async complete() {
+          return { content: 'b', stopReason: 'stop' }
+        },
+      },
+      modelId: 'm',
+    })
+    const parent = await rt.root()
+    await (await parent.submit({ content: 'a' })).wait()
+    const commitsBefore = commits
+    const mintsBefore = mints
+    const entriesBefore = storage.readEntries(1)
+    const rowBefore = storage.readConversation(1)
+    let thrown: unknown
+    try {
+      await parent.fork(404)
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBeInstanceOf(DurableFault)
+    if (!(thrown instanceof DurableFault)) throw new Error('expected DurableFault')
+    expect(thrown.message).toBe('entry is not on this conversation')
+    expect(commits).toBe(commitsBefore)
+    expect(mints).toBe(mintsBefore)
+    expect(storage.readEntries(1)).toEqual(entriesBefore)
+    expect(storage.readConversation(1)).toEqual(rowBefore)
+    expect(storage.readConversation(2)).toBeUndefined()
+  })
+
+  test('conversation(404) throws unknown conversation 404', async () => {
+    const storage = openMemoryStorage()
+    const rt = await openDurable(storage, {
+      model: {
+        async complete() {
+          return { content: 'ok', stopReason: 'stop' }
+        },
+      },
+      modelId: 'm',
+    })
+    await rt.root()
+    let thrown: unknown
+    try {
+      await rt.conversation(404)
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBeInstanceOf(DurableFault)
+    if (!(thrown instanceof DurableFault)) throw new Error('expected DurableFault')
+    expect(thrown.message).toBe('unknown conversation 404')
+  })
+
+  test('a child submit during a parent run finishes with its own user text', async () => {
+    const storage = openMemoryStorage()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let mark!: () => void
+    const entered = new Promise<void>((resolve) => {
+      mark = resolve
+    })
+    const rt = await openDurable(storage, {
+      model: {
+        async complete(input) {
+          const text = lastUserContent(input.messages) ?? ''
+          if (text === 'parent') {
+            mark()
+            await gate
+          }
+          return { content: `answer:${text}`, stopReason: 'stop' }
+        },
+      },
+      modelId: 'm',
+    })
+    const parent = await rt.root()
+    const parentSubmission = await parent.submit({ content: 'parent' })
+    await entered
+    const user = storage.readEntries(1).find((entry) => entry.message.content === 'parent')
+    if (!user) throw new Error('missing parent entry')
+    const child = await parent.fork(user.id)
+    const childSubmission = await child.submit({ content: 'child' })
+    release()
+    expect(await parentSubmission.wait()).toEqual({ status: 'done', text: 'answer:parent' })
+    expect(await childSubmission.wait()).toEqual({ status: 'done', text: 'answer:child' })
+  })
+
+  test('a fork copies the parent agent modelId', async () => {
+    const storage = openMemoryStorage()
+    const rt = await openDurable(storage, {
+      model: {
+        async complete() {
+          return { content: 'b', stopReason: 'stop' }
+        },
+      },
+      modelId: 'parent-model',
+    })
+    const parent = await rt.root()
+    await (await parent.submit({ content: 'a' })).wait()
+    const entry = storage.readEntries(1)[0]
+    if (!entry) throw new Error('missing entry')
+    const child = await parent.fork(entry.id)
+    const parentAgent = storage.readDocument('agent') as { modelId?: string }
+    const childAgent = storage.readDocument(`agent:${child.id}`) as { modelId?: string }
+    expect(childAgent.modelId).toBe(parentAgent.modelId)
+    expect(childAgent.modelId).toBe('parent-model')
+  })
+
+  test("forking a child copies only that child's entries", async () => {
+    const storage = openMemoryStorage()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let mark!: () => void
+    const entered = new Promise<void>((resolve) => {
+      mark = resolve
+    })
+    let calls = 0
+    const rt = await openDurable(storage, {
+      model: {
+        async complete() {
+          calls += 1
+          if (calls === 1) return { content: 'b', stopReason: 'stop' }
+          mark()
+          await gate
+          return { content: 'later', stopReason: 'stop' }
+        },
+      },
+      modelId: 'm',
+    })
+    const parent = await rt.root()
+    expect(await (await parent.submit({ content: 'a' })).wait()).toEqual({ status: 'done', text: 'b' })
+    const pending = await parent.submit({ content: 'c' })
+    await entered
+    const entryB = storage.readEntries(1).find((entry) => entry.message.content === 'b')
+    if (!entryB) throw new Error('missing b')
+    const child = await parent.fork(entryB.id)
+    const childEntries = storage.readEntries(child.id)
+    const childTip = childEntries[childEntries.length - 1]
+    if (!childTip) throw new Error('missing child entry')
+    const grandchild = await child.fork(childTip.id)
+    expect(entryContents(storage, child.id)).toEqual(['a', 'b'])
+    expect(entryContents(storage, grandchild.id)).toEqual(['a', 'b'])
+    expect(entryContents(storage, grandchild.id)).not.toContain('c')
+    expect(storage.readConversation(grandchild.id)?.parentConversationId).toBe(child.id)
+    expect(storage.readEntries(grandchild.id).every((entry) => entry.conversationId === grandchild.id)).toBe(true)
+    release()
+    expect(await pending.wait()).toEqual({ status: 'done', text: 'later' })
+    expect(entryContents(storage, grandchild.id)).toEqual(['a', 'b'])
+  })
+
+  test('fork keeps boundaryId on the copied entry', async () => {
+    const storage = openMemoryStorage()
+    const rt = await openDurable(storage, {
+      model: {
+        async complete() {
+          return { content: 'b', stopReason: 'stop' }
+        },
+      },
+      modelId: 'm',
+    })
+    const parent = await rt.root()
+    await (await parent.submit({ content: 'a' })).wait()
+    const id = storage.mintId()
+    storage.commit({
+      entries: [
+        {
+          id,
+          conversationId: 1,
+          kind: 'user',
+          message: { role: 'user', content: 'marked' },
+          boundaryId: 7,
+        },
+      ],
+    })
+    const child = await parent.fork(id)
+    const copied = storage.readEntries(child.id).find((entry) => entry.message.content === 'marked')
+    expect(copied).toMatchObject({
+      conversationId: child.id,
+      kind: 'user',
+      boundaryId: 7,
+      message: { role: 'user', content: 'marked' },
+    })
+    expect(copied?.id).not.toBe(id)
+    expect(storage.readEntries(1).find((entry) => entry.id === id)?.boundaryId).toBe(7)
+  })
+
+  test('a child stream partial uses live:<id> and leaves the root live document', async () => {
+    const storage = openMemoryStorage()
+    let rt!: DurableRuntime
+    let childId = 0
+    rt = await openDurable(storage, {
+      model: {
+        async complete() {
+          throw new Error('complete should not run')
+        },
+        async stream(input) {
+          const text = lastUserContent(input.messages) ?? ''
+          await input.onPartial(`partial:${text}`)
+          if (text === 'child') {
+            expect(rt.partial(1)).toBeUndefined()
+            expect(rt.partial(childId)).toBe('partial:child')
+            expect(storage.readDocument('live')).toEqual({})
+            expect(storage.readDocument(`live:${childId}`)).toMatchObject({
+              partial: { content: 'partial:child' },
+            })
+          }
+          return { content: `answer:${text}`, stopReason: 'stop' }
+        },
+      },
+      modelId: 'm',
+    })
+    const parent = await rt.root()
+    expect(await (await parent.submit({ content: 'a' })).wait()).toEqual({ status: 'done', text: 'answer:a' })
+    const entry = storage.readEntries(1)[0]
+    if (!entry) throw new Error('missing entry')
+    const child = await parent.fork(entry.id)
+    childId = child.id
+    expect(await (await child.submit({ content: 'child' })).wait()).toEqual({
+      status: 'done',
+      text: 'answer:child',
+    })
+    expect(rt.partial(1)).toBeUndefined()
+    expect(rt.partial(childId)).toBeUndefined()
   })
 })
