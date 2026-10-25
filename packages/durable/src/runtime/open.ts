@@ -21,6 +21,7 @@ export type DurableRuntime = {
   close(): Promise<void>
   abandon(): void
   retryTask(taskId: number): Promise<void>
+  wake(): { active: boolean; at?: number }
   readonly closed: boolean
 }
 
@@ -364,11 +365,44 @@ export async function openDurable(
         if (!(error instanceof DurableClosed)) throw error
       })
     },
+    wake() {
+      return reportWake(storage.readTasks(), now())
+    },
     get closed() {
       return abandoned || closing || closedFlag
     },
   }
   return runtime
+}
+
+function reportWake(
+  tasks: readonly DurableTaskRow[],
+  clock: number,
+): { active: boolean; at?: number } {
+  let active = false
+  let at: number | undefined
+  for (const task of tasks) {
+    if (task.status === 'sleeping') {
+      const until = task.checkpoint?.until
+      if (typeof until !== 'number' || !Number.isFinite(until)) continue
+      if (until <= clock) active = true
+      else if (at === undefined || until < at) at = until
+      continue
+    }
+    if (task.parked) continue
+    if (task.status === 'pending' || task.status === 'running') {
+      active = true
+      continue
+    }
+    if (task.status === 'waiting' && terminalChildren(task, tasks)) active = true
+  }
+  if (at === undefined) return { active }
+  return { active, at }
+}
+
+function terminalChildren(task: DurableTaskRow, tasks: readonly DurableTaskRow[]): boolean {
+  const kids = tasks.filter((child) => child.parentTaskId === task.id)
+  return kids.length > 0 && kids.every((child) => child.status === 'terminal')
 }
 
 function select(tasks: readonly DurableTaskRow[]): DurableTaskRow[] {

@@ -1,7 +1,14 @@
 import { describe, expect, test } from 'bun:test'
 import { DurableBusy } from '../errors.ts'
 import { openMemoryStorage } from '../storage/memory.ts'
-import type { DurableMessage, DurableModel, DurableStorage, DurableTool, JsonObject } from '../storage/types.ts'
+import type {
+  DurableMessage,
+  DurableModel,
+  DurableStorage,
+  DurableTaskRow,
+  DurableTool,
+  JsonObject,
+} from '../storage/types.ts'
 import { openDurable, type DurableRuntime } from './open.ts'
 
 function toolUseThenStop(): DurableModel {
@@ -514,5 +521,178 @@ describe('durable turns', () => {
     expect(execs).toBe(1)
     expect(calls).toBe(2)
     expect(storage.readTasks().some((task) => task.status === 'sleeping')).toBe(false)
+  })
+
+  test('abandon after a committed sleep keeps the task sleeping across open', async () => {
+    const storage = openMemoryStorage()
+    let now = 0
+    let execs = 0
+    let calls = 0
+    const until = 50
+    const options = {
+      now: () => now,
+      model: {
+        async complete(input: { messages: readonly DurableMessage[] }) {
+          calls += 1
+          if (input.messages.some((message) => message.role === 'tool')) {
+            return { content: 'done', stopReason: 'stop' as const }
+          }
+          return {
+            content: '',
+            stopReason: 'toolUse' as const,
+            toolCalls: [{ id: 'c1', name: 'echo', arguments: {} }],
+          }
+        },
+      },
+      tools: [
+        {
+          name: 'echo',
+          async execute() {
+            execs += 1
+            return { content: 'ok', sleepUntil: until }
+          },
+        },
+      ],
+      modelId: 'm',
+    }
+    const rt = await openDurable(storage, options)
+    const submission = await (await rt.root()).submit({ content: 'go' })
+    await rt.resume()
+    const generation = storage.readTasks().find((task) => task.name === 'generation')
+    expect(generation?.status).toBe('sleeping')
+    expect(generation?.restarts).toBe(0)
+    expect(calls).toBe(1)
+    expect(execs).toBe(1)
+    rt.abandon()
+
+    const second = await openDurable(storage, options)
+    const reopened = storage.readTask(generation!.id)
+    expect(reopened?.status).toBe('sleeping')
+    expect(reopened?.checkpoint).toEqual({ phase: 'sleep', until, resume: 'tools' })
+    expect(reopened?.restarts).toBe(0)
+    expect(storage.readTasks().filter((task) => task.name === 'generation')).toHaveLength(1)
+    expect(execs).toBe(1)
+    expect(calls).toBe(1)
+
+    now = until
+    await second.resume()
+    expect(calls).toBe(2)
+    expect(execs).toBe(1)
+    expect(await second.submission(submission.id).wait()).toEqual({ status: 'done', text: 'done' })
+  })
+
+  test('wake reports the next sleep deadline and active work', async () => {
+    const storage = openMemoryStorage()
+    let now = 0
+    const until = 50
+    const rt = await openDurable(storage, {
+      now: () => now,
+      model: {
+        async complete(input) {
+          if (input.messages.some((message) => message.role === 'tool')) {
+            return { content: 'done', stopReason: 'stop' }
+          }
+          return {
+            content: '',
+            stopReason: 'toolUse',
+            toolCalls: [{ id: 'c1', name: 'echo', arguments: {} }],
+          }
+        },
+      },
+      tools: [
+        {
+          name: 'echo',
+          async execute() {
+            return { content: 'ok', sleepUntil: until }
+          },
+        },
+      ],
+      modelId: 'm',
+    })
+    await (await rt.root()).submit({ content: 'go' })
+    await rt.resume()
+    expect(rt.wake()).toEqual({ active: false, at: until })
+    const parked = JSON.stringify(storage.readTasks())
+    now = until
+    const due = rt.wake()
+    expect(due.active).toBe(true)
+    expect(Object.hasOwn(due, 'at')).toBe(false)
+    expect(JSON.stringify(storage.readTasks())).toBe(parked)
+    expect(storage.readTasks().find((task) => task.name === 'generation')?.status).toBe('sleeping')
+
+    const idle = openMemoryStorage()
+    let clock = 100
+    const view = await openDurable(idle, { now: () => clock, model: toolUseThenStop(), modelId: 'm' })
+    const row = (
+      id: number,
+      status: DurableTaskRow['status'],
+      extra: Partial<DurableTaskRow> = {},
+    ): DurableTaskRow => ({
+      id,
+      name: extra.name ?? 'generation',
+      conversationId: 1,
+      status,
+      restarts: extra.restarts ?? 0,
+      parked: extra.parked ?? false,
+      ...(extra.parentTaskId !== undefined ? { parentTaskId: extra.parentTaskId } : {}),
+      ...(extra.checkpoint !== undefined ? { checkpoint: extra.checkpoint } : {}),
+      ...(extra.outcome !== undefined ? { outcome: extra.outcome } : {}),
+    })
+    const asleep = (id: number, at: number) =>
+      row(id, 'sleeping', { checkpoint: { phase: 'sleep', until: at, resume: 'tools' } })
+    idle.commit({ tasks: [asleep(idle.mintId(), 150), asleep(idle.mintId(), 180)] })
+    expect(view.wake()).toEqual({ active: false, at: 150 })
+    idle.commit({ tasks: [asleep(idle.mintId(), 120)] })
+    expect(view.wake()).toEqual({ active: false, at: 120 })
+
+    const parkedPending = idle.mintId()
+    idle.commit({
+      tasks: [row(parkedPending, 'pending', { name: 'tool', restarts: 5, parked: true })],
+    })
+    expect(view.wake()).toEqual({ active: false, at: 120 })
+
+    const pending = idle.mintId()
+    idle.commit({ tasks: [row(pending, 'pending', { name: 'tool' })] })
+    expect(view.wake()).toEqual({ active: true, at: 120 })
+    idle.commit({
+      tasks: [row(pending, 'terminal', { name: 'tool', outcome: 'completed' })],
+    })
+    expect(view.wake()).toEqual({ active: false, at: 120 })
+
+    const running = idle.mintId()
+    idle.commit({ tasks: [row(running, 'running', { name: 'tool' })] })
+    expect(view.wake()).toEqual({ active: true, at: 120 })
+    idle.commit({ tasks: [row(running, 'running', { name: 'tool', restarts: 1, parked: true })] })
+    expect(view.wake()).toEqual({ active: false, at: 120 })
+
+    const parent = idle.mintId()
+    const child = idle.mintId()
+    idle.commit({
+      tasks: [
+        row(parent, 'waiting', { checkpoint: { phase: 'tools' } }),
+        row(child, 'sleeping', {
+          name: 'tool',
+          parentTaskId: parent,
+          checkpoint: { phase: 'sleep', until: 130, resume: 'tools' },
+        }),
+      ],
+    })
+    expect(view.wake()).toEqual({ active: false, at: 120 })
+    idle.commit({
+      tasks: [row(child, 'terminal', { name: 'tool', parentTaskId: parent, outcome: 'completed' })],
+    })
+    expect(view.wake()).toEqual({ active: true, at: 120 })
+    idle.commit({
+      tasks: [row(parent, 'waiting', { checkpoint: { phase: 'tools' }, parked: true })],
+    })
+    expect(view.wake()).toEqual({ active: false, at: 120 })
+
+    const beforeDue = idle.readTasks()
+    clock = 120
+    expect(view.wake()).toEqual({ active: true, at: 150 })
+    expect(idle.readTasks()).toEqual(beforeDue)
+    clock = 1000
+    expect(view.wake()).toEqual({ active: true })
+    expect(idle.readTasks()).toEqual(beforeDue)
   })
 })
