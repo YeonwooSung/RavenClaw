@@ -33,6 +33,31 @@ function toolMessage(storage: DurableStorage, content: string): DurableMessage |
     .find((message) => message.role === 'tool' && message.content === content)
 }
 
+function holdModel(): { model: DurableModel; entered: Promise<void>; release(): void } {
+  let open!: () => void
+  const gate = new Promise<void>((resolve) => {
+    open = resolve
+  })
+  let mark!: () => void
+  const entered = new Promise<void>((resolve) => {
+    mark = resolve
+  })
+  return {
+    model: {
+      async complete(input) {
+        mark()
+        await gate
+        if (input.signal.aborted) throw new Error('aborted')
+        return { content: 'one', stopReason: 'stop' }
+      },
+    },
+    entered,
+    release() {
+      open()
+    },
+  }
+}
+
 describe('durable turns', () => {
   test('an unsafe tool is not executed again and the result is interrupted', async () => {
     const storage = openMemoryStorage()
@@ -268,6 +293,111 @@ describe('durable turns', () => {
     await expect(conversation.submit({ content: 'c' })).rejects.toBeInstanceOf(DurableBusy)
     expect(storage.readEntries(1).filter((entry) => entry.kind === 'user')).toHaveLength(1)
     rt.abandon()
+  })
+
+  test('an omitted or reject whenBusy while a run is active throws DurableBusy and writes nothing', async () => {
+    const storage = openMemoryStorage()
+    const held = holdModel()
+    const rt = await openDurable(storage, { model: held.model, modelId: 'm' })
+    const conversation = await rt.root()
+    const first = await conversation.submit({ content: 'a' })
+    await held.entered
+    const entries = storage.readEntries(conversation.id)
+    const tasks = storage.readTasks()
+    const live = storage.readDocument('live')
+    await expect(conversation.submit({ content: 'c' })).rejects.toBeInstanceOf(DurableBusy)
+    await expect(conversation.submit({ content: 'd', whenBusy: 'reject' })).rejects.toBeInstanceOf(DurableBusy)
+    expect(storage.readEntries(conversation.id)).toEqual(entries)
+    expect(storage.readTasks()).toEqual(tasks)
+    expect(storage.readDocument('live')).toEqual(live)
+    expect(storage.readDocument(`inbox:${conversation.id}`)).toBeUndefined()
+    held.release()
+    expect(await first.wait()).toEqual({ status: 'done', text: 'one' })
+  })
+
+  test('a followUp while a run is active queues one inbox item and does not start it', async () => {
+    const storage = openMemoryStorage()
+    const held = holdModel()
+    const rt = await openDurable(storage, { model: held.model, modelId: 'm' })
+    const conversation = await rt.root()
+    const first = await conversation.submit({ content: 'first' })
+    await held.entered
+    const live = storage.readDocument('live')
+    const second = await conversation.submit({ content: 'second', whenBusy: 'followUp' })
+    expect(second.id).not.toBe(first.id)
+    expect(storage.readSubmission(second.id)).toEqual({
+      id: second.id,
+      conversationId: conversation.id,
+      status: 'queued',
+    })
+    expect(storage.readDocument(`inbox:${conversation.id}`)).toEqual({
+      items: [{ id: second.id, mode: 'followUp', content: 'second' }],
+    })
+    const steered = await conversation.submit({ content: 'nudge', whenBusy: 'steer' })
+    expect(storage.readSubmission(steered.id)).toEqual({
+      id: steered.id,
+      conversationId: conversation.id,
+      status: 'queued',
+    })
+    expect(storage.readDocument(`inbox:${conversation.id}`)).toEqual({
+      items: [
+        { id: second.id, mode: 'followUp', content: 'second' },
+        { id: steered.id, mode: 'steer', content: 'nudge' },
+      ],
+    })
+    expect(storage.readDocument('live')).toEqual(live)
+    expect(storage.readEntries(conversation.id).filter((entry) => entry.kind === 'user')).toHaveLength(1)
+    expect(storage.readTasks().filter((task) => task.name === 'generation')).toHaveLength(1)
+    held.release()
+    expect(await first.wait()).toEqual({ status: 'done', text: 'one' })
+  })
+
+  test('the same followUp requestId returns the queued submission and one inbox item', async () => {
+    const storage = openMemoryStorage()
+    const held = holdModel()
+    const rt = await openDurable(storage, { model: held.model, modelId: 'm' })
+    const conversation = await rt.root()
+    const first = await conversation.submit({ content: 'first', requestId: 'live' })
+    await held.entered
+    const sameLive = await conversation.submit({ content: 'nope', requestId: 'live', whenBusy: 'followUp' })
+    expect(sameLive.id).toBe(first.id)
+    expect(storage.readDocument(`inbox:${conversation.id}`)).toBeUndefined()
+    const queued = await conversation.submit({ content: 'later', requestId: 'r', whenBusy: 'followUp' })
+    const again = await conversation.submit({ content: 'other', requestId: 'r', whenBusy: 'followUp' })
+    expect(again.id).toBe(queued.id)
+    expect(storage.readSubmission(queued.id)).toEqual({
+      id: queued.id,
+      conversationId: conversation.id,
+      requestId: 'r',
+      status: 'queued',
+    })
+    expect(storage.readDocument(`inbox:${conversation.id}`)).toEqual({
+      items: [{ id: queued.id, mode: 'followUp', content: 'later', requestId: 'r' }],
+    })
+    expect(storage.readEntries(conversation.id).filter((entry) => entry.kind === 'user')).toHaveLength(1)
+    expect(storage.readTasks().filter((task) => task.name === 'generation')).toHaveLength(1)
+    held.release()
+    expect(await first.wait()).toEqual({ status: 'done', text: 'one' })
+  })
+
+  test('an idle followUp or steer submits immediately and leaves no inbox item', async () => {
+    const storage = openMemoryStorage()
+    const rt = await openDurable(storage, {
+      model: {
+        async complete() {
+          return { content: 'ok', stopReason: 'stop' }
+        },
+      },
+      modelId: 'm',
+    })
+    const conversation = await rt.root()
+    const follow = await conversation.submit({ content: 'a', whenBusy: 'followUp' })
+    expect(await follow.wait()).toEqual({ status: 'done', text: 'ok' })
+    expect(storage.readDocument(`inbox:${conversation.id}`)).toBeUndefined()
+    const steer = await conversation.submit({ content: 'b', whenBusy: 'steer' })
+    expect(await steer.wait()).toEqual({ status: 'done', text: 'ok' })
+    expect(storage.readDocument(`inbox:${conversation.id}`)).toBeUndefined()
+    expect(storage.readEntries(conversation.id).filter((entry) => entry.kind === 'user')).toHaveLength(2)
   })
 
   test('the sixth observed cutoff parks a safe tool without executing it', async () => {

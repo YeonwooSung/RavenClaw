@@ -7,10 +7,11 @@ import {
   type DurableSubmissionRow,
   type DurableTaskRow,
   type DurableTool,
+  type InboxItem,
   type JsonObject,
   type JsonValue,
 } from '../storage/types.ts'
-import { createCommitLine, type CommitLine } from './commit.ts'
+import { createCommitLine, type CommitLine, type CommitTx } from './commit.ts'
 import { DEFAULT_RESTART_LIMIT, evolveTask, holdPending, reconcileTask } from './scheduler.ts'
 import { createPhases } from './turn.ts'
 
@@ -25,9 +26,15 @@ export type DurableRuntime = {
   readonly closed: boolean
 }
 
+type SubmitInput = {
+  content: string
+  requestId?: string
+  whenBusy?: 'reject' | 'followUp' | 'steer'
+}
+
 export type DurableConversation = {
   readonly id: number
-  submit(input: { content: string; requestId?: string }): Promise<DurableSubmission>
+  submit(input: SubmitInput): Promise<DurableSubmission>
 }
 
 export type DurableSubmission = {
@@ -258,49 +265,9 @@ export async function openDurable(
     return { id: ROOT_CONVERSATION_ID, submit }
   }
 
-  async function submit(input: { content: string; requestId?: string }): Promise<DurableSubmission> {
+  async function submit(input: SubmitInput): Promise<DurableSubmission> {
     if (isDead()) throw new DurableClosed('closed')
-    const row = await line.run((tx) => {
-      if (input.requestId !== undefined) {
-        const existing = tx.readSubmissionByRequest(ROOT_CONVERSATION_ID, input.requestId)
-        if (existing) return existing
-      }
-      const live = tx.readDocument('live')
-      if (liveRun(live)) throw new DurableBusy()
-      const entryId = tx.mintId()
-      const submissionId = tx.mintId()
-      const taskId = tx.mintId()
-      const submission: DurableSubmissionRow = {
-        id: submissionId,
-        conversationId: ROOT_CONVERSATION_ID,
-        status: 'queued',
-        entryId,
-      }
-      if (input.requestId !== undefined) submission.requestId = input.requestId
-      const task: DurableTaskRow = {
-        id: taskId,
-        name: 'generation',
-        conversationId: ROOT_CONVERSATION_ID,
-        status: 'pending',
-        checkpoint: { phase: 'prepare' },
-        restarts: 0,
-        parked: false,
-      }
-      tx.stage({
-        entries: [
-          {
-            id: entryId,
-            conversationId: ROOT_CONVERSATION_ID,
-            kind: 'user',
-            message: { role: 'user', content: input.content },
-          },
-        ],
-        submissions: [submission],
-        tasks: [task],
-        documents: [{ key: 'live', value: { run: { submissionId, generationTaskId: taskId } } }],
-      })
-      return submission
-    })
+    const row = await line.run((tx) => admit(tx, input))
     if (!isDead()) {
       const pending = kick()
       pending.catch((error: unknown) => {
@@ -421,6 +388,110 @@ function select(tasks: readonly DurableTaskRow[]): DurableTaskRow[] {
     .filter((task) => task.name === 'generation' && task.status === 'pending' && !task.parked)
     .sort((a, b) => a.id - b.id)[0]
   return generation ? [generation] : []
+}
+
+function admit(tx: CommitTx, input: SubmitInput): DurableSubmissionRow {
+  if (input.requestId !== undefined) {
+    const existing = tx.readSubmissionByRequest(ROOT_CONVERSATION_ID, input.requestId)
+    if (existing) return existing
+  }
+  const items = readInbox(tx.readDocument(inboxKey(ROOT_CONVERSATION_ID)))
+  if (!liveRun(tx.readDocument('live')) && items.length === 0) return placeNow(tx, input)
+  const mode = input.whenBusy ?? 'reject'
+  if (mode !== 'followUp' && mode !== 'steer') throw new DurableBusy()
+  return enqueue(tx, input, items, mode)
+}
+
+function placeNow(tx: CommitTx, input: SubmitInput): DurableSubmissionRow {
+  const entryId = tx.mintId()
+  const submissionId = tx.mintId()
+  const taskId = tx.mintId()
+  const submission: DurableSubmissionRow = {
+    id: submissionId,
+    conversationId: ROOT_CONVERSATION_ID,
+    status: 'queued',
+    entryId,
+  }
+  if (input.requestId !== undefined) submission.requestId = input.requestId
+  const task: DurableTaskRow = {
+    id: taskId,
+    name: 'generation',
+    conversationId: ROOT_CONVERSATION_ID,
+    status: 'pending',
+    checkpoint: { phase: 'prepare' },
+    restarts: 0,
+    parked: false,
+  }
+  tx.stage({
+    entries: [
+      {
+        id: entryId,
+        conversationId: ROOT_CONVERSATION_ID,
+        kind: 'user',
+        message: { role: 'user', content: input.content },
+      },
+    ],
+    submissions: [submission],
+    tasks: [task],
+    documents: [{ key: 'live', value: { run: { submissionId, generationTaskId: taskId } } }],
+  })
+  return submission
+}
+
+function enqueue(
+  tx: CommitTx,
+  input: SubmitInput,
+  items: readonly InboxItem[],
+  mode: 'followUp' | 'steer',
+): DurableSubmissionRow {
+  const submissionId = tx.mintId()
+  const submission: DurableSubmissionRow = {
+    id: submissionId,
+    conversationId: ROOT_CONVERSATION_ID,
+    status: 'queued',
+  }
+  if (input.requestId !== undefined) submission.requestId = input.requestId
+  const item: InboxItem = { id: submissionId, mode, content: input.content }
+  if (input.requestId !== undefined) item.requestId = input.requestId
+  tx.stage({
+    submissions: [submission],
+    documents: [{ key: inboxKey(ROOT_CONVERSATION_ID), value: inboxDocument([...items, item]) }],
+  })
+  return submission
+}
+
+function inboxKey(conversationId: number): string {
+  return `inbox:${conversationId}`
+}
+
+function inboxDocument(items: readonly InboxItem[]): JsonObject {
+  const list: JsonValue[] = items.map((item) => {
+    const stored: JsonObject = { id: item.id, mode: item.mode, content: item.content }
+    if (item.requestId !== undefined) stored.requestId = item.requestId
+    return stored
+  })
+  return { items: list }
+}
+
+function readInbox(value: JsonValue | undefined): InboxItem[] {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return []
+  const raw = value.items
+  if (!Array.isArray(raw)) return []
+  const items: InboxItem[] = []
+  for (const entry of raw) {
+    const item = inboxItem(entry)
+    if (item) items.push(item)
+  }
+  return items
+}
+
+function inboxItem(value: JsonValue): InboxItem | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  if (typeof value.id !== 'number' || typeof value.content !== 'string') return undefined
+  if (value.mode !== 'followUp' && value.mode !== 'steer') return undefined
+  const item: InboxItem = { id: value.id, mode: value.mode, content: value.content }
+  if (typeof value.requestId === 'string') item.requestId = value.requestId
+  return item
 }
 
 function liveRun(value: JsonValue | undefined): { submissionId: number; generationTaskId: number } | undefined {

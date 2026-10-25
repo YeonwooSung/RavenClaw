@@ -77,6 +77,13 @@ export type DurableSubmissionRow = {
   reason?: string
 }
 
+export type InboxItem = {
+  id: number
+  mode: 'steer' | 'followUp'
+  content: string
+  requestId?: string
+}
+
 export type DurableBatch = {
   conversations?: DurableConversationRow[]
   entries?: DurableEntryRow[]
