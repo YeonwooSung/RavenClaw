@@ -130,8 +130,24 @@ async function request(host: PhaseHost, taskId: number): Promise<void> {
   if (host.stopped()) return
   const messages = await host.line.run((tx) => projectMessages(tx.readEntries(ROOT_CONVERSATION_ID), pinned.cutoff))
   let result: Awaited<ReturnType<DurableModel['complete']>>
+  const pending: Promise<void>[] = []
   try {
-    result = await host.model.complete({ messages, modelId: pinned.modelId, signal: host.signal })
+    const stream = host.model.stream
+    if (typeof stream === 'function') {
+      result = await stream({
+        messages,
+        modelId: pinned.modelId,
+        signal: host.signal,
+        onPartial(text) {
+          const write = writePartial(host, taskId, text)
+          pending.push(write)
+          return write
+        },
+      })
+      await Promise.all(pending)
+    } else {
+      result = await host.model.complete({ messages, modelId: pinned.modelId, signal: host.signal })
+    }
   } catch (error) {
     if (host.stopped()) return
     const message = error instanceof Error ? error.message : String(error)
@@ -148,6 +164,16 @@ async function request(host: PhaseHost, taskId: number): Promise<void> {
     return
   }
   await settleStop(host, taskId, result.content)
+}
+
+async function writePartial(host: PhaseHost, taskId: number, text: string): Promise<void> {
+  if (host.stopped()) return
+  await host.line.run((tx) => {
+    const live = tx.readDocument('live')
+    const base: JsonObject = live && typeof live === 'object' && !Array.isArray(live) ? { ...live } : {}
+    base.partial = { taskId, content: text }
+    tx.stage({ documents: [{ key: 'live', value: base }] })
+  })
 }
 
 async function repairMissing(host: PhaseHost, cutoff: number): Promise<void> {

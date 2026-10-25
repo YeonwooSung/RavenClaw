@@ -15,6 +15,16 @@ export type DurableModel = {
     toolCalls?: DurableToolCall[]
     stopReason: 'stop' | 'toolUse' | 'error'
   }>
+  stream?(input: {
+    messages: readonly DurableMessage[]
+    modelId: string
+    signal: AbortSignal
+    onPartial: (text: string) => void | Promise<void>
+  }): Promise<{
+    content: string
+    toolCalls?: DurableToolCall[]
+    stopReason: 'stop' | 'toolUse' | 'error'
+  }>
 }
 
 export type DurableTool = {

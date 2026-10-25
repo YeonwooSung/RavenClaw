@@ -1214,4 +1214,129 @@ describe('durable turns', () => {
       items: [{ id: queued.id, mode: 'steer', content: 'later' }],
     })
   })
+
+  test('a stream partial is visible after onPartial and cleared when the turn settles', async () => {
+    const storage = openMemoryStorage()
+    let rt!: DurableRuntime
+    const model: DurableModel = {
+      async complete() {
+        throw new Error('complete should not run')
+      },
+      async stream(input) {
+        await input.onPartial('Hel')
+        expect(rt.partial(1)).toBe('Hel')
+        await input.onPartial('Hello')
+        expect(rt.partial(1)).toBe('Hello')
+        const live = storage.readDocument('live')
+        expect(live && typeof live === 'object' && !Array.isArray(live) ? live.run : undefined).toEqual(
+          expect.objectContaining({
+            submissionId: expect.any(Number),
+            generationTaskId: expect.any(Number),
+          }),
+        )
+        return { content: 'Hello', stopReason: 'stop' }
+      },
+    }
+    rt = await openDurable(storage, { model, modelId: 'm' })
+    const submission = await (await rt.root()).submit({ content: 'hi' })
+    expect(await submission.wait()).toEqual({ status: 'done', text: 'Hello' })
+    expect(rt.partial(1)).toBeUndefined()
+  })
+
+  test('a complete-only model leaves partial undefined', async () => {
+    const storage = openMemoryStorage()
+    const rt = await openDurable(storage, {
+      model: {
+        async complete() {
+          return { content: 'ok', stopReason: 'stop' }
+        },
+      },
+      modelId: 'm',
+    })
+    expect(await (await (await rt.root()).submit({ content: 'hi' })).wait()).toEqual({
+      status: 'done',
+      text: 'ok',
+    })
+    expect(rt.partial(1)).toBeUndefined()
+  })
+
+  test('partial throws for an unknown conversation', async () => {
+    const storage = openMemoryStorage()
+    const rt = await openDurable(storage, {
+      model: {
+        async complete() {
+          return { content: 'ok', stopReason: 'stop' }
+        },
+      },
+      modelId: 'm',
+    })
+    await rt.root()
+    expect(() => rt.partial(99)).toThrow(/unknown conversation 99/)
+  })
+
+  test('a stream error leaves the submission unanswered and clears the partial', async () => {
+    const storage = openMemoryStorage()
+    let rt!: DurableRuntime
+    const model: DurableModel = {
+      async complete() {
+        throw new Error('complete should not run')
+      },
+      async stream(input) {
+        await input.onPartial('HALF')
+        expect(rt.partial(1)).toBe('HALF')
+        throw new Error('boom')
+      },
+    }
+    rt = await openDurable(storage, { model, modelId: 'm' })
+    const submission = await (await rt.root()).submit({ content: 'hi' })
+    expect(await submission.wait()).toEqual({ status: 'unanswered', reason: 'model_error' })
+    expect(rt.partial(1)).toBeUndefined()
+  })
+
+  test('abandon during a stream keeps the partial and resends the same messages', async () => {
+    const storage = openMemoryStorage()
+    const seen: DurableMessage[][] = []
+    let calls = 0
+    let rt!: DurableRuntime
+    const model: DurableModel = {
+      async complete() {
+        throw new Error('complete should not run')
+      },
+      async stream(input) {
+        calls += 1
+        seen.push(input.messages.map((message) => JSON.parse(JSON.stringify(message)) as DurableMessage))
+        if (calls === 1) {
+          await input.onPartial('HALF')
+          rt.abandon()
+          throw new Error('abandoned')
+        }
+        expect(
+          storage.readEntries(1).some((entry) => entry.message.role === 'assistant' && entry.message.content === 'HALF'),
+        ).toBe(false)
+        return { content: 'done', stopReason: 'stop' }
+      },
+    }
+    rt = await openDurable(storage, { model, modelId: 'm' })
+    const submission = await (await rt.root()).submit({ content: 'capital?' })
+    await rt.resume()
+    expect(rt.closed).toBe(true)
+    expect(calls).toBe(1)
+    expect(storage.readTasks().find((task) => task.name === 'generation')?.status).toBe('running')
+    expect(
+      storage.readEntries(1).some((entry) => entry.message.role === 'assistant' && entry.message.content === 'HALF'),
+    ).toBe(false)
+
+    const second = await openDurable(storage, { model, modelId: 'm' })
+    expect(storage.readTasks().find((task) => task.name === 'generation')?.status).toBe('pending')
+    expect(second.partial(1)).toBe('HALF')
+    expect(
+      storage.readEntries(1).some((entry) => entry.message.role === 'assistant' && entry.message.content === 'HALF'),
+    ).toBe(false)
+    await second.resume()
+    expect(calls).toBe(2)
+    expect(seen[1]).toEqual([{ role: 'user', content: 'capital?' }])
+    expect(seen[1]?.some((message) => message.role === 'assistant' && message.content === 'HALF')).toBe(false)
+    expect(await second.submission(submission.id).wait()).toEqual({ status: 'done', text: 'done' })
+    expect(second.partial(1)).toBeUndefined()
+  })
 })

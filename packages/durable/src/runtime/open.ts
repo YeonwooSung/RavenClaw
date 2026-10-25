@@ -23,6 +23,7 @@ export type DurableRuntime = {
   abandon(): void
   retryTask(taskId: number): Promise<void>
   wake(): { active: boolean; at?: number }
+  partial(conversationId: number): string | undefined
   readonly closed: boolean
 }
 
@@ -334,6 +335,17 @@ export async function openDurable(
     },
     wake() {
       return reportWake(storage.readTasks(), now())
+    },
+    partial(conversationId) {
+      if (isDead()) throw new DurableClosed('closed')
+      if (!storage.readConversation(conversationId)) {
+        throw new DurableFault(`unknown conversation ${conversationId}`)
+      }
+      const live = storage.readDocument(conversationId === 1 ? 'live' : `live:${conversationId}`)
+      if (!live || typeof live !== 'object' || Array.isArray(live)) return undefined
+      const partial = live.partial
+      if (!partial || typeof partial !== 'object' || Array.isArray(partial)) return undefined
+      return typeof partial.content === 'string' ? partial.content : undefined
     },
     get closed() {
       return abandoned || closing || closedFlag
