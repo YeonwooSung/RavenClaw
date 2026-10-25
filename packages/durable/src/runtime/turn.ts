@@ -191,8 +191,11 @@ async function settleStop(host: PhaseHost, taskId: number, content: string): Pro
     const entryId = tx.mintId()
     const items = readInbox(tx.readDocument(inboxKey(ROOT_CONVERSATION_ID)))
     const submissions = doneSubmissions(tx, content)
+    const hasSteer = items.some((item) => item.mode === 'steer')
     const documents: { key: string; value: JsonValue }[] = []
-    if (!items.some((item) => item.mode === 'followUp')) documents.push({ key: 'live', value: {} })
+    if (!hasSteer && !items.some((item) => item.mode === 'followUp')) {
+      documents.push({ key: 'live', value: {} })
+    }
     tx.stage({
       entries: [
         {
@@ -206,7 +209,8 @@ async function settleStop(host: PhaseHost, taskId: number, content: string): Pro
       submissions,
       ...(documents.length > 0 ? { documents } : {}),
     })
-    placeFirstFollowUp(tx, items)
+    if (hasSteer) placeFirstInboxRun(tx, items, 'steer')
+    else placeFirstFollowUp(tx, items)
   })
 }
 
@@ -636,7 +640,15 @@ function inboxItem(value: JsonValue): InboxItem | undefined {
 }
 
 export function placeFirstFollowUp(tx: CommitTx, items: readonly InboxItem[]): DurableSubmissionRow | undefined {
-  const index = items.findIndex((item) => item.mode === 'followUp')
+  return placeFirstInboxRun(tx, items, 'followUp')
+}
+
+function placeFirstInboxRun(
+  tx: CommitTx,
+  items: readonly InboxItem[],
+  mode: 'followUp' | 'steer',
+): DurableSubmissionRow | undefined {
+  const index = items.findIndex((item) => item.mode === mode)
   if (index < 0) return undefined
   const item = items[index]
   if (!item) return undefined

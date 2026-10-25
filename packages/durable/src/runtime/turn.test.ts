@@ -997,9 +997,10 @@ describe('durable turns', () => {
     expect(steerResult).toEqual(originalResult)
   })
 
-  test('a second steer stays queued in inbox:1 when the model stops', async () => {
+  test('a second steer becomes the next run after the model stops', async () => {
     const storage = openMemoryStorage()
     const seen: DurableMessage[][] = []
+    let inboxAtFollow: unknown
     let firstId = 0
     let secondId = 0
     let conversation!: Awaited<ReturnType<DurableRuntime['root']>>
@@ -1008,6 +1009,9 @@ describe('durable turns', () => {
       model: {
         async complete(input) {
           seen.push(input.messages.map((message) => JSON.parse(JSON.stringify(message)) as DurableMessage))
+          if (lastUserContent(input.messages) === 'steer-a' && inboxAtFollow === undefined) {
+            inboxAtFollow = storage.readDocument('inbox:1')
+          }
           return inner.complete(input)
         },
       },
@@ -1030,14 +1034,14 @@ describe('durable turns', () => {
     const follow = seen.find((messages) => lastUserContent(messages) === 'steer-a')
     expect(follow?.some((message) => message.role === 'user' && message.content === 'steer-a')).toBe(true)
     expect(follow?.some((message) => message.role === 'user' && message.content === 'steer-b')).toBe(false)
-    expect(storage.readDocument('inbox:1')).toEqual({
+    expect(inboxAtFollow).toEqual({
       items: [{ id: secondId, mode: 'steer', content: 'steer-b' }],
     })
-    expect(storage.readSubmission(secondId)).toEqual({
-      id: secondId,
-      conversationId: 1,
-      status: 'queued',
-    })
+    expect(await rt.submission(secondId).wait()).toEqual({ status: 'done', text: 'after-follow' })
+    const next = seen.find((messages) => lastUserContent(messages) === 'steer-b')
+    expect(next?.some((message) => message.role === 'user' && message.content === 'steer-b')).toBe(true)
+    expect(storage.readSubmission(firstId)?.answer).toBe('after-steer')
+    expect(storage.readSubmission(secondId)?.answer).toBe('after-follow')
   })
 
   test('a queued followUp stays in the inbox while a steer is placed on the tool follow-up', async () => {
@@ -1086,5 +1090,128 @@ describe('durable turns', () => {
     expect(followResult).toEqual({ status: 'done', text: 'after-follow' })
     expect(followResult.text).not.toBe(steerResult.text)
     expect(storage.readSubmission(steerId)?.answer).toBe('after-steer')
+  })
+
+  test('a tool-less stop starts the next run from a queued steer', async () => {
+    const storage = openMemoryStorage()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let mark!: () => void
+    const entered = new Promise<void>((resolve) => {
+      mark = resolve
+    })
+    const seen: string[] = []
+    const model: DurableModel = {
+      async complete(input) {
+        const last = lastUserContent(input.messages) ?? ''
+        seen.push(last)
+        if (seen.length === 1) {
+          mark()
+          await gate
+          if (input.signal.aborted) throw new Error('aborted')
+          return { content: 'first-answer', stopReason: 'stop' }
+        }
+        return { content: 'second-answer', stopReason: 'stop' }
+      },
+    }
+    const rt = await openDurable(storage, { model, modelId: 'm' })
+    const conversation = await rt.root()
+    const original = await conversation.submit({ content: 'ask' })
+    await entered
+    const steer = await conversation.submit({ content: 'later', whenBusy: 'steer' })
+    release()
+    expect(await original.wait()).toEqual({ status: 'done', text: 'first-answer' })
+    expect(await steer.wait()).toEqual({ status: 'done', text: 'second-answer' })
+    expect(seen[1]).toBe('later')
+  })
+
+  test('a tool-less stop places the steer and leaves the followUp queued', async () => {
+    const storage = openMemoryStorage()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let mark!: () => void
+    const entered = new Promise<void>((resolve) => {
+      mark = resolve
+    })
+    const seen: DurableMessage[][] = []
+    let inboxAtSteer: unknown
+    let calls = 0
+    const model: DurableModel = {
+      async complete(input) {
+        calls += 1
+        seen.push(input.messages.map((message) => JSON.parse(JSON.stringify(message)) as DurableMessage))
+        if (calls === 1) {
+          mark()
+          await gate
+          if (input.signal.aborted) throw new Error('aborted')
+          return { content: 'first-answer', stopReason: 'stop' }
+        }
+        if (calls === 2) {
+          inboxAtSteer = storage.readDocument('inbox:1')
+          return { content: 'steer-answer', stopReason: 'stop' }
+        }
+        return { content: 'follow-answer', stopReason: 'stop' }
+      },
+    }
+    const rt = await openDurable(storage, { model, modelId: 'm' })
+    const conversation = await rt.root()
+    const original = await conversation.submit({ content: 'ask' })
+    await entered
+    const steer = await conversation.submit({ content: 's', whenBusy: 'steer' })
+    const follow = await conversation.submit({ content: 'f', whenBusy: 'followUp' })
+    release()
+    expect(await original.wait()).toEqual({ status: 'done', text: 'first-answer' })
+    const steerResult = await steer.wait()
+    const steered = seen[1] ?? []
+    expect(steered.some((message) => message.role === 'user' && message.content === 's')).toBe(true)
+    expect(steered.some((message) => message.role === 'user' && message.content === 'f')).toBe(false)
+    expect(lastUserContent(steered)).toBe('s')
+    expect(inboxAtSteer).toEqual({
+      items: [{ id: follow.id, mode: 'followUp', content: 'f' }],
+    })
+    const followResult = await follow.wait()
+    expect(steerResult).toEqual({ status: 'done', text: 'steer-answer' })
+    expect(followResult).toEqual({ status: 'done', text: 'follow-answer' })
+    expect(steerResult.text).not.toBe(followResult.text)
+  })
+
+  test('a model error leaves the queued steer in inbox:1', async () => {
+    const storage = openMemoryStorage()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let mark!: () => void
+    const entered = new Promise<void>((resolve) => {
+      mark = resolve
+    })
+    const model: DurableModel = {
+      async complete(input) {
+        mark()
+        await gate
+        if (input.signal.aborted) throw new Error('aborted')
+        return { content: 'nope', stopReason: 'error' }
+      },
+    }
+    const rt = await openDurable(storage, { model, modelId: 'm' })
+    const conversation = await rt.root()
+    expect(conversation.id).toBe(1)
+    const first = await conversation.submit({ content: 'q' })
+    await entered
+    const queued = await conversation.submit({ content: 'later', whenBusy: 'steer' })
+    release()
+    expect(await first.wait()).toEqual({ status: 'unanswered', reason: 'model_error' })
+    expect(storage.readSubmission(queued.id)).toEqual({
+      id: queued.id,
+      conversationId: conversation.id,
+      status: 'queued',
+    })
+    expect(storage.readDocument('inbox:1')).toEqual({
+      items: [{ id: queued.id, mode: 'steer', content: 'later' }],
+    })
   })
 })
