@@ -3,6 +3,7 @@ import { evolveTask } from './scheduler.ts'
 import {
   ROOT_CONVERSATION_ID,
   type DurableEntryRow,
+  type DurableHooks,
   type DurableMessage,
   type DurableModel,
   type DurableSubmissionRow,
@@ -22,6 +23,7 @@ export type PhaseHost = {
   signal: AbortSignal
   stopped(): boolean
   now(): number
+  hooks?: DurableHooks
 }
 
 type LiveSlot = { taskId: number; status: 'running' | 'done'; entryId?: number }
@@ -72,6 +74,29 @@ export function createPhases(host: PhaseHost): {
       const planned = await host.line.run((tx) => planCompaction(tx, taskId))
       if (!planned || host.stopped()) return
       if (planned.kind === 'empty') return
+      if (host.hooks?.beforeCompact) {
+        try {
+          const decision = await host.hooks.beforeCompact({
+            conversationId: planned.conversationId,
+            taskId,
+            messages: planned.source,
+            ...(planned.instructions !== undefined ? { instructions: planned.instructions } : {}),
+          })
+          if (decision && 'decline' in decision && decision.decline) {
+            await host.line.run((tx) => finishCompaction(tx, taskId, { failed: false, answer: '' }))
+            return
+          }
+          if (decision && 'summary' in decision && typeof decision.summary === 'string') {
+            const text = `${COMPACT_PREFIX}${decision.summary}${COMPACT_SUFFIX}`
+            await host.line.run((tx) =>
+              finishCompaction(tx, taskId, { failed: false, answer: text, boundaryId: planned.boundaryId }),
+            )
+            return
+          }
+        } catch {
+          // A thrown beforeCompact leaves the model to summarize.
+        }
+      }
       let result: Awaited<ReturnType<DurableModel['complete']>>
       try {
         result = await host.model.complete({
@@ -151,7 +176,14 @@ function activeEntries(entries: readonly DurableEntryRow[]): DurableEntryRow[] {
 
 type CompactionPlan =
   | { kind: 'empty' }
-  | { kind: 'summarize'; messages: DurableMessage[]; boundaryId: number }
+  | {
+      kind: 'summarize'
+      messages: DurableMessage[]
+      source: DurableMessage[]
+      boundaryId: number
+      conversationId: number
+      instructions?: string
+    }
 
 function planCompaction(tx: CommitTx, taskId: number): CompactionPlan | undefined {
   const task = tx.readTask(taskId)
@@ -178,11 +210,15 @@ function planCompaction(tx: CommitTx, taskId: number): CompactionPlan | undefine
     return [`${prefix}${message.content.slice(0, 2000)}`]
   })
   const instructions = task.checkpoint?.instructions
+  const focus = typeof instructions === 'string' && instructions.length > 0 ? instructions : undefined
   let user = lines.join('\n')
-  if (typeof instructions === 'string' && instructions.length > 0) user += `\nAdditional focus: ${instructions}`
+  if (focus !== undefined) user += `\nAdditional focus: ${focus}`
   return {
     kind: 'summarize',
     boundaryId: boundary.id,
+    conversationId: task.conversationId,
+    source: source.flatMap((entry) => (entry.message.role === 'system' ? [] : [entry.message])),
+    ...(focus !== undefined ? { instructions: focus } : {}),
     messages: [
       { role: 'system', content: COMPACT_SYSTEM },
       { role: 'user', content: user },
@@ -267,9 +303,21 @@ async function request(host: PhaseHost, taskId: number): Promise<void> {
   if (!pinned || host.stopped()) return
   await repairMissing(host, pinned.conversationId, pinned.cutoff)
   if (host.stopped()) return
-  const messages = await host.line.run((tx) =>
+  let messages = await host.line.run((tx) =>
     projectMessages(tx.readEntries(pinned.conversationId), pinned.cutoff),
   )
+  if (host.hooks?.beforeRequest) {
+    try {
+      const replaced = await host.hooks.beforeRequest({
+        conversationId: pinned.conversationId,
+        taskId,
+        messages,
+      })
+      if (replaced && Array.isArray(replaced.messages)) messages = [...replaced.messages]
+    } catch {
+      // A thrown beforeRequest keeps the original messages.
+    }
+  }
   let result: Awaited<ReturnType<DurableModel['complete']>>
   const pending: Promise<void>[] = []
   try {
@@ -296,6 +344,18 @@ async function request(host: PhaseHost, taskId: number): Promise<void> {
     return
   }
   if (host.stopped()) return
+  if (host.hooks?.afterResponse) {
+    try {
+      await host.hooks.afterResponse({
+        conversationId: pinned.conversationId,
+        taskId,
+        content: result.content,
+        stopReason: result.stopReason,
+      })
+    } catch {
+      // An observer throw does not change classification.
+    }
+  }
   if (result.stopReason === 'toolUse' && result.toolCalls && result.toolCalls.length > 0) {
     await settleToolUse(host, taskId, result.content, result.toolCalls)
     return
@@ -582,9 +642,49 @@ async function executeBody(host: PhaseHost, taskId: number, intent: ExecuteInten
     })
     return
   }
+  const current = await host.line.run((tx) => tx.readTask(taskId))
+  let args = intent.arguments
+  if (host.hooks?.beforeTool && current) {
+    try {
+      const decision = await host.hooks.beforeTool({
+        conversationId: current.conversationId,
+        taskId,
+        name: intent.name,
+        arguments: args,
+      })
+      if (decision && typeof decision.block === 'string') {
+        await host.line.run((tx) => {
+          const task = tx.readTask(taskId)
+          if (!task) return
+          writeToolTerminal(tx, task, {
+            callId: intent.callId,
+            name: intent.name,
+            content: decision.block ?? '',
+            isError: true,
+            outcome: 'failed',
+          })
+        })
+        return
+      }
+      if (decision?.arguments) args = decision.arguments
+    } catch {
+      await host.line.run((tx) => {
+        const task = tx.readTask(taskId)
+        if (!task) return
+        writeToolTerminal(tx, task, {
+          callId: intent.callId,
+          name: intent.name,
+          content: 'hook_error',
+          isError: true,
+          outcome: 'failed',
+        })
+      })
+      return
+    }
+  }
   let value: { content: string; isError?: boolean; sleepUntil?: number }
   try {
-    value = await tool.execute(copyArgs(intent.arguments), { signal: host.signal, taskId })
+    value = await tool.execute(copyArgs(args), { signal: host.signal, taskId })
   } catch (error) {
     if (host.stopped()) return
     const message = error instanceof Error ? error.message : String(error)
@@ -601,6 +701,26 @@ async function executeBody(host: PhaseHost, taskId: number, intent: ExecuteInten
     return
   }
   if (host.stopped()) return
+  if (host.hooks?.afterTool && current && value && typeof value.content === 'string') {
+    try {
+      const replaced = await host.hooks.afterTool({
+        conversationId: current.conversationId,
+        taskId,
+        name: intent.name,
+        content: value.content,
+        isError: value.isError === true,
+      })
+      if (replaced && typeof replaced.content === 'string') {
+        value = {
+          content: replaced.content,
+          ...(replaced.isError !== undefined ? { isError: replaced.isError } : value.isError !== undefined ? { isError: value.isError } : {}),
+          ...(value.sleepUntil !== undefined ? { sleepUntil: value.sleepUntil } : {}),
+        }
+      }
+    } catch {
+      // A thrown afterTool keeps the executed result.
+    }
+  }
   if (!value || typeof value.content !== 'string') {
     await host.line.run((tx) => {
       const task = tx.readTask(taskId)

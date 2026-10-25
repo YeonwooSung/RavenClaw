@@ -5,6 +5,39 @@ export type JsonValue = null | boolean | number | string | JsonValue[] | JsonObj
 
 export type DurableReplay = 'safe' | 'unsafe'
 
+export type DurableHooks = {
+  beforeRequest?(input: {
+    conversationId: number
+    taskId: number
+    messages: readonly DurableMessage[]
+  }): Promise<{ messages: readonly DurableMessage[] } | void> | { messages: readonly DurableMessage[] } | void
+  afterResponse?(input: {
+    conversationId: number
+    taskId: number
+    content: string
+    stopReason: 'stop' | 'toolUse' | 'error'
+  }): Promise<void> | void
+  beforeTool?(input: {
+    conversationId: number
+    taskId: number
+    name: string
+    arguments: JsonObject
+  }): Promise<{ arguments?: JsonObject; block?: string } | void> | { arguments?: JsonObject; block?: string } | void
+  afterTool?(input: {
+    conversationId: number
+    taskId: number
+    name: string
+    content: string
+    isError: boolean
+  }): Promise<{ content: string; isError?: boolean } | void> | { content: string; isError?: boolean } | void
+  beforeCompact?(input: {
+    conversationId: number
+    taskId: number
+    messages: readonly DurableMessage[]
+    instructions?: string
+  }): Promise<{ decline: true } | { summary: string } | void> | { decline: true } | { summary: string } | void
+}
+
 export type DurableModel = {
   complete(input: {
     messages: readonly DurableMessage[]

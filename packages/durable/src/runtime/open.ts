@@ -4,6 +4,7 @@ import {
   type DurableBatch,
   type DurableConversationRow,
   type DurableEntryRow,
+  type DurableHooks,
   type DurableModel,
   type DurableStorage,
   type DurableSubmissionRow,
@@ -78,6 +79,7 @@ export async function openDurable(
     systemPrompt?: string
     now?: () => number
     restartLimit?: number
+    hooks?: DurableHooks
   },
 ): Promise<DurableRuntime> {
   const now = options.now ?? (() => 0)
@@ -113,6 +115,7 @@ export async function openDurable(
     signal: controller.signal,
     stopped: () => abandoned || closing || closedFlag,
     now,
+    ...(options.hooks !== undefined ? { hooks: options.hooks } : {}),
   })
 
   await reconcile()

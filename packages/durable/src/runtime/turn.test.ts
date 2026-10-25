@@ -1851,4 +1851,146 @@ describe('durable turns', () => {
     expect(summaryCalls.length).toBe(2)
     expect(summaryCalls[1]).not.toContain('[User] u1')
   })
+
+  test('beforeRequest can replace the model messages and a throw keeps them', async () => {
+    const storage = openMemoryStorage()
+    const seen: string[] = []
+    let throwOnce = true
+    const rt = await openDurable(storage, {
+      hooks: {
+        async beforeRequest(input) {
+          if (throwOnce) {
+            throwOnce = false
+            throw new Error('hook')
+          }
+          return { messages: [{ role: 'system', content: 'hook-system' }, ...input.messages] }
+        },
+      },
+      model: {
+        async complete(input) {
+          seen.push(input.messages.map((message) => message.role + ':' + (message.role === 'tool' ? '' : message.content)).join('|'))
+          return { content: 'ok', stopReason: 'stop' }
+        },
+      },
+      modelId: 'm',
+    })
+    const conversation = await rt.root()
+    await (await conversation.submit({ content: 'one' })).wait()
+    await (await conversation.submit({ content: 'two' })).wait()
+    expect(seen[0]).not.toContain('hook-system')
+    expect(seen[0]).toContain('one')
+    expect(seen[1]?.startsWith('system:hook-system')).toBe(true)
+    expect(storage.readEntries(1).some((entry) => entry.kind === 'system' && entry.message.role === 'system' && entry.message.content === 'hook-system')).toBe(false)
+  })
+
+  test('beforeTool can block, replace arguments, or fail as hook_error', async () => {
+    const storage = openMemoryStorage()
+    let mode: 'block' | 'args' | 'throw' = 'block'
+    const seen: JsonObject[] = []
+    let execs = 0
+    const rt = await openDurable(storage, {
+      hooks: {
+        beforeTool(input) {
+          if (mode === 'throw') throw new Error('hook')
+          if (mode === 'block') return { block: 'no' }
+          return { arguments: { path: 'b' } }
+        },
+      },
+      model: {
+        async complete(input) {
+          let lastUser = -1
+          for (let i = 0; i < input.messages.length; i++) {
+            if (input.messages[i]?.role === 'user') lastUser = i
+          }
+          const after = input.messages.slice(lastUser + 1)
+          if (!after.some((message) => message.role === 'tool')) {
+            return {
+              content: '',
+              stopReason: 'toolUse' as const,
+              toolCalls: [{ id: 'c1', name: 'echo', arguments: { k: 'v' } }],
+            }
+          }
+          return { content: 'done', stopReason: 'stop' as const }
+        },
+      },
+      tools: [
+        {
+          name: 'echo',
+          execute(args) {
+            execs += 1
+            seen.push(args)
+            return Promise.resolve({ content: 'ran' })
+          },
+        },
+      ],
+      modelId: 'm',
+    })
+    const conversation = await rt.root()
+    await (await conversation.submit({ content: 'go' })).wait()
+    expect(execs).toBe(0)
+    expect(storage.readEntries(1).some((entry) => entry.message.role === 'tool' && entry.message.content === 'no')).toBe(true)
+    mode = 'args'
+    await (await conversation.submit({ content: 'go2' })).wait()
+    expect(seen).toEqual([{ path: 'b' }])
+    mode = 'throw'
+    const before = execs
+    await (await conversation.submit({ content: 'go3' })).wait()
+    expect(execs).toBe(before)
+    expect(storage.readEntries(1).some((entry) => entry.message.role === 'tool' && entry.message.content === 'hook_error')).toBe(true)
+  })
+
+  test('afterTool replaces the committed tool text and a throwing afterResponse still finishes', async () => {
+    const storage = openMemoryStorage()
+    const rt = await openDurable(storage, {
+      hooks: {
+        afterResponse() {
+          throw new Error('observer')
+        },
+        afterTool() {
+          return { content: 'changed' }
+        },
+      },
+      model: toolUseThenStop(),
+      tools: [{ name: 'echo', execute: () => Promise.resolve({ content: 'ran' }) }],
+      modelId: 'm',
+    })
+    const conversation = await rt.root()
+    expect(await (await conversation.submit({ content: 'go' })).wait()).toEqual({ status: 'done', text: 'done' })
+    expect(storage.readEntries(1).some((entry) => entry.message.role === 'tool' && entry.message.content === 'changed')).toBe(true)
+  })
+
+  test('beforeCompact can supply the summary or decline', async () => {
+    const storage = openMemoryStorage()
+    let summarizeCalls = 0
+    let decline = false
+    const rt = await openDurable(storage, {
+      hooks: {
+        beforeCompact() {
+          if (decline) return { decline: true }
+          return { summary: 'kept' }
+        },
+      },
+      model: {
+        async complete(input) {
+          if (input.messages.some((message) => message.role === 'system' && message.content.startsWith('Summarize'))) {
+            summarizeCalls += 1
+          }
+          return { content: 'ok', stopReason: 'stop' }
+        },
+      },
+      modelId: 'm',
+    })
+    const conversation = await rt.root()
+    for (const text of ['u1', 'u2', 'u3']) await (await conversation.submit({ content: text })).wait()
+    const supplied = await (await conversation.compact()).wait()
+    expect(supplied.status).toBe('done')
+    if (supplied.status === 'done') expect(supplied.text).toContain('kept')
+    expect(summarizeCalls).toBe(0)
+    expect(storage.readEntries(1).some((entry) => entry.kind === 'compact' && entry.message.role === 'user' && entry.message.content.includes('kept'))).toBe(true)
+    for (const text of ['n1', 'n2', 'n3']) await (await conversation.submit({ content: text })).wait()
+    decline = true
+    const before = storage.readEntries(1).filter((entry) => entry.kind === 'compact').length
+    expect(await (await conversation.compact()).wait()).toEqual({ status: 'done', text: '' })
+    expect(storage.readEntries(1).filter((entry) => entry.kind === 'compact').length).toBe(before)
+  })
 })

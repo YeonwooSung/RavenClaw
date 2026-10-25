@@ -7,6 +7,7 @@ export type {
   DurableBatch,
   DurableConversationRow,
   DurableEntryRow,
+  DurableHooks,
   DurableMessage,
   DurableModel,
   DurableReplay,
