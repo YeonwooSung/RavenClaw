@@ -2,6 +2,8 @@ import { DurableBusy, DurableClosed, DurableFault } from '../errors.ts'
 import {
   ROOT_CONVERSATION_ID,
   type DurableBatch,
+  type DurableConversationRow,
+  type DurableEntryRow,
   type DurableModel,
   type DurableStorage,
   type DurableSubmissionRow,
@@ -13,11 +15,20 @@ import {
 } from '../storage/types.ts'
 import { createCommitLine, type CommitLine, type CommitTx } from './commit.ts'
 import { DEFAULT_RESTART_LIMIT, evolveTask, holdPending, reconcileTask } from './scheduler.ts'
-import { createPhases, inboxDocument, inboxKey, placeFirstFollowUp, readInbox } from './turn.ts'
+import {
+  agentKey,
+  createPhases,
+  inboxDocument,
+  inboxKey,
+  liveKey,
+  placeFirstFollowUp,
+  readInbox,
+} from './turn.ts'
 
 export type DurableRuntime = {
   resume(): Promise<void>
   root(): Promise<DurableConversation>
+  conversation(id: number): Promise<DurableConversation>
   submission(id: number): DurableSubmission
   close(): Promise<void>
   abandon(): void
@@ -36,6 +47,7 @@ type SubmitInput = {
 export type DurableConversation = {
   readonly id: number
   submit(input: SubmitInput): Promise<DurableSubmission>
+  fork(atEntryId: number): Promise<DurableConversation>
 }
 
 export type DurableSubmission = {
@@ -154,15 +166,20 @@ export async function openDurable(
       const batch: DurableBatch = {}
       if (staged.length > 0) batch.tasks = staged
       if (park) {
-        const live = tx.readDocument('live')
-        const run = liveRun(live)
-        if (run) {
+        const parkedIds = new Set(
+          staged.filter((task) => task.parked).map((task) => task.conversationId),
+        )
+        const submissions: DurableSubmissionRow[] = []
+        const documents: { key: string; value: JsonValue }[] = []
+        for (const conversationId of parkedIds) {
+          const run = liveRun(tx.readDocument(liveKey(conversationId)))
+          if (!run) continue
           const row = tx.readSubmission(run.submissionId)
-          if (row && row.status === 'queued') {
-            batch.submissions = [unanswered(row, 'task_parked')]
-          }
-          batch.documents = [{ key: 'live', value: {} }]
+          if (row && row.status === 'queued') submissions.push(unanswered(row, 'task_parked'))
+          documents.push({ key: liveKey(conversationId), value: {} })
         }
+        if (submissions.length > 0) batch.submissions = submissions
+        if (documents.length > 0) batch.documents = documents
       }
       if (batch.tasks || batch.submissions || batch.documents) tx.stage(batch)
     })
@@ -249,6 +266,14 @@ export async function openDurable(
     })
   }
 
+  function conversationHandle(id: number): DurableConversation {
+    return {
+      id,
+      submit: (input) => submit(id, input),
+      fork: (atEntryId) => forkAt(id, atEntryId),
+    }
+  }
+
   async function root(): Promise<DurableConversation> {
     if (isDead()) throw new DurableClosed('closed')
     await line.run((tx) => {
@@ -258,17 +283,56 @@ export async function openDurable(
       tx.stage({
         conversations: [{ id: ROOT_CONVERSATION_ID }],
         documents: [
-          { key: 'agent', value: agent },
-          { key: 'live', value: {} },
+          { key: agentKey(ROOT_CONVERSATION_ID), value: agent },
+          { key: liveKey(ROOT_CONVERSATION_ID), value: {} },
         ],
       })
     })
-    return { id: ROOT_CONVERSATION_ID, submit }
+    return conversationHandle(ROOT_CONVERSATION_ID)
   }
 
-  async function submit(input: SubmitInput): Promise<DurableSubmission> {
+  async function conversation(id: number): Promise<DurableConversation> {
     if (isDead()) throw new DurableClosed('closed')
-    const row = await line.run((tx) => admit(tx, input))
+    const row = await line.run((tx) => tx.readConversation(id))
+    if (!row) throw new DurableFault(`unknown conversation ${id}`)
+    return conversationHandle(id)
+  }
+
+  async function forkAt(conversationId: number, atEntryId: number): Promise<DurableConversation> {
+    if (isDead()) throw new DurableClosed('closed')
+    const childId = await line.run((tx) => {
+      const parent = tx.readConversation(conversationId)
+      if (!parent) throw new DurableFault(`unknown conversation ${conversationId}`)
+      const entries = tx.readEntries(conversationId)
+      if (!entries.some((entry) => entry.id === atEntryId)) {
+        throw new DurableFault('entry is not on this conversation')
+      }
+      const childId = tx.mintId()
+      const copied = entries
+        .filter((entry) => entry.id <= atEntryId)
+        .sort((a, b) => a.id - b.id)
+        .map((entry) => copyEntry(tx, entry, childId))
+      const row: DurableConversationRow = {
+        id: childId,
+        parentConversationId: conversationId,
+        atEntryId,
+      }
+      const documents: { key: string; value: JsonValue }[] = []
+      const agent = tx.readDocument(agentKey(conversationId))
+      if (agent !== undefined) documents.push({ key: agentKey(childId), value: agent })
+      tx.stage({
+        conversations: [row],
+        ...(copied.length > 0 ? { entries: copied } : {}),
+        ...(documents.length > 0 ? { documents } : {}),
+      })
+      return childId
+    })
+    return conversationHandle(childId)
+  }
+
+  async function submit(conversationId: number, input: SubmitInput): Promise<DurableSubmission> {
+    if (isDead()) throw new DurableClosed('closed')
+    const row = await line.run((tx) => admit(tx, conversationId, input))
     if (!isDead()) {
       const pending = kick()
       pending.catch((error: unknown) => {
@@ -284,6 +348,7 @@ export async function openDurable(
       return kick()
     },
     root,
+    conversation,
     submission(id) {
       const row = storage.readSubmission(id)
       if (!row) throw new DurableFault(`unknown submission ${id}`)
@@ -341,7 +406,7 @@ export async function openDurable(
       if (!storage.readConversation(conversationId)) {
         throw new DurableFault(`unknown conversation ${conversationId}`)
       }
-      const live = storage.readDocument(conversationId === 1 ? 'live' : `live:${conversationId}`)
+      const live = storage.readDocument(liveKey(conversationId))
       if (!live || typeof live !== 'object' || Array.isArray(live)) return undefined
       const partial = live.partial
       if (!partial || typeof partial !== 'object' || Array.isArray(partial)) return undefined
@@ -402,22 +467,23 @@ function select(tasks: readonly DurableTaskRow[]): DurableTaskRow[] {
   return generation ? [generation] : []
 }
 
-function admit(tx: CommitTx, input: SubmitInput): DurableSubmissionRow {
+function admit(tx: CommitTx, conversationId: number, input: SubmitInput): DurableSubmissionRow {
   if (input.requestId !== undefined) {
-    const existing = tx.readSubmissionByRequest(ROOT_CONVERSATION_ID, input.requestId)
+    const existing = tx.readSubmissionByRequest(conversationId, input.requestId)
     if (existing) return existing
   }
-  const items = readInbox(tx.readDocument(inboxKey(ROOT_CONVERSATION_ID)))
-  const running = liveRun(tx.readDocument('live'))
-  if (!running && items.length === 0) return placeNow(tx, input)
+  const items = readInbox(tx.readDocument(inboxKey(conversationId)))
+  const running = liveRun(tx.readDocument(liveKey(conversationId)))
+  if (!running && items.length === 0) return placeNow(tx, conversationId, input)
   const mode = input.whenBusy ?? 'reject'
   if (mode !== 'followUp' && mode !== 'steer') throw new DurableBusy()
-  if (!running) return enqueueAndPlace(tx, input, items, mode)
-  return enqueue(tx, input, items, mode)
+  if (!running) return enqueueAndPlace(tx, conversationId, input, items, mode)
+  return enqueue(tx, conversationId, input, items, mode)
 }
 
 function enqueueAndPlace(
   tx: CommitTx,
+  conversationId: number,
   input: SubmitInput,
   items: readonly InboxItem[],
   mode: 'followUp' | 'steer',
@@ -425,7 +491,7 @@ function enqueueAndPlace(
   const submissionId = tx.mintId()
   const submission: DurableSubmissionRow = {
     id: submissionId,
-    conversationId: ROOT_CONVERSATION_ID,
+    conversationId,
     status: 'queued',
   }
   if (input.requestId !== undefined) submission.requestId = input.requestId
@@ -434,20 +500,20 @@ function enqueueAndPlace(
   const next = [...items, item]
   tx.stage({
     submissions: [submission],
-    documents: [{ key: inboxKey(ROOT_CONVERSATION_ID), value: inboxDocument(next) }],
+    documents: [{ key: inboxKey(conversationId), value: inboxDocument(next) }],
   })
-  const placed = placeFirstFollowUp(tx, next)
+  const placed = placeFirstFollowUp(tx, conversationId, next)
   if (placed?.id === submission.id) return placed
   return submission
 }
 
-function placeNow(tx: CommitTx, input: SubmitInput): DurableSubmissionRow {
+function placeNow(tx: CommitTx, conversationId: number, input: SubmitInput): DurableSubmissionRow {
   const entryId = tx.mintId()
   const submissionId = tx.mintId()
   const taskId = tx.mintId()
   const submission: DurableSubmissionRow = {
     id: submissionId,
-    conversationId: ROOT_CONVERSATION_ID,
+    conversationId,
     status: 'queued',
     entryId,
   }
@@ -455,7 +521,7 @@ function placeNow(tx: CommitTx, input: SubmitInput): DurableSubmissionRow {
   const task: DurableTaskRow = {
     id: taskId,
     name: 'generation',
-    conversationId: ROOT_CONVERSATION_ID,
+    conversationId,
     status: 'pending',
     checkpoint: { phase: 'prepare' },
     restarts: 0,
@@ -465,20 +531,21 @@ function placeNow(tx: CommitTx, input: SubmitInput): DurableSubmissionRow {
     entries: [
       {
         id: entryId,
-        conversationId: ROOT_CONVERSATION_ID,
+        conversationId,
         kind: 'user',
         message: { role: 'user', content: input.content },
       },
     ],
     submissions: [submission],
     tasks: [task],
-    documents: [{ key: 'live', value: { run: { submissionId, generationTaskId: taskId } } }],
+    documents: [{ key: liveKey(conversationId), value: { run: { submissionId, generationTaskId: taskId } } }],
   })
   return submission
 }
 
 function enqueue(
   tx: CommitTx,
+  conversationId: number,
   input: SubmitInput,
   items: readonly InboxItem[],
   mode: 'followUp' | 'steer',
@@ -486,7 +553,7 @@ function enqueue(
   const submissionId = tx.mintId()
   const submission: DurableSubmissionRow = {
     id: submissionId,
-    conversationId: ROOT_CONVERSATION_ID,
+    conversationId,
     status: 'queued',
   }
   if (input.requestId !== undefined) submission.requestId = input.requestId
@@ -494,9 +561,20 @@ function enqueue(
   if (input.requestId !== undefined) item.requestId = input.requestId
   tx.stage({
     submissions: [submission],
-    documents: [{ key: inboxKey(ROOT_CONVERSATION_ID), value: inboxDocument([...items, item]) }],
+    documents: [{ key: inboxKey(conversationId), value: inboxDocument([...items, item]) }],
   })
   return submission
+}
+
+function copyEntry(tx: CommitTx, entry: DurableEntryRow, conversationId: number): DurableEntryRow {
+  const next: DurableEntryRow = {
+    id: tx.mintId(),
+    conversationId,
+    kind: entry.kind,
+    message: entry.message,
+  }
+  if (entry.boundaryId !== undefined) next.boundaryId = entry.boundaryId
+  return next
 }
 
 function liveRun(value: JsonValue | undefined): { submissionId: number; generationTaskId: number } | undefined {

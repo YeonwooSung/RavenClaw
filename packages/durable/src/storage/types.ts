@@ -53,13 +53,19 @@ export type DurableMessage =
     }
   | { role: 'tool'; toolCallId: string; name: string; content: string; isError: boolean }
 
-export type DurableConversationRow = { id: number }
+export type DurableConversationRow = {
+  id: number
+  parentConversationId?: number
+  atEntryId?: number
+  ownerTaskId?: number
+}
 
 export type DurableEntryRow = {
   id: number
   conversationId: number
   kind: 'system' | 'user' | 'assistant' | 'tool'
   message: DurableMessage
+  boundaryId?: number
 }
 
 export type DurableTaskStatus = 'pending' | 'running' | 'waiting' | 'sleeping' | 'terminal'

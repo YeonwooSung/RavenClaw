@@ -94,14 +94,15 @@ async function prepare(host: PhaseHost, taskId: number): Promise<void> {
   await host.line.run((tx) => {
     const task = tx.readTask(taskId)
     if (!task) return
-    const entries = tx.readEntries(ROOT_CONVERSATION_ID)
+    const conversationId = task.conversationId
+    const entries = tx.readEntries(conversationId)
     const staged: DurableEntryRow[] = []
     const prompt = host.systemPrompt
     if (prompt && prompt.length > 0 && !entries.some((entry) => entry.kind === 'system')) {
       const id = tx.mintId()
       staged.push({
         id,
-        conversationId: ROOT_CONVERSATION_ID,
+        conversationId,
         kind: 'system',
         message: { role: 'system', content: prompt },
       })
@@ -121,14 +122,17 @@ async function request(host: PhaseHost, taskId: number): Promise<void> {
     if (!task?.checkpoint || task.checkpoint.phase !== 'request') return undefined
     tx.stage({ tasks: [evolveTask(task, { status: 'running', checkpoint: task.checkpoint })] })
     return {
+      conversationId: task.conversationId,
       modelId: typeof task.checkpoint.modelId === 'string' ? task.checkpoint.modelId : host.modelId,
       cutoff: typeof task.checkpoint.cutoff === 'number' ? task.checkpoint.cutoff : 0,
     }
   })
   if (!pinned || host.stopped()) return
-  await repairMissing(host, pinned.cutoff)
+  await repairMissing(host, pinned.conversationId, pinned.cutoff)
   if (host.stopped()) return
-  const messages = await host.line.run((tx) => projectMessages(tx.readEntries(ROOT_CONVERSATION_ID), pinned.cutoff))
+  const messages = await host.line.run((tx) =>
+    projectMessages(tx.readEntries(pinned.conversationId), pinned.cutoff),
+  )
   let result: Awaited<ReturnType<DurableModel['complete']>>
   const pending: Promise<void>[] = []
   try {
@@ -169,21 +173,24 @@ async function request(host: PhaseHost, taskId: number): Promise<void> {
 async function writePartial(host: PhaseHost, taskId: number, text: string): Promise<void> {
   if (host.stopped()) return
   await host.line.run((tx) => {
-    const live = tx.readDocument('live')
+    const task = tx.readTask(taskId)
+    if (!task) return
+    const key = liveKey(task.conversationId)
+    const live = tx.readDocument(key)
     const base: JsonObject = live && typeof live === 'object' && !Array.isArray(live) ? { ...live } : {}
     base.partial = { taskId, content: text }
-    tx.stage({ documents: [{ key: 'live', value: base }] })
+    tx.stage({ documents: [{ key, value: base }] })
   })
 }
 
-async function repairMissing(host: PhaseHost, cutoff: number): Promise<void> {
+async function repairMissing(host: PhaseHost, conversationId: number, cutoff: number): Promise<void> {
   await host.line.run((tx) => {
-    const entries = tx.readEntries(ROOT_CONVERSATION_ID)
+    const entries = tx.readEntries(conversationId)
     const missing = missingCalls(entries, cutoff)
     if (missing.length === 0) return
     const staged: DurableEntryRow[] = missing.map((call) => ({
       id: tx.mintId(),
-      conversationId: ROOT_CONVERSATION_ID,
+      conversationId,
       kind: 'tool' as const,
       message: {
         role: 'tool' as const,
@@ -214,19 +221,20 @@ async function settleStop(host: PhaseHost, taskId: number, content: string): Pro
   await host.line.run((tx) => {
     const task = tx.readTask(taskId)
     if (!task) return
+    const conversationId = task.conversationId
     const entryId = tx.mintId()
-    const items = readInbox(tx.readDocument(inboxKey(ROOT_CONVERSATION_ID)))
-    const submissions = doneSubmissions(tx, content)
+    const items = readInbox(tx.readDocument(inboxKey(conversationId)))
+    const submissions = doneSubmissions(tx, conversationId, content)
     const hasSteer = items.some((item) => item.mode === 'steer')
     const documents: { key: string; value: JsonValue }[] = []
     if (!hasSteer && !items.some((item) => item.mode === 'followUp')) {
-      documents.push({ key: 'live', value: {} })
+      documents.push({ key: liveKey(conversationId), value: {} })
     }
     tx.stage({
       entries: [
         {
           id: entryId,
-          conversationId: ROOT_CONVERSATION_ID,
+          conversationId,
           kind: 'assistant',
           message: { role: 'assistant', content, stopReason: 'stop' },
         },
@@ -235,8 +243,8 @@ async function settleStop(host: PhaseHost, taskId: number, content: string): Pro
       submissions,
       ...(documents.length > 0 ? { documents } : {}),
     })
-    if (hasSteer) placeFirstInboxRun(tx, items, 'steer')
-    else placeFirstFollowUp(tx, items)
+    if (hasSteer) placeFirstInboxRun(tx, conversationId, items, 'steer')
+    else placeFirstFollowUp(tx, conversationId, items)
   })
 }
 
@@ -244,18 +252,19 @@ async function settleModelError(host: PhaseHost, taskId: number, content: string
   await host.line.run((tx) => {
     const task = tx.readTask(taskId)
     if (!task) return
+    const conversationId = task.conversationId
     tx.stage({
       entries: [
         {
           id: tx.mintId(),
-          conversationId: ROOT_CONVERSATION_ID,
+          conversationId,
           kind: 'assistant',
           message: { role: 'assistant', content, stopReason: 'error' },
         },
       ],
       tasks: [evolveTask(task, { status: 'terminal', outcome: 'failed' })],
-      submissions: unansweredSubmissions(tx, 'model_error'),
-      documents: [{ key: 'live', value: {} }],
+      submissions: unansweredSubmissions(tx, conversationId, 'model_error'),
+      documents: [{ key: liveKey(conversationId), value: {} }],
     })
   })
 }
@@ -279,7 +288,7 @@ async function settleToolUse(
       const child: DurableTaskRow = {
         id: childId,
         name: 'tool',
-        conversationId: ROOT_CONVERSATION_ID,
+        conversationId: task.conversationId,
         parentTaskId: task.id,
         status: 'pending',
         checkpoint,
@@ -293,18 +302,18 @@ async function settleToolUse(
       name: item.name,
       arguments: item.arguments ?? {},
     }))
-    const live = tx.readDocument('live')
+    const live = tx.readDocument(liveKey(task.conversationId))
     const documents: { key: string; value: JsonValue }[] = []
     if (live && typeof live === 'object' && !Array.isArray(live) && Object.hasOwn(live, 'partial')) {
       const next = { ...live }
       delete next.partial
-      documents.push({ key: 'live', value: next })
+      documents.push({ key: liveKey(task.conversationId), value: next })
     }
     tx.stage({
       entries: [
         {
           id: tx.mintId(),
-          conversationId: ROOT_CONVERSATION_ID,
+          conversationId: task.conversationId,
           kind: 'assistant',
           message: {
             role: 'assistant',
@@ -329,18 +338,19 @@ async function followUp(host: PhaseHost, taskId: number): Promise<void> {
     if (!task) return
     const kids = tx.readTasks().filter((item) => item.parentTaskId === task.id)
     if (kids.length === 0 || kids.some((item) => item.status !== 'terminal')) return
-    const live = parseLive(tx.readDocument('live'))
+    const conversationId = task.conversationId
+    const live = parseLive(tx.readDocument(liveKey(conversationId)))
     const done = evolveTask(task, { status: 'terminal', outcome: 'completed' })
     if (!live.run || live.run.generationTaskId !== task.id) {
       tx.stage({ tasks: [done] })
       return
     }
-    const steerId = placeFirstSteer(tx)
+    const steerId = placeFirstSteer(tx, conversationId)
     const nextId = tx.mintId()
     const next: DurableTaskRow = {
       id: nextId,
       name: 'generation',
-      conversationId: ROOT_CONVERSATION_ID,
+      conversationId,
       status: 'pending',
       checkpoint: { phase: 'prepare' },
       restarts: 0,
@@ -352,7 +362,7 @@ async function followUp(host: PhaseHost, taskId: number): Promise<void> {
       tasks: [done, next],
       documents: [
         {
-          key: 'live',
+          key: liveKey(conversationId),
           value: {
             run: runDocument({
               submissionId: live.run.submissionId,
@@ -389,10 +399,10 @@ function beginCall(host: PhaseHost, tx: CommitTx, taskId: number): ExecuteIntent
   const replay = tool?.replay ?? 'unsafe'
   const args = task.checkpoint.arguments
   const checkpoint: JsonObject = { phase: 'execute', callId, name, arguments: args, replay }
-  const live = parseLive(tx.readDocument('live'))
+  const live = parseLive(tx.readDocument(liveKey(task.conversationId)))
   tx.stage({
     tasks: [evolveTask(task, { status: 'running', checkpoint })],
-    documents: [{ key: 'live', value: withSlot(live, { taskId: task.id, status: 'running' }) }],
+    documents: [{ key: liveKey(task.conversationId), value: withSlot(live, { taskId: task.id, status: 'running' }) }],
   })
   return { callId, name, arguments: args, replay }
 }
@@ -515,12 +525,12 @@ function writeToolTerminal(
   result: { callId: string; name: string; content: string; isError?: boolean; outcome: 'failed' | 'completed' },
 ): void {
   const entryId = tx.mintId()
-  const live = parseLive(tx.readDocument('live'))
+  const live = parseLive(tx.readDocument(liveKey(task.conversationId)))
   tx.stage({
     entries: [
       {
         id: entryId,
-        conversationId: ROOT_CONVERSATION_ID,
+        conversationId: task.conversationId,
         kind: 'tool',
         message: {
           role: 'tool',
@@ -532,23 +542,26 @@ function writeToolTerminal(
       },
     ],
     tasks: [evolveTask(task, { status: 'terminal', outcome: result.outcome })],
-    documents: [{ key: 'live', value: withSlot(live, { taskId: task.id, status: 'done', entryId }) }],
+    documents: [
+      { key: liveKey(task.conversationId), value: withSlot(live, { taskId: task.id, status: 'done', entryId }) },
+    ],
   })
 }
 
-function doneSubmissions(tx: CommitTx, text: string) {
-  return settleSubmissions(tx, { status: 'done' as const, answer: text })
+function doneSubmissions(tx: CommitTx, conversationId: number, text: string) {
+  return settleSubmissions(tx, conversationId, { status: 'done' as const, answer: text })
 }
 
-function unansweredSubmissions(tx: CommitTx, reason: string) {
-  return settleSubmissions(tx, { status: 'unanswered' as const, reason })
+function unansweredSubmissions(tx: CommitTx, conversationId: number, reason: string) {
+  return settleSubmissions(tx, conversationId, { status: 'unanswered' as const, reason })
 }
 
 function settleSubmissions(
   tx: CommitTx,
+  conversationId: number,
   patch: { status: 'done'; answer: string } | { status: 'unanswered'; reason: string },
 ): DurableSubmissionRow[] {
-  const live = parseLive(tx.readDocument('live'))
+  const live = parseLive(tx.readDocument(liveKey(conversationId)))
   if (!live.run) return []
   const seen = new Set<number>()
   const rows: DurableSubmissionRow[] = []
@@ -639,6 +652,14 @@ function parseLive(value: JsonValue | undefined): LiveDoc {
   return doc
 }
 
+export function liveKey(id: number): string {
+  return id === ROOT_CONVERSATION_ID ? 'live' : `live:${id}`
+}
+
+export function agentKey(id: number): string {
+  return id === ROOT_CONVERSATION_ID ? 'agent' : `agent:${id}`
+}
+
 export function inboxKey(conversationId: number): string {
   return `inbox:${conversationId}`
 }
@@ -673,12 +694,17 @@ function inboxItem(value: JsonValue): InboxItem | undefined {
   return item
 }
 
-export function placeFirstFollowUp(tx: CommitTx, items: readonly InboxItem[]): DurableSubmissionRow | undefined {
-  return placeFirstInboxRun(tx, items, 'followUp')
+export function placeFirstFollowUp(
+  tx: CommitTx,
+  conversationId: number,
+  items: readonly InboxItem[],
+): DurableSubmissionRow | undefined {
+  return placeFirstInboxRun(tx, conversationId, items, 'followUp')
 }
 
 function placeFirstInboxRun(
   tx: CommitTx,
+  conversationId: number,
   items: readonly InboxItem[],
   mode: 'followUp' | 'steer',
 ): DurableSubmissionRow | undefined {
@@ -692,7 +718,7 @@ function placeFirstInboxRun(
   const row = tx.readSubmission(item.id)
   const submission: DurableSubmissionRow = {
     id: item.id,
-    conversationId: row?.conversationId ?? ROOT_CONVERSATION_ID,
+    conversationId: row?.conversationId ?? conversationId,
     status: 'queued',
     entryId,
   }
@@ -701,7 +727,7 @@ function placeFirstInboxRun(
   const task: DurableTaskRow = {
     id: taskId,
     name: 'generation',
-    conversationId: ROOT_CONVERSATION_ID,
+    conversationId,
     status: 'pending',
     checkpoint: { phase: 'prepare' },
     restarts: 0,
@@ -711,7 +737,7 @@ function placeFirstInboxRun(
     entries: [
       {
         id: entryId,
-        conversationId: ROOT_CONVERSATION_ID,
+        conversationId,
         kind: 'user',
         message: { role: 'user', content: item.content },
       },
@@ -719,15 +745,15 @@ function placeFirstInboxRun(
     submissions: [submission],
     tasks: [task],
     documents: [
-      { key: 'live', value: { run: { submissionId: item.id, generationTaskId: taskId } } },
-      { key: inboxKey(ROOT_CONVERSATION_ID), value: inboxDocument(rest) },
+      { key: liveKey(conversationId), value: { run: { submissionId: item.id, generationTaskId: taskId } } },
+      { key: inboxKey(conversationId), value: inboxDocument(rest) },
     ],
   })
   return submission
 }
 
-export function placeFirstSteer(tx: CommitTx): number | undefined {
-  const items = readInbox(tx.readDocument(inboxKey(ROOT_CONVERSATION_ID)))
+export function placeFirstSteer(tx: CommitTx, conversationId: number): number | undefined {
+  const items = readInbox(tx.readDocument(inboxKey(conversationId)))
   const index = items.findIndex((item) => item.mode === 'steer')
   if (index < 0) return undefined
   const item = items[index]
@@ -737,7 +763,7 @@ export function placeFirstSteer(tx: CommitTx): number | undefined {
   const row = tx.readSubmission(item.id)
   const submission: DurableSubmissionRow = {
     id: item.id,
-    conversationId: row?.conversationId ?? ROOT_CONVERSATION_ID,
+    conversationId: row?.conversationId ?? conversationId,
     status: 'queued',
     entryId,
   }
@@ -747,13 +773,13 @@ export function placeFirstSteer(tx: CommitTx): number | undefined {
     entries: [
       {
         id: entryId,
-        conversationId: ROOT_CONVERSATION_ID,
+        conversationId,
         kind: 'user',
         message: { role: 'user', content: item.content },
       },
     ],
     submissions: [submission],
-    documents: [{ key: inboxKey(ROOT_CONVERSATION_ID), value: inboxDocument(rest) }],
+    documents: [{ key: inboxKey(conversationId), value: inboxDocument(rest) }],
   })
   return submission.id
 }
