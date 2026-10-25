@@ -65,9 +65,7 @@ export function createPhases(host: PhaseHost): {
 }
 
 export function projectMessages(entries: readonly DurableEntryRow[], cutoff: number): DurableMessage[] {
-  const scoped = [...entries]
-    .filter((entry) => entry.id <= cutoff || entry.kind === 'tool')
-    .sort((a, b) => a.id - b.id)
+  const scoped = compactWindow(entries, cutoff)
   const callIds = new Set<string>()
   for (const entry of scoped) {
     if (entry.message.role !== 'assistant') continue
@@ -88,6 +86,22 @@ export function projectMessages(entries: readonly DurableEntryRow[], cutoff: num
     messages.unshift(system)
   }
   return messages
+}
+
+function compactWindow(entries: readonly DurableEntryRow[], cutoff: number): DurableEntryRow[] {
+  const inCutoff = entries.filter((entry) => entry.id <= cutoff)
+  let head: DurableEntryRow | undefined
+  for (const entry of inCutoff) {
+    if (entry.kind === 'compact' && (!head || entry.id > head.id)) head = entry
+  }
+  const start = head ? (head.boundaryId ?? head.id) : undefined
+  const window = start === undefined ? inCutoff : inCutoff.filter((entry) => entry.id >= start)
+  const lateTools = entries.filter(
+    (entry) => entry.kind === 'tool' && entry.id > cutoff && !window.some((kept) => kept.id === entry.id),
+  )
+  const ordered = [...window, ...lateTools].sort((a, b) => a.id - b.id)
+  if (!head) return ordered
+  return [head, ...ordered.filter((entry) => entry.id !== head.id)]
 }
 
 async function prepare(host: PhaseHost, taskId: number): Promise<void> {

@@ -2,6 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { DurableBusy, DurableFault } from '../errors.ts'
 import { openMemoryStorage } from '../storage/memory.ts'
 import type {
+  DurableEntryRow,
   DurableMessage,
   DurableModel,
   DurableStorage,
@@ -10,6 +11,7 @@ import type {
   JsonObject,
 } from '../storage/types.ts'
 import { openDurable, type DurableRuntime } from './open.ts'
+import { projectMessages } from './turn.ts'
 
 function toolUseThenStop(): DurableModel {
   return {
@@ -1678,5 +1680,32 @@ describe('durable turns', () => {
     })
     expect(rt.partial(1)).toBeUndefined()
     expect(rt.partial(childId)).toBeUndefined()
+  })
+
+  test('projectMessages starts at the latest compact entry', () => {
+    const old: DurableEntryRow = {
+      id: 1,
+      conversationId: 1,
+      kind: 'user',
+      message: { role: 'user', content: 'old' },
+    }
+    const kept: DurableEntryRow = {
+      id: 3,
+      conversationId: 1,
+      kind: 'user',
+      message: { role: 'user', content: 'kept' },
+    }
+    const summary: DurableEntryRow = {
+      id: 10,
+      conversationId: 1,
+      kind: 'compact',
+      boundaryId: 3,
+      message: { role: 'user', content: 'summary' },
+    }
+    const messages = projectMessages([old, kept, summary], 10)
+    expect(messages).toEqual([
+      { role: 'user', content: 'summary' },
+      { role: 'user', content: 'kept' },
+    ])
   })
 })

@@ -63,7 +63,7 @@ export type DurableConversationRow = {
 export type DurableEntryRow = {
   id: number
   conversationId: number
-  kind: 'system' | 'user' | 'assistant' | 'tool'
+  kind: 'system' | 'user' | 'assistant' | 'tool' | 'compact'
   message: DurableMessage
   boundaryId?: number
 }
@@ -73,7 +73,7 @@ export type DurableTaskOutcome = 'completed' | 'failed' | 'faulted' | 'aborted'
 
 export type DurableTaskRow = {
   id: number
-  name: 'generation' | 'tool'
+  name: 'generation' | 'tool' | 'compaction'
   conversationId: number
   parentTaskId?: number
   status: DurableTaskStatus
