@@ -28,9 +28,16 @@ type LiveSlot = { taskId: number; status: 'running' | 'done'; entryId?: number }
 type LiveRun = { submissionId: number; generationTaskId: number; inputs?: number[] }
 type LiveDoc = { run?: LiveRun; tools?: LiveSlot[] }
 
+const COMPACT_SYSTEM =
+  'Summarize the conversation so a later turn can continue. Keep decisions, errors, and file paths. Omit chatter.'
+const COMPACT_PREFIX =
+  'The conversation history before this point was compacted into the following summary:\n\n<summary>\n'
+const COMPACT_SUFFIX = '\n</summary>'
+
 export function createPhases(host: PhaseHost): {
   runGeneration(taskId: number): Promise<void>
   runTool(taskId: number): Promise<void>
+  runCompaction(taskId: number): Promise<void>
 } {
   return {
     async runGeneration(taskId) {
@@ -60,6 +67,33 @@ export function createPhases(host: PhaseHost): {
         return
       }
       await callPhase(host, task.id)
+    },
+    async runCompaction(taskId) {
+      const planned = await host.line.run((tx) => planCompaction(tx, taskId))
+      if (!planned || host.stopped()) return
+      if (planned.kind === 'empty') return
+      let result: Awaited<ReturnType<DurableModel['complete']>>
+      try {
+        result = await host.model.complete({
+          messages: planned.messages,
+          modelId: host.modelId,
+          signal: host.signal,
+        })
+      } catch (error) {
+        if (host.stopped()) return
+        const message = error instanceof Error ? error.message : String(error)
+        await host.line.run((tx) => finishCompaction(tx, taskId, { failed: true, error: message }))
+        return
+      }
+      if (host.stopped()) return
+      if (result.stopReason === 'stop' && result.content.length > 0) {
+        const text = `${COMPACT_PREFIX}${result.content}${COMPACT_SUFFIX}`
+        await host.line.run((tx) =>
+          finishCompaction(tx, taskId, { failed: false, answer: text, boundaryId: planned.boundaryId }),
+        )
+        return
+      }
+      await host.line.run((tx) => finishCompaction(tx, taskId, { failed: true, error: 'model_error' }))
     },
   }
 }
@@ -102,6 +136,95 @@ function compactWindow(entries: readonly DurableEntryRow[], cutoff: number): Dur
   const ordered = [...window, ...lateTools].sort((a, b) => a.id - b.id)
   if (!head) return ordered
   return [head, ...ordered.filter((entry) => entry.id !== head.id)]
+}
+
+function activeEntries(entries: readonly DurableEntryRow[]): DurableEntryRow[] {
+  const ordered = [...entries].sort((a, b) => a.id - b.id)
+  let head: DurableEntryRow | undefined
+  for (const entry of ordered) {
+    if (entry.kind === 'compact' && (!head || entry.id > head.id)) head = entry
+  }
+  if (!head) return ordered
+  const start = head.boundaryId ?? head.id
+  return ordered.filter((entry) => entry.id >= start)
+}
+
+type CompactionPlan =
+  | { kind: 'empty' }
+  | { kind: 'summarize'; messages: DurableMessage[]; boundaryId: number }
+
+function planCompaction(tx: CommitTx, taskId: number): CompactionPlan | undefined {
+  const task = tx.readTask(taskId)
+  if (!task || task.status === 'terminal') return undefined
+  const active = activeEntries(tx.readEntries(task.conversationId))
+  const countable = active.filter(
+    (entry) => entry.message.role === 'user' || entry.message.role === 'assistant',
+  )
+  if (countable.length <= 4) {
+    finishCompaction(tx, taskId, { failed: false, answer: '' })
+    return { kind: 'empty' }
+  }
+  const firstTail = countable[countable.length - 2]
+  if (!firstTail) return undefined
+  let startAt = active.findIndex((entry) => entry.id === firstTail.id)
+  while (startAt > 0 && active[startAt]?.kind === 'tool') startAt -= 1
+  const boundary = active[startAt]
+  if (!boundary) return undefined
+  const source = active.filter((entry) => entry.id < boundary.id)
+  const lines = source.flatMap((entry) => {
+    const message = entry.message
+    if (message.role === 'system') return []
+    const prefix = message.role === 'user' ? '[User] ' : message.role === 'assistant' ? '[Assistant] ' : '[Tool] '
+    return [`${prefix}${message.content.slice(0, 2000)}`]
+  })
+  const instructions = task.checkpoint?.instructions
+  let user = lines.join('\n')
+  if (typeof instructions === 'string' && instructions.length > 0) user += `\nAdditional focus: ${instructions}`
+  return {
+    kind: 'summarize',
+    boundaryId: boundary.id,
+    messages: [
+      { role: 'system', content: COMPACT_SYSTEM },
+      { role: 'user', content: user },
+    ],
+  }
+}
+
+function finishCompaction(
+  tx: CommitTx,
+  taskId: number,
+  result: { failed: false; answer: string; boundaryId?: number } | { failed: true; error: string },
+): void {
+  const task = tx.readTask(taskId)
+  if (!task) return
+  const submission = tx.readSubmissionByRequest(task.conversationId, `compaction:${task.id}`)
+  const entries: DurableEntryRow[] = []
+  if (!result.failed && result.boundaryId !== undefined) {
+    entries.push({
+      id: tx.mintId(),
+      conversationId: task.conversationId,
+      kind: 'compact',
+      boundaryId: result.boundaryId,
+      message: { role: 'user', content: result.answer },
+    })
+  }
+  const submissions: DurableSubmissionRow[] = []
+  if (submission) {
+    const next: DurableSubmissionRow = {
+      id: submission.id,
+      conversationId: submission.conversationId,
+      status: result.failed ? 'unanswered' : 'done',
+    }
+    if (submission.requestId !== undefined) next.requestId = submission.requestId
+    if (result.failed) next.reason = 'model_error'
+    else next.answer = result.answer
+    submissions.push(next)
+  }
+  tx.stage({
+    ...(entries.length > 0 ? { entries } : {}),
+    tasks: [evolveTask(task, { status: 'terminal', outcome: result.failed ? 'failed' : 'completed' })],
+    ...(submissions.length > 0 ? { submissions } : {}),
+  })
 }
 
 async function prepare(host: PhaseHost, taskId: number): Promise<void> {

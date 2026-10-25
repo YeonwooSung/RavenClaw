@@ -1708,4 +1708,147 @@ describe('durable turns', () => {
       { role: 'user', content: 'kept' },
     ])
   })
+
+  test('compact of four messages writes no entry', async () => {
+    const storage = openMemoryStorage()
+    const rt = await openDurable(storage, {
+      model: {
+        async complete(input) {
+          const last = lastUserContent(input.messages) ?? ''
+          return { content: `a:${last}`, stopReason: 'stop' }
+        },
+      },
+      modelId: 'm',
+    })
+    const conversation = await rt.root()
+    for (const text of ['a', 'b']) {
+      expect((await (await conversation.submit({ content: text })).wait()).status).toBe('done')
+    }
+    const before = storage.readEntries(1).length
+    const compacted = await conversation.compact()
+    await rt.resume()
+    expect(await compacted.wait()).toEqual({ status: 'done', text: '' })
+    expect(storage.readEntries(1).length).toBe(before)
+    expect(storage.readEntries(1).some((entry) => entry.kind === 'compact')).toBe(false)
+  })
+
+  test('compact keeps the tail and the summary and leaves the prefix stored', async () => {
+    const storage = openMemoryStorage()
+    const seen: DurableMessage[][] = []
+    const rt = await openDurable(storage, {
+      model: {
+        async complete(input) {
+          seen.push(input.messages.map((message) => ({ ...message })))
+          if (input.messages.some((message) => message.role === 'system' && message.content.startsWith('Summarize'))) {
+            return { content: 'summary body', stopReason: 'stop' }
+          }
+          return { content: `a:${lastUserContent(input.messages) ?? ''}`, stopReason: 'stop' }
+        },
+      },
+      modelId: 'm',
+    })
+    const conversation = await rt.root()
+    for (const text of ['u1', 'u2', 'u3']) {
+      expect((await (await conversation.submit({ content: text })).wait()).status).toBe('done')
+    }
+    const compacted = await conversation.compact()
+    await rt.resume()
+    const wrapped = await compacted.wait()
+    expect(wrapped).toEqual({
+      status: 'done',
+      text: 'The conversation history before this point was compacted into the following summary:\n\n<summary>\nsummary body\n</summary>',
+    })
+    expect(storage.readEntries(1).some((entry) => entry.kind === 'user' && entry.message.role === 'user' && entry.message.content === 'u1')).toBe(true)
+    await (await conversation.submit({ content: 'u4' })).wait()
+    const later = seen.filter(
+      (messages) => !messages.some((message) => message.role === 'system' && message.content.startsWith('Summarize')),
+    )
+    const last = later[later.length - 1] ?? []
+    const userText = last.flatMap((message) => (message.role === 'user' ? [message.content] : []))
+    expect(userText.some((text) => text.includes('<summary>'))).toBe(true)
+    expect(userText.some((text) => text === 'u1')).toBe(false)
+    expect(userText.some((text) => text === 'u4')).toBe(true)
+  })
+
+  test('a failed compact writes no entry and reports model_error', async () => {
+    const storage = openMemoryStorage()
+    const rt = await openDurable(storage, {
+      model: {
+        async complete(input) {
+          if (input.messages.some((message) => message.role === 'system' && message.content.startsWith('Summarize'))) {
+            return { content: 'nope', stopReason: 'error' }
+          }
+          return { content: 'ok', stopReason: 'stop' }
+        },
+      },
+      modelId: 'm',
+    })
+    const conversation = await rt.root()
+    for (const text of ['u1', 'u2', 'u3']) {
+      await (await conversation.submit({ content: text })).wait()
+    }
+    const compacted = await conversation.compact()
+    await rt.resume()
+    expect(await compacted.wait()).toEqual({ status: 'unanswered', reason: 'model_error' })
+    expect(storage.readEntries(1).some((entry) => entry.kind === 'compact')).toBe(false)
+  })
+
+  test('compact while a run is active throws DurableBusy', async () => {
+    const storage = openMemoryStorage()
+    let release!: () => void
+    const gate = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let mark!: () => void
+    const entered = new Promise<void>((resolve) => {
+      mark = resolve
+    })
+    const rt = await openDurable(storage, {
+      model: {
+        async complete() {
+          mark()
+          await gate
+          return { content: 'ok', stopReason: 'stop' }
+        },
+      },
+      modelId: 'm',
+    })
+    const conversation = await rt.root()
+    const submission = await conversation.submit({ content: 'go' })
+    await entered
+    let thrown: unknown
+    try {
+      await conversation.compact()
+    } catch (error) {
+      thrown = error
+    }
+    expect(thrown).toBeInstanceOf(DurableBusy)
+    expect(storage.readTasks().some((task) => task.name === 'compaction')).toBe(false)
+    release()
+    expect(await submission.wait()).toEqual({ status: 'done', text: 'ok' })
+  })
+
+  test('a second compact does not send the prefix before the first summary', async () => {
+    const storage = openMemoryStorage()
+    const summaryCalls: string[] = []
+    const rt = await openDurable(storage, {
+      model: {
+        async complete(input) {
+          if (input.messages.some((message) => message.role === 'system' && message.content.startsWith('Summarize'))) {
+            summaryCalls.push(lastUserContent(input.messages) ?? '')
+            return { content: 'summary body', stopReason: 'stop' }
+          }
+          return { content: 'ok', stopReason: 'stop' }
+        },
+      },
+      modelId: 'm',
+    })
+    const conversation = await rt.root()
+    for (const text of ['u1', 'u2', 'u3']) await (await conversation.submit({ content: text })).wait()
+    await (await conversation.compact()).wait()
+    for (const text of ['n1', 'n2', 'n3']) await (await conversation.submit({ content: text })).wait()
+    await (await conversation.compact()).wait()
+    expect(summaryCalls.length).toBe(2)
+    expect(summaryCalls[1]).not.toContain('[User] u1')
+  })
 })

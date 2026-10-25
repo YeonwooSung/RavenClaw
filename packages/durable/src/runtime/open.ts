@@ -48,6 +48,7 @@ export type DurableConversation = {
   readonly id: number
   submit(input: SubmitInput): Promise<DurableSubmission>
   fork(atEntryId: number): Promise<DurableConversation>
+  compact(instructions?: string): Promise<DurableSubmission>
 }
 
 export type DurableSubmission = {
@@ -216,6 +217,7 @@ export async function openDurable(
           const first = selected[0]
           if (!first) return
           if (first.name === 'tool') await Promise.all(selected.map((task) => phases.runTool(task.id)))
+          else if (first.name === 'compaction') await phases.runCompaction(first.id)
           else await phases.runGeneration(first.id)
         } finally {
           trackEnd()
@@ -271,6 +273,7 @@ export async function openDurable(
       id,
       submit: (input) => submit(id, input),
       fork: (atEntryId) => forkAt(id, atEntryId),
+      compact: (instructions) => compactAt(id, instructions),
     }
   }
 
@@ -296,6 +299,43 @@ export async function openDurable(
     const row = await line.run((tx) => tx.readConversation(id))
     if (!row) throw new DurableFault(`unknown conversation ${id}`)
     return conversationHandle(id)
+  }
+
+  async function compactAt(conversationId: number, instructions?: string): Promise<DurableSubmission> {
+    if (isDead()) throw new DurableClosed('closed')
+    const row = await line.run((tx) => {
+      if (!tx.readConversation(conversationId)) throw new DurableFault(`unknown conversation ${conversationId}`)
+      if (liveRun(tx.readDocument(liveKey(conversationId)))) throw new DurableBusy()
+      if (readInbox(tx.readDocument(inboxKey(conversationId))).length > 0) throw new DurableBusy()
+      const taskId = tx.mintId()
+      const submissionId = tx.mintId()
+      const checkpoint: JsonObject = { phase: 'select' }
+      if (instructions !== undefined && instructions.length > 0) checkpoint.instructions = instructions
+      const task: DurableTaskRow = {
+        id: taskId,
+        name: 'compaction',
+        conversationId,
+        status: 'pending',
+        checkpoint,
+        restarts: 0,
+        parked: false,
+      }
+      const submission: DurableSubmissionRow = {
+        id: submissionId,
+        conversationId,
+        status: 'queued',
+        requestId: `compaction:${taskId}`,
+      }
+      tx.stage({ tasks: [task], submissions: [submission] })
+      return submission
+    })
+    if (!isDead()) {
+      const pending = kick()
+      pending.catch((error: unknown) => {
+        if (!(error instanceof DurableClosed)) throw error
+      })
+    }
+    return handleFor(row)
   }
 
   async function forkAt(conversationId: number, atEntryId: number): Promise<DurableConversation> {
@@ -461,6 +501,10 @@ function select(tasks: readonly DurableTaskRow[]): DurableTaskRow[] {
     const kids = tasks.filter((task) => task.parentTaskId === generation.id)
     if (kids.length > 0 && kids.every((task) => task.status === 'terminal')) return [generation]
   }
+  const compaction = tasks
+    .filter((task) => task.name === 'compaction' && task.status === 'pending' && !task.parked)
+    .sort((a, b) => a.id - b.id)[0]
+  if (compaction) return [compaction]
   const generation = tasks
     .filter((task) => task.name === 'generation' && task.status === 'pending' && !task.parked)
     .sort((a, b) => a.id - b.id)[0]
