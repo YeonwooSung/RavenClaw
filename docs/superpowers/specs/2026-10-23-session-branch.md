@@ -1,6 +1,6 @@
 # 기본 세션은 메시지 부모와 잎으로 가지를 남긴다
 
-Status: **draft**. 베이스 `fdf0f79`. 스키마 v12. 패키지 버전은 올리지 않는다. CHANGELOG는 쓰지 않는다. 워크트리 `docs/session-branch`. Shipped sha는 없다.
+Status: **implemented**. 베이스 `fdf0f79`. 스키마 v12. 패키지 버전은 올리지 않는다. CHANGELOG는 쓰지 않는다. Shipped sha: `4caf820` on `main`.
 
 ## 이 문서가 하는 일
 

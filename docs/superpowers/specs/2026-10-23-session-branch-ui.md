@@ -1,6 +1,6 @@
 # 슬래시 `/branch`로 현재 경로와 다른 잎을 고른다
 
-Status: **draft**. 베이스 `4caf820`. 스키마 v12. 패키지 버전은 올리지 않는다. CHANGELOG는 쓰지 않는다. 워크트리 `docs/session-branch-ui`. Shipped sha는 없다.
+Status: **implemented**. 베이스 `4caf820`. 스키마 v12. 패키지 버전은 올리지 않는다. CHANGELOG는 쓰지 않는다. Shipped sha: `25f5af7` on `main`.
 
 Implementation plan: [2026-10-23-session-branch-ui.md](../plans/2026-10-23-session-branch-ui.md)
 

@@ -1,6 +1,6 @@
 # 컴팩트는 현재 잎 경로만 접는다
 
-Status: **draft**. 베이스 `25f5af7`. 스키마 v12. 패키지 버전은 올리지 않는다. CHANGELOG는 쓰지 않는다. 워크트리 `docs/session-compact-path`. Shipped sha는 없다.
+Status: **implemented**. 베이스 `25f5af7`. 스키마 v12. 패키지 버전은 올리지 않는다. CHANGELOG는 쓰지 않는다. Shipped sha: `1c22f0c` on `main`.
 
 Implementation plan: [2026-10-24-session-compact-path.md](../plans/2026-10-24-session-compact-path.md)
 

@@ -1,6 +1,6 @@
 # SDK에서 듀러블 런타임을 연다
 
-Status: **draft**. 동작은 이 워크트리 `docs/durable-host`에 구현되어 있다. 베이스 `659cfb9`. 머지 전이므로 Shipped sha는 없다. 스키마 v11 유지. 버전 범프 없음. CHANGELOG는 쓰지 않는다.
+Status: **implemented**. 베이스 `659cfb9`. 스키마 v11 유지. 버전 범프 없음. CHANGELOG는 쓰지 않는다. Shipped sha: `6d4235d` on `main`.
 
 이전 문 [듀러블 런타임 패키지](2026-10-22-durable-harness.md)는 `@ravenclaw/durable`만 둔다. 그 문의 비목표에 있던 SDK 연결이 이 문이다. 패키지 계약은 바꾸지 않는다.
 

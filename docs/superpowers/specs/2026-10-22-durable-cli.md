@@ -1,6 +1,6 @@
 # `raven durable` 명령
 
-Status: **draft**. 베이스 `6d4235d`. 스키마 v11 유지. 버전 범프 없음. CHANGELOG는 쓰지 않는다. 워크트리 `docs/durable-cli`. 동작은 이 브랜치에 구현되어 있다. 머지 전이므로 Shipped sha는 없다.
+Status: **implemented**. 베이스 `6d4235d`. 스키마 v11 유지. 버전 범프 없음. CHANGELOG는 쓰지 않는다. Shipped sha: `3706714` on `main`.
 
 Implementation plan: [2026-10-22-durable-cli.md](../plans/2026-10-22-durable-cli.md)
 

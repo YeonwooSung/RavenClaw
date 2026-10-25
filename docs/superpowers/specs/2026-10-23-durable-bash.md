@@ -1,6 +1,6 @@
 # 듀러블 세션에서 일반 Bash를 실행한다
 
-Status: **draft**. 베이스 `3706714`. 스키마 v11 유지. 버전 범프 없음. CHANGELOG는 쓰지 않는다. 워크트리 `docs/durable-bash`. Shipped sha는 없다.
+Status: **implemented**. 베이스 `3706714`. 스키마 v11 유지. 버전 범프 없음. CHANGELOG는 쓰지 않는다. Shipped sha: `fdf0f79` on `main`.
 
 Implementation plan: [2026-10-23-durable-bash.md](../plans/2026-10-23-durable-bash.md)
 

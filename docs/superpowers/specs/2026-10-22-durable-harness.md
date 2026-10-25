@@ -1,6 +1,6 @@
 # 듀러블 런타임 패키지
 
-Status: **draft**. 베이스 `c4831c1`. 스키마 v11 유지. 버전 범프 없음. CHANGELOG는 쓰지 않는다. 워크트리 `feat/durable`.
+Status: **implemented**. 베이스 `c4831c1`. 스키마 v11 유지. 버전 범프 없음. CHANGELOG는 쓰지 않는다. Shipped sha: `659cfb9` on `main`.
 
 ## 이 문서가 하는 일
 
