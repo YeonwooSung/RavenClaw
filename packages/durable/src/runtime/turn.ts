@@ -25,7 +25,8 @@ export type PhaseHost = {
 }
 
 type LiveSlot = { taskId: number; status: 'running' | 'done'; entryId?: number }
-type LiveDoc = { run?: { submissionId: number; generationTaskId: number }; tools?: LiveSlot[] }
+type LiveRun = { submissionId: number; generationTaskId: number; inputs?: number[] }
+type LiveDoc = { run?: LiveRun; tools?: LiveSlot[] }
 
 export function createPhases(host: PhaseHost): {
   runGeneration(taskId: number): Promise<void>
@@ -296,6 +297,7 @@ async function followUp(host: PhaseHost, taskId: number): Promise<void> {
       tx.stage({ tasks: [done] })
       return
     }
+    const steerId = placeFirstSteer(tx)
     const nextId = tx.mintId()
     const next: DurableTaskRow = {
       id: nextId,
@@ -306,12 +308,20 @@ async function followUp(host: PhaseHost, taskId: number): Promise<void> {
       restarts: 0,
       parked: false,
     }
+    const inputs = [...(live.run.inputs ?? [])]
+    if (steerId !== undefined && !inputs.includes(steerId)) inputs.push(steerId)
     tx.stage({
       tasks: [done, next],
       documents: [
         {
           key: 'live',
-          value: { run: { submissionId: live.run.submissionId, generationTaskId: nextId } },
+          value: {
+            run: runDocument({
+              submissionId: live.run.submissionId,
+              generationTaskId: nextId,
+              inputs,
+            }),
+          },
         },
       ],
     })
@@ -502,18 +512,25 @@ function settleSubmissions(
 ): DurableSubmissionRow[] {
   const live = parseLive(tx.readDocument('live'))
   if (!live.run) return []
-  const row = tx.readSubmission(live.run.submissionId)
-  if (!row) return []
-  const next: DurableSubmissionRow = {
-    id: row.id,
-    conversationId: row.conversationId,
-    status: patch.status,
+  const seen = new Set<number>()
+  const rows: DurableSubmissionRow[] = []
+  for (const id of [live.run.submissionId, ...(live.run.inputs ?? [])]) {
+    if (seen.has(id)) continue
+    seen.add(id)
+    const row = tx.readSubmission(id)
+    if (!row) continue
+    const next: DurableSubmissionRow = {
+      id: row.id,
+      conversationId: row.conversationId,
+      status: patch.status,
+    }
+    if (row.requestId !== undefined) next.requestId = row.requestId
+    if (row.entryId !== undefined) next.entryId = row.entryId
+    if (patch.status === 'done') next.answer = patch.answer
+    else next.reason = patch.reason
+    rows.push(next)
   }
-  if (row.requestId !== undefined) next.requestId = row.requestId
-  if (row.entryId !== undefined) next.entryId = row.entryId
-  if (patch.status === 'done') next.answer = patch.answer
-  else next.reason = patch.reason
-  return [next]
+  return rows
 }
 
 function withSlot(live: LiveDoc, slot: LiveSlot): JsonObject {
@@ -522,8 +539,26 @@ function withSlot(live: LiveDoc, slot: LiveSlot): JsonObject {
     ? { taskId: slot.taskId, status: slot.status, entryId: slot.entryId }
     : { taskId: slot.taskId, status: slot.status }
   const doc: JsonObject = { tools: [...tools.map(slotJson), stored] }
-  if (live.run) doc.run = { submissionId: live.run.submissionId, generationTaskId: live.run.generationTaskId }
+  if (live.run) doc.run = runDocument(live.run)
   return doc
+}
+
+function runDocument(run: LiveRun): JsonObject {
+  const value: JsonObject = {
+    submissionId: run.submissionId,
+    generationTaskId: run.generationTaskId,
+  }
+  if (run.inputs && run.inputs.length > 0) value.inputs = [...run.inputs]
+  return value
+}
+
+function runInputs(value: JsonValue | undefined): number[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const inputs: number[] = []
+  for (const item of value) {
+    if (typeof item === 'number') inputs.push(item)
+  }
+  return inputs.length > 0 ? inputs : undefined
 }
 
 function slotJson(slot: LiveSlot): JsonObject {
@@ -543,7 +578,13 @@ function parseLive(value: JsonValue | undefined): LiveDoc {
     typeof run.submissionId === 'number' &&
     typeof run.generationTaskId === 'number'
   ) {
-    doc.run = { submissionId: run.submissionId, generationTaskId: run.generationTaskId }
+    const parsed: LiveRun = {
+      submissionId: run.submissionId,
+      generationTaskId: run.generationTaskId,
+    }
+    const inputs = runInputs(run.inputs)
+    if (inputs) parsed.inputs = inputs
+    doc.run = parsed
   }
   if (Array.isArray(value.tools)) {
     const tools: LiveSlot[] = []
@@ -637,6 +678,38 @@ export function placeFirstFollowUp(tx: CommitTx, items: readonly InboxItem[]): D
     ],
   })
   return submission
+}
+
+export function placeFirstSteer(tx: CommitTx): number | undefined {
+  const items = readInbox(tx.readDocument(inboxKey(ROOT_CONVERSATION_ID)))
+  const index = items.findIndex((item) => item.mode === 'steer')
+  if (index < 0) return undefined
+  const item = items[index]
+  if (!item) return undefined
+  const rest = items.filter((_, at) => at !== index)
+  const entryId = tx.mintId()
+  const row = tx.readSubmission(item.id)
+  const submission: DurableSubmissionRow = {
+    id: item.id,
+    conversationId: row?.conversationId ?? ROOT_CONVERSATION_ID,
+    status: 'queued',
+    entryId,
+  }
+  const requestId = row?.requestId ?? item.requestId
+  if (requestId !== undefined) submission.requestId = requestId
+  tx.stage({
+    entries: [
+      {
+        id: entryId,
+        conversationId: ROOT_CONVERSATION_ID,
+        kind: 'user',
+        message: { role: 'user', content: item.content },
+      },
+    ],
+    submissions: [submission],
+    documents: [{ key: inboxKey(ROOT_CONVERSATION_ID), value: inboxDocument(rest) }],
+  })
+  return submission.id
 }
 
 function isJsonObject(value: unknown): value is JsonObject {

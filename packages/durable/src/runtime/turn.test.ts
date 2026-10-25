@@ -26,6 +26,34 @@ function toolUseThenStop(): DurableModel {
   }
 }
 
+function lastUserContent(messages: readonly DurableMessage[]): string | undefined {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]
+    if (message?.role === 'user') return message.content
+  }
+  return undefined
+}
+
+function toolUntilSteer(steerText: string): DurableModel {
+  return {
+    async complete(input) {
+      const sawSteer = input.messages.some(
+        (message) => message.role === 'user' && message.content === steerText,
+      )
+      if (!sawSteer) {
+        return {
+          content: '',
+          stopReason: 'toolUse',
+          toolCalls: [{ id: 'c1', name: 'echo', arguments: {} }],
+        }
+      }
+      const last = lastUserContent(input.messages)
+      if (last !== steerText) return { content: 'after-follow', stopReason: 'stop' }
+      return { content: 'after-steer', stopReason: 'stop' }
+    },
+  }
+}
+
 function toolMessage(storage: DurableStorage, content: string): DurableMessage | undefined {
   return storage
     .readEntries(1)
@@ -932,5 +960,131 @@ describe('durable turns', () => {
     clock = 1000
     expect(view.wake()).toEqual({ active: true })
     expect(idle.readTasks()).toEqual(beforeDue)
+  })
+
+  test('a steer during a tool is the next user message and shares the follow-up answer', async () => {
+    const storage = openMemoryStorage()
+    const seen: DurableMessage[][] = []
+    let steerId = 0
+    let conversation!: Awaited<ReturnType<DurableRuntime['root']>>
+    const inner = toolUntilSteer('steer-text')
+    const rt = await openDurable(storage, {
+      model: {
+        async complete(input) {
+          seen.push(input.messages.map((message) => JSON.parse(JSON.stringify(message)) as DurableMessage))
+          return inner.complete(input)
+        },
+      },
+      tools: [
+        {
+          name: 'echo',
+          async execute() {
+            steerId = (await conversation.submit({ content: 'steer-text', whenBusy: 'steer' })).id
+            return { content: 'ok' }
+          },
+        },
+      ],
+      modelId: 'm',
+    })
+    conversation = await rt.root()
+    const original = await conversation.submit({ content: 'go' })
+    const originalResult = await original.wait()
+    const steerResult = await rt.submission(steerId).wait()
+    expect(seen.length).toBeGreaterThanOrEqual(2)
+    expect(lastUserContent(seen[0] ?? [])).toBe('go')
+    expect(lastUserContent(seen[1] ?? [])).toBe('steer-text')
+    expect(originalResult).toEqual({ status: 'done', text: 'after-steer' })
+    expect(steerResult).toEqual(originalResult)
+  })
+
+  test('a second steer stays queued in inbox:1 when the model stops', async () => {
+    const storage = openMemoryStorage()
+    const seen: DurableMessage[][] = []
+    let firstId = 0
+    let secondId = 0
+    let conversation!: Awaited<ReturnType<DurableRuntime['root']>>
+    const inner = toolUntilSteer('steer-a')
+    const rt = await openDurable(storage, {
+      model: {
+        async complete(input) {
+          seen.push(input.messages.map((message) => JSON.parse(JSON.stringify(message)) as DurableMessage))
+          return inner.complete(input)
+        },
+      },
+      tools: [
+        {
+          name: 'echo',
+          async execute() {
+            firstId = (await conversation.submit({ content: 'steer-a', whenBusy: 'steer' })).id
+            secondId = (await conversation.submit({ content: 'steer-b', whenBusy: 'steer' })).id
+            return { content: 'ok' }
+          },
+        },
+      ],
+      modelId: 'm',
+    })
+    conversation = await rt.root()
+    const original = await conversation.submit({ content: 'go' })
+    expect(await original.wait()).toEqual({ status: 'done', text: 'after-steer' })
+    expect(await rt.submission(firstId).wait()).toEqual({ status: 'done', text: 'after-steer' })
+    const follow = seen.find((messages) => lastUserContent(messages) === 'steer-a')
+    expect(follow?.some((message) => message.role === 'user' && message.content === 'steer-a')).toBe(true)
+    expect(follow?.some((message) => message.role === 'user' && message.content === 'steer-b')).toBe(false)
+    expect(storage.readDocument('inbox:1')).toEqual({
+      items: [{ id: secondId, mode: 'steer', content: 'steer-b' }],
+    })
+    expect(storage.readSubmission(secondId)).toEqual({
+      id: secondId,
+      conversationId: 1,
+      status: 'queued',
+    })
+  })
+
+  test('a queued followUp stays in the inbox while a steer is placed on the tool follow-up', async () => {
+    const storage = openMemoryStorage()
+    const seen: DurableMessage[][] = []
+    let inboxAtSteer: unknown
+    let followId = 0
+    let steerId = 0
+    let conversation!: Awaited<ReturnType<DurableRuntime['root']>>
+    const inner = toolUntilSteer('steer-text')
+    const rt = await openDurable(storage, {
+      model: {
+        async complete(input) {
+          seen.push(input.messages.map((message) => JSON.parse(JSON.stringify(message)) as DurableMessage))
+          if (lastUserContent(input.messages) === 'steer-text' && inboxAtSteer === undefined) {
+            inboxAtSteer = storage.readDocument('inbox:1')
+          }
+          return inner.complete(input)
+        },
+      },
+      tools: [
+        {
+          name: 'echo',
+          async execute() {
+            followId = (await conversation.submit({ content: 'later-text', whenBusy: 'followUp' })).id
+            steerId = (await conversation.submit({ content: 'steer-text', whenBusy: 'steer' })).id
+            return { content: 'ok' }
+          },
+        },
+      ],
+      modelId: 'm',
+    })
+    conversation = await rt.root()
+    const original = await conversation.submit({ content: 'go' })
+    const originalResult = await original.wait()
+    const steerResult = await rt.submission(steerId).wait()
+    const followResult = await rt.submission(followId).wait()
+    const steered = seen.find((messages) => lastUserContent(messages) === 'steer-text')
+    expect(steered?.some((message) => message.role === 'user' && message.content === 'steer-text')).toBe(true)
+    expect(steered?.some((message) => message.role === 'user' && message.content === 'later-text')).toBe(false)
+    expect(inboxAtSteer).toEqual({
+      items: [{ id: followId, mode: 'followUp', content: 'later-text' }],
+    })
+    expect(originalResult).toEqual({ status: 'done', text: 'after-steer' })
+    expect(steerResult).toEqual(originalResult)
+    expect(followResult).toEqual({ status: 'done', text: 'after-follow' })
+    expect(followResult.text).not.toBe(steerResult.text)
+    expect(storage.readSubmission(steerId)?.answer).toBe('after-steer')
   })
 })
