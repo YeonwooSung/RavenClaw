@@ -1243,6 +1243,46 @@ describe('durable turns', () => {
     expect(rt.partial(1)).toBeUndefined()
   })
 
+  test('a stream partial is absent when tools start', async () => {
+    const storage = openMemoryStorage()
+    const model: DurableModel = {
+      async complete() {
+        throw new Error('complete should not run')
+      },
+      async stream(input) {
+        if (input.messages.some((message) => message.role === 'tool')) {
+          return { content: 'done', stopReason: 'stop' }
+        }
+        await input.onPartial('toolish')
+        return {
+          content: '',
+          stopReason: 'toolUse',
+          toolCalls: [{ id: 'c1', name: 'echo', arguments: {} }],
+        }
+      },
+    }
+    const rt = await openDurable(storage, {
+      model,
+      tools: [
+        {
+          name: 'echo',
+          async execute() {
+            const live = storage.readDocument('live')
+            expect(
+              live && typeof live === 'object' && !Array.isArray(live) && Object.hasOwn(live, 'partial'),
+            ).toBe(false)
+            return { content: 'ok' }
+          },
+        },
+      ],
+      modelId: 'm',
+    })
+    expect(await (await (await rt.root()).submit({ content: 'go' })).wait()).toEqual({
+      status: 'done',
+      text: 'done',
+    })
+  })
+
   test('a complete-only model leaves partial undefined', async () => {
     const storage = openMemoryStorage()
     const rt = await openDurable(storage, {

@@ -293,6 +293,13 @@ async function settleToolUse(
       name: item.name,
       arguments: item.arguments ?? {},
     }))
+    const live = tx.readDocument('live')
+    const documents: { key: string; value: JsonValue }[] = []
+    if (live && typeof live === 'object' && !Array.isArray(live) && Object.hasOwn(live, 'partial')) {
+      const next = { ...live }
+      delete next.partial
+      documents.push({ key: 'live', value: next })
+    }
     tx.stage({
       entries: [
         {
@@ -311,6 +318,7 @@ async function settleToolUse(
         evolveTask(task, { status: 'waiting', checkpoint: { phase: 'tools' } }),
         ...planned.map((item) => item.child),
       ],
+      ...(documents.length > 0 ? { documents } : {}),
     })
   })
 }
