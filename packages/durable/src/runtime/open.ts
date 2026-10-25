@@ -163,6 +163,10 @@ export async function openDurable(
       let park = false
       for (const task of tx.readTasks()) {
         if (task.status !== 'running') continue
+        if (task.nested === true) {
+          staged.push(evolveTask(task, { status: 'terminal', outcome: 'aborted' }))
+          continue
+        }
         const next = reconcileTask(task, limit)
         staged.push(next.task)
         if (!next.invoke) park = true
@@ -494,7 +498,7 @@ function terminalChildren(task: DurableTaskRow, tasks: readonly DurableTaskRow[]
 
 function select(tasks: readonly DurableTaskRow[]): DurableTaskRow[] {
   const tools = tasks
-    .filter((task) => task.name === 'tool' && task.status === 'pending' && !task.parked)
+    .filter((task) => task.name === 'tool' && task.status === 'pending' && !task.parked && task.nested !== true)
     .sort((a, b) => a.id - b.id)
   if (tools.length > 0) return tools
   const waiting = tasks

@@ -18,6 +18,7 @@ export function reconcileTask(
     parked,
   }
   if (task.parentTaskId !== undefined) next.parentTaskId = task.parentTaskId
+  if (task.nested === true) next.nested = true
   if (task.checkpoint !== undefined) next.checkpoint = task.checkpoint
   return { task: next, invoke: !parked }
 }
@@ -43,6 +44,7 @@ export function evolveTask(
     parked: next.parked !== undefined ? next.parked : task.parked,
   }
   if (task.parentTaskId !== undefined) row.parentTaskId = task.parentTaskId
+  if (task.nested === true) row.nested = true
   if (!terminal && checkpoint !== undefined) row.checkpoint = checkpoint
   if (terminal && next.outcome !== undefined) row.outcome = next.outcome
   return row
@@ -58,6 +60,7 @@ export function holdPending(task: DurableTaskRow): DurableTaskRow {
     parked: task.parked,
   }
   if (task.parentTaskId !== undefined) row.parentTaskId = task.parentTaskId
+  if (task.nested === true) row.nested = true
   if (task.checkpoint !== undefined) row.checkpoint = task.checkpoint
   return row
 }

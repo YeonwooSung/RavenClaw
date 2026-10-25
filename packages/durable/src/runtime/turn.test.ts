@@ -1993,4 +1993,101 @@ describe('durable turns', () => {
     expect(await (await conversation.compact()).wait()).toEqual({ status: 'done', text: '' })
     expect(storage.readEntries(1).filter((entry) => entry.kind === 'compact').length).toBe(before)
   })
+
+  test('a tool can call one child tool and the model does not see the nested entry', async () => {
+    const storage = openMemoryStorage()
+    let childExecs = 0
+    const requests: DurableMessage[][] = []
+    const rt = await openDurable(storage, {
+      model: {
+        async complete(input) {
+          requests.push([...input.messages])
+          if (input.messages.some((message) => message.role === 'tool')) {
+            return { content: 'done', stopReason: 'stop' }
+          }
+          return {
+            content: '',
+            stopReason: 'toolUse',
+            toolCalls: [{ id: 'c1', name: 'parent', arguments: {} }],
+          }
+        },
+      },
+      tools: [
+        {
+          name: 'parent',
+          async execute(_args, ctx) {
+            const nested = await ctx.call('child', { n: 1 })
+            const missing = await ctx.call('missing', {})
+            const spawned = await ctx.spawn({ content: 'nope' })
+            return { content: `${nested.content}|${missing.content}|${spawned.reason}` }
+          },
+        },
+        {
+          name: 'child',
+          async execute(_args, ctx) {
+            childExecs += 1
+            const again = await ctx.call('child', {})
+            return { content: `child:${again.content}` }
+          },
+        },
+      ],
+      modelId: 'm',
+    })
+    const conversation = await rt.root()
+    expect(await (await conversation.submit({ content: 'go' })).wait()).toEqual({ status: 'done', text: 'done' })
+    expect(childExecs).toBe(1)
+    const parentTool = storage.readEntries(1).find((entry) => entry.message.role === 'tool' && entry.message.name === 'parent')
+    expect(parentTool?.message.role === 'tool' ? parentTool.message.content : '').toBe(
+      'child:nested tool depth|tool_unavailable|subagent depth',
+    )
+    const nested = storage.readEntries(1).find(
+      (entry) => entry.message.role === 'tool' && entry.message.toolCallId.startsWith('nested:'),
+    )
+    expect(nested).toBeDefined()
+    const follow = requests[1] ?? []
+    expect(follow.some((message) => message.role === 'tool' && message.toolCallId.startsWith('nested:'))).toBe(false)
+    expect(follow.some((message) => message.role === 'tool' && message.name === 'parent')).toBe(true)
+    let missingConversation = false
+    try {
+      await rt.conversation(2)
+    } catch (error) {
+      missingConversation = error instanceof DurableFault && error.message === 'unknown conversation 2'
+    }
+    expect(missingConversation).toBe(true)
+  })
+
+  test('a nested tool left running is aborted on open and not executed again', async () => {
+    const storage = openMemoryStorage()
+    let execs = 0
+    let rt!: DurableRuntime
+    const options = {
+      model: toolUseThenStop(),
+      tools: [
+        {
+          name: 'echo',
+          async execute(_args: JsonObject, ctx: { call(name: string, args: JsonObject): Promise<{ content: string; isError: boolean }> }) {
+            await ctx.call('child', {})
+            return { content: 'parent' }
+          },
+        },
+        {
+          name: 'child',
+          async execute() {
+            execs += 1
+            rt.abandon()
+            return { content: 'child' }
+          },
+        },
+      ],
+      modelId: 'm',
+    }
+    rt = await openDurable(storage, options)
+    await (await rt.root()).submit({ content: 'go' })
+    await rt.resume()
+    expect(execs).toBe(1)
+    const second = await openDurable(storage, options)
+    await second.resume()
+    expect(execs).toBe(1)
+    expect(storage.readTasks().some((task) => task.nested === true && task.outcome === 'aborted')).toBe(true)
+  })
 })

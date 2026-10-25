@@ -65,7 +65,14 @@ export type DurableTool = {
   replay?: DurableReplay
   execute(
     args: JsonObject,
-    ctx: { signal: AbortSignal; taskId: number },
+    ctx: {
+      signal: AbortSignal
+      taskId: number
+      call(name: string, args: JsonObject): Promise<{ content: string; isError: boolean }>
+      spawn(input: { content: string }): Promise<
+        { status: 'done'; text: string } | { status: 'unanswered'; reason: string }
+      >
+    },
   ): Promise<{ content: string; isError?: boolean; sleepUntil?: number }>
 }
 
@@ -109,6 +116,7 @@ export type DurableTaskRow = {
   name: 'generation' | 'tool' | 'compaction'
   conversationId: number
   parentTaskId?: number
+  nested?: boolean
   status: DurableTaskStatus
   checkpoint?: JsonObject
   restarts: number

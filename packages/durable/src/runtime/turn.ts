@@ -627,6 +627,47 @@ async function recoverExecute(host: PhaseHost, taskId: number): Promise<void> {
 
 type ExecuteIntent = { callId: string; name: string; arguments: JsonObject; replay: 'safe' | 'unsafe' }
 
+async function callNested(
+  host: PhaseHost,
+  parentTaskId: number,
+  name: string,
+  args: JsonObject,
+): Promise<{ content: string; isError: boolean }> {
+  const tool = host.tools.find((item) => item.name === name)
+  if (!tool) return { content: 'tool_unavailable', isError: true }
+  const parent = await host.line.run((tx) => tx.readTask(parentTaskId))
+  if (!parent || parent.nested === true) return { content: 'nested tool depth', isError: true }
+  const childId = await host.line.run((tx) => {
+    const id = tx.mintId()
+    const task: DurableTaskRow = {
+      id,
+      name: 'tool',
+      conversationId: parent.conversationId,
+      parentTaskId,
+      nested: true,
+      status: 'running',
+      checkpoint: { phase: 'execute', name, arguments: args, replay: tool.replay ?? 'unsafe' },
+      restarts: 0,
+      parked: false,
+    }
+    tx.stage({ tasks: [task] })
+    return id
+  })
+  await executeBody(host, childId, {
+    callId: `nested:${childId}`,
+    name,
+    arguments: args,
+    replay: tool.replay === 'safe' ? 'safe' : 'unsafe',
+  })
+  const entry = await host.line.run((tx) =>
+    tx
+      .readEntries(parent.conversationId)
+      .find((row) => row.message.role === 'tool' && row.message.toolCallId === `nested:${childId}`),
+  )
+  if (!entry || entry.message.role !== 'tool') return { content: 'tool_error: nested', isError: true }
+  return { content: entry.message.content, isError: entry.message.isError }
+}
+
 async function executeBody(host: PhaseHost, taskId: number, intent: ExecuteIntent): Promise<void> {
   const tool = host.tools.find((item) => item.name === intent.name)
   if (!tool) {
@@ -684,7 +725,12 @@ async function executeBody(host: PhaseHost, taskId: number, intent: ExecuteInten
   }
   let value: { content: string; isError?: boolean; sleepUntil?: number }
   try {
-    value = await tool.execute(copyArgs(args), { signal: host.signal, taskId })
+    value = await tool.execute(copyArgs(args), {
+      signal: host.signal,
+      taskId,
+      call: (name, callArgs) => callNested(host, taskId, name, callArgs),
+      spawn: () => Promise.resolve({ status: 'unanswered', reason: 'subagent depth' }),
+    })
   } catch (error) {
     if (host.stopped()) return
     const message = error instanceof Error ? error.message : String(error)
