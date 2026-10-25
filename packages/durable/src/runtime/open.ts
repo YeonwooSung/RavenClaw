@@ -11,7 +11,7 @@ import {
   type JsonValue,
 } from '../storage/types.ts'
 import { createCommitLine, type CommitLine } from './commit.ts'
-import { DEFAULT_RESTART_LIMIT, holdPending, reconcileTask } from './scheduler.ts'
+import { DEFAULT_RESTART_LIMIT, evolveTask, holdPending, reconcileTask } from './scheduler.ts'
 import { createPhases } from './turn.ts'
 
 export type DurableRuntime = {
@@ -58,7 +58,7 @@ export async function openDurable(
     restartLimit?: number
   },
 ): Promise<DurableRuntime> {
-  void options.now
+  const now = options.now ?? (() => 0)
   const limit = options.restartLimit ?? DEFAULT_RESTART_LIMIT
   const controller = new AbortController()
   let abandoned = false
@@ -90,6 +90,7 @@ export async function openDurable(
     ...(options.systemPrompt !== undefined ? { systemPrompt: options.systemPrompt } : {}),
     signal: controller.signal,
     stopped: () => abandoned || closing || closedFlag,
+    now,
   })
 
   await reconcile()
@@ -158,11 +159,32 @@ export async function openDurable(
     })
   }
 
+  async function promoteDue(): Promise<void> {
+    await line.run((tx) => {
+      const sleeping = tx.readTasks().filter((task) => task.status === 'sleeping')
+      if (sleeping.length === 0) return
+      const clock = now()
+      const due = sleeping.filter((task) => {
+        const until = task.checkpoint?.until
+        return typeof until === 'number' && until <= clock
+      })
+      if (due.length === 0) return
+      tx.stage({
+        tasks: due.map((task) => {
+          if (task.checkpoint === undefined) return evolveTask(task, { status: 'pending' })
+          return evolveTask(task, { status: 'pending', checkpoint: task.checkpoint })
+        }),
+      })
+    })
+  }
+
   async function drive(): Promise<void> {
     try {
       while (enabled && !isDead()) {
         trackStart()
         try {
+          await promoteDue()
+          if (isDead()) return
           const selected = await line.run((tx) => select(tx.readTasks()))
           if (isDead() || selected.length === 0) return
           const first = selected[0]

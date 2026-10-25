@@ -23,7 +23,7 @@ export type DurableTool = {
   execute(
     args: JsonObject,
     ctx: { signal: AbortSignal; taskId: number },
-  ): Promise<{ content: string; isError?: boolean }>
+  ): Promise<{ content: string; isError?: boolean; sleepUntil?: number }>
 }
 
 export type DurableToolCall = {
@@ -52,7 +52,7 @@ export type DurableEntryRow = {
   message: DurableMessage
 }
 
-export type DurableTaskStatus = 'pending' | 'running' | 'waiting' | 'terminal'
+export type DurableTaskStatus = 'pending' | 'running' | 'waiting' | 'sleeping' | 'terminal'
 export type DurableTaskOutcome = 'completed' | 'failed' | 'faulted' | 'aborted'
 
 export type DurableTaskRow = {

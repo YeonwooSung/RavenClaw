@@ -385,4 +385,134 @@ describe('durable turns', () => {
     expect(afterOpen?.restarts).toBe(0)
     await second.close()
   })
+
+  test('a future sleepUntil parks the parent until the clock reaches it', async () => {
+    const storage = openMemoryStorage()
+    let now = 0
+    let execs = 0
+    let calls = 0
+    const until = 50
+    const rt = await openDurable(storage, {
+      now: () => now,
+      model: {
+        async complete(input) {
+          calls += 1
+          if (input.messages.some((message) => message.role === 'tool')) {
+            return { content: 'done', stopReason: 'stop' }
+          }
+          return {
+            content: '',
+            stopReason: 'toolUse',
+            toolCalls: [{ id: 'c1', name: 'echo', arguments: {} }],
+          }
+        },
+      },
+      tools: [
+        {
+          name: 'echo',
+          async execute() {
+            execs += 1
+            return { content: 'ok', sleepUntil: until }
+          },
+        },
+      ],
+      modelId: 'm',
+    })
+    const submission = await (await rt.root()).submit({ content: 'go' })
+    await rt.resume()
+    expect(execs).toBe(1)
+    expect(calls).toBe(1)
+    const generation = storage.readTasks().find((task) => task.name === 'generation')
+    expect(generation?.status).toBe('sleeping')
+    expect(generation?.checkpoint).toEqual({ phase: 'sleep', until, resume: 'tools' })
+    expect(storage.readTasks().filter((task) => task.name === 'generation')).toHaveLength(1)
+    expect(storage.readSubmission(submission.id)?.status).toBe('queued')
+    expect(toolMessage(storage, 'ok')?.role).toBe('tool')
+
+    now = until
+    await rt.resume()
+    expect(calls).toBe(2)
+    expect(execs).toBe(1)
+    expect(await submission.wait()).toEqual({ status: 'done', text: 'done' })
+  })
+
+  test('a sleepUntil at or before now follows up without sleeping', async () => {
+    const storage = openMemoryStorage()
+    let now = 10
+    let execs = 0
+    let calls = 0
+    const rt = await openDurable(storage, {
+      now: () => now,
+      model: {
+        async complete(input) {
+          calls += 1
+          if (input.messages.some((message) => message.role === 'tool')) {
+            return { content: 'done', stopReason: 'stop' }
+          }
+          return {
+            content: '',
+            stopReason: 'toolUse',
+            toolCalls: [{ id: 'c1', name: 'echo', arguments: {} }],
+          }
+        },
+      },
+      tools: [
+        {
+          name: 'echo',
+          async execute() {
+            execs += 1
+            return { content: 'ok', sleepUntil: now }
+          },
+        },
+      ],
+      modelId: 'm',
+    })
+    expect(await (await (await rt.root()).submit({ content: 'go' })).wait()).toEqual({
+      status: 'done',
+      text: 'done',
+    })
+    expect(execs).toBe(1)
+    expect(calls).toBe(2)
+    expect(storage.readTasks().some((task) => task.status === 'sleeping')).toBe(false)
+  })
+
+  test('a NaN sleepUntil is ignored and follow-up runs immediately', async () => {
+    const storage = openMemoryStorage()
+    let now = 0
+    let execs = 0
+    let calls = 0
+    const rt = await openDurable(storage, {
+      now: () => now,
+      model: {
+        async complete(input) {
+          calls += 1
+          if (input.messages.some((message) => message.role === 'tool')) {
+            return { content: 'done', stopReason: 'stop' }
+          }
+          return {
+            content: '',
+            stopReason: 'toolUse',
+            toolCalls: [{ id: 'c1', name: 'echo', arguments: {} }],
+          }
+        },
+      },
+      tools: [
+        {
+          name: 'echo',
+          async execute() {
+            execs += 1
+            return { content: 'ok', sleepUntil: Number.NaN }
+          },
+        },
+      ],
+      modelId: 'm',
+    })
+    expect(await (await (await rt.root()).submit({ content: 'go' })).wait()).toEqual({
+      status: 'done',
+      text: 'done',
+    })
+    expect(execs).toBe(1)
+    expect(calls).toBe(2)
+    expect(storage.readTasks().some((task) => task.status === 'sleeping')).toBe(false)
+  })
 })

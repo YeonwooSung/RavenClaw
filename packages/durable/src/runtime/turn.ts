@@ -20,6 +20,7 @@ export type PhaseHost = {
   systemPrompt?: string
   signal: AbortSignal
   stopped(): boolean
+  now(): number
 }
 
 type LiveSlot = { taskId: number; status: 'running' | 'done'; entryId?: number }
@@ -33,6 +34,10 @@ export function createPhases(host: PhaseHost): {
     async runGeneration(taskId) {
       const task = await readTask(host, taskId)
       if (!task || task.parked || task.status === 'terminal' || host.stopped()) return
+      if (task.checkpoint?.phase === 'sleep') {
+        await sleepPhase(host, task.id)
+        return
+      }
       if (task.checkpoint?.phase === 'tools' || task.status === 'waiting') {
         await followUp(host, task.id)
         return
@@ -376,7 +381,7 @@ async function executeBody(host: PhaseHost, taskId: number, intent: ExecuteInten
     })
     return
   }
-  let value: { content: string; isError?: boolean }
+  let value: { content: string; isError?: boolean; sleepUntil?: number }
   try {
     value = await tool.execute(copyArgs(intent.arguments), { signal: host.signal, taskId })
   } catch (error) {
@@ -413,7 +418,41 @@ async function executeBody(host: PhaseHost, taskId: number, intent: ExecuteInten
       isError: value.isError === true,
       outcome: 'completed',
     })
+    const until = value.sleepUntil
+    if (task.parentTaskId === undefined) return
+    if (typeof until !== 'number' || !Number.isFinite(until) || until < 0) return
+    if (!(host.now() < until)) return
+    const parent = tx.readTask(task.parentTaskId)
+    if (!parent || parent.status === 'terminal') return
+    tx.stage({
+      tasks: [
+        evolveTask(parent, {
+          status: 'sleeping',
+          checkpoint: { phase: 'sleep', until, resume: 'tools' },
+        }),
+      ],
+    })
   })
+}
+
+async function sleepPhase(host: PhaseHost, taskId: number): Promise<void> {
+  const due = await host.line.run((tx) => {
+    const task = tx.readTask(taskId)
+    if (!task || task.parked || task.status === 'terminal' || task.checkpoint?.phase !== 'sleep') return false
+    const until = task.checkpoint.until
+    if (typeof until === 'number' && host.now() < until) {
+      tx.stage({
+        tasks: [evolveTask(task, { status: 'sleeping', checkpoint: task.checkpoint })],
+      })
+      return false
+    }
+    tx.stage({
+      tasks: [evolveTask(task, { status: 'pending', checkpoint: { phase: 'tools' } })],
+    })
+    return true
+  })
+  if (!due || host.stopped()) return
+  await followUp(host, taskId)
 }
 
 function writeToolTerminal(
