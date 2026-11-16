@@ -222,10 +222,15 @@ describe('builtin skills', () => {
       'references/catalog-index.md',
       'references/mcp-servers.json',
       'references/skipped.md',
+      'Agent depth is 1.',
       'At most 6 children.',
       'Do not set agents[] and run_in_background together.',
+      'Do not pass a child model slug.',
+      'There is no cloud environment.',
       'For a Ralph loop, run /loop with n at most 20.',
+      'There is no stop hook.',
       'State files go under .ravenclaw/.',
+      'Do not write state under `.cursor/`.',
       'general',
       'file-finder',
       'command-runner',
@@ -312,6 +317,10 @@ describe('builtin skills', () => {
           (entry.args as unknown[]).includes('@playwright/mcp@latest'),
       ),
     ).toBe(true)
+    expect(
+      servers.find((entry) => entry.plugin === 'excalidraw' && entry.name === 'excalidraw')
+        ?.headers,
+    ).toEqual({ 'X-Cursor-Plugin': 'excalidraw' })
     for (const entry of servers) {
       expect(typeof entry.name).toBe('string')
       expect((entry.name as string).length).toBeGreaterThan(0)
@@ -329,7 +338,9 @@ describe('builtin skills', () => {
         for (const value of Object.values(entry.headers as Record<string, unknown>)) {
           expect(typeof value).toBe('string')
           const text = String(value)
-          expect(text === '' || text.includes('${')).toBe(true)
+          expect(
+            text === '' || text.includes('${') || /^[A-Za-z0-9._:-]{1,64}$/.test(text),
+          ).toBe(true)
         }
       }
     }

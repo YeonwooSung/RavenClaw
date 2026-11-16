@@ -76,7 +76,7 @@ cursor-pack/
 - plugin `github`, url `https://api.githubcopilot.com/mcp/`
 - plugin `playwright`, command `npx`, args에 `@playwright/mcp@latest`
 
-URL이 `https://`도 아니고 `${`로 시작하지도 않으면 실패다. 헤더 값의 비밀은 `${...}` 자리표시자이거나 비어 있다. 설치는 하지 않는다.
+URL이 `https://`도 아니고 `${`로 시작하지도 않으면 실패다. 헤더 값의 비밀은 `${...}` 자리표시자이거나 비어 있다. 비밀이 아닌 짧은 리터럴 헤더는 유지하며, 예는 `X-Cursor-Plugin`이다. 설치는 하지 않는다.
 
 ## 제외
 

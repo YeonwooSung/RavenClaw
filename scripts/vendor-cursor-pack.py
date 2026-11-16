@@ -269,11 +269,18 @@ def string_map(value: object) -> dict[str, str] | None:
     return out or None
 
 
+_HEADER_LITERAL = re.compile(r"^[A-Za-z0-9._:-]{1,64}$")
+
+
 def header_map(value: object) -> dict[str, str] | None:
     raw = string_map(value)
     if raw is None:
         return None
-    kept = {key: item for key, item in raw.items() if item == "" or "${" in item}
+    kept = {
+        key: item
+        for key, item in raw.items()
+        if item == "" or "${" in item or _HEADER_LITERAL.fullmatch(item)
+    }
     return kept or None
 
 
