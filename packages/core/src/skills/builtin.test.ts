@@ -16,6 +16,7 @@ const REQUIRED = [
   'gamedev',
   'game-design',
   'team-design',
+  'cursor-pack',
 ]
 
 // Pinned at authoring time from the normative skill. The test must not read that file.
@@ -203,5 +204,148 @@ describe('builtin skills', () => {
       }
     }
     walk(join(builtinSkillsRoot(), 'team-design'))
+  })
+
+  test('cursor-pack vendors MIT cursor plugins behind one router', () => {
+    const root = builtinSkillsRoot()
+    const top = readdirSync(root).filter((name) => !name.startsWith('.'))
+    expect(top.sort()).toEqual([...REQUIRED].sort())
+
+    const pack = join(root, 'cursor-pack')
+    const router = readFileSync(join(pack, 'SKILL.md'), 'utf8')
+    const routerFm = parseSkillFrontmatter(router)
+    expect(routerFm.name).toBe('cursor-pack')
+    expect(routerFm.description).toBe('Cursor plugin workflows, principles, and MCP map.')
+    expect(router).not.toContain('allowed-tools')
+    for (const sentence of [
+      'catalog/cli-for-agents/SKILL.md',
+      'references/catalog-index.md',
+      'references/mcp-servers.json',
+      'references/skipped.md',
+      'At most 6 children.',
+      'Do not set agents[] and run_in_background together.',
+      'For a Ralph loop, run /loop with n at most 20.',
+      'State files go under .ravenclaw/.',
+      'general',
+      'file-finder',
+      'command-runner',
+      'reviewer',
+      'researcher-web',
+      'name `gamedev`',
+      'name `team-design`',
+    ]) {
+      expect(router).toContain(sentence)
+    }
+
+    const license = readFileSync(join(pack, 'LICENSE'), 'utf8')
+    expect(license).toContain('MIT License')
+    for (const line of [
+      'Copyright (c) 2026 Cursor',
+      'Copyright (c) 2026 Lauren Tan',
+      'Copyright (c) 2026 Dylan Gattey',
+    ]) {
+      expect(license).toContain(line)
+    }
+
+    const walk = (dir: string): void => {
+      for (const ent of readdirSync(dir, { withFileTypes: true })) {
+        const path = join(dir, ent.name)
+        if (ent.isDirectory()) {
+          walk(path)
+          continue
+        }
+        const text = readFileSync(path).toString('utf8').toLowerCase()
+        expect(text).not.toContain('claude')
+        expect(text).not.toContain('anthropic')
+      }
+    }
+    walk(pack)
+
+    const catalog = join(pack, 'catalog')
+    const dirs = readdirSync(catalog, { withFileTypes: true }).filter((ent) => ent.isDirectory())
+    expect(dirs.length).toBeGreaterThan(90)
+    const names = dirs.map((ent) => ent.name)
+    const note =
+      'RavenClaw note: upstream MIT text from https://github.com/cursor/plugins. Ignore Cursor stop hooks, cloud agents, canvases, and model slugs. Use the cursor-pack router limits.'
+    const original = new Set(['local-plugin', 'mcp-servers'])
+    for (const name of names) {
+      const markdown = readFileSync(join(catalog, name, 'SKILL.md'), 'utf8')
+      const skill = parseSkillFrontmatter(markdown)
+      expect(skill.name).toBe(name)
+      const description = skill.description ?? ''
+      expect(description.length).toBeGreaterThan(8)
+      expect(description).not.toBe('>')
+      expect(description).not.toBe('|')
+      if (original.has(name)) expect(markdown).not.toContain(note)
+      else expect(markdown).toContain(note)
+    }
+    for (const name of [
+      'local-plugin',
+      'mcp-servers',
+      'pstack-tdd',
+      'cli-for-agents',
+      'ralph-loop',
+      'cursor-team-kit--thermo-nuclear-code-quality-review',
+      'thermos--thermo-nuclear-code-quality-review',
+    ]) {
+      expect(names).toContain(name)
+    }
+    expect(names).not.toContain('tdd')
+    expect(names).not.toContain('pr-review-canvas')
+    expect(names).not.toContain('thermo-nuclear-code-quality-review')
+
+    const servers = JSON.parse(
+      readFileSync(join(pack, 'references', 'mcp-servers.json'), 'utf8'),
+    ) as Array<Record<string, unknown>>
+    expect(Array.isArray(servers)).toBe(true)
+    expect(
+      servers.some(
+        (entry) => entry.plugin === 'github' && entry.url === 'https://api.githubcopilot.com/mcp/',
+      ),
+    ).toBe(true)
+    expect(
+      servers.some(
+        (entry) =>
+          entry.plugin === 'playwright' &&
+          entry.command === 'npx' &&
+          Array.isArray(entry.args) &&
+          (entry.args as unknown[]).includes('@playwright/mcp@latest'),
+      ),
+    ).toBe(true)
+    for (const entry of servers) {
+      expect(typeof entry.name).toBe('string')
+      expect((entry.name as string).length).toBeGreaterThan(0)
+      expect(typeof entry.plugin).toBe('string')
+      expect((entry.plugin as string).length).toBeGreaterThan(0)
+      expect(['stdio', 'http', 'sse']).toContain(entry.type)
+      if (entry.command !== undefined) expect(entry.type).toBe('stdio')
+      if (entry.url !== undefined) {
+        expect(typeof entry.url).toBe('string')
+        const url = entry.url as string
+        expect(url.startsWith('https://') || url.startsWith('${')).toBe(true)
+      }
+      if (entry.headers !== undefined && entry.headers !== null) {
+        expect(typeof entry.headers).toBe('object')
+        for (const value of Object.values(entry.headers as Record<string, unknown>)) {
+          expect(typeof value).toBe('string')
+          const text = String(value)
+          expect(text === '' || text.includes('${')).toBe(true)
+        }
+      }
+    }
+
+    const index = readFileSync(join(pack, 'references', 'catalog-index.md'), 'utf8')
+    for (const name of names) expect(index).toContain(name)
+
+    const skipped = readFileSync(join(pack, 'references', 'skipped.md'), 'utf8')
+    for (const name of [
+      'cursor-sdk',
+      'origin-apps',
+      'docs-canvas',
+      'orchestrate',
+      'create-plugin',
+    ]) {
+      expect(skipped).toContain(name)
+    }
   })
 })

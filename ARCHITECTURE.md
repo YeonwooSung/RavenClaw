@@ -52,7 +52,7 @@ packages/
     agent/          root + catalog specialists + disk load
     compact/        policy, prune, summarize
     mcp/            stdio/http/sse transports, tools, resources, oauth (per-server)
-    skills/builtin/ eleven SKILL.md trees (gamedev nests a 74-skill catalog)
+    skills/builtin/ twelve SKILL.md trees (gamedev nests a 74-skill catalog; cursor-pack nests a vendored MIT catalog)
     cost/models.ts  CURRENT / BUILT_INS / ALIASES
     schedule/       cron parse + jobs.json store + claim-before-execute
     gateway/        loopback HTTP helpers + HMAC webhook (used by raven serve)
@@ -580,7 +580,7 @@ Discovery (`discoverSkills` in `packages/core/src/tools/skill.ts`), later source
 2. **user** — `~/.ravenclaw/skills/<name>/SKILL.md`
 3. **project** — `<cwd>/.ravenclaw/skills/<name>/SKILL.md`
 
-Eleven builtins (pinned by `builtin.test.ts`): `review`, `test`, `commit`, `debug`, `tdd`, `plan`, `frontend-design`, `mcp-builder`, `gamedev`, `game-design`, `team-design`. Frontmatter `name` + `description` (index clips at 60 chars). `allowed-tools` becomes `turn.skillAllowedTools` for the rest of the turn. `gamedev`, `game-design`, and `team-design` set no `allowed-tools`.
+Twelve builtins (pinned by `builtin.test.ts`): `review`, `test`, `commit`, `debug`, `tdd`, `plan`, `frontend-design`, `mcp-builder`, `gamedev`, `game-design`, `team-design`, `cursor-pack`. Frontmatter `name` + `description` (index clips at 60 chars). `allowed-tools` becomes `turn.skillAllowedTools` for the rest of the turn. `gamedev`, `game-design`, `team-design`, and `cursor-pack` set no `allowed-tools`.
 
 **`mcp-builder` verify path is `raven mcp tools`, not `/mcp` after `/reload`.** The skill text says so: in-session `/mcp` and `/reload` do not spawn a newly registered server. `raven mcp tools` re-reads `config.yaml` and probes.
 
@@ -588,7 +588,7 @@ Disabled list: `$RAVENCLAW_HOME/skills-disabled.json` (`packages/core/src/skills
 
 `raven skills [new|rm|prune] [--project]` manages user/project skill trees without a model.
 
-`gamedev` (`packages/core/src/skills/builtin/gamedev/`) is a vendored Apache-2.0 pack: 74 catalog skills behind one router, loaded through the Skill tool at `catalog/<name>/SKILL.md`. `game-design` is original prose: one page before code, then that router. `team-design` is original prose and designs project agents and skills under `.ravenclaw/`. The other eight remain original RavenClaw prose. The official Anthropic 19-skill set is **not** copied (license + kitchen-sink). Name overlap with that set is 0/19 except two clean-room skills that share names (`frontend-design`, `mcp-builder`) — see `docs/superpowers/specs/2026-09-13-official-claude-skills-gap.md`. `raven play` and `/play` serve a detected web game on `127.0.0.1` and open the OS browser. They do not capture the console or a screenshot.
+`gamedev` (`packages/core/src/skills/builtin/gamedev/`) is a vendored Apache-2.0 pack: 74 catalog skills behind one router, loaded through the Skill tool at `catalog/<name>/SKILL.md`. `cursor-pack` is a vendored MIT pack (workflows, principles, MCP map) behind one router, not a marketplace. `game-design` is original prose: one page before code, then that router. `team-design` is original prose and designs project agents and skills under `.ravenclaw/`. The other eight remain original RavenClaw prose. The official Anthropic 19-skill set is **not** copied (license + kitchen-sink). Name overlap with that set is 0/19 except two clean-room skills that share names (`frontend-design`, `mcp-builder`) — see `docs/superpowers/specs/2026-09-13-official-claude-skills-gap.md`. `raven play` and `/play` serve a detected web game on `127.0.0.1` and open the OS browser. They do not capture the console or a screenshot.
 
 ## Prompt assembly
 
@@ -806,7 +806,7 @@ These are closed doors, not a backlog.
 - **No computer-use.**
 - **No “Pro = no ads”.** `hasPaidCapacityPlan` raises included caps. Ads still fund the compute floor. BYOK never shows ads.
 - **No `execute_code` / child kernel RPC.** Highest cost-curve idea in the roadmap; not started. Skills + Bash + MCP cover the job.
-- **No official 19-skill copy** from `anthropics/skills`. License and kitchen-sink. Eleven builtins: eight original RavenClaw prose skills, plus `game-design` and `team-design` as original prose, plus vendored Apache-2.0 `gamedev` (74 catalog skills behind one router). The official 19 are still not copied.
+- **No official 19-skill copy** from `anthropics/skills`. License and kitchen-sink. Twelve builtins: eight original RavenClaw prose skills, plus `game-design` and `team-design` as original prose, plus vendored Apache-2.0 `gamedev` (74 catalog skills behind one router), plus `cursor-pack`, a vendored MIT pack (workflows, principles, MCP map) behind one router, not a marketplace. The official 19 are still not copied.
 - **No `bypass` / yolo / auto-allow-all-Bash.** `dontAsk` is leftover-deny.
 - **No host-local query loop.** If a host needs a new turn behavior, it belongs in `phases.ts`. `@ravenclaw/durable` (`packages/durable`) is an opt-in sibling runtime with its own store. Default CLI sessions, `createRavenSession`, ACP, and HTTP still enter turns only through `queryLoop`. `raven durable` calls `createDurableSession` and does not call `queryLoop` or open `state.db`. This package is not a host-local query loop. `decidePermission` does not promote Bash. After that call, this host's `dontAsk` runs ordinary leftover Bash. Commands matched by `matchesDangerousPattern` or `matchesDestructiveGit` stay `permission_denied`. `queryLoop` hosts stay unchanged.
 - **No silent BYOK fallback** for an included session.

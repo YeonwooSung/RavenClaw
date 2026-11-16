@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- `cursor-pack` is a vendored MIT pack (workflows, principles, MCP map) behind one router, not a marketplace. Spec: [docs/superpowers/specs/2026-11-16-cursor-pack.md](docs/superpowers/specs/2026-11-16-cursor-pack.md).
 - `team-design` is a builtin that designs project agents and skills under `.ravenclaw/`. Spec: [docs/superpowers/specs/2026-10-11-team-design-skill.md](docs/superpowers/specs/2026-10-11-team-design-skill.md).
 - Builtin `gamedev` (`packages/core/src/skills/builtin/gamedev/`) vendors [awesome-gamedev-agent-skills](https://github.com/gamedev-skills/awesome-gamedev-agent-skills) (Apache-2.0) as one router plus 74 catalog skills, not 74 top-level builtins.
 - `game-design` is a builtin that writes one page (fantasy, verb, loop, three pillars, scope box, session length, riskiest assumption, playtest question) and stops until the user accepts it. `raven play` detects a web entry, serves it on `127.0.0.1`, and opens the OS browser without an API key. `/play` and `/play stop` use that same server from the session cwd. The `gamedev` web section tells the agent to run `raven play` before claiming a scene works. Playtest capture stays parked. Spec: [docs/superpowers/specs/2026-10-10-gamedev-convenience.md](docs/superpowers/specs/2026-10-10-gamedev-convenience.md).

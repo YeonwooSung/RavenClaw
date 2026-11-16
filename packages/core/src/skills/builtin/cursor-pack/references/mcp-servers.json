@@ -1,0 +1,728 @@
+[
+  {
+    "name": "ahrefs",
+    "plugin": "ahrefs",
+    "type": "http",
+    "url": "https://api.ahrefs.com/mcp/mcp"
+  },
+  {
+    "name": "amplemarket",
+    "plugin": "amplemarket",
+    "type": "http",
+    "url": "https://mcp.amplemarket.com/mcp"
+  },
+  {
+    "name": "ashby",
+    "plugin": "ashby",
+    "type": "http",
+    "url": "https://mcp.ashbyhq.com/mcp/v1"
+  },
+  {
+    "name": "attio",
+    "plugin": "attio",
+    "type": "http",
+    "url": "https://mcp.attio.com/mcp"
+  },
+  {
+    "name": "beehiiv",
+    "plugin": "beehiiv",
+    "type": "http",
+    "url": "https://mcp.beehiiv.com/mcp"
+  },
+  {
+    "name": "brevo",
+    "plugin": "brevo",
+    "type": "http",
+    "url": "https://mcp.brevo.com/v1/brevo/mcp",
+    "headers": {
+      "Authorization": "Bearer ${BREVO_MCP_TOKEN}"
+    }
+  },
+  {
+    "name": "brex",
+    "plugin": "brex",
+    "type": "http",
+    "url": "https://api.brex.com/mcp"
+  },
+  {
+    "name": "buffer",
+    "plugin": "buffer",
+    "type": "http",
+    "url": "https://mcp.buffer.com/mcp"
+  },
+  {
+    "name": "calendly",
+    "plugin": "calendly",
+    "type": "http",
+    "url": "https://mcp.calendly.com/"
+  },
+  {
+    "name": "circleback",
+    "plugin": "circleback",
+    "type": "http",
+    "url": "https://circleback.ai/api/mcp"
+  },
+  {
+    "name": "clay",
+    "plugin": "clay",
+    "type": "http",
+    "url": "https://api.clay.com/v3/mcp"
+  },
+  {
+    "name": "coda",
+    "plugin": "coda",
+    "type": "http",
+    "url": "https://docs.superhuman.com/apis/mcp"
+  },
+  {
+    "name": "coinbase",
+    "plugin": "coinbase",
+    "type": "http",
+    "url": "https://agents.coinbase.com/mcp"
+  },
+  {
+    "name": "craft",
+    "plugin": "craft",
+    "type": "http",
+    "url": "https://mcp.craft.do/my/mcp"
+  },
+  {
+    "name": "customer-io",
+    "plugin": "customer-io",
+    "type": "http",
+    "url": "https://mcp.customer.io/mcp"
+  },
+  {
+    "name": "daloopa",
+    "plugin": "daloopa",
+    "type": "http",
+    "url": "https://mcp.daloopa.com/server/mcp"
+  },
+  {
+    "name": "databricks-genie",
+    "plugin": "databricks-genie",
+    "type": "http",
+    "url": "https://${DATABRICKS_HOST}/ai-gateway/mcp-services/system.ai.genie_one_mcp"
+  },
+  {
+    "name": "docusign",
+    "plugin": "docusign",
+    "type": "http",
+    "url": "https://mcp.docusign.com/mcp"
+  },
+  {
+    "name": "eight-sleep",
+    "plugin": "eight-sleep",
+    "type": "http",
+    "url": "https://public-api.8slp.net/mcp"
+  },
+  {
+    "name": "engine",
+    "plugin": "engine",
+    "type": "http",
+    "url": "https://mcp.engine.com/mcp"
+  },
+  {
+    "name": "etoro-trading",
+    "plugin": "etoro-trading",
+    "type": "http",
+    "url": "https://mcp.public-api.etoro.com"
+  },
+  {
+    "name": "excalidraw",
+    "plugin": "excalidraw",
+    "type": "http",
+    "url": "https://mcp.excalidraw.com/mcp"
+  },
+  {
+    "name": "fathom",
+    "plugin": "fathom",
+    "type": "http",
+    "url": "https://api.fathom.ai/mcp"
+  },
+  {
+    "name": "feishu",
+    "plugin": "feishu",
+    "type": "http",
+    "url": "https://mcp.feishu.cn/mcp"
+  },
+  {
+    "name": "finance",
+    "plugin": "finance",
+    "type": "http",
+    "url": "https://connectors-gateway.grok.com/gateway/v1/finance/mcp"
+  },
+  {
+    "name": "finary",
+    "plugin": "finary",
+    "type": "http",
+    "url": "https://public-api.finary.com/mcp"
+  },
+  {
+    "name": "fireflies",
+    "plugin": "fireflies",
+    "type": "http",
+    "url": "https://api.fireflies.ai/mcp"
+  },
+  {
+    "name": "fitmetrics",
+    "plugin": "fitmetrics",
+    "type": "http",
+    "url": "https://app.fitmetrics.ai/mcp",
+    "headers": {
+      "Authorization": "Bearer ${FITMETRICS_API_KEY}"
+    }
+  },
+  {
+    "name": "front",
+    "plugin": "front",
+    "type": "http",
+    "url": "https://mcp.frontapp.com/mcp"
+  },
+  {
+    "name": "gamma",
+    "plugin": "gamma",
+    "type": "http",
+    "url": "https://mcp.gamma.app/mcp"
+  },
+  {
+    "name": "github",
+    "plugin": "github",
+    "type": "http",
+    "url": "https://api.githubcopilot.com/mcp/",
+    "headers": {
+      "Authorization": "Bearer ${GITHUB_PERSONAL_ACCESS_TOKEN}"
+    }
+  },
+  {
+    "name": "gmail",
+    "plugin": "gmail",
+    "type": "http",
+    "url": "https://gmailmcp.googleapis.com/mcp/v1"
+  },
+  {
+    "name": "godaddy",
+    "plugin": "godaddy",
+    "type": "http",
+    "url": "https://api.godaddy.com/v1/domains/mcp"
+  },
+  {
+    "name": "gong",
+    "plugin": "gong",
+    "type": "http",
+    "url": "https://mcp.gong.io/mcp"
+  },
+  {
+    "name": "google-ads",
+    "plugin": "google-ads",
+    "type": "http",
+    "url": "https://api.cursor.com/rest-mcp/google-ads/mcp"
+  },
+  {
+    "name": "google-analytics",
+    "plugin": "google-analytics",
+    "type": "http",
+    "url": "https://api.cursor.com/rest-mcp/google-analytics/mcp"
+  },
+  {
+    "name": "google-calendar",
+    "plugin": "google-calendar",
+    "type": "http",
+    "url": "https://calendarmcp.googleapis.com/mcp/v1"
+  },
+  {
+    "name": "google-cloud-bigquery",
+    "plugin": "google-cloud-bigquery",
+    "type": "http",
+    "url": "https://bigquery.googleapis.com/mcp"
+  },
+  {
+    "name": "google-docs",
+    "plugin": "google-docs",
+    "type": "http",
+    "url": "https://api.cursor.com/rest-mcp/google-docs/mcp"
+  },
+  {
+    "name": "google-drive",
+    "plugin": "google-drive",
+    "type": "http",
+    "url": "https://api.cursor.com/rest-mcp/google-drive/mcp"
+  },
+  {
+    "name": "google-sheets",
+    "plugin": "google-sheets",
+    "type": "http",
+    "url": "https://api.cursor.com/rest-mcp/google-sheets/mcp"
+  },
+  {
+    "name": "google-slides",
+    "plugin": "google-slides",
+    "type": "http",
+    "url": "https://api.cursor.com/rest-mcp/google-slides/mcp"
+  },
+  {
+    "name": "gopuff",
+    "plugin": "gopuff",
+    "type": "http",
+    "url": "https://mcp.gopuff.com/mcp"
+  },
+  {
+    "name": "greenhouse",
+    "plugin": "greenhouse",
+    "type": "http",
+    "url": "https://mcp.us.greenhouse.io/mcp"
+  },
+  {
+    "name": "guru",
+    "plugin": "guru",
+    "type": "http",
+    "url": "https://mcp.api.getguru.com/mcp"
+  },
+  {
+    "name": "gusto",
+    "plugin": "gusto",
+    "type": "http",
+    "url": "https://mcp.api.gusto.com/"
+  },
+  {
+    "name": "highlevel",
+    "plugin": "highlevel",
+    "type": "http",
+    "url": "https://services.leadconnectorhq.com/mcp/cursor/v2"
+  },
+  {
+    "name": "hubspot",
+    "plugin": "hubspot",
+    "type": "http",
+    "url": "https://mcp.hubspot.com"
+  },
+  {
+    "name": "hunter",
+    "plugin": "hunter",
+    "type": "http",
+    "url": "https://mcp.hunter.io/mcp",
+    "headers": {
+      "X-API-Key": "${HUNTER_API_KEY}"
+    }
+  },
+  {
+    "name": "interactive-brokers",
+    "plugin": "interactive-brokers",
+    "type": "http",
+    "url": "https://api.ibkr.com/v1/api/mcp-public"
+  },
+  {
+    "name": "intercom",
+    "plugin": "intercom",
+    "type": "http",
+    "url": "https://mcp.intercom.com/mcp"
+  },
+  {
+    "name": "jotform",
+    "plugin": "jotform",
+    "type": "http",
+    "url": "https://mcp.jotform.com"
+  },
+  {
+    "name": "juicebox",
+    "plugin": "juicebox",
+    "type": "http",
+    "url": "https://mcp.juicebox.ai/v1"
+  },
+  {
+    "name": "klaviyo",
+    "plugin": "klaviyo",
+    "type": "http",
+    "url": "https://mcp.klaviyo.com/mcp"
+  },
+  {
+    "name": "lark",
+    "plugin": "lark",
+    "type": "http",
+    "url": "https://mcp.larksuite.com/mcp"
+  },
+  {
+    "name": "lark-base",
+    "plugin": "lark-base",
+    "type": "http",
+    "url": "https://api.cursor.com/rest-mcp/lark-base/mcp"
+  },
+  {
+    "name": "mailerlite",
+    "plugin": "mailerlite",
+    "type": "http",
+    "url": "https://mcp.mailerlite.com/mcp"
+  },
+  {
+    "name": "meltwater",
+    "plugin": "meltwater",
+    "type": "http",
+    "url": "https://api.meltwater.com/v2/mcp"
+  },
+  {
+    "name": "mem",
+    "plugin": "mem",
+    "type": "http",
+    "url": "https://mcp.mem.ai/mcp"
+  },
+  {
+    "name": "meta-ads",
+    "plugin": "meta-ads",
+    "type": "http",
+    "url": "https://mcp.facebook.com/ads"
+  },
+  {
+    "name": "metricool",
+    "plugin": "metricool",
+    "type": "http",
+    "url": "https://ai.metricool.com/mcp"
+  },
+  {
+    "name": "mixpanel",
+    "plugin": "mixpanel",
+    "type": "http",
+    "url": "https://mcp.mixpanel.com/mcp"
+  },
+  {
+    "name": "navan",
+    "plugin": "navan",
+    "type": "http",
+    "url": "https://mcp.navan.com/mcp"
+  },
+  {
+    "name": "netsuite",
+    "plugin": "netsuite",
+    "type": "http",
+    "url": "${NETSUITE_MCP_URL}"
+  },
+  {
+    "name": "onedrive",
+    "plugin": "onedrive",
+    "type": "http",
+    "url": "https://api.cursor.com/rest-mcp/onedrive/mcp"
+  },
+  {
+    "name": "onepay",
+    "plugin": "onepay",
+    "type": "http",
+    "url": "https://mcp.onepay.com"
+  },
+  {
+    "name": "otter",
+    "plugin": "otter",
+    "type": "http",
+    "url": "https://mcp.otter.ai/mcp"
+  },
+  {
+    "name": "outlook",
+    "plugin": "outlook",
+    "type": "http",
+    "url": "https://api.cursor.com/rest-mcp/outlook/mcp"
+  },
+  {
+    "name": "outlook-calendar",
+    "plugin": "outlook-calendar",
+    "type": "http",
+    "url": "https://api.cursor.com/rest-mcp/outlook-calendar/mcp"
+  },
+  {
+    "name": "outreach",
+    "plugin": "outreach",
+    "type": "http",
+    "url": "https://api.outreach.io/mcp"
+  },
+  {
+    "name": "paypal",
+    "plugin": "paypal",
+    "type": "http",
+    "url": "https://mcp.paypal.com/mcp"
+  },
+  {
+    "name": "pitchbook",
+    "plugin": "pitchbook",
+    "type": "http",
+    "url": "https://premium.mcp.pitchbook.com/mcp"
+  },
+  {
+    "name": "plaud",
+    "plugin": "plaud",
+    "type": "http",
+    "url": "https://mcp.plaud.ai/mcp"
+  },
+  {
+    "name": "playwright",
+    "plugin": "playwright",
+    "type": "stdio",
+    "command": "npx",
+    "args": [
+      "-y",
+      "@playwright/mcp@latest"
+    ]
+  },
+  {
+    "name": "posthog",
+    "plugin": "posthog-mcp",
+    "type": "http",
+    "url": "https://mcp.posthog.com/mcp"
+  },
+  {
+    "name": "power-bi",
+    "plugin": "power-bi",
+    "type": "http",
+    "url": "https://api.cursor.com/rest-mcp/power-bi/mcp"
+  },
+  {
+    "name": "profound",
+    "plugin": "profound",
+    "type": "http",
+    "url": "https://mcp.tryprofound.com/mcp"
+  },
+  {
+    "name": "questrade",
+    "plugin": "questrade",
+    "type": "http",
+    "url": "https://mcp.questrade.com/v1/brokerage/mcp"
+  },
+  {
+    "name": "quickbooks-online",
+    "plugin": "quickbooks-online",
+    "type": "http",
+    "url": "https://mcp-e2e.quickbooks.intuit.com/mcp"
+  },
+  {
+    "name": "readwise",
+    "plugin": "readwise",
+    "type": "http",
+    "url": "https://mcp2.readwise.io/mcp"
+  },
+  {
+    "name": "ringcentral-chat",
+    "plugin": "ringcentral-chat",
+    "type": "http",
+    "url": "https://mcp.labs.ringcentral.com/ringex/v1.1.0/team-chat"
+  },
+  {
+    "name": "ringcentral-phone",
+    "plugin": "ringcentral-phone",
+    "type": "http",
+    "url": "https://mcp.labs.ringcentral.com/ringex/phone"
+  },
+  {
+    "name": "rippling",
+    "plugin": "rippling",
+    "type": "http",
+    "url": "${RIPPLING_MCP_URL}"
+  },
+  {
+    "name": "robinhood",
+    "plugin": "robinhood",
+    "type": "http",
+    "url": "https://agent.robinhood.com/mcp/trading"
+  },
+  {
+    "name": "runta",
+    "plugin": "runta",
+    "type": "http",
+    "url": "https://mcp.runta.com/mcp"
+  },
+  {
+    "name": "salesforce",
+    "plugin": "salesforce",
+    "type": "http",
+    "url": "${SALESFORCE_MCP_URL}"
+  },
+  {
+    "name": "salesforce-headless-360",
+    "plugin": "salesforce-headless-360",
+    "type": "http",
+    "url": "${SALESFORCE_MCP_URL}"
+  },
+  {
+    "name": "semrush",
+    "plugin": "semrush",
+    "type": "http",
+    "url": "https://mcp.semrush.com/v2/mcp"
+  },
+  {
+    "name": "servicenow",
+    "plugin": "servicenow",
+    "type": "http",
+    "url": "https://${SERVICENOW_HOST}/sncapps/mcp-server/mcp/${SERVICENOW_MCP_SERVER}"
+  },
+  {
+    "name": "sharepoint",
+    "plugin": "sharepoint",
+    "type": "http",
+    "url": "https://api.cursor.com/rest-mcp/sharepoint/mcp"
+  },
+  {
+    "name": "shopify",
+    "plugin": "shopify-store",
+    "type": "http",
+    "url": "https://setup.shopify.com/mcp"
+  },
+  {
+    "name": "similarweb",
+    "plugin": "similarweb",
+    "type": "http",
+    "url": "https://mcp.similarweb.com",
+    "headers": {
+      "api-key": "${SIMILARWEB_API_KEY}"
+    }
+  },
+  {
+    "name": "smartsheet",
+    "plugin": "smartsheet",
+    "type": "http",
+    "url": "https://mcp.smartsheet.com",
+    "headers": {
+      "Authorization": "Bearer ${SMARTSHEET_API_TOKEN}"
+    }
+  },
+  {
+    "name": "sp-global",
+    "plugin": "sp-global",
+    "type": "http",
+    "url": "https://kfinance.kensho.com/integrations/mcp"
+  },
+  {
+    "name": "square",
+    "plugin": "square",
+    "type": "http",
+    "url": "https://mcp.squareup.com/mcp"
+  },
+  {
+    "name": "squarespace",
+    "plugin": "squarespace",
+    "type": "http",
+    "url": "https://mcp.squarespace.com/mcp"
+  },
+  {
+    "name": "stable",
+    "plugin": "stable",
+    "type": "http",
+    "url": "https://mcp.usestable.com/mcp",
+    "headers": {
+      "x-api-key": "${STABLE_API_KEY}"
+    }
+  },
+  {
+    "name": "statsig",
+    "plugin": "statsig",
+    "type": "http",
+    "url": "https://api.statsig.com/v3/mcp"
+  },
+  {
+    "name": "teams",
+    "plugin": "teams",
+    "type": "http",
+    "url": "https://api.cursor.com/rest-mcp/teams/mcp"
+  },
+  {
+    "name": "tesla",
+    "plugin": "tesla",
+    "type": "http",
+    "url": "https://api.cursor.com/rest-mcp/tesla/mcp"
+  },
+  {
+    "name": "tiktok-for-business",
+    "plugin": "tiktok-for-business",
+    "type": "http",
+    "url": "https://business-api.tiktok.com/open_mcp/tt-ads-mcp-layer"
+  },
+  {
+    "name": "tinyfish",
+    "plugin": "tinyfish",
+    "type": "http",
+    "url": "https://agent.tinyfish.ai/mcp"
+  },
+  {
+    "name": "todoist",
+    "plugin": "todoist",
+    "type": "http",
+    "url": "https://ai.todoist.net/mcp"
+  },
+  {
+    "name": "trello",
+    "plugin": "trello",
+    "type": "http",
+    "url": "https://mcp.trello.com/v1"
+  },
+  {
+    "name": "typeform",
+    "plugin": "typeform",
+    "type": "http",
+    "url": "https://api.typeform.com/mcp"
+  },
+  {
+    "name": "upwork",
+    "plugin": "upwork",
+    "type": "http",
+    "url": "https://mcp.upwork.com/mcp"
+  },
+  {
+    "name": "vanta",
+    "plugin": "vanta",
+    "type": "http",
+    "url": "https://${VANTA_MCP_HOST}/mcp"
+  },
+  {
+    "name": "webull",
+    "plugin": "webull",
+    "type": "http",
+    "url": "https://api.webull.com/mcp"
+  },
+  {
+    "name": "workable",
+    "plugin": "workable",
+    "type": "http",
+    "url": "https://mcp.workable.com/mcp"
+  },
+  {
+    "name": "wrike",
+    "plugin": "wrike",
+    "type": "http",
+    "url": "https://mcp.wrike.com/v2",
+    "headers": {
+      "Authorization": "Bearer ${WRIKE_ACCESS_TOKEN}"
+    }
+  },
+  {
+    "name": "x",
+    "plugin": "x",
+    "type": "http",
+    "url": "https://api.x.com/mcp"
+  },
+  {
+    "name": "x-ads",
+    "plugin": "x-ads",
+    "type": "http",
+    "url": "https://ads-api.x.com/mcp"
+  },
+  {
+    "name": "x-money",
+    "plugin": "x-money",
+    "type": "http",
+    "url": "https://mcp.money.x.com/mcp"
+  },
+  {
+    "name": "xero",
+    "plugin": "xero",
+    "type": "stdio",
+    "command": "npx",
+    "args": [
+      "-y",
+      "@xeroapi/xero-mcp-server@latest"
+    ],
+    "env": {
+      "XERO_CLIENT_ID": "${XERO_CLIENT_ID}",
+      "XERO_CLIENT_SECRET": "${XERO_CLIENT_SECRET}"
+    }
+  },
+  {
+    "name": "zoom",
+    "plugin": "zoom",
+    "type": "http",
+    "url": "https://mcp.zoom.us/mcp/zoom/streamable"
+  }
+]

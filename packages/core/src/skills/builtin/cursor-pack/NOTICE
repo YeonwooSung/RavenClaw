@@ -1,0 +1,8 @@
+Upstream: https://github.com/cursor/plugins
+
+Copyright (c) 2026 Cursor
+Copyright (c) 2026 Lauren Tan
+Copyright (c) 2026 Dylan Gattey
+
+Catalog bodies are modified upstream MIT text.
+The router, local-plugin, and mcp-servers are original.
