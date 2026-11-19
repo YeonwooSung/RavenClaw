@@ -875,6 +875,94 @@ describe('createAgentTool', () => {
     expect(child?.funding).toBe('byok')
   })
 
+  test('child engine uses the profile of the resolved child model', async () => {
+    const provider = createFakeProvider([textThenStop('found')])
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_child_profile', model: 'parent-model', funding: 'byok' })
+    await store.createSession(session)
+    const { tool } = createTestAgent({
+      store,
+      provider,
+      model: defaultModel('parent-model'),
+      specialistModel: 'claude-haiku-4-5',
+    })
+    await tool.execute(
+      { prompt: 'find', subagent: 'file-finder' },
+      makeCtx(makeTurn(session, { model: 'parent-model', funding: 'byok' })),
+    )
+    expect(provider.requests[0]?.model).toBe('claude-haiku-4-5')
+    // parent profile reserve is 3_200; haiku's real profile reserve is 20_000
+    expect(provider.requests[0]?.maxTokens).toBe(20_000)
+  })
+
+  test('resolveProfile opt is used for the child model, parent profile kept when same id', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_resolve_profile', model: 'parent-model', funding: 'byok' })
+    await store.createSession(session)
+    const seen: string[] = []
+    const provider = createFakeProvider([textThenStop('a'), textThenStop('b')])
+    const tool = createAgentTool({
+      store,
+      provider,
+      tools: parentPool(),
+      compact: { ...defaultCompact(), specialistModel: 'child-model' },
+      model: defaultModel('parent-model'),
+      askUser,
+      resolveProfile(id) {
+        seen.push(id)
+        return { ...defaultModel(id), reserveOutputTokens: 777 }
+      },
+    })
+    const turn = makeTurn(session, { model: 'parent-model', funding: 'byok' })
+    await tool.execute({ prompt: 'x', subagent: 'file-finder' }, makeCtx(turn))
+    expect(seen).toEqual(['child-model'])
+    expect(provider.requests[0]?.maxTokens).toBe(777)
+    const same = createAgentTool({
+      store,
+      provider,
+      tools: parentPool(),
+      compact: defaultCompact(),
+      model: defaultModel('parent-model'),
+      askUser,
+      resolveProfile(id) {
+        seen.push(id)
+        return { ...defaultModel(id), reserveOutputTokens: 777 }
+      },
+    })
+    await same.execute({ prompt: 'y' }, makeCtx(turn))
+    expect(seen).toEqual(['child-model'])
+    expect(provider.requests[1]?.maxTokens).toBe(3_200)
+  })
+
+  async function roundsUsed(subagent: string, childMaxRounds: number): Promise<number> {
+    const store = createMemoryStore()
+    const session = makeSession({ id: `sess_rounds_${subagent}_${childMaxRounds}` })
+    await store.createSession(session)
+    let n = 0
+    const provider = createFakeProvider([])
+    provider.stream = async function* (req: ProviderRequest) {
+      provider.requests.push(req)
+      provider.streamCount += 1
+      n += 1
+      yield { type: 'tool_call' as const, id: `c${n}`, name: 'Read', input: { n } }
+      yield { type: 'stop' as const, reason: 'tool_use' as const }
+    }
+    const { tool } = createTestAgent({ store, provider, childMaxRounds })
+    await tool.execute({ prompt: 'loop', subagent }, makeCtx(makeTurn(session)))
+    return provider.streamCount
+  }
+
+  test('definition maxRounds is honored under a larger childMaxRounds ceiling', async () => {
+    const used = await roundsUsed('command-runner', 30)
+    expect(used).toBeLessThanOrEqual(3)
+  })
+
+  test('childMaxRounds caps a definition with a larger maxRounds', async () => {
+    const used = await roundsUsed('general', 10)
+    expect(used).toBeLessThanOrEqual(11)
+    expect(used).toBeGreaterThanOrEqual(5)
+  })
+
   test('included funding pins specialist child.model to parent.model', async () => {
     const provider = createFakeProvider([textThenStop('included')])
     const store = createMemoryStore()

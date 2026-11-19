@@ -138,6 +138,12 @@ export function createSkillTool(cwd: string, home?: string): Tool<SkillInput, st
   }
 }
 
+/** Raw frontmatter fields (yamlish) for callers that need keys beyond skills. */
+export function parseFrontmatterFields(markdown: string): Record<string, unknown> {
+  const block = extractFrontmatter(markdown)
+  return block === undefined ? {} : parseYamlish(block)
+}
+
 export function parseSkillFrontmatter(markdown: string): {
   name?: string
   description?: string

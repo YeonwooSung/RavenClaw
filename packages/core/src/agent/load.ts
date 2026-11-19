@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { ravenclawHome } from '../home'
-import { parseSkillFrontmatter } from '../tools/skill'
+import { parseFrontmatterFields, parseSkillFrontmatter } from '../tools/skill'
 import type { AgentDefinition } from '../types'
 
 const DEFAULT_TOOLS = ['Read', 'Grep', 'Glob']
@@ -37,6 +37,13 @@ function parseAgentFile(path: string): AgentDefinition | undefined {
   const fm = parseSkillFrontmatter(raw)
   const id = fm.name?.trim()
   if (!id) return undefined
+  const extra = parseFrontmatterFields(raw)
+  const model = typeof extra.model === 'string' && extra.model.trim() !== '' ? extra.model.trim() : undefined
+  const rounds =
+    typeof extra.maxRounds === 'string' && /^[0-9]+$/.test(extra.maxRounds.trim())
+      ? Number(extra.maxRounds.trim())
+      : 0
+  const maxRounds = Number.isSafeInteger(rounds) && rounds > 0 ? rounds : 12
   const body = raw.replace(/^---[\s\S]*?---\s*/, '').trim()
   const tools = fm.allowedTools && fm.allowedTools.length > 0 ? fm.allowedTools : DEFAULT_TOOLS
   return {
@@ -46,8 +53,9 @@ function parseAgentFile(path: string): AgentDefinition | undefined {
     spawnableAgents: [],
     inheritParentSystemPrompt: false,
     includeMessageHistory: false,
-    maxRounds: 12,
+    maxRounds,
     outputMode: 'last_message',
+    ...(model !== undefined ? { model } : {}),
     ...(body.length > 0 ? { systemPrompt: body } : {}),
   }
 }

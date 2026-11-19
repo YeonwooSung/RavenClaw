@@ -37,4 +37,23 @@ describe('loadDiskAgents', () => {
     expect(getAgentDefinition('reviewer', cwd)?.id).toBe('reviewer')
     expect(getAgentDefinition('general', cwd)?.id).toBe('general')
   })
+
+  test('reads optional model and maxRounds frontmatter; invalid maxRounds ignored', () => {
+    const home = mkdtempSync(join(tmpdir(), 'ravenclaw-agents-home-'))
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-agents-cwd-'))
+    tempDirs.push(home, cwd)
+    mkdirSync(join(home, 'agents'), { recursive: true })
+    writeFileSync(
+      join(home, 'agents', 'a.md'),
+      '---\nname: a\nmodel: foo-model\nmaxRounds: 3\n---\nBody\n',
+    )
+    writeFileSync(join(home, 'agents', 'b.md'), '---\nname: b\nmaxRounds: 0\n---\nBody\n')
+    writeFileSync(join(home, 'agents', 'c.md'), '---\nname: c\nmaxRounds: nope\n---\nBody\n')
+    const byId = new Map(loadDiskAgents(cwd, home).map((d) => [d.id, d]))
+    expect(byId.get('a')?.model).toBe('foo-model')
+    expect(byId.get('a')?.maxRounds).toBe(3)
+    expect(byId.get('b')?.model).toBeUndefined()
+    expect(byId.get('b')?.maxRounds).toBe(12)
+    expect(byId.get('c')?.maxRounds).toBe(12)
+  })
 })

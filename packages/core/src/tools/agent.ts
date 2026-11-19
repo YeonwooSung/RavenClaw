@@ -18,6 +18,7 @@ import {
   lastAssistantText,
   resolveChildModel,
 } from '../agent/definition'
+import { getModelProfile } from '../cost/models'
 import { PersistError } from '../types'
 import type {
   CompactPolicy,
@@ -101,6 +102,7 @@ export function createAgentTool(opts: {
   model: ModelProfile
   askUser: SessionEngineOptions['askUser']
   childMaxRounds?: number
+  resolveProfile?: (id: string) => ModelProfile
   system?: SystemPart[]
   hooks?: PermissionHook[]
 }): Tool<AgentInput, string> {
@@ -176,7 +178,10 @@ async function spawnChild(
   const definition = getAgentDefinition(input.subagent ?? 'general', projectCwd)
   if (!definition) return `Unknown subagent: ${input.subagent}`
 
-  const maxRounds = opts.childMaxRounds ?? definition.maxRounds
+  const maxRounds =
+    opts.childMaxRounds !== undefined && definition.maxRounds !== undefined
+      ? Math.min(opts.childMaxRounds, definition.maxRounds)
+      : (opts.childMaxRounds ?? definition.maxRounds)
   const now = Date.now()
   const childModel = resolveChildModel(
     {
@@ -186,6 +191,8 @@ async function spawnChild(
     },
     definition,
   )
+  const childProfile =
+    childModel === opts.model.id ? opts.model : (opts.resolveProfile ?? getModelProfile)(childModel)
   const childSession = buildChildSession(
     ctx.turn,
     childModel,
@@ -251,7 +258,7 @@ async function spawnChild(
         store: opts.store,
         tools: childTools,
         compact: opts.compact,
-        model: opts.model,
+        model: childProfile,
         maxRounds,
         askUser: opts.askUser,
         bare: true,

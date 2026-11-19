@@ -307,7 +307,7 @@ flowchart TD
 
 Abort → `{ reason: 'aborted' }`. If the previous round used tools and `round >= maxRounds` and grace is unused, enter grace (one last no-tools reply) via `shouldEnterGrace` (`packages/core/src/loop/budget.ts`). Else if `round >= maxRounds` → `max_rounds`. Otherwise increment `round`, reset pending buffers, yield `round_start`.
 
-Default `maxRounds` is 80 (`defaultConfig`). Child agents use `childMaxRounds` (default 30) or the catalog definition.
+Default `maxRounds` is 80 (`defaultConfig`). Child agents run for `min(childMaxRounds, definition.maxRounds)` rounds: config `childMaxRounds` (default 30) is a ceiling, and a catalog or disk definition's own `maxRounds` applies when lower.
 
 ### `prepareContext`
 
@@ -568,7 +568,7 @@ Built-ins in `packages/core/src/agent/catalog.ts`:
 | `reviewer` | `reviewer.ts` | **none** | 4 | **yes** | findings, no tools, no secrets |
 | `researcher-web` | `researcher-web.ts` | WebSearch Fetch | 12 | no | search then Fetch ≥3 pages |
 
-`root.spawnableAgents` is that specialist list. Disk agents: `~/.ravenclaw/agents/*.md` then `<cwd>/.ravenclaw/agents/*.md` (`packages/core/src/agent/load.ts`). Frontmatter `name` is the id; `allowed-tools` or default `Read, Grep, Glob`; body is `systemPrompt`; `maxRounds: 12`. Project disk agents override user agents with the same id. Catalog ids win over disk ids (`agentCatalog` filters extras).
+`root.spawnableAgents` is that specialist list. Disk agents: `~/.ravenclaw/agents/*.md` then `<cwd>/.ravenclaw/agents/*.md` (`packages/core/src/agent/load.ts`). Frontmatter `name` is the id; `allowed-tools` or default `Read, Grep, Glob`; body is `systemPrompt`; optional `model` and `maxRounds` (positive integer) frontmatter, default `maxRounds: 12`. Project disk agents override user agents with the same id. Catalog ids win over disk ids (`agentCatalog` filters extras).
 
 `--agent <id>` starts the *root* session with that definition's tool filter (`filterChildTools`).
 
