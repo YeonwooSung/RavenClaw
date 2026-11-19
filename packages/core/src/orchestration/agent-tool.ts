@@ -153,6 +153,13 @@ export function createAgentTool(opts: {
 
       const batch = input.agents
       const background = input.run_in_background === true
+      // A nested child's task registry and mailbox die with it; only the root owns background work.
+      if (
+        (ctx.turn.agentDepth ?? 0) > 0 &&
+        (background || (batch ?? []).some((child) => child.run_in_background === true))
+      ) {
+        return 'Agent failed: background agents are root-only'
+      }
       if (background && batch !== undefined && batch.length > 0) {
         return 'Agent failed: agents[] cannot run in the background'
       }

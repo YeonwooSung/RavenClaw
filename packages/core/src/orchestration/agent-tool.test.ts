@@ -2394,6 +2394,64 @@ describe('agent graph', () => {
     expect(toolNamesOf(provider.requests[0])).toEqual(['Read'])
   })
 
+  test('background agents are root-only: nested background is refused before any slot', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-agent-bg-root-'))
+    tempDirs.push(cwd)
+    // A regression would write task logs under home; keep them out of the real one.
+    const savedHome = process.env.RAVENCLAW_HOME
+    process.env.RAVENCLAW_HOME = cwd
+    writeDiskAgent(cwd, 'lead', 'spawnable-agents: file-finder\n')
+    const store = createMemoryStore()
+    const session = makeSession({ cwd })
+    await store.createSession(session)
+    const provider = createFakeProvider(
+      Array.from({ length: 6 }, () => textThenStop('ok')),
+    )
+    const { tool } = createTestAgent({ store, provider })
+    const tasks = createTaskRegistry()
+    const nested = { ...makeCtx(makeTurn(session, { cwd, agentId: 'lead', agentDepth: 1 })), tasks }
+    const forms = [
+      { prompt: 'x', subagent: 'file-finder', run_in_background: true },
+      {
+        prompt: 'x',
+        run_in_background: true,
+        agents: [{ prompt: 'a', subagent: 'file-finder' }],
+      },
+      {
+        prompt: 'x',
+        agents: [
+          { prompt: 'a', subagent: 'file-finder' },
+          { prompt: 'b', subagent: 'file-finder', run_in_background: true },
+        ],
+      },
+    ]
+    try {
+      for (let i = 0; i < 3; i++) {
+        for (const input of forms) {
+          expect(await tool.execute(input, nested)).toBe(
+            'Agent failed: background agents are root-only',
+          )
+        }
+      }
+    } finally {
+      tasks.killAll()
+      if (savedHome === undefined) delete process.env.RAVENCLAW_HOME
+      else process.env.RAVENCLAW_HOME = savedHome
+    }
+    expect(provider.streamCount).toBe(0)
+    expect(tasks.list()).toHaveLength(0)
+    expect(await store.listSessions({ parentSessionId: session.id })).toHaveLength(0)
+
+    // No slot leaked: the root can still run a full batch.
+    const batch = Array.from({ length: 6 }, (_, i) => ({ prompt: `p${i}` }))
+    const out = await tool.execute(
+      { prompt: 'ignored', agents: batch },
+      makeCtx(makeTurn(session, { cwd })),
+    )
+    expect(out.startsWith('Agent failed')).toBe(false)
+    expect(provider.streamCount).toBe(6)
+  })
+
   test('in-tool depth guard rejects a call at maxAgentDepth', async () => {
     const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-agent-guard-'))
     tempDirs.push(cwd)
