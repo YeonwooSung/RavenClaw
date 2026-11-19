@@ -15,7 +15,15 @@ describe('formatPublicConfig', () => {
     expect(text).toContain(`model: ${defaultModelId('anthropic')}`)
     expect(text).toContain('ANTHROPIC_API_KEY: unset')
     expect(text).toContain('instructionFiles: both')
+    expect(text).toContain('childMaxRounds: 30\nmaxAgentDepth: 2\n')
     expect(text).not.toContain('sk-')
+  })
+
+  test('prints a configured maxAgentDepth', () => {
+    const home = join(tmpdir(), `raven-cfg-depth-${Date.now()}`)
+    mkdirSync(home, { recursive: true })
+    writeFileSync(join(home, 'config.yaml'), 'maxAgentDepth: 3\n')
+    expect(formatPublicConfig({ home })).toContain('maxAgentDepth: 3')
   })
 
   test('redacts secrets and shows yaml overlay', () => {

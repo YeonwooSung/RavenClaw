@@ -245,8 +245,11 @@ export function parseConfigYaml(text: string): Partial<RavenClawConfig> {
   const childMaxRounds = asNumber(raw.childMaxRounds)
   if (childMaxRounds !== undefined) out.childMaxRounds = childMaxRounds
 
+  // Integers >= 1 only; anything else is ignored (default 2).
   const maxAgentDepth = asNumber(raw.maxAgentDepth)
-  if (maxAgentDepth !== undefined) out.maxAgentDepth = maxAgentDepth
+  if (maxAgentDepth !== undefined && Number.isSafeInteger(maxAgentDepth) && maxAgentDepth >= 1) {
+    out.maxAgentDepth = maxAgentDepth
+  }
 
   const compactRaw = asMap(raw.compact)
   if (compactRaw) {

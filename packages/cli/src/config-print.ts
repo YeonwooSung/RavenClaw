@@ -48,6 +48,7 @@ export function formatPublicConfig(opts?: { home?: string; flags?: ConfigFlags }
     `instructionFiles: ${parsed.instructionFiles ?? 'both'}`,
     `maxRounds: ${parsed.maxRounds ?? base.maxRounds}`,
     `childMaxRounds: ${parsed.childMaxRounds ?? base.childMaxRounds}`,
+    `maxAgentDepth: ${parsed.maxAgentDepth ?? base.maxAgentDepth}`,
     `compact.enabled: ${parsed.compact?.enabled ?? base.compact.enabled}`,
     `compact.llmSummarize: ${parsed.compact?.llmSummarize ?? base.compact.llmSummarize}`,
     `ads.feedUrl: ${feed === '' ? '(empty)' : feed}`,

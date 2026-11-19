@@ -104,6 +104,16 @@ describe('loadConfig', () => {
     expect(loadConfig({ home }).maxAgentDepth).toBe(3)
   })
 
+  test('maxAgentDepth below 1 or fractional is ignored and falls back to 2', () => {
+    for (const bad of ['0', '-1', '1.5', '.inf']) {
+      expect(parseConfigYaml(`maxAgentDepth: ${bad}\n`).maxAgentDepth).toBeUndefined()
+    }
+    const home = tempHome()
+    writeFileSync(join(home, 'config.yaml'), 'maxAgentDepth: 0\n')
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test'
+    expect(loadConfig({ home }).maxAgentDepth).toBe(2)
+  })
+
   test('parseConfigYaml accepts instructionFiles tokens and ignores unknown', () => {
     expect(parseConfigYaml('instructionFiles: claude\n').instructionFiles).toBe('claude')
     expect(parseConfigYaml('instructionFiles: agents-fallback\n').instructionFiles).toBe(
