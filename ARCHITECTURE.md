@@ -571,7 +571,7 @@ Built-ins in `packages/core/src/agent/catalog.ts`:
 | `reviewer` | `reviewer.ts` | **none** | 4 | **yes** | findings, no tools, no secrets |
 | `researcher-web` | `researcher-web.ts` | WebSearch Fetch | 12 | no | search then Fetch ≥3 pages |
 
-`root.spawnableAgents` is that specialist list. Disk agents: `~/.ravenclaw/agents/*.md` then `<cwd>/.ravenclaw/agents/*.md` (`packages/core/src/agent/load.ts`). Frontmatter `name` is the id; `allowed-tools` or default `Read, Grep, Glob`; body is `systemPrompt`; optional `model` and `maxRounds` (positive integer) frontmatter, default `maxRounds: 12`. Project disk agents override user agents with the same id. Catalog ids win over disk ids (`agentCatalog` filters extras).
+`root.spawnableAgents` is that specialist list. Disk agents: `~/.ravenclaw/agents/*.md` then `<cwd>/.ravenclaw/agents/*.md` (`packages/core/src/agent/load.ts`). Frontmatter `name` is the id; `allowed-tools` or default `Read, Grep, Glob`; body is `systemPrompt`; optional `model` and `maxRounds` (positive integer) frontmatter; without `maxRounds` the child runs to the `childMaxRounds` ceiling. Project disk agents override user agents with the same id. Catalog ids win over disk ids (`agentCatalog` filters extras).
 
 ### Spawn graph
 

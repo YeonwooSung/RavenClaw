@@ -289,7 +289,8 @@ export interface AgentDefinition {
   systemPrompt?: string
   inheritParentSystemPrompt?: boolean
   includeMessageHistory: boolean
-  maxRounds: number
+  /** Child round cap, applied under `childMaxRounds`. Unset: the ceiling alone. */
+  maxRounds?: number
   /** Overlaid on the parent compact policy for this child's engine. */
   compactContext?: Partial<CompactPolicy>
   outputMode: 'last_message' | 'all_messages'

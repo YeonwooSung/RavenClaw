@@ -38,7 +38,7 @@ describe('loadDiskAgents', () => {
     expect(getAgentDefinition('general', cwd)?.id).toBe('general')
   })
 
-  test('reads optional model and maxRounds frontmatter; invalid maxRounds ignored', () => {
+  test('reads optional model and maxRounds frontmatter; missing or invalid maxRounds stays unset', () => {
     const home = mkdtempSync(join(tmpdir(), 'ravenclaw-agents-home-'))
     const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-agents-cwd-'))
     tempDirs.push(home, cwd)
@@ -49,12 +49,15 @@ describe('loadDiskAgents', () => {
     )
     writeFileSync(join(home, 'agents', 'b.md'), '---\nname: b\nmaxRounds: 0\n---\nBody\n')
     writeFileSync(join(home, 'agents', 'c.md'), '---\nname: c\nmaxRounds: nope\n---\nBody\n')
+    writeFileSync(join(home, 'agents', 'd.md'), '---\nname: d\n---\nBody\n')
     const byId = new Map(loadDiskAgents(cwd, home).map((d) => [d.id, d]))
     expect(byId.get('a')?.model).toBe('foo-model')
     expect(byId.get('a')?.maxRounds).toBe(3)
     expect(byId.get('b')?.model).toBeUndefined()
-    expect(byId.get('b')?.maxRounds).toBe(12)
-    expect(byId.get('c')?.maxRounds).toBe(12)
+    expect(byId.get('b')?.maxRounds).toBeUndefined()
+    expect(byId.get('c')?.maxRounds).toBeUndefined()
+    expect(byId.get('d')?.maxRounds).toBeUndefined()
+    expect(byId.has('d') && 'maxRounds' in byId.get('d')!).toBe(false)
   })
 
   test('spawnable-agents frontmatter sets edges and implies the Agent tool', () => {

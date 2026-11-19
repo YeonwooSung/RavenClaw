@@ -447,7 +447,7 @@ CLI `createRootTools` (`packages/cli/src/engine.ts`)가 실제로 조립하는 �
 | `reviewer` | 없음 | 같은 모델, 부모 히스토리. `maxRounds` 4 |
 | `researcher-web` | `WebSearch` `Fetch` | 최소 3페이지. `maxRounds` 12 |
 
-디스크 에이전트는 `<project>/.ravenclaw/agents/*.md`와 `~/.ravenclaw/agents`다(`packages/core/src/agent/load.ts`). frontmatter `name`이 id이고, `allowed-tools`(없으면 `Read, Grep, Glob`), 본문이 `systemPrompt`다. 선택 frontmatter `model`과 `maxRounds`(양의 정수)를 받으며 기본 `maxRounds: 12`다. 같은 id면 빌트인이 이긴다. `--agent <id>`는 세션을 그 정의의 툴로 시작한다.
+디스크 에이전트는 `<project>/.ravenclaw/agents/*.md`와 `~/.ravenclaw/agents`다(`packages/core/src/agent/load.ts`). frontmatter `name`이 id이고, `allowed-tools`(없으면 `Read, Grep, Glob`), 본문이 `systemPrompt`다. 선택 frontmatter `model`과 `maxRounds`(양의 정수)를 받으며, `maxRounds`가 없으면 자식은 `childMaxRounds` 상한까지 돈다. 같은 id면 빌트인이 이긴다. `--agent <id>`는 세션을 그 정의의 툴로 시작한다.
 
 `Agent` 입력은 `prompt`가 필수다. `agents[]`로 병렬, `run_in_background`, `isolation: worktree`를 지원한다. `createAgentTool`은 `packages/core/src/orchestration/agent-tool.ts`에 있고 `tools/agent.ts`는 re-export shim이다. `agents[]`는 공유 동시성 예산(아래 Spawn graph) 안에서 자식을 병렬로 돌리며 백그라운드로 보낼 수 없다. worktree(`prepareChildWorktree`, `packages/core/src/orchestration/worktree.ts`)는 `.ravenclaw/worktrees/<childSessionId>`에 detached로 만든다. cleanup이 dirty를 보면 경로를 남기고 `dirty: true`만 보고한다. 자식 결과는 32k자로 자른다. 자식 라운드 수는 `min(childMaxRounds, definition.maxRounds)`다. config `childMaxRounds`(기본 30)가 상한이고, 카탈로그나 디스크 정의의 `maxRounds`가 더 낮으면 그 값을 쓴다.
 

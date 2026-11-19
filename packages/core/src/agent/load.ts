@@ -43,7 +43,8 @@ function parseAgentFile(path: string): AgentDefinition | undefined {
     typeof extra.maxRounds === 'string' && /^[0-9]+$/.test(extra.maxRounds.trim())
       ? Number(extra.maxRounds.trim())
       : 0
-  const maxRounds = Number.isSafeInteger(rounds) && rounds > 0 ? rounds : 12
+  // Unset when omitted or invalid, so the childMaxRounds ceiling applies alone.
+  const maxRounds = Number.isSafeInteger(rounds) && rounds > 0 ? rounds : undefined
   const body = raw.replace(/^---[\s\S]*?---\s*/, '').trim()
   const tools = fm.allowedTools && fm.allowedTools.length > 0 ? fm.allowedTools : DEFAULT_TOOLS
   const edges = parseAllowedTools(extra['spawnable-agents']) ?? []
@@ -56,8 +57,8 @@ function parseAgentFile(path: string): AgentDefinition | undefined {
     spawnableAgents: edges,
     inheritParentSystemPrompt: false,
     includeMessageHistory: false,
-    maxRounds,
     outputMode: 'last_message',
+    ...(maxRounds !== undefined ? { maxRounds } : {}),
     ...(model !== undefined ? { model } : {}),
     ...(body.length > 0 ? { systemPrompt: body } : {}),
   }

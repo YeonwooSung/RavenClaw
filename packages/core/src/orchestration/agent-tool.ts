@@ -59,6 +59,9 @@ export { MAX_PARALLEL_CHILDREN }
 /** Default for `maxAgentDepth`: root=0 spawns 1, depth 1 spawns 2, depth 2 cannot. */
 export const DEFAULT_MAX_AGENT_DEPTH = 2
 
+/** Round cap when neither `childMaxRounds` nor the definition sets one (config default). */
+const DEFAULT_CHILD_MAX_ROUNDS = 30
+
 export interface AgentChildInput {
   prompt: string
   context?: string
@@ -234,7 +237,7 @@ async function spawnChild(
   const maxRounds =
     opts.childMaxRounds !== undefined && definition.maxRounds !== undefined
       ? Math.min(opts.childMaxRounds, definition.maxRounds)
-      : (opts.childMaxRounds ?? definition.maxRounds)
+      : (opts.childMaxRounds ?? definition.maxRounds ?? DEFAULT_CHILD_MAX_ROUNDS)
   const now = Date.now()
   const childModel = resolveChildModel(
     {

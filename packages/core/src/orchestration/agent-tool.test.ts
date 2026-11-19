@@ -1016,9 +1016,16 @@ describe('createAgentTool', () => {
     expect(provider.requests[1]?.maxTokens).toBe(3_200)
   })
 
-  async function roundsUsed(subagent: string, childMaxRounds: number): Promise<number> {
+  async function roundsUsed(
+    subagent: string,
+    childMaxRounds: number,
+    cwd?: string,
+  ): Promise<number> {
     const store = createMemoryStore()
-    const session = makeSession({ id: `sess_rounds_${subagent}_${childMaxRounds}` })
+    const session = makeSession({
+      id: `sess_rounds_${subagent}_${childMaxRounds}`,
+      ...(cwd !== undefined ? { cwd } : {}),
+    })
     await store.createSession(session)
     let n = 0
     const provider = createFakeProvider([])
@@ -1030,9 +1037,21 @@ describe('createAgentTool', () => {
       yield { type: 'stop' as const, reason: 'tool_use' as const }
     }
     const { tool } = createTestAgent({ store, provider, childMaxRounds })
-    await tool.execute({ prompt: 'loop', subagent }, makeCtx(makeTurn(session)))
+    await tool.execute(
+      { prompt: 'loop', subagent },
+      makeCtx(makeTurn(session, cwd !== undefined ? { cwd } : {})),
+    )
     return provider.streamCount
   }
+
+  test('a disk agent without maxRounds frontmatter runs to the childMaxRounds ceiling', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-agent-rounds-'))
+    tempDirs.push(cwd)
+    writeDiskAgent(cwd, 'looper', '')
+    const used = await roundsUsed('looper', 20, cwd)
+    expect(used).toBeGreaterThanOrEqual(20)
+    expect(used).toBeLessThanOrEqual(21)
+  })
 
   test('definition maxRounds is honored under a larger childMaxRounds ceiling', async () => {
     const used = await roundsUsed('command-runner', 30)
