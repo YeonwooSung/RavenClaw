@@ -267,8 +267,6 @@ export interface CompactPolicy {
   auxModel?: ModelProfile
   /** True when `auxiliary.compact` was set. Missing provider then means mechanical. */
   auxConfigured?: boolean
-  /** BYOK pin for child specialists; Agent reads this when the turn omits it. */
-  specialistModel?: string
 }
 
 export interface AgentDefinition {
@@ -493,6 +491,8 @@ export interface SessionEngineOptions {
   system?: SystemPart[]
   hooks?: import('./permissions/hooks').PermissionHook[]
   fallbackModel?: string
+  /** Routes fallback switches to the right provider. Unset keeps the live provider. */
+  modelResolver?: import('./model/resolve').ModelResolver
   jsonSchema?: unknown
   bare?: boolean
   additionalDirectories?: string[]
@@ -546,7 +546,8 @@ export interface SessionEngine {
   clearKeepId(): Promise<{ ok: true; notice: string } | { ok: false; notice: string }>
   whenTreeStop(): Promise<{ descendantWork: boolean; thisSessionWork: boolean }>
   compactNow(): Promise<void>
-  setModel(profile: ModelProfile): Promise<void>
+  /** Next turn uses `profile` (and `provider` when given); an in-flight loop keeps its own. */
+  setModel(profile: ModelProfile, provider?: Provider): Promise<void>
   setPermissionMode(mode: PermissionMode): Promise<void>
   reloadSystem(system: SystemPart[]): void
   setInstructionFiles(mode: import('./config').InstructionFilesMode): void
@@ -577,6 +578,7 @@ export interface QueryLoopOptions {
   /** After a tool batch, take at most one host-queued prompt. */
   drainQueued?: () => string | undefined
   fallbackModel?: string
+  modelResolver?: import('./model/resolve').ModelResolver
   jsonSchema?: unknown
   verifyOnStop?: boolean
   /** After a tool batch, return newly ready deferred tools (MCP). Prefix stays unchanged. */

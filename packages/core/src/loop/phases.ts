@@ -623,12 +623,18 @@ export async function* streamModel(
         !state.fallbackUsed
       ) {
         state.fallbackUsed = true
-        state.turn.model = fallback
-        state.model = getModelProfile(fallback)
-        yield { type: 'status', message: `fallback model ${fallback}` }
-        current = assembleRequest(state)
-        attempt = -1
-        continue
+        const resolved = state.modelResolver?.resolve(fallback)
+        if (resolved !== undefined && !resolved.ok) {
+          yield { type: 'status', message: `fallback model ${fallback} unavailable: ${resolved.error}` }
+        } else {
+          if (resolved !== undefined) state.provider = resolved.provider
+          state.turn.model = fallback
+          state.model = resolved !== undefined ? resolved.profile : getModelProfile(fallback)
+          yield { type: 'status', message: `fallback model ${fallback}` }
+          current = assembleRequest(state)
+          attempt = -1
+          continue
+        }
       }
       if (attempt === maxTries - 1) {
         return { action: 'return', end: { reason: 'model_error', error } }

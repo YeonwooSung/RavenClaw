@@ -101,8 +101,8 @@ export function wrapSessionEngineLog(
     compactNow() {
       return engine.compactNow()
     },
-    setModel(profile) {
-      return engine.setModel(profile)
+    setModel(profile, provider) {
+      return engine.setModel(profile, provider)
     },
     setPermissionMode(mode) {
       return engine.setPermissionMode(mode)

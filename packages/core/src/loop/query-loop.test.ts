@@ -25,6 +25,8 @@ import {
   type ToolContext,
 } from '../types'
 import { createSessionEngine } from './session-engine'
+import { createModelResolver } from '../model/resolve'
+import type { ResolvedConfig } from '../config'
 import { resumeSession } from '../session/resume'
 import { ABORTED_TEXT, IGNORED_TEXT, unpairedToolUseIds } from './pairing'
 import { createMemoryStore } from '../session/memory-store'
@@ -2070,6 +2072,71 @@ describe('queryLoop via SessionEngine', () => {
       true,
     )
     expect(calls).toBe(1)
+  })
+
+  test('fallback with a resolver switches to the resolved cross-kind provider', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_fallback_cross', model: 'claude-primary' })
+    await store.createSession(session)
+    const boom = Object.assign(new Error('overloaded'), { retryable: true, status: 529 })
+    const parent = createFakeProvider([
+      async function* () {
+        throw boom
+      },
+    ])
+    const backup = createFakeProvider([textThenStop('ok')])
+    const opts = engineOpts({ provider: parent, store, session })
+    opts.fallbackModel = 'ollama/qwen'
+    opts.modelResolver = createModelResolver({
+      config: { model: 'claude-primary', provider: 'anthropic', env: {} } as unknown as ResolvedConfig,
+      funding: 'byok',
+      liveProvider: parent,
+      liveModel: 'claude-primary',
+      createProvider: () => backup,
+    })
+    const engine = await createSessionEngine(opts)
+    const { result, events } = await collect(engine.submitMessage('hi'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(parent.streamCount).toBe(1)
+    expect(backup.requests[0]?.model).toBe('ollama/qwen')
+    expect(
+      events.some((event) => event.type === 'status' && event.message === 'fallback model ollama/qwen'),
+    ).toBe(true)
+  })
+
+  test('fallback unavailable under included emits status and keeps the live provider', async () => {
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_fallback_unavail', model: 'claude-primary', funding: 'included' })
+    await store.createSession(session)
+    const boom = Object.assign(new Error('overloaded'), { retryable: true, status: 529 })
+    const parent = createFakeProvider([
+      async function* () {
+        throw boom
+      },
+      textThenStop('ok'),
+    ])
+    let factoryCalls = 0
+    const opts = engineOpts({ provider: parent, store, session })
+    opts.fallbackModel = 'ollama/qwen'
+    opts.modelResolver = createModelResolver({
+      config: { model: 'claude-primary', provider: 'anthropic', env: {} } as unknown as ResolvedConfig,
+      funding: 'included',
+      liveProvider: parent,
+      liveModel: 'claude-primary',
+      createProvider: () => {
+        factoryCalls += 1
+        return parent
+      },
+    })
+    const engine = await createSessionEngine(opts)
+    const { result, events } = await collect(engine.submitMessage('hi'))
+    expect(result).toEqual({ reason: 'completed' })
+    expect(factoryCalls).toBe(0)
+    expect(parent.requests.map((req) => req.model)).toEqual(['claude-primary', 'claude-primary'])
+    const status = events.find(
+      (event) => event.type === 'status' && event.message.startsWith('fallback model ollama/qwen unavailable: '),
+    )
+    expect(status).toBeDefined()
   })
 
   test('Skill allowed-tools shrinks the live pool on the next assemble', async () => {

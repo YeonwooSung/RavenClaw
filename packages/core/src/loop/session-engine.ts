@@ -136,6 +136,7 @@ export async function createSessionEngine(opts: SessionEngineOptions): Promise<S
   let compactQueued = false
   let system = opts.system
   let model = opts.model
+  let provider = opts.provider
   const tasks = createTaskRegistry()
   const fileHistory = opts.fileHistory ?? createFileHistory(session.id)
   const ownsHistoryTurn = opts.fileHistory === undefined || opts.fileHistoryOwnsTurn === true
@@ -613,7 +614,7 @@ export async function createSessionEngine(opts: SessionEngineOptions): Promise<S
       ...(todos !== undefined ? { todos } : {}),
       ...(opts.compact.llmSummarize
         ? {
-            provider: opts.provider,
+            provider,
             signal: liveTurn?.abort.signal ?? new AbortController().signal,
           }
         : { summary: mechanicalSummary(source.slice(0, cut)) }),
@@ -963,7 +964,7 @@ export async function createSessionEngine(opts: SessionEngineOptions): Promise<S
         const loopOpts: QueryLoopOptions = {
           turn,
           tools: opts.tools,
-          provider: opts.provider,
+          provider,
           store: opts.store,
           compact: opts.compact,
           model,
@@ -982,6 +983,7 @@ export async function createSessionEngine(opts: SessionEngineOptions): Promise<S
         loopOpts.drainQueued = () => drainQueued?.()
         loopOpts.lifecycle = lifecycle
         if (opts.fallbackModel !== undefined) loopOpts.fallbackModel = opts.fallbackModel
+        if (opts.modelResolver !== undefined) loopOpts.modelResolver = opts.modelResolver
         if (opts.jsonSchema !== undefined) loopOpts.jsonSchema = opts.jsonSchema
         if (opts.verifyOnStop === true) loopOpts.verifyOnStop = true
         if (opts.refreshTools !== undefined) loopOpts.refreshTools = opts.refreshTools
@@ -1103,7 +1105,7 @@ export async function createSessionEngine(opts: SessionEngineOptions): Promise<S
           })
         ) {
           cancelBackgroundReview = startDetachedReview({
-            provider: opts.provider,
+            provider,
             parentSession: session,
             messages,
             system,
@@ -1143,10 +1145,11 @@ export async function createSessionEngine(opts: SessionEngineOptions): Promise<S
       instructionFiles = mode
     },
 
-    async setModel(next: SessionEngineOptions['model']) {
+    async setModel(next: SessionEngineOptions['model'], nextProvider?: SessionEngineOptions['provider']) {
       session.model = next.id
       session.updatedAt = Date.now()
       model = next
+      if (nextProvider !== undefined) provider = nextProvider
       await opts.store.upsertSession(session)
     },
 

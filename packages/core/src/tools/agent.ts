@@ -19,6 +19,7 @@ import {
   resolveChildModel,
 } from '../agent/definition'
 import { getModelProfile } from '../cost/models'
+import type { ModelResolver } from '../model/resolve'
 import { PersistError } from '../types'
 import type {
   CompactPolicy,
@@ -103,6 +104,10 @@ export function createAgentTool(opts: {
   askUser: SessionEngineOptions['askUser']
   childMaxRounds?: number
   resolveProfile?: (id: string) => ModelProfile
+  /** Routes the child model id to its provider + profile. Unset keeps the parent provider. */
+  modelResolver?: ModelResolver
+  /** BYOK pin for child specialists; used when the turn omits one. */
+  specialistModel?: string
   system?: SystemPart[]
   hooks?: PermissionHook[]
 }): Tool<AgentInput, string> {
@@ -187,12 +192,21 @@ async function spawnChild(
     {
       model: ctx.turn.model,
       funding: ctx.turn.funding,
-      specialistModel: ctx.turn.specialistModel ?? opts.compact.specialistModel,
+      specialistModel: ctx.turn.specialistModel ?? opts.specialistModel,
     },
     definition,
   )
-  const childProfile =
-    childModel === opts.model.id ? opts.model : (opts.resolveProfile ?? getModelProfile)(childModel)
+  let childProvider = opts.provider
+  let childProfile: ModelProfile
+  if (opts.modelResolver !== undefined) {
+    const resolved = opts.modelResolver.resolve(childModel)
+    if (!resolved.ok) return `Agent failed: ${resolved.error}`
+    childProvider = resolved.provider
+    childProfile = resolved.profile
+  } else {
+    childProfile =
+      childModel === opts.model.id ? opts.model : (opts.resolveProfile ?? getModelProfile)(childModel)
+  }
   const childSession = buildChildSession(
     ctx.turn,
     childModel,
@@ -254,7 +268,7 @@ async function spawnChild(
       const engineOpts: SessionEngineOptions = {
         session: childSession,
         messages: preambleMessages,
-        provider: opts.provider,
+        provider: childProvider,
         store: opts.store,
         tools: childTools,
         compact: opts.compact,

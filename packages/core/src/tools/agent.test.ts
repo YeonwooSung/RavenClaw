@@ -9,6 +9,8 @@ import { createSessionEngine } from '../loop/session-engine'
 import { INCOMPLETE_TEXT } from '../loop/pairing'
 import { PersistError } from '../types'
 import { decidePermission } from '../permissions/pipeline'
+import { createModelResolver, type ModelResolver } from '../model/resolve'
+import type { ResolvedConfig } from '../config'
 import type {
   CompactPolicy,
   Message,
@@ -219,6 +221,10 @@ function parentPool(extras: Tool[] = []): Tool[] {
   ]
 }
 
+function testConfig(model: string, extra: Partial<ResolvedConfig> = {}): ResolvedConfig {
+  return { model, provider: 'anthropic', env: {}, ...extra } as unknown as ResolvedConfig
+}
+
 async function askUser() {
   return 'deny' as const
 }
@@ -232,13 +238,13 @@ function createTestAgent(
     childMaxRounds?: number
     system?: SystemPart[]
     specialistModel?: string
+    modelResolver?: ModelResolver
     askUser?: SessionEngineOptions['askUser']
   } = {},
 ) {
   const store = over.store ?? createMemoryStore()
   const provider = over.provider ?? createFakeProvider([textThenStop('child done')])
   const compact = defaultCompact()
-  if (over.specialistModel !== undefined) compact.specialistModel = over.specialistModel
   const opts: Parameters<typeof createAgentTool>[0] = {
     store,
     provider,
@@ -247,6 +253,8 @@ function createTestAgent(
     model: over.model ?? defaultModel(),
     askUser: over.askUser ?? askUser,
   }
+  if (over.specialistModel !== undefined) opts.specialistModel = over.specialistModel
+  if (over.modelResolver !== undefined) opts.modelResolver = over.modelResolver
   if (over.childMaxRounds !== undefined) opts.childMaxRounds = over.childMaxRounds
   if (over.system !== undefined) opts.system = over.system
   return { store, provider, tool: createAgentTool(opts) }
@@ -849,8 +857,9 @@ describe('createAgentTool', () => {
     expect(children).toHaveLength(0)
   })
 
-  test('BYOK specialistModel pins file-finder request model', async () => {
-    const provider = createFakeProvider([textThenStop('found')])
+  test('BYOK specialistModel pins file-finder request model on the resolved provider', async () => {
+    const provider = createFakeProvider([textThenStop('parent should not run')])
+    const resolved = createFakeProvider([textThenStop('found')])
     const store = createMemoryStore()
     const session = makeSession({
       id: 'sess_specialist_byok',
@@ -858,21 +867,88 @@ describe('createAgentTool', () => {
       funding: 'byok',
     })
     await store.createSession(session)
+    const made: string[] = []
     const { tool } = createTestAgent({
       store,
       provider,
       model: defaultModel('parent-model'),
       specialistModel: 'ollama/qwen',
+      modelResolver: createModelResolver({
+        config: testConfig('parent-model'),
+        funding: 'byok',
+        liveProvider: provider,
+        liveModel: 'parent-model',
+        createProvider: (kind, id) => {
+          made.push(`${kind}:${id}`)
+          return resolved
+        },
+      }),
     })
     await tool.execute(
       { prompt: 'find', subagent: 'file-finder' },
       makeCtx(makeTurn(session, { model: 'parent-model', funding: 'byok' })),
     )
 
-    expect(provider.requests[0]?.model).toBe('ollama/qwen')
+    expect(made).toEqual(['ollama:ollama/qwen'])
+    expect(provider.streamCount).toBe(0)
+    expect(resolved.requests[0]?.model).toBe('ollama/qwen')
     const child = (await store.listSessions({ parentSessionId: session.id }))[0]
     expect(child?.model).toBe('ollama/qwen')
     expect(child?.funding).toBe('byok')
+  })
+
+  test('resolver failure returns Agent failed and creates no child session', async () => {
+    const provider = createFakeProvider([textThenStop('should not run')])
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_specialist_fail', model: 'parent-model', funding: 'byok' })
+    await store.createSession(session)
+    const { tool } = createTestAgent({
+      store,
+      provider,
+      model: defaultModel('parent-model'),
+      specialistModel: 'ollama/qwen',
+      modelResolver: createModelResolver({
+        config: testConfig('parent-model'),
+        funding: 'byok',
+        liveProvider: provider,
+        liveModel: 'parent-model',
+        createProvider: () => {
+          throw new Error('no ollama here')
+        },
+      }),
+    })
+    const result = await tool.execute(
+      { prompt: 'find', subagent: 'file-finder' },
+      makeCtx(makeTurn(session, { model: 'parent-model', funding: 'byok' })),
+    )
+    expect(result).toBe('Agent failed: no ollama here')
+    expect(provider.streamCount).toBe(0)
+    expect(await store.listSessions({ parentSessionId: session.id })).toHaveLength(0)
+  })
+
+  test('resolver profile applies even when the child reuses the live provider', async () => {
+    const provider = createFakeProvider([textThenStop('ok')])
+    const store = createMemoryStore()
+    const session = makeSession({ id: 'sess_resolver_live', model: 'claude-sonnet-5', funding: 'byok' })
+    await store.createSession(session)
+    const { tool } = createTestAgent({
+      store,
+      provider,
+      model: defaultModel('claude-sonnet-5'),
+      modelResolver: createModelResolver({
+        config: testConfig('claude-sonnet-5', { contextWindow: 200_000 }),
+        funding: 'byok',
+        liveProvider: provider,
+        liveModel: 'claude-sonnet-5',
+      }),
+    })
+    await tool.execute(
+      { prompt: 'x' },
+      makeCtx(makeTurn(session, { model: 'claude-sonnet-5', funding: 'byok' })),
+    )
+    expect(provider.requests[0]?.model).toBe('claude-sonnet-5')
+    // parent test profile reserve is 3_200; resolver profile is the real one
+    expect(provider.requests[0]?.maxTokens).toBe(20_000)
   })
 
   test('child engine uses the profile of the resolved child model', async () => {
@@ -905,7 +981,8 @@ describe('createAgentTool', () => {
       store,
       provider,
       tools: parentPool(),
-      compact: { ...defaultCompact(), specialistModel: 'child-model' },
+      compact: defaultCompact(),
+      specialistModel: 'child-model',
       model: defaultModel('parent-model'),
       askUser,
       resolveProfile(id) {

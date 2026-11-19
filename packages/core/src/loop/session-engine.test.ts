@@ -247,6 +247,56 @@ describe('setModel', () => {
     expect(seen[0]?.model).toBe('claude-sonnet-5')
     expect(seen[0]?.maxTokens).toBe(20_000)
   })
+
+  test('provider arg replaces the provider for the next turn', async () => {
+    const store = createMemoryStore()
+    const sess = makeSession({ id: 'sess_set_model_provider', model: 'dummy' })
+    await store.createSession(sess)
+    const first = createFakeProvider([
+      [
+        { type: 'text_delta', text: 'one' },
+        { type: 'stop', reason: 'end' },
+      ],
+    ])
+    const second = createFakeProvider([
+      [
+        { type: 'text_delta', text: 'two' },
+        { type: 'stop', reason: 'end' },
+      ],
+    ])
+    let firstCalls = 0
+    let secondCalls = 0
+    const f1 = first.stream.bind(first)
+    first.stream = async function* (req, signal) {
+      firstCalls += 1
+      yield* f1(req, signal)
+    }
+    const f2 = second.stream.bind(second)
+    second.stream = async function* (req, signal) {
+      secondCalls += 1
+      yield* f2(req, signal)
+    }
+    const engine = await createSessionEngine({
+      session: sess,
+      provider: first,
+      store,
+      tools: [],
+      compact: defaultCompact({ enabled: false }),
+      model: defaultModel(),
+      maxRounds: 8,
+      async askUser() {
+        return 'deny'
+      },
+    })
+    await engine.setModel(defaultModel('ollama/qwen'), second)
+    const gen = engine.submitMessage('hi')
+    while (true) {
+      const next = await gen.next()
+      if (next.done) break
+    }
+    expect(firstCalls).toBe(0)
+    expect(secondCalls).toBe(1)
+  })
 })
 
 describe('compactNow', () => {
