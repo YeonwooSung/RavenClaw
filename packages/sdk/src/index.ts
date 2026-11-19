@@ -4,6 +4,7 @@ import {
   bashTool,
   buildSystemParts,
   createAgentTool,
+  createModelResolver,
   createBashTool,
   createMemoryStore,
   createPlanModeTools,
@@ -53,6 +54,7 @@ import {
   type Funding,
   type Message,
   type ModelProfile,
+  type ModelResolver,
   type PermissionMode,
   type Provider,
   type ResolvedConfig,
@@ -66,7 +68,7 @@ import {
   type TerminalBackend,
   type Tool,
 } from '@ravenclaw/core'
-import { createProvider } from '@ravenclaw/providers'
+import { byokProviderFactory, createProvider } from '@ravenclaw/providers'
 
 export { createDurableSession } from './durable.ts'
 export type { CreateDurableSessionOptions, DurableRavenSession } from './durable.ts'
@@ -177,6 +179,8 @@ export function createSessionTools(opts: {
   bash?: Tool
   backend?: TerminalBackend
   network?: boolean
+  modelResolver?: ModelResolver
+  specialistModel?: string
 }): Tool[] {
   const networkOn = opts.network === true
   const base = createRootTools(opts.store, opts.bash ?? bashTool, networkOn, opts.backend)
@@ -200,6 +204,10 @@ export function createSessionTools(opts: {
     childMaxRounds: opts.childMaxRounds,
   }
   if (opts.system !== undefined) agentOpts.system = opts.system
+  if (opts.modelResolver !== undefined) agentOpts.modelResolver = opts.modelResolver
+  if (opts.specialistModel !== undefined && opts.specialistModel !== '') {
+    agentOpts.specialistModel = opts.specialistModel
+  }
   return [...always, createAgentTool(agentOpts)]
 }
 
@@ -241,7 +249,16 @@ export async function createRavenSession(
   const backendOpts: { image?: string } = {}
   if (terminal?.image !== undefined) backendOpts.image = terminal.image
   const backend = createTerminalBackend(terminal?.backend ?? 'local', backendOpts)
-  const tools = opts.tools ?? defaultSessionTools({ store, provider, config, compact, system, askUser, backend })
+  const modelResolver = createModelResolver({
+    config,
+    funding: session.funding,
+    liveProvider: provider,
+    liveModel: session.model,
+    createProvider: byokProviderFactory,
+  })
+  const tools =
+    opts.tools ??
+    defaultSessionTools({ store, provider, config, compact, system, askUser, backend, modelResolver })
 
   const engineOpts: SessionEngineOptions = {
     session,
@@ -257,6 +274,7 @@ export async function createRavenSession(
     fileHistory: createFileHistory(session.id, home, { backend, cwd: session.cwd }),
   }
   if (opts.messages !== undefined) engineOpts.messages = opts.messages
+  engineOpts.modelResolver = modelResolver
   engineOpts.sessionLock = { holderId: lockHolderId }
 
   const engine = await createSessionEngine(engineOpts)
@@ -287,6 +305,7 @@ function defaultSessionTools(opts: {
   system: SystemPart[]
   askUser: SessionEngineOptions['askUser']
   backend: TerminalBackend
+  modelResolver: ModelResolver
 }): Tool[] {
   const bash = createBashTool(opts.backend)
   return createSessionTools({
@@ -300,6 +319,10 @@ function defaultSessionTools(opts: {
     bash,
     backend: opts.backend,
     network: (opts.config as { tools?: { network?: boolean } }).tools?.network === true,
+    modelResolver: opts.modelResolver,
+    ...(opts.config.specialistModel !== undefined
+      ? { specialistModel: opts.config.specialistModel }
+      : {}),
   })
 }
 

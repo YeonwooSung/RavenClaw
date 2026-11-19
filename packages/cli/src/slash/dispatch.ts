@@ -121,8 +121,18 @@ export async function dispatchSharedSlash(
         return 'handled'
       }
       const id = parsed.arg.trim()
-      const profile = getModelProfile(id, profileOverridesFor(runtime.config, id))
-      await runtime.engine.setModel(profile)
+      let profile = getModelProfile(id, profileOverridesFor(runtime.config, id))
+      if (runtime.modelResolver !== undefined) {
+        const resolved = runtime.modelResolver.resolve(id)
+        if (!resolved.ok) {
+          host.notice(`model ${id}: ${resolved.error}`)
+          return 'handled'
+        }
+        profile = resolved.profile
+        await runtime.engine.setModel(profile, resolved.provider)
+      } else {
+        await runtime.engine.setModel(profile)
+      }
       runtime.config.model = profile.id
       runtime.config.profile = profile
       host.onModelChanged?.(profile.id)

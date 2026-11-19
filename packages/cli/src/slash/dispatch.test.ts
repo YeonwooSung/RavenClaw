@@ -5,9 +5,12 @@ import { join } from 'node:path'
 import { spawnSync } from 'node:child_process'
 import {
   createFileHistory,
+  createModelResolver,
   createTaskRegistry,
   PersistError,
   type Message,
+  type Provider,
+  type ResolvedConfig,
   type SessionBranchNode,
   type SessionEngine,
   type SessionJob,
@@ -356,6 +359,57 @@ describe('dispatchSharedSlash', () => {
     expect(runtime.config.profile.contextWindow).toBe(1_000_000)
     expect(runtime.config.profile.supportsThinking).toBe(true)
     expect(host.notices).toEqual(['model claude-sonnet-5'])
+  })
+
+  test('model cross-kind under included prints the resolver error and does not switch', async () => {
+    const session = makeSession({ model: 'claude-sonnet-5', funding: 'included' })
+    const engine = fakeEngine(session)
+    const calls: Array<{ id: string; provider: Provider | undefined }> = []
+    engine.setModel = async (profile, provider) => {
+      calls.push({ id: profile.id, provider })
+      session.model = profile.id
+    }
+    const runtime = fakeRuntime(engine)
+    const live = { id: 'live' } as unknown as Provider
+    runtime.modelResolver = createModelResolver({
+      config: { model: 'claude-sonnet-5', provider: 'anthropic', env: {} } as unknown as ResolvedConfig,
+      funding: 'included',
+      liveProvider: live,
+      liveModel: 'claude-sonnet-5',
+      createProvider: () => live,
+    })
+    const host = fakeHost(runtime)
+    expect(await dispatchSharedSlash(cmd('model', 'ollama/qwen'), host)).toBe('handled')
+    expect(calls).toEqual([])
+    expect(session.model).toBe('claude-sonnet-5')
+    expect(runtime.config.model).toBe('dummy')
+    expect(host.notices).toHaveLength(1)
+    expect(host.notices[0]).toStartWith('model ollama/qwen: ')
+  })
+
+  test('model cross-kind under byok hands the resolved provider to the engine', async () => {
+    const session = makeSession({ model: 'claude-sonnet-5', funding: 'byok' })
+    const engine = fakeEngine(session)
+    const calls: Array<{ id: string; provider: Provider | undefined }> = []
+    engine.setModel = async (profile, provider) => {
+      calls.push({ id: profile.id, provider })
+      session.model = profile.id
+    }
+    const runtime = fakeRuntime(engine)
+    const live = { id: 'live' } as unknown as Provider
+    const ollama = { id: 'ollama' } as unknown as Provider
+    runtime.modelResolver = createModelResolver({
+      config: { model: 'claude-sonnet-5', provider: 'anthropic', env: {} } as unknown as ResolvedConfig,
+      funding: 'byok',
+      liveProvider: live,
+      liveModel: 'claude-sonnet-5',
+      createProvider: () => ollama,
+    })
+    const host = fakeHost(runtime)
+    await dispatchSharedSlash(cmd('model', 'ollama/qwen'), host)
+    expect(calls).toEqual([{ id: 'ollama/qwen', provider: ollama }])
+    expect(runtime.config.model).toBe('ollama/qwen')
+    expect(host.notices).toEqual(['model ollama/qwen'])
   })
 
   test('model switch does not inherit the global contextWindow override', async () => {

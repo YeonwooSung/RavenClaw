@@ -272,7 +272,7 @@ Accepts a string or `{ text?, images? }`. Sequence:
 
 ### Other methods
 
-- **`setModel(profile)`** writes `session.model = profile.id`, replaces the engine's `model` binding, upserts. The in-flight `queryLoop` already closed over the previous `model` / `turn.model`. Next turn picks up the new window, prices, and `supportsThinking`. `/model` in the TUI calls this after `getModelProfile`.
+- **`setModel(profile, provider?)`** writes `session.model = profile.id`, replaces the engine's `model` binding (and the `provider` binding when given), upserts. The in-flight `queryLoop` already closed over the previous `model` / `provider` / `turn.model`. Next turn picks up the new window, prices, `supportsThinking`, and provider. `/model` in the TUI calls this with the result of the runtime's `ModelResolver.resolve(id)`.
 - **`setPermissionMode(mode)`** updates session + live turn (so leftover asks in this turn see the new mode), tracks `prePlanMode` when entering/leaving `plan`, and rewrites the volatile system line via `applyPermissionMode`.
 - **`enqueueSteer(text)`** pushes onto `steering`. Drained in `prepareContext` and `finalizeRound` through `injectMidTurnHint` (the only mid-turn writer).
 - **`bindDrainQueued(fn)`** — host `/queue`. At most one queued prompt is injected after each tool batch (`finalizeRound` → `injectQueued`).
@@ -325,7 +325,7 @@ Grace suffix: `This is the last round; answer the user now. Do not call tools.` 
 
 ### `streamModel`
 
-Up to 8 tries, 500ms exponential backoff + 25% jitter. Auth 401/403 is not retryable. On abort, set `streamAborted` and continue to `normalizeResponse` (which pairs). On context overflow: one reactive compact, then `context_full`. On retryable error: if `fallbackModel` is set and unused, switch `turn.model` + `getModelProfile` and retry (`fallbackUsed`).
+Up to 8 tries, 500ms exponential backoff + 25% jitter. Auth 401/403 is not retryable. On abort, set `streamAborted` and continue to `normalizeResponse` (which pairs). On context overflow: one reactive compact, then `context_full`. On retryable error: if `fallbackModel` is set and unused, mark `fallbackUsed`. With `modelResolver` (cli/sdk always pass one), `resolve(fallback)`: on ok switch `state.provider`, `state.model`, `turn.model` and retry; on `ok:false` emit `fallback model <id> unavailable: <error>` and keep normal backoff on the live provider (included sessions never cross provider kind). Without a resolver, switch `turn.model` + `getModelProfile` on the same provider.
 
 **Output-token escalation:** if the stop reason looks like max_tokens / length, there are no tool calls, and escalation has not run, bump `maxTokens` to `min(64_000, contextWindow - 1000)` and retry the stream.
 
@@ -553,6 +553,8 @@ Registry: `createToolRegistry` (`packages/core/src/tools/registry.ts`) — last 
 
 `--worktree [name]` on the CLI (`enterSessionWorktree`) is a *session* worktree, distinct from child isolation. `EnterWorktree` / `ExitWorktree` tools wrap the same session helper.
 
+Child model: `resolveChildModel` = `definition.model ?? turn.specialistModel ?? opts.specialistModel ?? turn.model` (included pins the parent model). `specialistModel` comes from `config.specialistModel` via `createAgentTool` opts (not `CompactPolicy`). With `opts.modelResolver`, the child's provider and profile both come from `resolve(childModel)`; `ok:false` returns `Agent failed: <error>` before any child session is created. Without it, the child keeps the parent provider and uses `resolveProfile`.
+
 Child results are bounded (`CHILD_RESULT_CHAR_BOUND`). Child sessions have `parent_session_id`; `deleteSession` cascades.
 
 ## Agents catalog
@@ -698,7 +700,7 @@ Also in `BUILT_INS`: `claude-fable-5-1`; `gpt-5.6-sol` (alias `gpt-5.6` / `opena
 
 Ollama default model `llama3.2`; vLLM `local-model`. OrcaRouter default model `orcarouter/auto`. Calls whose host is `api.orcarouter.ai` also send `HTTP-Referer: https://github.com/YeonwooSung/RavenClaw` and `X-Title: RavenClaw`. Other hosts do not. `ORCAROUTER_API_KEY` does not override Anthropic, Ollama, vLLM, or OpenAI during env inference.
 
-`/model <id>` → `setModel(getModelProfile(id))`. Live in-flight `queryLoop` is not mutated.
+`/model <id>` → `runtime.modelResolver.resolve(id)` (`packages/core/src/model/resolve.ts`; one resolver per opened engine, BYOK factory `byokProviderFactory` from `@ravenclaw/providers`) → `setModel(profile, provider)`. On `ok:false` (e.g. cross-kind under `included`, missing key) the notice is `model <id>: <error>` and nothing switches. Live in-flight `queryLoop` is not mutated.
 
 ## MCP
 

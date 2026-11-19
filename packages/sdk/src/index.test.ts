@@ -216,6 +216,40 @@ describe('createRavenSession', () => {
     await session.close()
   })
 
+  test('Agent child routes a cross-kind specialistModel through the BYOK resolver', async () => {
+    const home = tempHome()
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test'
+    writeFileSync(
+      join(home, 'config.yaml'),
+      ['provider: anthropic', 'model: claude-sonnet-4-5', 'specialistModel: gpt-5', ''].join('\n'),
+    )
+    const provider = createFakeProvider([
+      [
+        { type: 'tool_call', id: 'a1', name: 'Agent', input: { prompt: 'find x', subagent: 'file-finder' } },
+        { type: 'stop', reason: 'tool_use' },
+      ],
+      [
+        { type: 'text_delta', text: 'done' },
+        { type: 'stop', reason: 'end' },
+      ],
+    ])
+    const session = await createRavenSession({
+      cwd: home,
+      home,
+      provider,
+      store: 'memory',
+      async askUser() {
+        return 'allow'
+      },
+    })
+    await collectSubmit(session, 'go')
+    expect(provider.requests).toHaveLength(2)
+    const toolMsg = provider.requests[1]?.messages.find((msg) => msg.role === 'tool')
+    const text = JSON.stringify(toolMsg)
+    expect(text).toContain('Agent failed: missing OPENAI_API_KEY')
+    await session.close()
+  })
+
   test('missing provider + no keys throws a setup hint', async () => {
     const home = tempHome()
     await expect(createRavenSession({ cwd: home, home })).rejects.toThrow(

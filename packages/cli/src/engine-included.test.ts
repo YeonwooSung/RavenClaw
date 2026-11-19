@@ -888,6 +888,25 @@ describe('included gateway access', () => {
     expect(engine.session.funding).toBe('included')
   })
 
+  test('openEngine returns a resolver bound to the session funding and live provider', async () => {
+    const live = stubProvider()
+    const included = await openEngine({
+      provider: live,
+      store: createMemoryStore(),
+      config: config(),
+      cwd: '/tmp',
+      funding: 'included',
+      async askUser() {
+        return 'deny'
+      },
+    })
+    const cross = included.modelResolver.resolve('ollama/qwen')
+    expect(cross.ok).toBe(false)
+    const same = included.modelResolver.resolve(included.engine.session.model)
+    expect(same.ok && same.provider).toBe(live)
+    await included.engine.close()
+  })
+
   test('openEngine releases the session lock when later setup throws', async () => {
     const store = createMemoryStore()
     const session = newSessionRecord({

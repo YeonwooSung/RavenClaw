@@ -5,6 +5,7 @@ import {
   bashTool,
   buildSystemParts,
   createAgentTool,
+  createModelResolver,
   createBashTool,
   createTerminalBackend,
   createPlanModeTools,
@@ -72,6 +73,7 @@ import {
   type Funding,
   type Message,
   type ModelProfile,
+  type ModelResolver,
   type PermissionHook,
   type PermissionMode,
   type Provider,
@@ -93,7 +95,7 @@ import { startPreventSleep, stopPreventSleep } from './prevent-sleep'
 import { probeEntitlement, type Entitlement } from '@ravenclaw/ads'
 import { includedCapReached, tryRecordIncludedSession } from './included-usage'
 import { loadConfiguredMcpTools, type McpSpawnFn } from './mcp'
-import { applyAuxCompactPolicy } from './aux'
+import { applyAuxCompactPolicy, byokProviderFactory } from './aux'
 
 export type IncludedAccess =
   | {
@@ -277,6 +279,8 @@ export function createSessionTools(opts: {
   askTool?: Tool
   network?: boolean
   deferredCatalog?: Tool[]
+  modelResolver?: ModelResolver
+  specialistModel?: string
 }): Tool[] {
   const networkOn = opts.network === true
   const root = createRootTools(opts.store, opts.bash ?? bashTool, opts.askTool, networkOn, opts.backend)
@@ -305,6 +309,10 @@ export function createSessionTools(opts: {
   }
   if (opts.system !== undefined) agentOpts.system = opts.system
   if (opts.hooks !== undefined) agentOpts.hooks = opts.hooks
+  if (opts.modelResolver !== undefined) agentOpts.modelResolver = opts.modelResolver
+  if (opts.specialistModel !== undefined && opts.specialistModel !== '') {
+    agentOpts.specialistModel = opts.specialistModel
+  }
   const agent = createAgentTool(agentOpts)
   if (deferredMcp.length === 0) return [...always, agent]
   return mergeToolPool([...always, agent], deferredMcp)
@@ -384,6 +392,8 @@ export interface CliRuntimeBase {
   lockHolderName: SessionLockHolderName
   verifyOnStop?: boolean
   askUserHost?: boolean
+  /** One per opened engine; `/model` resolves through it. */
+  modelResolver?: ModelResolver
 }
 
 export type CliRuntime = CliRuntimeBase & { engine: SessionEngine }
@@ -411,6 +421,7 @@ export async function openEngine(opts: {
   mcpCloser?: () => Promise<void>
   askQuestions: AskUserBridge
   mcpErrors: Array<{ name: string; message: string }>
+  modelResolver: ModelResolver
 }> {
   const askQuestions = createAskUserBridge()
   const session = opts.session ?? newSessionRecord({
@@ -464,6 +475,7 @@ async function finishOpenEngine(
   mcpCloser?: () => Promise<void>
   askQuestions: AskUserBridge
   mcpErrors: Array<{ name: string; message: string }>
+  modelResolver: ModelResolver
 }> {
   const { session, lockHolderId, askQuestions } = ready
   const compact = compactPolicyFromConfig(opts.config.compact)
@@ -473,9 +485,13 @@ async function finishOpenEngine(
     sessionModel: session.model,
     liveProvider: opts.provider,
   })
-  if (opts.config.specialistModel !== undefined && opts.config.specialistModel !== '') {
-    compact.specialistModel = opts.config.specialistModel
-  }
+  const modelResolver = createModelResolver({
+    config: opts.config,
+    funding: session.funding,
+    liveProvider: opts.provider,
+    liveModel: session.model,
+    createProvider: byokProviderFactory,
+  })
   const system = buildSystemParts({
     cwd: session.cwd,
     permissionMode: session.permissionMode,
@@ -534,6 +550,10 @@ async function finishOpenEngine(
           ? createAskUserTool((input, signal) => askQuestions.ask(input, signal))
           : askUserTool,
       network: (opts.config as { tools?: { network?: boolean } }).tools?.network === true,
+      modelResolver,
+      ...(opts.config.specialistModel !== undefined
+        ? { specialistModel: opts.config.specialistModel }
+        : {}),
     }).map((tool) =>
       tool.name === 'Skill' ? createSkillTool(session.cwd, opts.config.home) : tool,
     )
@@ -584,6 +604,7 @@ async function finishOpenEngine(
   if (opts.messages) engineOpts.messages = opts.messages
   if (hooks.length > 0) engineOpts.hooks = hooks
   if (opts.config.fallbackModel !== undefined) engineOpts.fallbackModel = opts.config.fallbackModel
+  engineOpts.modelResolver = modelResolver
   if (jsonSchema !== undefined) engineOpts.jsonSchema = jsonSchema
   if (opts.config.bare === true) engineOpts.bare = true
   if (extraDirs.length > 0) engineOpts.additionalDirectories = extraDirs
@@ -617,6 +638,7 @@ async function finishOpenEngine(
     mcpCloser,
     askQuestions,
     mcpErrors,
+    modelResolver,
   }
   } catch (error) {
     if (mcpCloser) {
@@ -835,7 +857,7 @@ export async function bootCli(
   if (wantBackgroundReview(config, opts.surface, access.admitted ? 'included' : 'byok')) {
     engineOpts.backgroundReview = true
   }
-  const { engine, mcpCloser, askQuestions, mcpErrors } = await openEngine(engineOpts)
+  const { engine, mcpCloser, askQuestions, mcpErrors, modelResolver } = await openEngine(engineOpts)
   const mcpStatus = mcpErrors.length > 0 ? formatMcpLoadErrors(mcpErrors) : undefined
   const wt = opts.flags.worktree
   if (wt !== undefined && wt !== false) {
@@ -855,6 +877,7 @@ export async function bootCli(
         mcpCloser,
         askQuestions,
         mcpErrors,
+        modelResolver,
         ...(mcpStatus !== undefined ? { status: mcpStatus } : {}),
         lockHolderId,
         lockHolderName,
@@ -872,6 +895,7 @@ export async function bootCli(
     mcpCloser,
     askQuestions,
     mcpErrors,
+    modelResolver,
     ...(mcpStatus !== undefined ? { status: mcpStatus } : {}),
     lockHolderId,
     lockHolderName,
@@ -904,7 +928,7 @@ export async function resumeRuntime(
   try {
   await runtime.mcpCloser?.()
   const resumed = await providerForResumedSession(runtime, loaded.session)
-  const { engine, mcpCloser, askQuestions, mcpErrors } = await openEngine({
+  const { engine, mcpCloser, askQuestions, mcpErrors, modelResolver } = await openEngine({
     provider: resumed.provider,
     store: runtime.store,
     config: runtime.config,
@@ -941,6 +965,7 @@ export async function resumeRuntime(
     mcpCloser,
     askQuestions,
     mcpErrors,
+    modelResolver,
     status: mcpStatus,
     hasPaidCapacityPlan: resumed.hasPaidCapacityPlan,
     lockHolderId,
@@ -982,7 +1007,7 @@ export async function openNewSession(
   const prevEngine = runtime.engine
   const lockHolderId = runtime.lockHolderId ?? crypto.randomUUID()
   const lockHolderName = runtime.lockHolderName ?? 'tui'
-  const { engine, mcpCloser, askQuestions, mcpErrors } = await openEngine({
+  const { engine, mcpCloser, askQuestions, mcpErrors, modelResolver } = await openEngine({
     provider,
     store: runtime.store,
     config: runtime.config,
@@ -1012,6 +1037,7 @@ export async function openNewSession(
     mcpCloser,
     askQuestions,
     mcpErrors,
+    modelResolver,
     status: mcpStatus,
     hasPaidCapacityPlan: access.admitted ? access.hasPaidCapacityPlan : false,
     remainingSessions: access.admitted ? access.remainingSessions : undefined,
@@ -1115,8 +1141,8 @@ function attachRavenclawLog(engine: SessionEngine, log: RavenclawLog): SessionEn
     compactNow() {
       return engine.compactNow()
     },
-    setModel(profile) {
-      return engine.setModel(profile)
+    setModel(profile, provider) {
+      return engine.setModel(profile, provider)
     },
     setPermissionMode(mode) {
       return engine.setPermissionMode(mode)
