@@ -256,6 +256,7 @@ export async function createRavenSession(
     funding: session.funding,
     liveProvider: provider,
     liveModel: session.model,
+    liveKind: config.provider,
     createProvider: byokProviderFactory,
   })
   const tools =

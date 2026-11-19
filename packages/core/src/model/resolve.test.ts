@@ -38,6 +38,58 @@ describe('profileOverridesFor', () => {
 
 describe('createModelResolver', () => {
   const base = { liveProvider: live, liveModel: 'claude-sonnet-4-5' }
+  test('providerKind on the reuse path is the explicit live kind, not the id prefix', () => {
+    const r = createModelResolver({
+      liveProvider: live,
+      liveModel: 'openai/gpt-oss-120b',
+      liveKind: 'vllm',
+      config: cfg({ provider: 'vllm', model: 'openai/gpt-oss-120b' }),
+      funding: 'byok',
+    })
+    const out = r.resolve('openai/gpt-oss-20b')
+    expect(out.ok && out.provider).toBe(live)
+    expect(out.ok && out.providerKind).toBe('vllm')
+  })
+  test('providerKind on the reuse path for an unprefixed id is the live kind', () => {
+    const r = createModelResolver({
+      liveProvider: live,
+      liveModel: 'qwen3:8b',
+      liveKind: 'ollama',
+      config: cfg({ provider: 'ollama', model: 'qwen3:8b' }),
+      funding: 'byok',
+    })
+    const out = r.resolve('qwen3:8b')
+    expect(out.ok && out.provider).toBe(live)
+    expect(out.ok && out.providerKind).toBe('ollama')
+  })
+  test('providerKind on the BYOK path is the factory kind', () => {
+    const made = { name: 'made' } as unknown as Provider
+    const seen: string[] = []
+    const r = createModelResolver({
+      liveProvider: live,
+      liveModel: 'qwen3:8b',
+      liveKind: 'ollama',
+      config: cfg({ provider: 'ollama', model: 'qwen3:8b' }),
+      funding: 'byok',
+      createProvider: (kind) => (seen.push(kind), made),
+    })
+    const out = r.resolve('claude-opus-5')
+    expect(out.ok && out.provider).toBe(made)
+    expect(out.ok && out.providerKind).toBe('anthropic')
+    expect(seen).toEqual(['anthropic'])
+  })
+  test('included reuse reports the live kind for a same-family prefixed id', () => {
+    const r = createModelResolver({
+      liveProvider: live,
+      liveModel: 'claude-sonnet-4-5',
+      liveKind: 'anthropic',
+      config: cfg(),
+      funding: 'included',
+    })
+    const out = r.resolve('anthropic/claude-opus-5')
+    expect(out.ok && out.provider).toBe(live)
+    expect(out.ok && out.providerKind).toBe('anthropic')
+  })
   test('same kind and unknown kind reuse live provider', () => {
     const r = createModelResolver({ ...base, config: cfg(), funding: 'byok' })
     for (const id of ['claude-opus-4', 'mystery']) {
@@ -57,7 +109,7 @@ describe('createModelResolver', () => {
     const a = r.resolve('gpt-5')
     const b = r.resolve('gpt-5')
     expect(a.ok && a.provider).toBe(made)
-    expect(a.ok && a.kind).toBe('openai_compat')
+    expect(a.ok && a.providerKind).toBe('openai_compat')
     expect(b.ok && b.provider).toBe(made)
     expect(calls).toBe(1)
   })

@@ -38,18 +38,29 @@ export interface ModelResolverOptions {
   /** Session model id the liveProvider serves. */
   liveModel: string
   /**
+   * Kind the liveProvider was built with; reported as `providerKind` when it is
+   * reused. Default: the `liveModel` id prefix, else `config.provider`.
+   */
+  liveKind?: ProviderKind
+  /**
    * Model the global `contextWindow` override belongs to. Default: `config.model`
    * snapshotted at creation, so a later `/model` mutation does not move it.
    */
   configuredModel?: string
-  /** BYOK factory, injected by cli/sdk (core cannot import providers). */
   /** Default true. When false and funding is byok, every resolve builds (and caches) a provider via the factory. */
   reuseLiveProvider?: boolean
+  /** BYOK factory, injected by cli/sdk (core cannot import providers). */
   createProvider?: (kind: ProviderKind, modelId: string, config: ResolvedConfig) => Provider
 }
 
 export type ResolvedModel =
-  | { ok: true; provider: Provider; profile: ModelProfile; kind: ProviderKind | undefined }
+  | {
+      ok: true
+      provider: Provider
+      profile: ModelProfile
+      /** Kind of `provider`: the live kind when reused, else the factory kind. */
+      providerKind: ProviderKind
+    }
   | { ok: false; error: string }
 
 export interface ModelResolver {
@@ -60,7 +71,9 @@ export interface ModelResolver {
 export function createModelResolver(opts: ModelResolverOptions): ModelResolver {
   const { config, funding, liveProvider, liveModel, createProvider } = opts
   const reuseLive = opts.reuseLiveProvider ?? true
-  const liveKind = providerKindFromModelId(liveModel) ?? config.provider
+  // Ids of this kind reuse the live provider (e.g. vllm serving `openai/...`).
+  const servedKind = providerKindFromModelId(liveModel) ?? config.provider
+  const liveKind = opts.liveKind ?? servedKind
   const cache = new Map<string, Provider>()
   const configuredModel = opts.configuredModel ?? config.model
 
@@ -75,9 +88,9 @@ export function createModelResolver(opts: ModelResolverOptions): ModelResolver {
 
   const resolve = (id: string): ResolvedModel => {
     const idKind = providerKindFromModelId(id)
-    const sameKind = idKind === undefined || idKind === liveKind
+    const sameKind = idKind === undefined || idKind === servedKind
     if (sameKind && (reuseLive || funding === 'included')) {
-      return { ok: true, provider: liveProvider, profile: profile(id), kind: idKind }
+      return { ok: true, provider: liveProvider, profile: profile(id), providerKind: liveKind }
     }
     const kind = idKind ?? liveKind
     if (funding === 'included') {
@@ -99,7 +112,7 @@ export function createModelResolver(opts: ModelResolverOptions): ModelResolver {
       }
       cache.set(key, provider)
     }
-    return { ok: true, provider, profile: profile(id), kind: idKind }
+    return { ok: true, provider, profile: profile(id), providerKind: kind }
   }
 
   return { resolve, profile }

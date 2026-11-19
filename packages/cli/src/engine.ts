@@ -76,6 +76,7 @@ import {
   type ModelResolver,
   type PermissionHook,
   type PermissionMode,
+  type ProviderKind,
   type Provider,
   type RavenclawLog,
   type ResolvedConfig,
@@ -421,6 +422,8 @@ export async function openEngine(opts: {
   askUserHost?: boolean
   backgroundReview?: boolean
   configuredModel?: string
+  /** Kind `provider` was built with. Default: `config.provider`. */
+  liveKind?: ProviderKind
 }): Promise<{
   engine: SessionEngine
   mcpCloser?: () => Promise<void>
@@ -495,6 +498,7 @@ async function finishOpenEngine(
     funding: session.funding,
     liveProvider: opts.provider,
     liveModel: session.model,
+    liveKind: opts.liveKind ?? opts.config.provider,
     createProvider: byokProviderFactory,
     ...(opts.configuredModel !== undefined ? { configuredModel: opts.configuredModel } : {}),
   })
@@ -679,16 +683,19 @@ export async function providerFromConfig(
   return byokProviderFromConfig(config)
 }
 
+/** Kind `byokProviderFromConfig(config, model)` builds. */
+function byokKindFor(config: ResolvedConfig, model: string): ProviderKind {
+  if (model === config.model) return config.provider
+  return providerKindFromModelId(model) ?? config.provider
+}
+
 /**
  * BYOK client for `model` (default `config.model`). A model other than the
  * configured one picks its kind from its id prefix, falling back to
  * `config.provider`; the configured model keeps `config.provider`.
  */
 function byokProviderFromConfig(config: ResolvedConfig, model = config.model): Provider {
-  if (model !== config.model) {
-    const kind = providerKindFromModelId(model) ?? config.provider
-    return byokProviderFactory(kind, model, config)
-  }
+  if (model !== config.model) return byokProviderFactory(byokKindFor(config, model), model, config)
   if (config.provider === 'ollama') {
     return createProvider({
       provider: 'ollama',
@@ -949,6 +956,7 @@ export async function resumeRuntime(
   const resumed = await providerForResumedSession(runtime, loaded.session)
   const { engine, mcpCloser, askQuestions, mcpErrors, modelResolver } = await openEngine({
     provider: resumed.provider,
+    liveKind: resumed.kind,
     store: runtime.store,
     config: runtime.config,
     cwd: loaded.session.cwd,
@@ -1070,10 +1078,11 @@ export async function openNewSession(
 async function providerForResumedSession(
   runtime: CliRuntimeBase,
   session: SessionRecord,
-): Promise<{ provider: Provider; hasPaidCapacityPlan?: boolean }> {
+): Promise<{ provider: Provider; kind: ProviderKind; hasPaidCapacityPlan?: boolean }> {
   if (session.funding !== 'included') {
     return {
       provider: byokProviderFromConfig(runtime.config, session.model),
+      kind: byokKindFor(runtime.config, session.model),
       hasPaidCapacityPlan: false,
     }
   }
@@ -1086,6 +1095,7 @@ async function providerForResumedSession(
   if (access.admitted) {
     return {
       provider: await providerFromConfig(runtime.config, { access }),
+      kind: runtime.config.provider,
       hasPaidCapacityPlan: access.hasPaidCapacityPlan,
     }
   }

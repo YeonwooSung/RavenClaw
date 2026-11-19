@@ -8,7 +8,14 @@ import { dispatchSharedSlash, type SlashHost } from './slash/dispatch'
 const tempDirs: string[] = []
 const savedHome = process.env.RAVENCLAW_HOME
 const savedFetch = globalThis.fetch
-const ENV_KEYS = ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY', 'OLLAMA_HOST', 'OLLAMA_API_KEY'] as const
+const ENV_KEYS = [
+  'ANTHROPIC_API_KEY',
+  'OPENAI_API_KEY',
+  'OLLAMA_HOST',
+  'OLLAMA_API_KEY',
+  'VLLM_BASE_URL',
+  'VLLM_API_KEY',
+] as const
 const savedEnv: Record<string, string | undefined> = {}
 for (const key of ENV_KEYS) savedEnv[key] = process.env[key]
 
@@ -27,12 +34,16 @@ afterEach(() => {
 })
 
 function anthropicHome(): string {
+  return makeHome('ANTHROPIC_API_KEY=sk-ant\n', ['provider: anthropic', 'model: claude-sonnet-5'])
+}
+
+function makeHome(env: string, config: string[]): string {
   const home = mkdtempSync(join(tmpdir(), 'ravenclaw-model-switch-'))
   tempDirs.push(home)
   process.env.RAVENCLAW_HOME = home
   for (const key of ENV_KEYS) delete process.env[key]
-  writeFileSync(join(home, '.env'), 'ANTHROPIC_API_KEY=sk-ant\n')
-  writeFileSync(join(home, 'config.yaml'), ['provider: anthropic', 'model: claude-sonnet-5', ''].join('\n'))
+  writeFileSync(join(home, '.env'), env)
+  writeFileSync(join(home, 'config.yaml'), [...config, ''].join('\n'))
   return home
 }
 
@@ -124,6 +135,58 @@ describe('cross-kind /model survives new sessions and resume', () => {
       await submit(runtime, 'hi')
       expect(urls.length).toBeGreaterThan(0)
       expect(urls.every((url) => url.startsWith('http://127.0.0.1:11434/'))).toBe(true)
+    } finally {
+      await runtime.engine.close()
+      ;(runtime.store as { close?: () => void }).close?.()
+    }
+  })
+
+  test('unprefixed /model back to the live kind restores config.provider before /new', async () => {
+    makeHome('ANTHROPIC_API_KEY=sk-ant\n', ['provider: ollama', 'model: qwen3:8b'])
+    let runtime = await bootCli({ flags: {}, cwd: '/tmp' })
+    try {
+      const h = host(() => runtime)
+      await dispatchSharedSlash({ type: 'command', name: 'model', arg: 'claude-opus-5' }, h)
+      expect(runtime.provider.id).toBe('anthropic')
+      expect(runtime.config.provider).toBe('anthropic')
+      await dispatchSharedSlash({ type: 'command', name: 'model', arg: 'qwen3:8b' }, h)
+      expect(h.notices).toEqual(['model claude-opus-5', 'model qwen3:8b'])
+      expect(runtime.provider.id).toBe('ollama')
+      expect(runtime.config.provider).toBe('ollama')
+      runtime = await openNewSession(runtime)
+      expect(runtime.engine.session.model).toBe('qwen3:8b')
+      expect(runtime.provider.id).toBe('ollama')
+      const urls = recordFetch()
+      await submit(runtime, 'hi')
+      expect(urls.length).toBeGreaterThan(0)
+      expect(urls.every((url) => url.startsWith('http://127.0.0.1:11434/'))).toBe(true)
+    } finally {
+      await runtime.engine.close()
+      ;(runtime.store as { close?: () => void }).close?.()
+    }
+  })
+
+  test('vllm serving openai/ ids keeps config.provider vllm across /model and /new', async () => {
+    makeHome('VLLM_BASE_URL=http://127.0.0.1:8000/v1\n', [
+      'provider: vllm',
+      'model: openai/gpt-oss-120b',
+    ])
+    let runtime = await bootCli({ flags: {}, cwd: '/tmp' })
+    try {
+      const live = runtime.provider
+      expect(live.id).toBe('vllm')
+      const h = host(() => runtime)
+      await dispatchSharedSlash({ type: 'command', name: 'model', arg: 'openai/gpt-oss-20b' }, h)
+      expect(h.notices).toEqual(['model openai/gpt-oss-20b'])
+      expect(runtime.provider).toBe(live)
+      expect(runtime.config.provider).toBe('vllm')
+      runtime = await openNewSession(runtime)
+      expect(runtime.engine.session.model).toBe('openai/gpt-oss-20b')
+      expect(runtime.provider.id).toBe('vllm')
+      const urls = recordFetch()
+      await submit(runtime, 'hi')
+      expect(urls.length).toBeGreaterThan(0)
+      expect(urls.every((url) => url.startsWith('http://127.0.0.1:8000/'))).toBe(true)
     } finally {
       await runtime.engine.close()
       ;(runtime.store as { close?: () => void }).close?.()

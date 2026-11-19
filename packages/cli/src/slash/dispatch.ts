@@ -133,7 +133,7 @@ export async function dispatchSharedSlash(
         await runtime.engine.setModel(profile, resolved.provider)
         // /new, resume, and /review build from runtime.provider + config.
         runtime.provider = resolved.provider
-        if (resolved.kind !== undefined) runtime.config.provider = resolved.kind
+        runtime.config.provider = resolved.providerKind
       } else {
         profile = getModelProfile(id, profileOverridesFor(runtime.config, id))
         await runtime.engine.setModel(profile)
