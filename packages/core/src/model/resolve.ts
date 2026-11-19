@@ -38,6 +38,8 @@ export interface ModelResolverOptions {
   /** Session model id the liveProvider serves. */
   liveModel: string
   /** BYOK factory, injected by cli/sdk (core cannot import providers). */
+  /** Default true. When false and funding is byok, every resolve builds (and caches) a provider via the factory. */
+  reuseLiveProvider?: boolean
   createProvider?: (kind: ProviderKind, modelId: string, config: ResolvedConfig) => Provider
 }
 
@@ -52,17 +54,20 @@ export interface ModelResolver {
 
 export function createModelResolver(opts: ModelResolverOptions): ModelResolver {
   const { config, funding, liveProvider, liveModel, createProvider } = opts
+  const reuseLive = opts.reuseLiveProvider ?? true
   const liveKind = providerKindFromModelId(liveModel) ?? config.provider
-  const cache = new Map<ProviderKind, Provider>()
+  const cache = new Map<string, Provider>()
 
   const profile = (id: string): ModelProfile =>
     getModelProfile(id, profileOverridesFor(config, id))
 
   const resolve = (id: string): ResolvedModel => {
-    const kind = providerKindFromModelId(id)
-    if (kind === undefined || kind === liveKind) {
-      return { ok: true, provider: liveProvider, profile: profile(id), kind }
+    const idKind = providerKindFromModelId(id)
+    const sameKind = idKind === undefined || idKind === liveKind
+    if (sameKind && (reuseLive || funding === 'included')) {
+      return { ok: true, provider: liveProvider, profile: profile(id), kind: idKind }
     }
+    const kind = idKind ?? liveKind
     if (funding === 'included') {
       return {
         ok: false,
@@ -72,16 +77,17 @@ export function createModelResolver(opts: ModelResolverOptions): ModelResolver {
     if (createProvider === undefined) {
       return { ok: false, error: `model ${id} needs provider ${kind}; no provider factory available` }
     }
-    let provider = cache.get(kind)
+    const key = `${kind}\0${id}`
+    let provider = cache.get(key)
     if (provider === undefined) {
       try {
         provider = createProvider(kind, id, config)
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) }
       }
-      cache.set(kind, provider)
+      cache.set(key, provider)
     }
-    return { ok: true, provider, profile: profile(id), kind }
+    return { ok: true, provider, profile: profile(id), kind: idKind }
   }
 
   return { resolve, profile }

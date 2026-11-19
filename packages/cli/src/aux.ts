@@ -31,26 +31,20 @@ export function tryBuildAuxProvider(opts: {
 }): { provider: Provider; model: ModelProfile } | undefined {
   const modelId = opts.modelId.trim()
   if (modelId === '') return undefined
-  // Included sessions stay fail-closed: the resolver never opens a BYOK client for them.
+  // Included sessions stay fail-closed: unknown or cross-kind aux models disable aux.
+  if (opts.funding === 'included' && !auxSameProvider(opts.sessionModel, modelId)) {
+    return undefined
+  }
   const resolved = createModelResolver({
     config: opts.config,
     funding: opts.funding,
     liveProvider: opts.liveProvider,
     liveModel: opts.sessionModel,
+    reuseLiveProvider: false,
     createProvider: byokProviderFactory,
   }).resolve(modelId)
   if (!resolved.ok) return undefined
-  if (opts.funding === 'included' || resolved.provider !== opts.liveProvider) {
-    return { provider: resolved.provider, model: resolved.profile }
-  }
-  // BYOK aux keeps its own client even for the session's provider kind
-  // (distinct key/default model from the live provider).
-  try {
-    const kind = resolved.kind ?? opts.config.provider
-    return { provider: byokProviderFactory(kind, modelId, opts.config), model: resolved.profile }
-  } catch {
-    return undefined
-  }
+  return { provider: resolved.provider, model: resolved.profile }
 }
 
 export function applyAuxCompactPolicy(

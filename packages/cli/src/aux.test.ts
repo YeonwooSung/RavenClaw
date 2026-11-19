@@ -86,6 +86,17 @@ describe('tryBuildAuxProvider', () => {
     expect(auxSameProvider('anthropic/claude-sonnet-4', 'ollama/qwen')).toBe(false)
   })
 
+  test('included + unknown-kind aux model returns undefined', () => {
+    const built = tryBuildAuxProvider({
+      modelId: 'mystery-model',
+      config: config({ env: {} }),
+      funding: 'included',
+      sessionModel: 'anthropic/claude-sonnet-4',
+      liveProvider: liveProvider(),
+    })
+    expect(built).toBeUndefined()
+  })
+
   test('included + same provider family reuses the live included provider', () => {
     const live = liveProvider()
     const built = tryBuildAuxProvider({

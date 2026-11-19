@@ -45,7 +45,7 @@ describe('createModelResolver', () => {
       expect(out.ok && out.provider).toBe(live)
     }
   })
-  test('cross kind uses factory and caches per kind', () => {
+  test('cross kind uses factory and caches per kind+id', () => {
     let calls = 0
     const made = { name: 'made' } as unknown as Provider
     const r = createModelResolver({
@@ -55,7 +55,7 @@ describe('createModelResolver', () => {
       createProvider: () => (calls++, made),
     })
     const a = r.resolve('gpt-5')
-    const b = r.resolve('gpt-5-mini')
+    const b = r.resolve('gpt-5')
     expect(a.ok && a.provider).toBe(made)
     expect(a.ok && a.kind).toBe('openai_compat')
     expect(b.ok && b.provider).toBe(made)
@@ -77,7 +77,10 @@ describe('createModelResolver', () => {
   })
   test('no factory and factory throw are errors', () => {
     const none = createModelResolver({ ...base, config: cfg(), funding: 'byok' })
-    expect(none.resolve('gpt-5').ok).toBe(false)
+    expect(none.resolve('gpt-5')).toEqual({
+      ok: false,
+      error: 'model gpt-5 needs provider openai_compat; no provider factory available',
+    })
     const boom = createModelResolver({
       ...base,
       config: cfg(),
@@ -96,5 +99,48 @@ describe('createModelResolver', () => {
     })
     expect(r.profile('claude-sonnet-4-5').contextWindow).toBe(123_000)
     expect(r.profile('claude-opus-4').contextWindow).not.toBe(123_000)
+  })
+  test('included same-kind resolves to live', () => {
+    const r = createModelResolver({ ...base, config: cfg(), funding: 'included' })
+    const out = r.resolve('claude-opus-4')
+    expect(out.ok && out.provider).toBe(live)
+  })
+  test('different ids of the same kind get different providers', () => {
+    const r = createModelResolver({
+      ...base,
+      config: cfg(),
+      funding: 'byok',
+      createProvider: () => ({}) as unknown as Provider,
+    })
+    const a = r.resolve('gpt-5')
+    const b = r.resolve('gpt-5-mini')
+    expect(a.ok && b.ok && a.provider !== b.provider).toBe(true)
+  })
+  test('reuseLiveProvider false uses the factory and caches per id', () => {
+    let calls = 0
+    const r = createModelResolver({
+      ...base,
+      config: cfg(),
+      funding: 'byok',
+      reuseLiveProvider: false,
+      createProvider: () => (calls++, {}) as unknown as Provider,
+    })
+    const a = r.resolve('claude-opus-4')
+    const a2 = r.resolve('claude-opus-4')
+    expect(a.ok && a.provider).not.toBe(live)
+    expect(a.ok && a2.ok && a.provider === a2.provider).toBe(true)
+    expect(calls).toBe(1)
+    r.resolve('mystery')
+    expect(calls).toBe(2)
+  })
+  test('reuseLiveProvider false still reuses live when included', () => {
+    const r = createModelResolver({
+      ...base,
+      config: cfg(),
+      funding: 'included',
+      reuseLiveProvider: false,
+    })
+    const out = r.resolve('claude-opus-4')
+    expect(out.ok && out.provider).toBe(live)
   })
 })
