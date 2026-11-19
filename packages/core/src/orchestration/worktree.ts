@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type { SessionJob } from '../types'
-import { shadowBranchName } from './session-worktree'
+import { shadowBranchName } from '../tools/session-worktree'
 
 export type IsolationMode = 'none' | 'worktree'
 

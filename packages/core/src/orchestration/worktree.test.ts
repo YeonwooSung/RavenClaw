@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { SessionJob } from '../types'
-import { shadowBranchName } from './session-worktree'
+import { shadowBranchName } from '../tools/session-worktree'
 import { isWorktreeDirty, prepareChildWorktree } from './worktree'
 
 const tempDirs: string[] = []

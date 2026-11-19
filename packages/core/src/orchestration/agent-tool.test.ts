@@ -28,17 +28,17 @@ import type {
   ToolContext,
   Turn,
 } from '../types'
-import { createPlanModeTools } from './plan-mode'
-import { editTool } from './edit'
-import { readTool } from './read'
-import { setChildOutput } from './set-output'
-import { skillTool } from './skill'
-import { createAgentTool, MAX_PARALLEL_CHILDREN } from './agent'
-import { taskSteerTool } from './task'
+import { createPlanModeTools } from '../tools/plan-mode'
+import { editTool } from '../tools/edit'
+import { readTool } from '../tools/read'
+import { setChildOutput } from '../tools/set-output'
+import { skillTool } from '../tools/skill'
+import { createAgentTool, MAX_PARALLEL_CHILDREN } from './agent-tool'
+import { taskSteerTool } from '../tools/task'
 import { createTaskRegistry } from '../tasks/registry'
 import { drainAgentMail } from '../tasks/mailbox'
 import { createFileHistory } from '../session/file-history'
-import { writeTool } from './write'
+import { writeTool } from '../tools/write'
 
 const RESULT_BOUND = 32_000
 const tempDirs: string[] = []

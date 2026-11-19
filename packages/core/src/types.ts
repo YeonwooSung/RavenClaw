@@ -224,17 +224,24 @@ export type UserSubmitInput =
       turnPolicy?: TurnPolicy
     }
 
-export interface ToolContext {
+/** What a tool needs to do its own work: the turn, abort, progress, file history. */
+export interface ToolHandsContext {
   turn: Turn
   signal: AbortSignal
   onProgress: (text: string) => void
-  tasks?: import('./tasks/registry').TaskRegistry
   fileHistory?: import('./session/file-history').FileHistory
-  store?: SessionStore
-  session?: SessionRecord
-  registerChildEngine?(engine: SessionEngine): () => void
-  instructionFiles?: import('./config').InstructionFilesMode
 }
+
+/** Session-graph state only orchestration tools (Agent, Task*, ...) should reach for. */
+export interface ToolOrchestrationContext {
+  tasks: import('./tasks/registry').TaskRegistry
+  store: SessionStore
+  session: SessionRecord
+  registerChildEngine(engine: SessionEngine): () => void
+  instructionFiles: import('./config').InstructionFilesMode
+}
+
+export type ToolContext = ToolHandsContext & Partial<ToolOrchestrationContext>
 
 export interface ToolResult {
   toolUseId: string

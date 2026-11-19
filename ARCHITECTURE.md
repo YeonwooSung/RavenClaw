@@ -46,6 +46,7 @@ packages/
   core/src/
     loop/           query-loop, session-engine, phases, pairing, repair, abort, budget
     tools/          one file per tool + registry, parse (Ajv), partition
+    orchestration/  Agent tool (spawns child engines), child worktrees; the only layer tools/ must not import
     permissions/    pipeline, modes, safety, rules, directories, hooks
     session/        sqlite-store, memory-store, rewind, file-history, search, deliveries
     prompt/         builder, memory, project-files, coding-posture, cache
@@ -545,9 +546,9 @@ Registry: `createToolRegistry` (`packages/core/src/tools/registry.ts`) — last 
 
 ### Agent children + worktree isolation
 
-`createAgentTool` (`packages/core/src/tools/agent.ts`). Nested `createSessionEngine` with `bare: true`, filtered tools from the catalog definition, empty `readFiles`. Optional `agents[]` runs up to `MAX_PARALLEL_CHILDREN` (6) in parallel. `run_in_background` registers an Agent task and `attachEngine` so `TaskSteer` works; `agents[]` cannot be backgrounded.
+`createAgentTool` (`packages/core/src/orchestration/agent-tool.ts`; `tools/agent.ts` is a re-export shim). Nested `createSessionEngine` with `bare: true`, filtered tools from the catalog definition, empty `readFiles`. Optional `agents[]` runs up to `MAX_PARALLEL_CHILDREN` (6) in parallel. `run_in_background` registers an Agent task and `attachEngine` so `TaskSteer` works; `agents[]` cannot be backgrounded.
 
-`isolation: 'worktree'` → `prepareChildWorktree` (`packages/core/src/tools/worktree.ts`): `git worktree add --detach` under `<cwd>/.ravenclaw/worktrees/<childSessionId>`. On cleanup, **dirty worktree is report-only** (`dirty: true, pruned: false`). There is no auto-GC. Clean trees are `worktree remove`'d.
+`isolation: 'worktree'` → `prepareChildWorktree` (`packages/core/src/orchestration/worktree.ts`): `git worktree add --detach` under `<cwd>/.ravenclaw/worktrees/<childSessionId>`. On cleanup, **dirty worktree is report-only** (`dirty: true, pruned: false`). There is no auto-GC. Clean trees are `worktree remove`'d.
 
 `isolation: 'none'` (default) shares cwd and, if the parent FileHistory is open, `fileHistoryOwnsTurn: false` so child writes land on the parent's undo generation.
 
