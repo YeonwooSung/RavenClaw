@@ -175,6 +175,7 @@ export function createSessionTools(opts: {
   model: ModelProfile
   askUser: SessionEngineOptions['askUser']
   childMaxRounds: number
+  maxAgentDepth?: number
   system?: SystemPart[]
   bash?: Tool
   backend?: TerminalBackend
@@ -203,6 +204,7 @@ export function createSessionTools(opts: {
     askUser: opts.askUser,
     childMaxRounds: opts.childMaxRounds,
   }
+  if (opts.maxAgentDepth !== undefined) agentOpts.maxAgentDepth = opts.maxAgentDepth
   if (opts.system !== undefined) agentOpts.system = opts.system
   if (opts.modelResolver !== undefined) agentOpts.modelResolver = opts.modelResolver
   if (opts.specialistModel !== undefined && opts.specialistModel !== '') {
@@ -315,6 +317,7 @@ function defaultSessionTools(opts: {
     model: opts.config.profile,
     askUser: opts.askUser,
     childMaxRounds: opts.config.childMaxRounds,
+    maxAgentDepth: opts.config.maxAgentDepth,
     system: opts.system,
     bash,
     backend: opts.backend,

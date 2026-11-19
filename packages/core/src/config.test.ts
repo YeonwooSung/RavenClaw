@@ -63,6 +63,7 @@ describe('defaultConfig', () => {
     expect(cfg.permissionMode).toBe('default')
     expect(cfg.maxRounds).toBe(80)
     expect(cfg.childMaxRounds).toBe(30)
+    expect(cfg.maxAgentDepth).toBe(2)
     expect(cfg.compact).toEqual({ enabled: true, llmSummarize: true })
     expect(cfg.ads.feedUrl).toBe('')
     expect(cfg.included).toEqual({ gatewayUrl: '', enabled: false, sessionCapPerDay: 4 })
@@ -85,12 +86,22 @@ describe('loadConfig', () => {
     expect(cfg.provider).toBe('anthropic')
     expect(cfg.maxRounds).toBe(80)
     expect(cfg.childMaxRounds).toBe(30)
+    expect(cfg.maxAgentDepth).toBe(2)
     expect(cfg.permissionMode).toBe('default')
     expect(cfg.ads.feedUrl).toBe('')
     expect(cfg.included).toEqual({ gatewayUrl: '', enabled: false, sessionCapPerDay: 4 })
     expect(cfg.mcp).toEqual({ servers: [] })
     expect(cfg.home).toBe(home)
     expect(cfg.instructionFiles).toBe('both')
+  })
+
+  test('maxAgentDepth parses as a number and resolves over the default', () => {
+    expect(parseConfigYaml('maxAgentDepth: 1\n').maxAgentDepth).toBe(1)
+    expect(parseConfigYaml('maxAgentDepth: deep\n').maxAgentDepth).toBeUndefined()
+    const home = tempHome()
+    writeFileSync(join(home, 'config.yaml'), 'maxAgentDepth: 3\n')
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test'
+    expect(loadConfig({ home }).maxAgentDepth).toBe(3)
   })
 
   test('parseConfigYaml accepts instructionFiles tokens and ignores unknown', () => {

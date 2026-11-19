@@ -2,6 +2,8 @@ import { describe, expect, test } from 'bun:test'
 import { INCOMPLETE_TEXT } from '../loop/pairing'
 import type { AgentDefinition, Message, Tool } from '../types'
 import {
+  allAssistantText,
+  canSpawnNested,
   addTokenUsage,
   buildChildMessages,
   childSystemParts,
@@ -469,3 +471,27 @@ describe('addTokenUsage', () => {
     ).toEqual({ input: 15, output: 7, cacheRead: 3, cacheWrite: 8 })
   })
 })
+
+describe('agent graph helpers', () => {
+  test('canSpawnNested needs edges and a depth below the cap', () => {
+    expect(canSpawnNested({ spawnableAgents: [] }, 1, 2)).toBe(false)
+    expect(canSpawnNested({ spawnableAgents: ['general'] }, 1, 2)).toBe(true)
+    expect(canSpawnNested({ spawnableAgents: ['general'] }, 2, 2)).toBe(false)
+  })
+
+  test('allAssistantText joins non-empty assistant texts in order', () => {
+    const messages: Message[] = [
+      { id: 'u', role: 'user', blocks: [{ type: 'text', text: 'q' }], createdAt: 1 },
+      { id: 'a1', role: 'assistant', blocks: [{ type: 'text', text: 'one' }], createdAt: 2 },
+      {
+        id: 'a2',
+        role: 'assistant',
+        blocks: [{ type: 'tool_use', id: 't', name: 'Read', input: {} }],
+        createdAt: 3,
+      },
+      { id: 'a3', role: 'assistant', blocks: [{ type: 'text', text: 'two' }], createdAt: 4 },
+    ]
+    expect(allAssistantText(messages)).toBe('one\n\ntwo')
+  })
+})
+

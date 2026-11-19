@@ -91,6 +91,8 @@ export interface RavenClawConfig {
   permissionMode: PermissionMode
   maxRounds: number
   childMaxRounds: number
+  /** Deepest nested agent level. Root is 0; a child at this depth cannot spawn. */
+  maxAgentDepth: number
   compact: { enabled: boolean; llmSummarize: boolean }
   ads: { feedUrl: string }
   included?: IncludedConfig
@@ -208,6 +210,7 @@ export function defaultConfig(): RavenClawConfig {
     permissionMode: 'default',
     maxRounds: 80,
     childMaxRounds: 30,
+    maxAgentDepth: 2,
     compact: { enabled: true, llmSummarize: true },
     ads: { feedUrl: '' },
     included: { gatewayUrl: '', enabled: false, sessionCapPerDay: 4 },
@@ -241,6 +244,9 @@ export function parseConfigYaml(text: string): Partial<RavenClawConfig> {
 
   const childMaxRounds = asNumber(raw.childMaxRounds)
   if (childMaxRounds !== undefined) out.childMaxRounds = childMaxRounds
+
+  const maxAgentDepth = asNumber(raw.maxAgentDepth)
+  if (maxAgentDepth !== undefined) out.maxAgentDepth = maxAgentDepth
 
   const compactRaw = asMap(raw.compact)
   if (compactRaw) {
@@ -429,6 +435,7 @@ export function loadConfig(opts?: { home?: string; flags?: ConfigFlags }): Resol
     permissionMode,
     maxRounds: parsed.maxRounds ?? base.maxRounds,
     childMaxRounds: parsed.childMaxRounds ?? base.childMaxRounds,
+    maxAgentDepth: parsed.maxAgentDepth ?? base.maxAgentDepth,
     compact: {
       enabled: parsed.compact?.enabled ?? base.compact.enabled,
       llmSummarize: parsed.compact?.llmSummarize ?? base.compact.llmSummarize,

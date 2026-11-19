@@ -338,7 +338,8 @@ function parseScalar(raw: string): string | string[] {
   return unquote(raw)
 }
 
-function parseAllowedTools(value: unknown): string[] | undefined {
+/** Frontmatter list: YAML array or comma/space-separated string. */
+export function parseAllowedTools(value: unknown): string[] | undefined {
   if (value === undefined) return undefined
   const parts = Array.isArray(value)
     ? value.map((item) => String(item))

@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import { ravenclawHome } from '../home'
-import { parseFrontmatterFields, parseSkillFrontmatter } from '../tools/skill'
+import { parseAllowedTools, parseFrontmatterFields, parseSkillFrontmatter } from '../tools/skill'
 import type { AgentDefinition } from '../types'
 
 const DEFAULT_TOOLS = ['Read', 'Grep', 'Glob']
@@ -46,11 +46,14 @@ function parseAgentFile(path: string): AgentDefinition | undefined {
   const maxRounds = Number.isSafeInteger(rounds) && rounds > 0 ? rounds : 12
   const body = raw.replace(/^---[\s\S]*?---\s*/, '').trim()
   const tools = fm.allowedTools && fm.allowedTools.length > 0 ? fm.allowedTools : DEFAULT_TOOLS
+  const edges = parseAllowedTools(extra['spawnable-agents']) ?? []
+  // Edges imply the Agent tool; depth and edge checks live in the Agent tool.
+  const toolNames = edges.length > 0 && !tools.includes('Agent') ? [...tools, 'Agent'] : tools
   return {
     id,
     displayName: id,
-    toolNames: tools,
-    spawnableAgents: [],
+    toolNames,
+    spawnableAgents: edges,
     inheritParentSystemPrompt: false,
     includeMessageHistory: false,
     maxRounds,

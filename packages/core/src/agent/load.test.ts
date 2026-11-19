@@ -56,4 +56,27 @@ describe('loadDiskAgents', () => {
     expect(byId.get('b')?.maxRounds).toBe(12)
     expect(byId.get('c')?.maxRounds).toBe(12)
   })
+
+  test('spawnable-agents frontmatter sets edges and implies the Agent tool', () => {
+    const home = mkdtempSync(join(tmpdir(), 'ravenclaw-agents-home-'))
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-agents-cwd-'))
+    tempDirs.push(home, cwd)
+    mkdirSync(join(home, 'agents'), { recursive: true })
+    writeFileSync(
+      join(home, 'agents', 'lead.md'),
+      '---\nname: lead\nallowed-tools: Read, Grep\nspawnable-agents: file-finder, worker\n---\nBody\n',
+    )
+    writeFileSync(
+      join(home, 'agents', 'leaf.md'),
+      '---\nname: leaf\nallowed-tools: Read\nspawnable-agents:\n---\nBody\n',
+    )
+    writeFileSync(join(home, 'agents', 'plain.md'), '---\nname: plain\n---\nBody\n')
+    const byId = new Map(loadDiskAgents(cwd, home).map((d) => [d.id, d]))
+    expect(byId.get('lead')?.spawnableAgents).toEqual(['file-finder', 'worker'])
+    expect(byId.get('lead')?.toolNames).toEqual(['Read', 'Grep', 'Agent'])
+    expect(byId.get('leaf')?.spawnableAgents).toEqual([])
+    expect(byId.get('leaf')?.toolNames).toEqual(['Read'])
+    expect(byId.get('plain')?.spawnableAgents).toEqual([])
+    expect(byId.get('plain')?.toolNames).toEqual(['Read', 'Grep', 'Glob'])
+  })
 })

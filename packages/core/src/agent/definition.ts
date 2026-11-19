@@ -1,5 +1,13 @@
 import { repairRoleAlternation } from '../loop/repair'
-import type { AgentDefinition, Funding, Message, SystemPart, TokenUsage, Tool } from '../types'
+import type {
+  AgentDefinition,
+  CompactPolicy,
+  Funding,
+  Message,
+  SystemPart,
+  TokenUsage,
+  Tool,
+} from '../types'
 
 export const CHILD_RESULT_CHAR_BOUND = 32_000
 
@@ -31,6 +39,23 @@ export function childToolNames(definition: AgentDefinition): string[] {
   return definition.toolNames.filter((name) => !NESTING_DENIED.has(name))
 }
 
+/** A child at `childDepth` keeps the Agent tool only with edges and room below the cap. */
+export function canSpawnNested(
+  definition: Pick<AgentDefinition, 'spawnableAgents'>,
+  childDepth: number,
+  maxAgentDepth: number,
+): boolean {
+  return definition.spawnableAgents.length > 0 && childDepth < maxAgentDepth
+}
+
+export function childCompactPolicy(
+  parent: CompactPolicy,
+  definition: Pick<AgentDefinition, 'compactContext'>,
+): CompactPolicy {
+  if (definition.compactContext === undefined) return parent
+  return { ...parent, ...definition.compactContext }
+}
+
 export function filterChildTools(pool: Tool[], definition: AgentDefinition): Tool[] {
   const allow = new Set(childToolNames(definition))
   return pool.filter((tool) => allow.has(tool.name))
@@ -54,6 +79,20 @@ export function lastAssistantText(messages: Message[]): string {
     return text
   }
   return ''
+}
+
+/** Every non-empty assistant text, in order, joined by a blank line. */
+export function allAssistantText(messages: Message[]): string {
+  const parts: string[] = []
+  for (const msg of messages) {
+    if (msg.role !== 'assistant') continue
+    let text = ''
+    for (const block of msg.blocks) {
+      if (block.type === 'text') text += block.text
+    }
+    if (text.length > 0) parts.push(text)
+  }
+  return parts.join('\n\n')
 }
 
 export function addTokenUsage(a: TokenUsage, b: TokenUsage): TokenUsage {

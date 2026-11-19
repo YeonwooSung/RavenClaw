@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, test } from 'bun:test'
+import { afterEach, describe, expect, spyOn, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
@@ -39,6 +39,9 @@ import { createTaskRegistry } from '../tasks/registry'
 import { drainAgentMail } from '../tasks/mailbox'
 import { createFileHistory } from '../session/file-history'
 import { writeTool } from '../tools/write'
+import * as catalogModule from '../agent/catalog'
+import * as engineModule from '../loop/session-engine'
+import { generalAgent } from '../agent/general'
 
 const RESULT_BOUND = 32_000
 const tempDirs: string[] = []
@@ -236,6 +239,7 @@ function createTestAgent(
     tools?: Tool[]
     model?: ModelProfile
     childMaxRounds?: number
+    maxAgentDepth?: number
     system?: SystemPart[]
     specialistModel?: string
     modelResolver?: ModelResolver
@@ -256,6 +260,7 @@ function createTestAgent(
   if (over.specialistModel !== undefined) opts.specialistModel = over.specialistModel
   if (over.modelResolver !== undefined) opts.modelResolver = over.modelResolver
   if (over.childMaxRounds !== undefined) opts.childMaxRounds = over.childMaxRounds
+  if (over.maxAgentDepth !== undefined) opts.maxAgentDepth = over.maxAgentDepth
   if (over.system !== undefined) opts.system = over.system
   return { store, provider, tool: createAgentTool(opts) }
 }
@@ -1814,30 +1819,9 @@ describe('createAgentTool', () => {
       prompt: `child-${i}`,
     }))
     const result = await tool.execute({ prompt: 'ignored', agents }, makeCtx(makeTurn(session)))
-    expect(result).toBe('Agent failed: at most 6 parallel children')
+    expect(result).toBe('Agent failed: at most 6 concurrent agents (0 running)')
     expect(provider.streamCount).toBe(0)
     expect(await store.listSessions({ parentSessionId: session.id })).toHaveLength(0)
-  })
-
-  test('run_in_background rejects when live agent slots are full', async () => {
-    const store = createMemoryStore()
-    const session = makeSession()
-    await store.createSession(session)
-    const provider = createFakeProvider([textThenStop('should-not')])
-    const { tool } = createTestAgent({ store, provider })
-    const tasks = createTaskRegistry()
-    const ctx = { ...makeCtx(makeTurn(session)), tasks }
-    for (let i = 0; i < 6; i++) {
-      tasks.register({
-        type: 'agent',
-        command: `hold-${i}`,
-        outputFile: '/tmp/hold',
-        kill: () => {},
-      })
-    }
-    const result = await tool.execute({ prompt: 'one more', run_in_background: true }, ctx)
-    expect(result).toBe('Agent failed: at most 6 background agents')
-    expect(provider.streamCount).toBe(0)
   })
 
   test('run_in_background with agents[] is rejected', async () => {
@@ -2304,4 +2288,295 @@ function initGitRepo(dir: string): void {
   run(['config', 'commit.gpgsign', 'false'])
   run(['commit', '--allow-empty', '-m', 'init'])
 }
+
+function writeDiskAgent(cwd: string, name: string, frontmatter: string): void {
+  mkdirSync(join(cwd, '.ravenclaw', 'agents'), { recursive: true })
+  writeFileSync(
+    join(cwd, '.ravenclaw', 'agents', `${name}.md`),
+    `---\nname: ${name}\n${frontmatter}---\nBody for ${name}.\n`,
+  )
+}
+
+function toolNamesOf(req: ProviderRequest | undefined): string[] {
+  return req?.tools.map((entry) => entry.name) ?? []
+}
+
+describe('agent graph', () => {
+  test('a child with edges gets the Agent tool and can spawn a listed id', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-agent-graph-'))
+    tempDirs.push(cwd)
+    writeDiskAgent(cwd, 'lead', 'allowed-tools: Read\nspawnable-agents: file-finder\n')
+    const store = createMemoryStore()
+    const session = makeSession({ cwd })
+    await store.createSession(session)
+    const provider = createFakeProvider([
+      toolThenStop('nested_1', 'Agent', { prompt: 'find it', subagent: 'file-finder' }),
+      textThenStop('found nested'),
+      textThenStop('lead done'),
+    ])
+    const { tool } = createTestAgent({ store, provider, askUser: async () => 'allow' })
+    const result = await tool.execute(
+      { prompt: 'go', subagent: 'lead' },
+      makeCtx(makeTurn(session, { cwd })),
+    )
+
+    expect(result).toBe('lead done')
+    expect(toolNamesOf(provider.requests[0])).toEqual(['Read', 'Agent'])
+    expect(toolNamesOf(provider.requests[1])).toEqual(['Read', 'Grep', 'Glob'])
+    expect(JSON.stringify(provider.requests[2]?.messages)).toContain('found nested')
+    const [leadSession] = await store.listSessions({ parentSessionId: session.id })
+    expect(leadSession).toBeDefined()
+    const grandchildren = await store.listSessions({ parentSessionId: leadSession!.id })
+    expect(grandchildren).toHaveLength(1)
+  })
+
+  test('edge check: a child may spawn only its listed ids', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-agent-edges-'))
+    tempDirs.push(cwd)
+    writeDiskAgent(cwd, 'lead', 'spawnable-agents: file-finder\n')
+    writeDiskAgent(cwd, 'other', '')
+    const store = createMemoryStore()
+    const session = makeSession({ cwd })
+    await store.createSession(session)
+    const provider = createFakeProvider([textThenStop('should-not')])
+    const { tool } = createTestAgent({ store, provider })
+    const turn = makeTurn(session, { cwd, agentId: 'lead', agentDepth: 1 })
+
+    for (const subagent of ['general', 'other', 'reviewer']) {
+      const text = await tool.execute({ prompt: 'x', subagent }, makeCtx(turn))
+      expect(text).toBe(`Subagent '${subagent}' is not spawnable`)
+    }
+    expect(await tool.execute({ prompt: 'x' }, makeCtx(turn))).toBe(
+      "Subagent 'general' is not spawnable",
+    )
+    expect(provider.streamCount).toBe(0)
+    expect(await store.listSessions({ parentSessionId: session.id })).toHaveLength(0)
+
+    const ok = await tool.execute({ prompt: 'x', subagent: 'file-finder' }, makeCtx(turn))
+    expect(ok).toBe('should-not')
+    const [child] = await store.listSessions({ parentSessionId: session.id })
+    expect(child).toBeDefined()
+  })
+
+  test('depth limit: a depth-2 child has no Agent tool even with edges', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-agent-depth-'))
+    tempDirs.push(cwd)
+    writeDiskAgent(cwd, 'alpha', 'allowed-tools: Read\nspawnable-agents: beta\n')
+    writeDiskAgent(cwd, 'beta', 'allowed-tools: Read\nspawnable-agents: alpha\n')
+    const store = createMemoryStore()
+    const session = makeSession({ cwd })
+    await store.createSession(session)
+    const provider = createFakeProvider([
+      toolThenStop('nested_1', 'Agent', { prompt: 'deeper', subagent: 'beta' }),
+      textThenStop('beta done'),
+      textThenStop('alpha done'),
+    ])
+    const { tool } = createTestAgent({ store, provider, askUser: async () => 'allow' })
+    const result = await tool.execute(
+      { prompt: 'go', subagent: 'alpha' },
+      makeCtx(makeTurn(session, { cwd })),
+    )
+    expect(result).toBe('alpha done')
+    expect(toolNamesOf(provider.requests[0])).toEqual(['Read', 'Agent'])
+    expect(toolNamesOf(provider.requests[1])).toEqual(['Read'])
+  })
+
+  test('maxAgentDepth 1 keeps Agent out of every child pool', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-agent-depth1-'))
+    tempDirs.push(cwd)
+    writeDiskAgent(cwd, 'alpha', 'allowed-tools: Read\nspawnable-agents: file-finder\n')
+    const store = createMemoryStore()
+    const session = makeSession({ cwd })
+    await store.createSession(session)
+    const provider = createFakeProvider([textThenStop('alpha done')])
+    const { tool } = createTestAgent({ store, provider, maxAgentDepth: 1 })
+    await tool.execute({ prompt: 'go', subagent: 'alpha' }, makeCtx(makeTurn(session, { cwd })))
+    expect(toolNamesOf(provider.requests[0])).toEqual(['Read'])
+  })
+
+  test('in-tool depth guard rejects a call at maxAgentDepth', async () => {
+    const cwd = mkdtempSync(join(tmpdir(), 'ravenclaw-agent-guard-'))
+    tempDirs.push(cwd)
+    writeDiskAgent(cwd, 'alpha', 'spawnable-agents: beta\n')
+    writeDiskAgent(cwd, 'beta', '')
+    const store = createMemoryStore()
+    const session = makeSession({ cwd })
+    await store.createSession(session)
+    const provider = createFakeProvider([textThenStop('should-not')])
+    const { tool } = createTestAgent({ store, provider })
+    const text = await tool.execute(
+      { prompt: 'x', subagent: 'beta' },
+      makeCtx(makeTurn(session, { cwd, agentId: 'alpha', agentDepth: 2 })),
+    )
+    expect(text).toBe('Agent failed: max agent depth 2 reached')
+    expect(provider.streamCount).toBe(0)
+    expect(await store.listSessions({ parentSessionId: session.id })).toHaveLength(0)
+  })
+
+  test('background agents and batches share one concurrency budget', async () => {
+    const home = mkdtempSync(join(tmpdir(), 'ravenclaw-agent-budget-'))
+    tempDirs.push(home)
+    const savedHome = process.env.RAVENCLAW_HOME
+    process.env.RAVENCLAW_HOME = home
+    const session = makeSession()
+    const store = createMemoryStore()
+    const lastUserText = (req: ProviderRequest) =>
+      JSON.stringify(req.messages.filter((m) => m.role === 'user').at(-1) ?? '')
+    const provider: Provider = {
+      id: 'fake',
+      apiMode: 'openai_compat',
+      profile: (model: string) => defaultModel(model),
+      async *stream(req: ProviderRequest, signal: AbortSignal) {
+        if (lastUserText(req).includes('HANG')) {
+          await new Promise<void>((resolve) => {
+            if (signal.aborted) resolve()
+            else signal.addEventListener('abort', () => resolve(), { once: true })
+          })
+          return
+        }
+        yield { type: 'text_delta' as const, text: 'ok' }
+        yield { type: 'stop' as const, reason: 'end' }
+      },
+    }
+    try {
+      await store.createSession(session)
+      const { tool } = createTestAgent({ store, provider })
+      const tasks = createTaskRegistry()
+      const ctx = { ...makeCtx(makeTurn(session)), tasks }
+      for (let i = 0; i < 4; i++) {
+        const out = await tool.execute({ prompt: `HANG ${i}`, run_in_background: true }, ctx)
+        expect(JSON.parse(out).status).toBe('dispatched')
+      }
+      const batch = [{ prompt: 'a' }, { prompt: 'b' }, { prompt: 'c' }]
+      expect(await tool.execute({ prompt: 'ignored', agents: batch }, ctx)).toBe(
+        'Agent failed: at most 6 concurrent agents (4 running)',
+      )
+
+      const pair = await tool.execute(
+        { prompt: 'ignored', agents: [{ prompt: 'a' }, { prompt: 'b' }] },
+        ctx,
+      )
+      expect(pair).toBe('## 1 (general)\nok\n\n## 2 (general)\nok')
+
+      for (let i = 4; i < 6; i++) {
+        await tool.execute({ prompt: `HANG ${i}`, run_in_background: true }, ctx)
+      }
+      expect(await tool.execute({ prompt: 'HANG 6', run_in_background: true }, ctx)).toBe(
+        'Agent failed: at most 6 concurrent agents (6 running)',
+      )
+      expect(await tool.execute({ prompt: 'single' }, ctx)).toBe(
+        'Agent failed: at most 6 concurrent agents (6 running)',
+      )
+
+      tasks.killAll()
+      const deadline = Date.now() + 3000
+      let freed = ''
+      while (Date.now() < deadline) {
+        freed = await tool.execute({ prompt: 'ignored', agents: batch }, ctx)
+        if (!freed.startsWith('Agent failed')) break
+        await Bun.sleep(10)
+      }
+      expect(freed).toBe('## 1 (general)\nok\n\n## 2 (general)\nok\n\n## 3 (general)\nok')
+    } finally {
+      await drainAgentMail(store, session.id)
+      if (savedHome === undefined) delete process.env.RAVENCLAW_HOME
+      else process.env.RAVENCLAW_HOME = savedHome
+    }
+  })
+
+  test('separate Agent tool instances do not share a budget', async () => {
+    const store = createMemoryStore()
+    const session = makeSession()
+    await store.createSession(session)
+    const six = Array.from({ length: 6 }, (_, i) => ({ prompt: `c${i}` }))
+    const first = createTestAgent({ store, provider: createFakeProvider([]) })
+    const second = createTestAgent({ store, provider: createFakeProvider([]) })
+    const [a, b] = await Promise.all([
+      first.tool.execute({ prompt: 'x', agents: six }, makeCtx(makeTurn(session))),
+      second.tool.execute({ prompt: 'x', agents: six }, makeCtx(makeTurn(session))),
+    ])
+    expect(a).not.toContain('Agent failed')
+    expect(b).not.toContain('Agent failed')
+  })
+
+  test("outputMode 'all_messages' joins every child assistant text", async () => {
+    const original = catalogModule.getAgentDefinition
+    const spy = spyOn(catalogModule, 'getAgentDefinition').mockImplementation((id, cwd) =>
+      id === 'general' ? { ...generalAgent, outputMode: 'all_messages' } : original(id, cwd),
+    )
+    try {
+      const store = createMemoryStore()
+      const session = makeSession()
+      await store.createSession(session)
+      const provider = createFakeProvider([
+        [
+          { type: 'text_delta', text: 'first part' },
+          { type: 'tool_call', id: 'r1', name: 'Read', input: {} },
+          { type: 'stop', reason: 'tool_use' },
+        ],
+        [{ type: 'tool_call', id: 'r2', name: 'Read', input: {} }, { type: 'stop', reason: 'tool_use' }],
+        textThenStop('second part'),
+      ])
+      const { tool } = createTestAgent({ store, provider })
+      const text = await tool.execute({ prompt: 'go' }, makeCtx(makeTurn(session)))
+      expect(text).toBe('first part\n\nsecond part')
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test("outputMode 'all_messages' stays within the result bound", async () => {
+    const original = catalogModule.getAgentDefinition
+    const spy = spyOn(catalogModule, 'getAgentDefinition').mockImplementation((id, cwd) =>
+      id === 'general' ? { ...generalAgent, outputMode: 'all_messages' } : original(id, cwd),
+    )
+    try {
+      const store = createMemoryStore()
+      const session = makeSession()
+      await store.createSession(session)
+      const provider = createFakeProvider([
+        [
+          { type: 'text_delta', text: 'a'.repeat(RESULT_BOUND) },
+          { type: 'tool_call', id: 'r1', name: 'Read', input: {} },
+          { type: 'stop', reason: 'tool_use' },
+        ],
+        textThenStop('tail'),
+      ])
+      const { tool } = createTestAgent({ store, provider })
+      const text = await tool.execute({ prompt: 'go' }, makeCtx(makeTurn(session)))
+      expect(text).toBe('a'.repeat(RESULT_BOUND))
+    } finally {
+      spy.mockRestore()
+    }
+  })
+
+  test('compactContext overlays the parent compact policy on the child engine', async () => {
+    const original = catalogModule.getAgentDefinition
+    const defSpy = spyOn(catalogModule, 'getAgentDefinition').mockImplementation((id, cwd) =>
+      id === 'general'
+        ? { ...generalAgent, compactContext: { protectLastMessages: 4, llmSummarize: true } }
+        : original(id, cwd),
+    )
+    const realCreate = engineModule.createSessionEngine
+    const seen: CompactPolicy[] = []
+    const engineSpy = spyOn(engineModule, 'createSessionEngine').mockImplementation((opts) => {
+      seen.push(opts.compact)
+      return realCreate(opts)
+    })
+    try {
+      const store = createMemoryStore()
+      const session = makeSession()
+      await store.createSession(session)
+      const { tool } = createTestAgent({ store, provider: createFakeProvider([textThenStop('ok')]) })
+      await tool.execute({ prompt: 'go' }, makeCtx(makeTurn(session)))
+      await tool.execute({ prompt: 'go', subagent: 'file-finder' }, makeCtx(makeTurn(session)))
+      expect(seen).toHaveLength(2)
+      expect(seen[0]).toEqual({ ...defaultCompact(), protectLastMessages: 4, llmSummarize: true })
+      expect(seen[1]).toEqual(defaultCompact())
+    } finally {
+      defSpy.mockRestore()
+      engineSpy.mockRestore()
+    }
+  })
+})
 

@@ -147,6 +147,10 @@ export interface Turn {
   frozenToolNames?: string[]
   /** Same tool+args+result repeats this turn. Key is name + args + result text. */
   stallCounts?: Record<string, number>
+  /** Calling agent definition id. Unset means root (edges from rootAgent + disk agents). */
+  agentId?: string
+  /** Nesting depth of this turn's agent. Unset means 0 (root). */
+  agentDepth?: number
   /** Set by `SessionEngine.abort`. `cancel` → `{ reason: 'cancelled' }`; default interrupt → `aborted`. */
   cancelKind?: 'cancel' | 'interrupt'
 }
@@ -286,7 +290,8 @@ export interface AgentDefinition {
   inheritParentSystemPrompt?: boolean
   includeMessageHistory: boolean
   maxRounds: number
-  compactContext?: CompactPolicy
+  /** Overlaid on the parent compact policy for this child's engine. */
+  compactContext?: Partial<CompactPolicy>
   outputMode: 'last_message' | 'all_messages'
 }
 

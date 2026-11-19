@@ -546,7 +546,7 @@ Registry: `createToolRegistry` (`packages/core/src/tools/registry.ts`) — last 
 
 ### Agent children + worktree isolation
 
-`createAgentTool` (`packages/core/src/orchestration/agent-tool.ts`; `tools/agent.ts` is a re-export shim). Nested `createSessionEngine` with `bare: true`, filtered tools from the catalog definition, empty `readFiles`. Optional `agents[]` runs up to `MAX_PARALLEL_CHILDREN` (6) in parallel. `run_in_background` registers an Agent task and `attachEngine` so `TaskSteer` works; `agents[]` cannot be backgrounded.
+`createAgentTool` (`packages/core/src/orchestration/agent-tool.ts`; `tools/agent.ts` is a re-export shim). Nested `createSessionEngine` with `bare: true`, filtered tools from the catalog definition, empty `readFiles`. Optional `agents[]` runs children in parallel within the shared concurrency budget (see Agents catalog). `run_in_background` registers an Agent task and `attachEngine` so `TaskSteer` works; `agents[]` cannot be backgrounded.
 
 `isolation: 'worktree'` → `prepareChildWorktree` (`packages/core/src/orchestration/worktree.ts`): `git worktree add --detach` under `<cwd>/.ravenclaw/worktrees/<childSessionId>`. On cleanup, **dirty worktree is report-only** (`dirty: true, pruned: false`). There is no auto-GC. Clean trees are `worktree remove`'d.
 
@@ -572,6 +572,16 @@ Built-ins in `packages/core/src/agent/catalog.ts`:
 | `researcher-web` | `researcher-web.ts` | WebSearch Fetch | 12 | no | search then Fetch ≥3 pages |
 
 `root.spawnableAgents` is that specialist list. Disk agents: `~/.ravenclaw/agents/*.md` then `<cwd>/.ravenclaw/agents/*.md` (`packages/core/src/agent/load.ts`). Frontmatter `name` is the id; `allowed-tools` or default `Read, Grep, Glob`; body is `systemPrompt`; optional `model` and `maxRounds` (positive integer) frontmatter, default `maxRounds: 12`. Project disk agents override user agents with the same id. Catalog ids win over disk ids (`agentCatalog` filters extras).
+
+### Spawn graph
+
+- **Edges.** A call may spawn only ids in the *calling* agent's `spawnableAgents`. The root uses `rootAgent.spawnableAgents` plus every disk agent id. A child uses its own definition's list; an omitted `subagent` means `general` and is checked the same way. A miss returns `Subagent '<id>' is not spawnable`. Built-in catalog definitions have `spawnableAgents: []`, so by default children cannot spawn.
+- **Caller on the turn.** `Turn.agentId` / `Turn.agentDepth` (unset = root, depth 0). The child engine builds its own turns, so the Agent tool stamps both onto every child turn through the same `bindChildTurnFields` wrapper that stamps `cwd`/`projectCwd`.
+- **Depth.** Config `maxAgentDepth` (number, default 2): root (0) spawns depth 1, depth 1 spawns depth 2, depth 2 cannot. `Agent` stays in `NESTING_DENIED`; the child pool gets the root's own Agent tool instance only when the child definition has non-empty `spawnableAgents` and its depth is below `maxAgentDepth` (`canSpawnNested`). The tool also refuses a call at the cap: `Agent failed: max agent depth <n> reached`.
+- **Budget.** One counter of live children per Agent tool instance, so one per root tree (nested children get the same instance; separate sessions do not share it). Foreground single calls take 1 slot, `agents[]` reserves all its slots up front, a background agent holds 1 slot until it settles, nested children count too. Cap `MAX_PARALLEL_CHILDREN` (6). Over budget: `Agent failed: at most 6 concurrent agents (N running)`, with N the count before the rejected reservation. Slots are released in `finally`.
+- **Output.** `outputMode: 'last_message'` returns the final assistant text; `'all_messages'` joins every child-authored assistant text (not the copied history preamble) with a blank line. Both are bounded by `CHILD_RESULT_CHAR_BOUND`; `SetOutput` still wins.
+- **Compact.** `compactContext` (partial `CompactPolicy`) overlays the parent policy for that child's engine: `{ ...parentCompact, ...definition.compactContext }`.
+- **Disk frontmatter.** `spawnable-agents` (comma/space list or YAML array, same parser as `allowed-tools`) sets `spawnableAgents`. Non-empty edges add `Agent` to `toolNames` implicitly.
 
 `--agent <id>` starts the *root* session with that definition's tool filter (`filterChildTools`).
 

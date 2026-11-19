@@ -10,9 +10,12 @@ import { decidePermission } from '../permissions/pipeline'
 import { loadPermissionRules } from '../permissions/rules'
 import {
   addTokenUsage,
+  allAssistantText,
   boundChildResult,
   buildChildPreamble,
+  canSpawnNested,
   CHILD_RESULT_CHAR_BOUND,
+  childCompactPolicy,
   childSystemParts,
   filterChildTools,
   lastAssistantText,
@@ -22,6 +25,7 @@ import { getModelProfile } from '../cost/models'
 import type { ModelResolver } from '../model/resolve'
 import { PersistError } from '../types'
 import type {
+  AgentDefinition,
   CompactPolicy,
   Message,
   ModelProfile,
@@ -45,11 +49,15 @@ import { isTurnAlwaysTool } from '../tools/skill'
 import { prepareChildWorktree, type IsolationMode, type WorktreeCleanupReport } from './worktree'
 import { createFileHistory } from '../session/file-history'
 import { MAX_PARALLEL_CHILDREN } from '../tasks/mailbox'
+import { createAgentBudget } from './agent-budget'
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { ravenclawHome } from '../home'
 
 export { MAX_PARALLEL_CHILDREN }
+
+/** Default for `maxAgentDepth`: root=0 spawns 1, depth 1 spawns 2, depth 2 cannot. */
+export const DEFAULT_MAX_AGENT_DEPTH = 2
 
 export interface AgentChildInput {
   prompt: string
@@ -110,8 +118,13 @@ export function createAgentTool(opts: {
   specialistModel?: string
   system?: SystemPart[]
   hooks?: PermissionHook[]
+  /** Deepest nesting level. Unset uses DEFAULT_MAX_AGENT_DEPTH. */
+  maxAgentDepth?: number
 }): Tool<AgentInput, string> {
-  return {
+  const maxAgentDepth = opts.maxAgentDepth ?? DEFAULT_MAX_AGENT_DEPTH
+  // Per-instance: nested children get this same tool, so the whole root tree shares it.
+  const budget = createAgentBudget(MAX_PARALLEL_CHILDREN)
+  const tool: Tool<AgentInput, string> = {
     name: 'Agent',
     description:
       'Run a nested agent on an isolated sub-task. Optional subagent selects a catalog definition (default general). Optional agents[] runs several children in parallel. Optional run_in_background returns a task id immediately (TaskOutput/TaskStop). Child readFiles start empty; history is empty unless the definition includes it.',
@@ -133,55 +146,83 @@ export function createAgentTool(opts: {
     },
     async execute(input: AgentInput, ctx: ToolContext) {
       if (ctx.signal.aborted) return ABORTED_TEXT
+      // Children at the cap do not get this tool; guard anyway.
+      if ((ctx.turn.agentDepth ?? 0) >= maxAgentDepth) {
+        return `Agent failed: max agent depth ${maxAgentDepth} reached`
+      }
 
       const batch = input.agents
       const background = input.run_in_background === true
       if (background && batch !== undefined && batch.length > 0) {
         return 'Agent failed: agents[] cannot run in the background'
       }
-      if (batch !== undefined && batch.length > MAX_PARALLEL_CHILDREN) {
-        return `Agent failed: at most ${MAX_PARALLEL_CHILDREN} parallel children`
-      }
 
-      const runOne = (childInput: AgentChildInput) => spawnChild(childInput, ctx, opts)
-      if (batch !== undefined && batch.length > 0) {
-        const settled = await Promise.allSettled(batch.map((child) => runOne(child)))
-        return formatParallelResults(batch, settled)
+      const isBatch = batch !== undefined && batch.length > 0
+      const slots = isBatch ? batch.length : 1
+      if (!budget.tryReserve(slots)) {
+        return `Agent failed: at most ${MAX_PARALLEL_CHILDREN} concurrent agents (${budget.running} running)`
       }
-      if (background && ctx.tasks) {
-        const running = ctx.tasks
-          .list()
-          .filter((task) => task.type === 'agent' && task.status === 'running').length
-        if (running >= MAX_PARALLEL_CHILDREN) {
-          return `Agent failed: at most ${MAX_PARALLEL_CHILDREN} background agents`
+      const graph: AgentGraph = { self: tool, maxAgentDepth }
+      if (background && ctx.tasks && !isBatch) {
+        // The background child holds its slot until it settles.
+        try {
+          return startBackgroundAgent(input, ctx, opts, graph, () => budget.release(1))
+        } catch (error) {
+          budget.release(1)
+          throw error
         }
-        return startBackgroundAgent(input, ctx, opts)
       }
-      return runOne(input)
+      try {
+        const runOne = (childInput: AgentChildInput) => spawnChild(childInput, ctx, opts, graph)
+        if (isBatch) {
+          const settled = await Promise.allSettled(batch.map((child) => runOne(child)))
+          return formatParallelResults(batch, settled)
+        }
+        return await runOne(input)
+      } finally {
+        budget.release(slots)
+      }
     },
   }
+  return tool
 }
 
 type AgentToolOpts = Parameters<typeof createAgentTool>[0]
+
+/** The root-built Agent tool (handed to nested children) and the depth cap. */
+interface AgentGraph {
+  self: Tool<AgentInput, string>
+  maxAgentDepth: number
+}
+
+/** Edges of the calling agent: root uses rootAgent plus disk agents; a child uses its definition. */
+function spawnableFrom(turn: Turn, projectCwd: string): Set<string> {
+  if (turn.agentId === undefined) {
+    return new Set([
+      ...rootAgent.spawnableAgents,
+      ...loadDiskAgents(projectCwd).map((agent) => agent.id),
+    ])
+  }
+  return new Set(getAgentDefinition(turn.agentId, projectCwd)?.spawnableAgents ?? [])
+}
 
 async function spawnChild(
   input: AgentChildInput,
   ctx: ToolContext,
   opts: AgentToolOpts,
+  graph: AgentGraph,
   childSessionId?: string,
   taskId?: string,
 ): Promise<string> {
   const projectCwd = ctx.turn.projectCwd ?? ctx.turn.cwd
-  const spawnable = new Set([
-    ...rootAgent.spawnableAgents,
-    ...loadDiskAgents(projectCwd).map((agent) => agent.id),
-  ])
-  if (input.subagent !== undefined && !spawnable.has(input.subagent)) {
-    return `Subagent '${input.subagent}' is not spawnable`
+  const targetId = input.subagent ?? 'general'
+  if (!spawnableFrom(ctx.turn, projectCwd).has(targetId)) {
+    return `Subagent '${targetId}' is not spawnable`
   }
 
-  const definition = getAgentDefinition(input.subagent ?? 'general', projectCwd)
+  const definition = getAgentDefinition(targetId, projectCwd)
   if (!definition) return `Unknown subagent: ${input.subagent}`
+  const childDepth = (ctx.turn.agentDepth ?? 0) + 1
 
   const maxRounds =
     opts.childMaxRounds !== undefined && definition.maxRounds !== undefined
@@ -222,6 +263,7 @@ async function spawnChild(
   )
   const userMessage = buildChildUserMessage(input, definition, now)
   const preambleMessages = buildChildPreamble(definition, ctx.turn.messages)
+  const preambleIds = new Set(preambleMessages.map((message) => message.id))
   const parentCwd = childSession.cwd
 
   const childAbort = new AbortController()
@@ -232,20 +274,24 @@ async function spawnChild(
     childAbort,
     maxRounds,
     ctx.turn,
+    { agentId: definition.id, agentDepth: childDepth },
   )
   // Worktree path is live-only. session.cwd stays the parent so resume
   // still has a real directory after cleanup removes the worktree.
   childTurn.cwd = isolated.cwd
   childTurn.projectCwd = projectCwd
-  const childTools = bindChildTurnFields(
-    filterChildPool(filterChildTools(opts.tools, definition), childTurn),
-    {
-      cwd: isolated.cwd,
-      projectCwd,
-      skillAllowedTools: ctx.turn.skillAllowedTools,
-      unlockedToolNames: ctx.turn.unlockedToolNames,
-    },
-  )
+  const basePool = filterChildTools(opts.tools, definition)
+  const childPool = canSpawnNested(definition, childDepth, graph.maxAgentDepth)
+    ? [...basePool, graph.self as Tool]
+    : basePool
+  const childTools = bindChildTurnFields(filterChildPool(childPool, childTurn), {
+    cwd: isolated.cwd,
+    projectCwd,
+    agentId: definition.id,
+    agentDepth: childDepth,
+    skillAllowedTools: ctx.turn.skillAllowedTools,
+    unlockedToolNames: ctx.turn.unlockedToolNames,
+  })
   let engine: SessionEngine | undefined
   let result = INCOMPLETE_TEXT
   let report: WorktreeCleanupReport | undefined
@@ -271,7 +317,7 @@ async function spawnChild(
         provider: childProvider,
         store: opts.store,
         tools: childTools,
-        compact: opts.compact,
+        compact: childCompactPolicy(opts.compact, definition),
         model: childProfile,
         maxRounds,
         askUser: opts.askUser,
@@ -300,7 +346,12 @@ async function spawnChild(
         const loaded = await opts.store.loadSession(childSession.id).catch(() => undefined)
         if (loaded) childTurn.messages = loaded.messages
         await persistChildSession(opts.store, childSession, childTurn)
-        result = childResult(end, childTurn.messages, ctx.signal, childSession.id)
+        result = childResult(
+          end,
+          childOutput(definition, childTurn.messages, preambleIds),
+          ctx.signal,
+          childSession.id,
+        )
       } finally {
         unlinkEngine()
         await engine.close({ releaseLock: false }).catch(() => undefined)
@@ -319,7 +370,7 @@ async function spawnChild(
       if (structured !== undefined) result = boundChildResult(structured)
       else {
         const loaded = await opts.store.loadSession(childSession.id).catch(() => undefined)
-        const text = lastAssistantText(loaded?.messages ?? childTurn.messages)
+        const text = childOutput(definition, loaded?.messages ?? childTurn.messages, preambleIds)
         result = text ? boundChildResult(text) : INCOMPLETE_TEXT
       }
     }
@@ -349,6 +400,8 @@ function startBackgroundAgent(
   input: AgentChildInput,
   ctx: ToolContext,
   opts: AgentToolOpts,
+  graph: AgentGraph,
+  releaseSlot: () => void,
 ): string {
   const tasks = ctx.tasks
   if (!tasks) return 'background agent failed: no task registry'
@@ -373,6 +426,7 @@ function startBackgroundAgent(
     { ...input, run_in_background: false },
     bgCtx,
     opts,
+    graph,
     childSessionId,
     task.id,
   ).then(
@@ -397,6 +451,7 @@ function startBackgroundAgent(
     },
   ).finally(() => {
     childHistory.endTurn()
+    releaseSlot()
   })
   return JSON.stringify({ status: 'dispatched', taskId: task.id, childSessionId })
 }
@@ -484,6 +539,7 @@ function buildChildTurn(
   abort: AbortController,
   maxRounds: number,
   parent: Turn,
+  agent: { agentId: string; agentDepth: number },
 ): Turn {
   const turn: Turn = {
     id: crypto.randomUUID(),
@@ -501,6 +557,8 @@ function buildChildTurn(
     model: session.model,
     readFiles: new Set(),
     readFileMtimes: new Map(),
+    agentId: agent.agentId,
+    agentDepth: agent.agentDepth,
   }
   if (parent.terminalBackend !== undefined) turn.terminalBackend = parent.terminalBackend
   if (session.prePlanMode !== undefined) turn.prePlanMode = session.prePlanMode
@@ -572,6 +630,8 @@ function bindChildTurnFields(
   live: {
     cwd: string
     projectCwd: string
+    agentId: string
+    agentDepth: number
     skillAllowedTools?: string[]
     unlockedToolNames?: string[]
   },
@@ -579,6 +639,9 @@ function bindChildTurnFields(
   const stamp = (turn: Turn) => {
     turn.cwd = live.cwd
     turn.projectCwd = live.projectCwd
+    // The child engine builds its own turns; stamp the graph position here.
+    turn.agentId = live.agentId
+    turn.agentDepth = live.agentDepth
     if (live.skillAllowedTools !== undefined && turn.skillAllowedTools === undefined) {
       turn.skillAllowedTools = [...live.skillAllowedTools]
     }
@@ -631,16 +694,25 @@ async function persistChildSession(
   await store.upsertSession(session)
 }
 
+/** last_message: final assistant text. all_messages: every child-authored assistant text. */
+function childOutput(
+  definition: Pick<AgentDefinition, 'outputMode'>,
+  messages: Message[],
+  preambleIds: Set<string>,
+): string {
+  if (definition.outputMode !== 'all_messages') return lastAssistantText(messages)
+  return allAssistantText(messages.filter((message) => !preambleIds.has(message.id)))
+}
+
 function childResult(
   end: RoundEnd,
-  messages: Message[],
+  text: string,
   parentSignal: AbortSignal,
   childSessionId: string,
 ): string {
   if (end.reason === 'aborted' || parentSignal.aborted) return ABORTED_TEXT
   const structured = takeChildOutput(childSessionId)
   if (structured !== undefined) return boundChildResult(structured)
-  const text = lastAssistantText(messages)
   if (
     !text &&
     (end.reason === 'model_error' ||
