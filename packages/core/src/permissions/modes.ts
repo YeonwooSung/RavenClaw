@@ -62,6 +62,11 @@ export function cyclePermissionMode(mode: PermissionMode): PermissionMode {
   return CYCLE[mode]
 }
 
+/** Name-based read-only classification (no tool input needed). */
+export function isReadOnlyToolName(name: string): boolean {
+  return READ_ONLY_NAMES.has(name)
+}
+
 export function isMutatingTool(name: string, input?: unknown, tool?: Tool): boolean {
   if (name === 'ExitPlanMode' || name === 'EnterPlanMode') return false
   if (tool) return !tool.isReadOnly(input)

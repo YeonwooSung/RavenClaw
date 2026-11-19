@@ -1,9 +1,21 @@
-import { describe, expect, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { Message, Provider, ProviderChunk, Tool } from '@ravenclaw/core'
 import { createDurableSession, collectProviderStream, openDurableSession, type DurableToolSink } from './durable.ts'
+
+const FILE_HOME = mkdtempSync(join(tmpdir(), 'ravenclaw-durable-home-'))
+let savedFileHome: string | undefined
+beforeAll(() => {
+  savedFileHome = process.env.RAVENCLAW_HOME
+  process.env.RAVENCLAW_HOME = FILE_HOME
+})
+afterAll(() => {
+  if (savedFileHome === undefined) delete process.env.RAVENCLAW_HOME
+  else process.env.RAVENCLAW_HOME = savedFileHome
+  rmSync(FILE_HOME, { recursive: true, force: true })
+})
 
 function profile() {
   return {
@@ -323,7 +335,7 @@ describe('createDurableSession', () => {
     }
   })
 
-  test('a project deny rule does not block touch', async () => {
+  test('a project deny rule blocks touch', async () => {
     const dir = tempDir()
     const marker = join(dir, 'ruled')
     mkdirSync(join(dir, '.ravenclaw'))
@@ -333,9 +345,8 @@ describe('createDurableSession', () => {
     )
     try {
       const result = await runRealBash({ dir, command: `touch ${marker}` })
-      expect(existsSync(marker)).toBe(true)
-      expect(result.ok).toBe(true)
-      expect(result.text).not.toContain('permission_denied')
+      expect(existsSync(marker)).toBe(false)
+      expect(result.text).toContain('permission_denied')
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
@@ -515,6 +526,102 @@ describe('createDurableSession', () => {
       expect(execs).toBe(1)
       expect(seen).toContain('interrupted')
       await second.close()
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('durable permission rules and replay classification', () => {
+  const HOME_ENV = 'RAVENCLAW_HOME'
+
+  async function runOnce(
+    tool: Tool,
+    input: Record<string, unknown>,
+    rules: unknown[],
+    mode: 'default' | 'dontAsk',
+  ): Promise<string[]> {
+    const dir = tempDir()
+    const home = tempDir()
+    const saved = process.env[HOME_ENV]
+    process.env[HOME_ENV] = home
+    mkdirSync(join(dir, '.ravenclaw'))
+    writeFileSync(join(dir, '.ravenclaw', 'permissions.json'), JSON.stringify(rules))
+    const seen: string[] = []
+    const model = provider(async function* (req) {
+      const texts = toolTexts(req.messages)
+      if (texts.length > 0) {
+        seen.push(...texts)
+        yield { type: 'text_delta', text: 'done' } satisfies ProviderChunk
+        yield { type: 'stop', reason: 'end' } satisfies ProviderChunk
+        return
+      }
+      yield { type: 'tool_call', id: 't1', name: tool.name, input } satisfies ProviderChunk
+      yield { type: 'stop', reason: 'tool' } satisfies ProviderChunk
+    })
+    try {
+      const session = await openDurableSession(
+        { path: join(dir, 'd.db'), cwd: dir, model: 'm', provider: model, permissionMode: mode },
+        [tool],
+      )
+      await (await session.submit({ content: 'go', requestId: 'r1' })).wait()
+      await session.close()
+      return seen
+    } finally {
+      if (saved === undefined) delete process.env[HOME_ENV]
+      else process.env[HOME_ENV] = saved
+      rmSync(dir, { recursive: true, force: true })
+      rmSync(home, { recursive: true, force: true })
+    }
+  }
+
+  test('a project deny rule yields permission_denied without executing', async () => {
+    let execs = 0
+    const write = fakeTool('Write', false, async () => {
+      execs += 1
+      return 'wrote'
+    })
+    const seen = await runOnce(write, { path: 'a.txt' }, [{ tool: 'Write', spec: '', behavior: 'deny' }], 'dontAsk')
+    expect(seen).toEqual(['permission_denied'])
+    expect(execs).toBe(0)
+  })
+
+  test('an allow rule promotes a leftover ask', async () => {
+    let execs = 0
+    const ask: Tool = {
+      ...fakeTool('Custom', false, async () => {
+        execs += 1
+        return 'ran'
+      }),
+      checkPermissions: () => Promise.resolve({ behavior: 'ask' as const, reason: 'tool' as const, message: 'm' }),
+    }
+    expect(await runOnce(ask, {}, [], 'default')).toEqual(['permission_denied'])
+    expect(execs).toBe(0)
+    const seen = await runOnce(ask, {}, [{ tool: 'Custom', spec: '', behavior: 'allow' }], 'default')
+    expect(seen).toEqual(['ran'])
+    expect(execs).toBe(1)
+  })
+
+  test('replay classification is name-based and never calls isReadOnly', async () => {
+    const calls: unknown[] = []
+    const probe = (name: string): Tool => ({
+      ...fakeTool(name, true, async () => 'x'),
+      isReadOnly(input?: unknown) {
+        calls.push(input)
+        return true
+      },
+    })
+    const dir = tempDir()
+    try {
+      for (const [name, replay] of [
+        ['Read', 'safe'],
+        ['Bash', 'unsafe'],
+        ['Custom', 'unsafe'],
+      ] as const) {
+        const { toDurableToolForTest } = await import('./durable.ts')
+        expect(toDurableToolForTest(probe(name), dir).replay).toBe(replay)
+      }
+      expect(calls).toEqual([])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }

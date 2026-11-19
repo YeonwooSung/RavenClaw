@@ -5,6 +5,8 @@ import {
   editTool,
   globTool,
   grepTool,
+  isReadOnlyToolName,
+  loadPermissionRules,
   matchesDangerousPattern,
   readTool,
   writeTool,
@@ -51,8 +53,6 @@ export interface DurableToolSink {
   abandon: () => void
 }
 
-const EMPTY_RULES = { session: [], user: [], project: [] }
-
 export async function createDurableSession(opts: CreateDurableSessionOptions): Promise<DurableRavenSession> {
   return openDurableSession(opts, defaultTools())
 }
@@ -68,7 +68,7 @@ export async function openDurableSession(
   const storage = await openSqliteStorage(opts.path)
   const runtime = await openDurable(storage, {
     model: modelFromProvider(opts.provider, opts.model, tools),
-    tools: tools.map((tool) => toDurableTool(tool, turn, mode)),
+    tools: tools.map((tool) => toDurableTool(tool, turn, mode, opts.cwd)),
     modelId: opts.model,
     ...(opts.systemPrompt !== undefined ? { systemPrompt: opts.systemPrompt } : {}),
   })
@@ -202,10 +202,10 @@ function toolCallFromChunk(chunk: Extract<ProviderChunk, { type: 'tool_call' }>)
   return { id: chunk.id, name: chunk.name, arguments: chunk.input }
 }
 
-function toDurableTool(tool: Tool, turn: Turn, mode: PermissionMode): DurableTool {
+function toDurableTool(tool: Tool, turn: Turn, mode: PermissionMode, cwd: string): DurableTool {
   return {
     name: tool.name,
-    replay: tool.isReadOnly(undefined as never) ? 'safe' : 'unsafe',
+    replay: isReadOnlyToolName(tool.name) ? 'safe' : 'unsafe',
     async execute(args, ctx) {
       const parsed = tool.parse(args)
       if (!parsed.ok) throw new Error(parsed.message)
@@ -215,7 +215,8 @@ function toDurableTool(tool: Tool, turn: Turn, mode: PermissionMode): DurableToo
         input: parsed.value,
         ctx: toolContext(turn, ctx.signal),
         mode,
-        rules: EMPTY_RULES,
+        // Reloaded per call, mirroring runToolRound's per-round load (user + project files; no session store).
+        rules: await loadPermissionRules({ cwd }),
       })
       const command = commandOf(parsed.value)
       const ordinaryBash =
@@ -294,4 +295,8 @@ function isJsonObject(value: unknown): value is JsonObject {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) return false
   const proto = Object.getPrototypeOf(value)
   return proto === Object.prototype || proto === null
+}
+
+export function toDurableToolForTest(tool: Tool, cwd: string): DurableTool {
+  return toDurableTool(tool, makeTurn(cwd, 'm', 'dontAsk'), 'dontAsk', cwd)
 }

@@ -224,7 +224,7 @@ export type {
 } from './tools/terminal-backend'
 export { decidePermission } from './permissions/pipeline'
 export type { DecidePermissionOpts, PermissionRuleSet } from './permissions/pipeline'
-export { cyclePermissionMode, isMutatingTool } from './permissions/modes'
+export { cyclePermissionMode, isMutatingTool, isReadOnlyToolName } from './permissions/modes'
 export { loadPermissionRules, persistAllowAlways } from './permissions/rules'
 export { safetyCheck } from './permissions/safety'
 export { createPlanModeTools } from './tools/plan-mode'

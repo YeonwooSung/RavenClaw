@@ -6,11 +6,13 @@ import type { PermissionRuleSet } from './types'
 
 export async function loadPermissionRules(opts: {
   cwd: string
-  store: SessionStore
-  sessionId: string
+  store?: SessionStore
+  sessionId?: string
 }): Promise<PermissionRuleSet> {
   const [session, user, project] = await Promise.all([
-    opts.store.listPermissionRules(opts.sessionId),
+    opts.store && opts.sessionId !== undefined
+      ? opts.store.listPermissionRules(opts.sessionId)
+      : Promise.resolve([] as PermissionRule[]),
     readRuleFile(userRulesPath(), ''),
     readRuleFile(projectRulesPath(opts.cwd), ''),
   ])
