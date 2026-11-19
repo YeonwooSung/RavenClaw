@@ -41,7 +41,7 @@ English: [ARCHITECTURE.md](ARCHITECTURE.md)
 
 | 패키지 | 경로 | 책임 |
 |---|---|---|
-| `@ravenclaw/core` | `packages/core` | `queryLoop`, `SessionEngine`, 툴, 권한, 세션 스토어, compact, MCP 브리지, 스킬, cron, Provider 포트. 모델 역할과 가격은 `src/cost/models.ts` |
+| `@ravenclaw/core` | `packages/core` | `queryLoop`, `SessionEngine`, 툴, 권한, 세션 스토어, compact, MCP 브리지, 스킬, cron, Provider 포트. 모델 역할과 가격은 `src/cost/models.ts`. `src/orchestration/`은 Agent 툴(자식 엔진 스폰)과 child worktree를 담당하며, `tools/`가 import하면 안 되는 유일한 레이어다 |
 | `@ravenclaw/providers` | `packages/providers` | Anthropic Messages, OpenAI Chat Completions, OpenAI Responses, included gateway. `core`를 구현체로 끌어오지 않는다 |
 | `@ravenclaw/ads` | `packages/ads` | 1st-party 광고 레이아웃, house floor, entitlement probe. `@ravenclaw/core` / `ink` / `react`를 import하지 않는다 |
 | `@ravenclaw/cli` | `packages/cli` | `raven` 바이너리. Ink TUI, OpenTUI 부트, `exec` / `acp` / `serve` / `slack` / `discord` / `pairing` / `cron` |
@@ -279,7 +279,7 @@ SDK `createRootTools`에 없는 CLI 루트 툴: `NotebookEdit`, `TaskSteer`, `Ad
 10. 끝나면 usage, compact generation, permission mode, cwd를 세션에 다시 쓴다.
 11. 조건이 맞으면 persist-detached background review를 띄운다. included / `dontAsk` / headless에서는 켜지지 않는다.
 
-`setModel`은 세션의 model id와 엔진이 들고 있는 `ModelProfile`을 갱신하고 `upsertSession`한다. 이미 돌아가고 있는 `queryLoop`는 제출 시점의 `model`과 `turn.model`을 이미 잡았다. 라이브 라운드의 윈도우/가격/thinking은 바뀌지 않는다. `/model <id>`는 다음 턴부터 프로필을 다시 로드한다.
+`setModel(profile, provider?)`은 세션의 model id(`session.model = profile.id`)와 엔진이 들고 있는 `model` 바인딩(`provider`를 넘기면 `provider` 바인딩도)을 갱신하고 `upsertSession`한다. 이미 돌아가고 있는 `queryLoop`는 제출 시점의 `model` / `provider` / `turn.model`을 이미 잡았다. 라이브 라운드의 윈도우/가격/thinking은 바뀌지 않는다. 다음 턴부터 새 윈도우, 가격, `supportsThinking`, provider를 쓴다. TUI의 `/model`은 런타임 `ModelResolver.resolve(id)`의 결과로 이 메서드를 부른다.
 
 `setPermissionMode`는 라이브 턴에도 즉시 반영한다. `plan`으로 들어갈 때 이전 모드를 `prePlanMode`에 저장하고, 나올 때 지운다. 시스템 파트의 volatile 줄 `Current permission mode:`도 같이 고친다.
 
@@ -295,7 +295,7 @@ SDK `createRootTools`에 없는 CLI 루트 툴: `NotebookEdit`, `TaskSteer`, `Ad
 2. `prepareContext` — `repairRoleAlternation`으로 짝 없는 `tool_use`를 고치고, 삽입된 툴 메시지를 persist한다. steering을 주입한다.
 3. `maybeCompact` — 토큰이 임계를 넘으면 보호 꼬리를 남기고 중간을 요약한다.
 4. `assembleRequest` — 시스템 파트, 메시지, frozen 툴 prefix, `maxTokens`를 모은다. thinking을 지원하지 않는 모델은 thinking 블록을 뺀다. grace 라운드는 툴을 비운다.
-5. `streamModel` — Provider SSE를 소비한다. 재시도 최대 8회, 지수 백오프. 413/context overflow면 reactive compact 한 번. retryable이면 `--fallback-model`로 한 번 갈아탄다. 잘린 텍스트만 있으면 output token을 최대 64k까지 올린다.
+5. `streamModel` — Provider SSE를 소비한다. 재시도 최대 8회, 지수 백오프. 413/context overflow면 reactive compact 한 번. retryable이면 `--fallback-model`로 한 번 갈아탄다(`fallbackUsed` 표시). `modelResolver`가 있으면(cli/sdk는 항상 넘긴다) `resolve(fallback)`을 호출한다. ok면 `state.provider`, `state.model`, `turn.model`을 바꾸고 재시도한다. `ok:false`면 `fallback model <id> unavailable: <error>`를 내보내고 라이브 provider에서 기존 백오프를 이어 간다(included 세션은 provider kind를 넘지 않는다). resolver가 없으면 같은 provider에서 `turn.model` + `getModelProfile`만 바꾼다. 잘린 텍스트만 있으면 output token을 최대 64k까지 올린다.
 6. `normalizeResponse` — abort면 `aborted`로 pair한다. 툴이 없으면 empty-completion ladder를 탄다. 툴이 있고 grace면 `tools_omitted`으로 pair하고 끝낸다.
 7. `runToolRound` — **먼저** `persistToolCalls`한다. 실패면 `persist_failed`로 pair하고 실행하지 않는다. 그다음 `partitionToolCalls`로 배치를 나누고 `decidePermission` 후 실행한다.
 8. `finalizeRound` — 툴 결과를 `persistToolResults`한다(실패 시 incomplete로 재시도). queued / steering 힌트를 주입한다.
@@ -447,11 +447,23 @@ CLI `createRootTools` (`packages/cli/src/engine.ts`)가 실제로 조립하는 �
 | `reviewer` | 없음 | 같은 모델, 부모 히스토리. `maxRounds` 4 |
 | `researcher-web` | `WebSearch` `Fetch` | 최소 3페이지. `maxRounds` 12 |
 
-디스크 에이전트는 `<project>/.ravenclaw/agents/*.md`와 `~/.ravenclaw/agents`다. 같은 id면 빌트인이 이긴다. `--agent <id>`는 세션을 그 정의의 툴로 시작한다.
+디스크 에이전트는 `<project>/.ravenclaw/agents/*.md`와 `~/.ravenclaw/agents`다(`packages/core/src/agent/load.ts`). frontmatter `name`이 id이고, `allowed-tools`(없으면 `Read, Grep, Glob`), 본문이 `systemPrompt`다. 선택 frontmatter `model`과 `maxRounds`(양의 정수)를 받으며 기본 `maxRounds: 12`다. 같은 id면 빌트인이 이긴다. `--agent <id>`는 세션을 그 정의의 툴로 시작한다.
 
-`Agent` 입력은 `prompt`가 필수다. `agents[]`로 병렬, `run_in_background`, `isolation: worktree`를 지원한다. worktree는 `.ravenclaw/worktrees/<childSessionId>`에 detached로 만든다. cleanup이 dirty를 보면 경로를 남기고 `dirty: true`만 보고한다. 자식 결과는 32k자로 자른다. included 세션의 자식은 부모와 같은 모델을 쓴다.
+`Agent` 입력은 `prompt`가 필수다. `agents[]`로 병렬, `run_in_background`, `isolation: worktree`를 지원한다. `createAgentTool`은 `packages/core/src/orchestration/agent-tool.ts`에 있고 `tools/agent.ts`는 re-export shim이다. `agents[]`는 공유 동시성 예산(아래 Spawn graph) 안에서 자식을 병렬로 돌리며 백그라운드로 보낼 수 없다. worktree(`prepareChildWorktree`, `packages/core/src/orchestration/worktree.ts`)는 `.ravenclaw/worktrees/<childSessionId>`에 detached로 만든다. cleanup이 dirty를 보면 경로를 남기고 `dirty: true`만 보고한다. 자식 결과는 32k자로 자른다. 자식 라운드 수는 `min(childMaxRounds, definition.maxRounds)`다. config `childMaxRounds`(기본 30)가 상한이고, 카탈로그나 디스크 정의의 `maxRounds`가 더 낮으면 그 값을 쓴다.
+
+자식 모델: `resolveChildModel` = `definition.model ?? turn.specialistModel ?? opts.specialistModel ?? turn.model` (included는 부모 모델로 고정). `specialistModel`은 `config.specialistModel`에서 `createAgentTool` opts로 들어온다(`CompactPolicy`가 아니다). `opts.modelResolver`가 있으면 자식의 provider와 profile은 모두 `resolve(childModel)`에서 온다. `ok:false`면 자식 세션을 만들기 전에 `Agent failed: <error>`를 반환한다. 없으면 자식은 부모 provider를 유지하고 `resolveProfile`을 쓴다.
 
 자식 세션은 부모 `state.db`에 `parent_session_id`로 붙는다. `raven rm`은 자식까지 지운다.
+
+### Spawn graph
+
+- **Edges.** 호출은 *호출한* 에이전트의 `spawnableAgents`에 있는 id만 스폰할 수 있다. 루트는 `rootAgent.spawnableAgents`에 모든 디스크 에이전트 id를 더해 쓴다. 자식은 자기 정의의 목록을 쓰고, `subagent`를 생략하면 `general`로 보고 같은 방식으로 검사한다. 벗어나면 `Subagent '<id>' is not spawnable`를 반환한다. 빌트인 카탈로그 정의는 `spawnableAgents: []`이므로 기본적으로 자식은 스폰하지 못한다.
+- **Caller on the turn.** `Turn.agentId` / `Turn.agentDepth`(미설정 = 루트, depth 0). 자식 엔진은 자기 턴을 만들기 때문에 Agent 툴이 `cwd`/`projectCwd`를 찍는 것과 같은 `bindChildTurnFields` 래퍼로 두 값을 모든 자식 턴에 찍는다.
+- **Depth.** config `maxAgentDepth`(number, 기본 2): 루트(0)는 depth 1을, depth 1은 depth 2를 스폰하고, depth 2는 스폰하지 못한다. `Agent`는 `NESTING_DENIED`에 그대로 남는다. 자식 pool은 자식 정의의 `spawnableAgents`가 비어 있지 않고 depth가 `maxAgentDepth` 미만일 때만(`canSpawnNested`) 루트의 Agent 툴 인스턴스를 받는다. 툴도 상한에서의 호출을 거절한다: `Agent failed: max agent depth <n> reached`.
+- **Budget.** Agent 툴 인스턴스당 살아 있는 자식 카운터 하나, 즉 루트 트리당 하나다(중첩 자식은 같은 인스턴스를 받고 별도 세션은 공유하지 않는다). foreground 단일 호출은 슬롯 1개, `agents[]`는 슬롯을 미리 전부 예약하고, 백그라운드 에이전트는 끝날 때까지 슬롯 1개를 잡는다. 중첩 자식도 센다. 상한 `MAX_PARALLEL_CHILDREN`(6). 초과하면 `Agent failed: at most 6 concurrent agents (N running)`이고 N은 거절된 예약 이전의 개수다. 슬롯은 `finally`에서 반환한다.
+- **Output.** `outputMode: 'last_message'`는 마지막 assistant 텍스트를 반환하고, `'all_messages'`는 자식이 쓴 모든 assistant 텍스트(복사된 히스토리 서두 제외)를 빈 줄로 이어 붙인다. 둘 다 `CHILD_RESULT_CHAR_BOUND`로 자르며 `SetOutput`이 여전히 우선한다.
+- **Compact.** `compactContext`(부분 `CompactPolicy`)는 그 자식 엔진에서 부모 정책 위에 덮어쓴다: `{ ...parentCompact, ...definition.compactContext }`.
+- **Disk frontmatter.** `spawnable-agents`(쉼표/공백 목록 또는 YAML 배열, `allowed-tools`와 같은 파서)가 `spawnableAgents`를 정한다. 비어 있지 않은 edge는 `toolNames`에 `Agent`를 암묵적으로 추가한다.
 
 ---
 
@@ -615,6 +627,8 @@ Provider 포트는 `packages/core/src/types.ts`의 `Provider`다. `stream(req, s
 
 `defaultConfig()`, `defaultModelForProvider()`, Responses fallback은 모두 `defaultModelId`를 부른다. 스냅샷 문자열을 다른 패키지에 복제하지 않는다. 런타임에 vendor `/models`를 긁지 않는다.
 
+`/model <id>` → `runtime.modelResolver.resolve(id)`(`packages/core/src/model/resolve.ts`; 엔진마다 resolver 하나, BYOK 팩토리 `byokProviderFactory`는 `@ravenclaw/providers`) → `setModel(profile, provider)`. `ok:false`(예: `included`에서 kind를 넘는 전환, 키 없음)면 알림은 `model <id>: <error>`이고 아무것도 바뀌지 않는다. 라이브 in-flight `queryLoop`는 바뀌지 않는다.
+
 ---
 
 ## MCP
@@ -758,6 +772,7 @@ fire는 새 `dontAsk` 세션을 연다. `lockHolder`는 `cron`이다. surface는
 - **`execute_code` 샌드박스 툴.** `Bash`와 권한 규칙으로 충분하다.
 - **공식 19-skill 복사.** `anthropics/skills`의 문서/예제/프로덕트 스킬을 vendor하지 않는다. builtin은 12개다. 그중 8개와 `game-design`, `team-design`은 원래 RavenClaw 문장이고, `gamedev`는 서드파티 Apache-2.0 팩(카탈로그 74개, 라우터 하나)이다. `cursor-pack`은 vendor한 MIT 팩이다(워크플로, 원칙, MCP 맵). 라우터 하나 뒤이며 marketplace가 아니다. 이름만 겹치는 `frontend-design` / `mcp-builder`도 원문 프롬프트를 베끼지 않는다. `raven play`와 `/play`는 웹 게임을 `127.0.0.1`에서 열고 OS 브라우저를 연다. 콘솔과 스크린샷은 가져오지 않는다.
 - **bypass / yolo / auto-allow-all-Bash.**
+- **Convergence direction.** durable은 계속 opt-in 런타임이고 core 루프를 대체하지 않는다. 공유 정책 모듈(`loadPermissionRules`의 permission rules, `isReadOnlyToolName`의 이름 기반 replay 분류)은 core에 있고 SDK 어댑터(`packages/sdk/src/durable.ts`)가 쓴다. 그래서 deny 규칙이 durable에도 적용되고 replay 안전성이 가짜 입력으로 `isReadOnly`를 부르는 데 기대지 않는다.
 - **회사 RavenClaw 백엔드 필수.** BYOK가 완전하다.
 - **pets / buddy / grove / voice / kanban / mixture-of-agents.**
 
