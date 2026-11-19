@@ -95,7 +95,7 @@ import { startPreventSleep, stopPreventSleep } from './prevent-sleep'
 import { probeEntitlement, type Entitlement } from '@ravenclaw/ads'
 import { includedCapReached, tryRecordIncludedSession } from './included-usage'
 import { loadConfiguredMcpTools, type McpSpawnFn } from './mcp'
-import { applyAuxCompactPolicy, byokProviderFactory } from './aux'
+import { applyAuxCompactPolicy, byokProviderFactory, providerKindFromModelId } from './aux'
 
 export type IncludedAccess =
   | {
@@ -394,6 +394,8 @@ export interface CliRuntimeBase {
   askUserHost?: boolean
   /** One per opened engine; `/model` resolves through it. */
   modelResolver?: ModelResolver
+  /** `config.model` at boot; the global contextWindow override stays on it. */
+  configuredModel?: string
 }
 
 export type CliRuntime = CliRuntimeBase & { engine: SessionEngine }
@@ -416,6 +418,7 @@ export async function openEngine(opts: {
   verifyOnStop?: boolean
   askUserHost?: boolean
   backgroundReview?: boolean
+  configuredModel?: string
 }): Promise<{
   engine: SessionEngine
   mcpCloser?: () => Promise<void>
@@ -491,6 +494,7 @@ async function finishOpenEngine(
     liveProvider: opts.provider,
     liveModel: session.model,
     createProvider: byokProviderFactory,
+    ...(opts.configuredModel !== undefined ? { configuredModel: opts.configuredModel } : {}),
   })
   const system = buildSystemParts({
     cwd: session.cwd,
@@ -672,7 +676,16 @@ export async function providerFromConfig(
   return byokProviderFromConfig(config)
 }
 
-function byokProviderFromConfig(config: ResolvedConfig): Provider {
+/**
+ * BYOK client for `model` (default `config.model`). A model other than the
+ * configured one picks its kind from its id prefix, falling back to
+ * `config.provider`; the configured model keeps `config.provider`.
+ */
+function byokProviderFromConfig(config: ResolvedConfig, model = config.model): Provider {
+  if (model !== config.model) {
+    const kind = providerKindFromModelId(model) ?? config.provider
+    return byokProviderFactory(kind, model, config)
+  }
   if (config.provider === 'ollama') {
     return createProvider({
       provider: 'ollama',
@@ -823,8 +836,10 @@ export async function bootCli(
     | 'remainingSessions'
     | 'verifyOnStop'
     | 'askUserHost'
+    | 'configuredModel'
   > = {
     hasPaidCapacityPlan: paid,
+    configuredModel: config.model,
   }
   if (opts.probe !== undefined) extras.probe = opts.probe
   if (opts.fetch !== undefined) extras.fetch = opts.fetch
@@ -847,6 +862,7 @@ export async function bootCli(
     funding: access.admitted ? 'included' : 'byok',
     lockHolderId,
     lockHolderName,
+    configuredModel: config.model,
   }
   if (opts.tools !== undefined) engineOpts.tools = opts.tools
   if (opts.maxRounds !== undefined) engineOpts.maxRounds = opts.maxRounds
@@ -939,6 +955,7 @@ export async function resumeRuntime(
     lockHolderId,
     lockHolderName,
     skipLock: true,
+    ...(runtime.configuredModel !== undefined ? { configuredModel: runtime.configuredModel } : {}),
     ...((runtime.surface ?? 'interactive') !== 'headless' || runtime.verifyOnStop === true
       ? { verifyOnStop: true }
       : {}),
@@ -1016,6 +1033,7 @@ export async function openNewSession(
     session,
     lockHolderId,
     lockHolderName,
+    ...(runtime.configuredModel !== undefined ? { configuredModel: runtime.configuredModel } : {}),
     ...((runtime.surface ?? 'interactive') !== 'headless' || runtime.verifyOnStop === true
       ? { verifyOnStop: true }
       : {}),
@@ -1051,7 +1069,10 @@ async function providerForResumedSession(
   session: SessionRecord,
 ): Promise<{ provider: Provider; hasPaidCapacityPlan?: boolean }> {
   if (session.funding !== 'included') {
-    return { provider: byokProviderFromConfig(runtime.config), hasPaidCapacityPlan: false }
+    return {
+      provider: byokProviderFromConfig(runtime.config, session.model),
+      hasPaidCapacityPlan: false,
+    }
   }
   const access = await resolveIncludedAccess(runtime.config, {
     consumeCap: false,

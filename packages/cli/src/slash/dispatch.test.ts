@@ -409,7 +409,30 @@ describe('dispatchSharedSlash', () => {
     await dispatchSharedSlash(cmd('model', 'ollama/qwen'), host)
     expect(calls).toEqual([{ id: 'ollama/qwen', provider: ollama }])
     expect(runtime.config.model).toBe('ollama/qwen')
+    expect(runtime.provider).toBe(ollama)
+    expect((runtime.config as { provider?: string }).provider).toBe('ollama')
     expect(host.notices).toEqual(['model ollama/qwen'])
+  })
+
+  test('repeated /model X with a resolver does not pick up the global contextWindow', async () => {
+    const session = makeSession({ model: 'dummy', funding: 'byok' })
+    const runtime = fakeRuntime(fakeEngine(session))
+    runtime.config.contextWindow = 123_000
+    ;(runtime.config as { provider?: string }).provider = 'anthropic'
+    ;(runtime.config as { env?: Record<string, string> }).env = {}
+    const live = { id: 'live' } as unknown as Provider
+    runtime.provider = live
+    runtime.modelResolver = createModelResolver({
+      config: runtime.config,
+      funding: 'byok',
+      liveProvider: live,
+      liveModel: 'claude-sonnet-4-5',
+    })
+    const host = fakeHost(runtime)
+    await dispatchSharedSlash(cmd('model', 'claude-sonnet-5'), host)
+    expect(runtime.config.profile.contextWindow).toBe(1_000_000)
+    await dispatchSharedSlash(cmd('model', 'claude-sonnet-5'), host)
+    expect(runtime.config.profile.contextWindow).toBe(1_000_000)
   })
 
   test('model switch does not inherit the global contextWindow override', async () => {

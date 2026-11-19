@@ -121,8 +121,9 @@ export async function dispatchSharedSlash(
         return 'handled'
       }
       const id = parsed.arg.trim()
-      let profile = getModelProfile(id, profileOverridesFor(runtime.config, id))
+      let profile: ReturnType<typeof getModelProfile>
       if (runtime.modelResolver !== undefined) {
+        // Resolver profile: global contextWindow stays on the configured model.
         const resolved = runtime.modelResolver.resolve(id)
         if (!resolved.ok) {
           host.notice(`model ${id}: ${resolved.error}`)
@@ -130,7 +131,11 @@ export async function dispatchSharedSlash(
         }
         profile = resolved.profile
         await runtime.engine.setModel(profile, resolved.provider)
+        // /new, resume, and /review build from runtime.provider + config.
+        runtime.provider = resolved.provider
+        if (resolved.kind !== undefined) runtime.config.provider = resolved.kind
       } else {
+        profile = getModelProfile(id, profileOverridesFor(runtime.config, id))
         await runtime.engine.setModel(profile)
       }
       runtime.config.model = profile.id

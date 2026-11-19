@@ -37,6 +37,11 @@ export interface ModelResolverOptions {
   liveProvider: Provider
   /** Session model id the liveProvider serves. */
   liveModel: string
+  /**
+   * Model the global `contextWindow` override belongs to. Default: `config.model`
+   * snapshotted at creation, so a later `/model` mutation does not move it.
+   */
+  configuredModel?: string
   /** BYOK factory, injected by cli/sdk (core cannot import providers). */
   /** Default true. When false and funding is byok, every resolve builds (and caches) a provider via the factory. */
   reuseLiveProvider?: boolean
@@ -57,9 +62,16 @@ export function createModelResolver(opts: ModelResolverOptions): ModelResolver {
   const reuseLive = opts.reuseLiveProvider ?? true
   const liveKind = providerKindFromModelId(liveModel) ?? config.provider
   const cache = new Map<string, Provider>()
+  const configuredModel = opts.configuredModel ?? config.model
 
   const profile = (id: string): ModelProfile =>
-    getModelProfile(id, profileOverridesFor(config, id))
+    getModelProfile(
+      id,
+      profileOverridesFor(
+        { model: configuredModel, contextWindow: config.contextWindow, prices: config.prices },
+        id,
+      ),
+    )
 
   const resolve = (id: string): ResolvedModel => {
     const idKind = providerKindFromModelId(id)

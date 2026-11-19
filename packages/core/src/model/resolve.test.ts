@@ -144,3 +144,31 @@ describe('createModelResolver', () => {
     expect(out.ok && out.provider).toBe(live)
   })
 })
+
+describe('configured model snapshot', () => {
+  test('global contextWindow keeps following the model configured at creation', () => {
+    const config = cfg({ model: 'claude-sonnet-4-5', contextWindow: 123_000 })
+    const r = createModelResolver({
+      config,
+      funding: 'byok',
+      liveProvider: live,
+      liveModel: 'claude-sonnet-4-5',
+    })
+    config.model = 'claude-sonnet-5'
+    expect(r.profile('claude-sonnet-5').contextWindow).not.toBe(123_000)
+    expect(r.profile('claude-sonnet-4-5').contextWindow).toBe(123_000)
+  })
+
+  test('configuredModel option overrides the snapshot', () => {
+    const config = cfg({ model: 'claude-sonnet-5', contextWindow: 123_000 })
+    const r = createModelResolver({
+      config,
+      funding: 'byok',
+      liveProvider: live,
+      liveModel: 'claude-sonnet-5',
+      configuredModel: 'claude-sonnet-4-5',
+    })
+    expect(r.profile('claude-sonnet-5').contextWindow).not.toBe(123_000)
+    expect(r.profile('claude-sonnet-4-5').contextWindow).toBe(123_000)
+  })
+})
