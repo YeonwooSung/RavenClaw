@@ -358,6 +358,14 @@ describe('dispatchSharedSlash', () => {
     expect(host.notices).toEqual(['model claude-sonnet-5'])
   })
 
+  test('model switch does not inherit the global contextWindow override', async () => {
+    const runtime = fakeRuntime(fakeEngine(makeSession({ model: 'dummy' })))
+    runtime.config.contextWindow = 123_000
+    const host = fakeHost(runtime)
+    await dispatchSharedSlash(cmd('model', 'claude-sonnet-5'), host)
+    expect(runtime.config.profile.contextWindow).toBe(1_000_000)
+  })
+
   test('quit is left to the host', async () => {
     const host = fakeHost(fakeRuntime(fakeEngine(makeSession())))
     expect(await dispatchSharedSlash(cmd('quit'), host)).toBe('host')

@@ -17,6 +17,7 @@ import {
   clearSessionJobError,
   enterSessionWorktree,
   getSessionWorktree,
+  profileOverridesFor,
   setJobAutoCommit,
   setSessionJobError,
   type InstructionFilesMode,
@@ -120,12 +121,7 @@ export async function dispatchSharedSlash(
         return 'handled'
       }
       const id = parsed.arg.trim()
-      const profile = getModelProfile(id, {
-        ...(runtime.config.contextWindow !== undefined
-          ? { contextWindow: runtime.config.contextWindow }
-          : {}),
-        ...(runtime.config.prices?.[id] !== undefined ? { prices: runtime.config.prices[id] } : {}),
-      })
+      const profile = getModelProfile(id, profileOverridesFor(runtime.config, id))
       await runtime.engine.setModel(profile)
       runtime.config.model = profile.id
       runtime.config.profile = profile

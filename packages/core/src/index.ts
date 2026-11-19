@@ -74,6 +74,16 @@ export type {
   ResolvedConfig,
   ReviewConfig,
 } from './config'
+export {
+  createModelResolver,
+  profileOverridesFor,
+  providerKindFromModelId,
+} from './model/resolve'
+export type {
+  ModelResolver,
+  ModelResolverOptions,
+  ResolvedModel,
+} from './model/resolve'
 export { upsertYamlTopLevelScalar } from './config/yaml'
 export {
   conservativeProfile,

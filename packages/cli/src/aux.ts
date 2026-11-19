@@ -1,5 +1,6 @@
 import {
-  getModelProfile,
+  createModelResolver,
+  providerKindFromModelId,
   normalizeOpenAiBaseUrl,
   OLLAMA_DEFAULT_HOST,
   VLLM_DEFAULT_BASE_URL,
@@ -12,16 +13,7 @@ import {
 } from '@ravenclaw/core'
 import { createProvider } from '@ravenclaw/providers'
 
-export function providerKindFromModelId(modelId: string): ProviderKind | undefined {
-  const slash = modelId.indexOf('/')
-  const prefix = (slash === -1 ? modelId : modelId.slice(0, slash)).toLowerCase()
-  if (prefix === 'anthropic' || prefix.startsWith('claude-')) return 'anthropic'
-  if (prefix === 'openai' || prefix.startsWith('gpt-')) return 'openai_compat'
-  if (prefix === 'ollama') return 'ollama'
-  if (prefix === 'vllm') return 'vllm'
-  if (prefix === 'orcarouter') return 'orcarouter'
-  return undefined
-}
+export { providerKindFromModelId }
 
 export function auxSameProvider(sessionModel: string, auxModel: string): boolean {
   const sessionKind = providerKindFromModelId(sessionModel)
@@ -39,18 +31,23 @@ export function tryBuildAuxProvider(opts: {
 }): { provider: Provider; model: ModelProfile } | undefined {
   const modelId = opts.modelId.trim()
   if (modelId === '') return undefined
-
-  // Included sessions stay fail-closed: never open a BYOK client.
-  if (opts.funding === 'included') {
-    if (!auxSameProvider(opts.sessionModel, modelId)) return undefined
-    return { provider: opts.liveProvider, model: getModelProfile(modelId) }
+  // Included sessions stay fail-closed: the resolver never opens a BYOK client for them.
+  const resolved = createModelResolver({
+    config: opts.config,
+    funding: opts.funding,
+    liveProvider: opts.liveProvider,
+    liveModel: opts.sessionModel,
+    createProvider: byokProviderFactory,
+  }).resolve(modelId)
+  if (!resolved.ok) return undefined
+  if (opts.funding === 'included' || resolved.provider !== opts.liveProvider) {
+    return { provider: resolved.provider, model: resolved.profile }
   }
-
+  // BYOK aux keeps its own client even for the session's provider kind
+  // (distinct key/default model from the live provider).
   try {
-    return {
-      provider: createByokProviderForModel(opts.config, modelId),
-      model: getModelProfile(modelId),
-    }
+    const kind = resolved.kind ?? opts.config.provider
+    return { provider: byokProviderFactory(kind, modelId, opts.config), model: resolved.profile }
   } catch {
     return undefined
   }
@@ -82,8 +79,11 @@ export function applyAuxCompactPolicy(
   return compact
 }
 
-function createByokProviderForModel(config: ResolvedConfig, modelId: string): Provider {
-  const kind = providerKindFromModelId(modelId) ?? config.provider
+export function byokProviderFactory(
+  kind: ProviderKind,
+  modelId: string,
+  config: ResolvedConfig,
+): Provider {
   if (kind === 'ollama') {
     return createProvider({
       provider: 'ollama',

@@ -2,6 +2,7 @@ import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { defaultModelId, getModelProfile } from './cost/models'
 import { ravenclawHome } from './home'
+import { profileOverridesFor } from './model/resolve'
 import type { ModelProfile, PermissionMode } from './types'
 import { parseYamlMap, stripWrappingQuotes, upsertYamlTopLevelScalar } from './config/yaml'
 
@@ -438,7 +439,7 @@ export function loadConfig(opts?: { home?: string; flags?: ConfigFlags }): Resol
     instructionFiles: parsed.instructionFiles ?? base.instructionFiles,
     home,
     env,
-    profile: getModelProfile(model, profileOverrides(model, parsed)),
+    profile: getModelProfile(model, profileOverridesFor(overrideSource(model, parsed), model)),
   }
   if (parsed.contextWindow !== undefined) resolved.contextWindow = parsed.contextWindow
   if (parsed.prices !== undefined) resolved.prices = parsed.prices
@@ -485,15 +486,13 @@ function pickedProviderModel(
   return out
 }
 
-function profileOverrides(
+function overrideSource(
   model: string,
   parsed: Partial<RavenClawConfig>,
-): { contextWindow?: number; prices?: ModelPriceFields } | undefined {
-  const out: { contextWindow?: number; prices?: ModelPriceFields } = {}
+): Pick<ResolvedConfig, 'model' | 'contextWindow' | 'prices'> {
+  const out: Pick<ResolvedConfig, 'model' | 'contextWindow' | 'prices'> = { model }
   if (parsed.contextWindow !== undefined) out.contextWindow = parsed.contextWindow
-  const prices = parsed.prices?.[model]
-  if (prices !== undefined) out.prices = prices
-  if (out.contextWindow === undefined && out.prices === undefined) return undefined
+  if (parsed.prices !== undefined) out.prices = parsed.prices
   return out
 }
 
